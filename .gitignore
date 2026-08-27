@@ -1,0 +1,50 @@
+build/
+build-*/
+.vscode/
+.idea/
+*.geode
+# what leveldp writes when it is run without --out, so it cannot be committed by accident
+leveldp_plan.txt*
+# data/ is an allow-list. Only the solver's results (solution_lv*_dp.txt), the
+# cold regression's baseline and the calibration levels (data/rigs/*.lvl) are
+# tracked. Everything the tools
+# regenerate per run (.best/.gbest/.dump/.trace/.tail/.fixups/.bands/.groups,
+# run logs) is not. The official-level dumps (objrects/triggers/objgroups/obb),
+# gdref and the fixups_log archives live outside this repository
+# (GDSOLVER_LAB, see py/gdtas/paths.py).
+data/*
+# The 22 official-level solutions, and only those. A long campaign leaves a
+# lineage of intermediate plans behind (solution_lv22rNN, solution_lv22cold*,
+# lv16A/B, the first lv22 clear); they are working files, they do NOT replay to
+# a clear (verified 2026-08-23: 70 of them FAIL), and publishing them would mean
+# handing out 70 files that call themselves solutions and are not.
+!data/solution_lv[0-9]_dp.txt
+!data/solution_lv1[0-9]_dp.txt
+!data/solution_lv2[0-2]_dp.txt
+# What py/cold_regress.py compares against: the iteration count each level took
+# the last time the suite was green, and the [fp] it ended on. It is the
+# acceptance record, so it belongs with the code it judges.
+!data/cold_baseline.json
+!data/rigs/
+data/rigs/*
+!data/rigs/*.lvl
+!data/rigs/*.units.json
+!data/rigs/*.plan.txt
+!data/rigs/calib_empty_plan.txt
+
+__pycache__/
+*.pyc
+data/tmp_quickregress/
+
+# Isolated data roots used for one cold run / A-B comparison (~1.5 GB each)
+data-cold*/
+data-*/
+
+# Local MCP registration (paths are machine-specific); see .mcp.json.example
+.mcp.json
+# Private instructions / skills for this machine
+CLAUDE.local.md
+.claude/
+
+# Semantic code index (cocoindex-code); machine-local
+/.cocoindex_code/

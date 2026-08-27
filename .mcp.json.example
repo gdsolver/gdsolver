@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "gd": {
+      "command": "python",
+      "args": ["-m", "gdmcp.server"],
+      "env": {
+        "PYTHONPATH": "<repo>/mcp;<repo>/py"
+      }
+    }
+  }
+}

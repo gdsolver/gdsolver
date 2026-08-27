@@ -1,0 +1,11 @@
+{
+	"geode": "5.8.2",
+	"gd": {
+		"win": "2.2081"
+	},
+	"id": "gdsolver",
+	"name": "GD Solver",
+	"version": "v0.1.0",
+	"developer": "gdsolver",
+	"description": "TAS solver research mod. Drives GD's own physics as the replay verifier for a reachability-DP solver."
+}
