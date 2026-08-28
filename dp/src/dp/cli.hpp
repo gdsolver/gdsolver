@@ -29,6 +29,7 @@
 // entry point: whatever the CLI does with a level, the mod does with it too, in the same
 // order and with the same code. leveldp.exe is now a three-line main() around this.
 #include "dp/reset.hpp"
+#include "dp/clearance.hpp"
 
 namespace dp {
 
@@ -79,6 +80,9 @@ inline int cliMain(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--touch-from-anchor")) g_touchFromAnchor = true;
         if (!std::strcmp(argv[i], "--memstat")) g_memStat = true;
+        // Instrumentation only (dp/clearance.hpp). Reads the children after they
+        // are stepped and keyed; never feeds anything back into the search.
+        if (!std::strcmp(argv[i], "--clearprobe")) g_clearProbe = true;
         if (!std::strcmp(argv[i], "--no-miniwave")) g_noMiniWave = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
@@ -1174,6 +1178,7 @@ inline int cliMain(int argc, char** argv) {
         std::vector<uint32_t> touched;
         std::vector<KeyRec> recs;
         uint32_t goalOrd = kNone;
+        uint16_t goalTight = 0xffff;   // route score; see the goal pick below
         size_t mask = 0;
         void ensure(size_t want) {
             size_t n = 1024;
@@ -1188,6 +1193,7 @@ inline int cliMain(int argc, char** argv) {
             touched.clear();
             recs.clear();
             goalOrd = kNone;
+            goalTight = 0xffff;
         }
         // ensure() sizes for the EXPECTED keys per shard; a lopsided hash
         // could still overfill one shard's table, and a full open-addressing
@@ -1282,6 +1288,7 @@ inline int cliMain(int argc, char** argv) {
         const Obj* obj = nullptr; // --dbg only
     };
     std::vector<Child> kids;      // reused every layer
+    std::vector<ClearSample> clearKids;   // --clearprobe only, reused too
     std::vector<size_t> gidx;     // this speed group's indices into `cur`
     // Below this many children the pool's wakeup costs more than the work.
     // A thin frontier is cheap anyway; the layers that matter run at the cap.
@@ -1999,7 +2006,16 @@ inline int cliMain(int argc, char** argv) {
                 // layer's nominal timeline. Only in frame 0: `goalX` is a world
                 // x, and in a turned frame xAbs is a different axis entirely
                 // (lv22 ends un-rotated, so nothing is lost).
-                if (!solved && s.frame == 0 && (double)s.xAbs >= goalX) {
+                // The goal is reached by a STATE, and by MORE THAN ONE of them:
+                // the layer runs to the end (the loop tests `!solved` on the
+                // NEXT iteration), so every other state that got past goalX is
+                // emitted too and only loses to this latch. Measured on lv16:
+                // 2,000 of them, whose lineages stay distinct for 3,345 ticks.
+                // Keep the roomiest instead of the first; with the score off
+                // they all read 0 and the incumbent always wins, which is the
+                // old latch exactly.
+                if (s.frame == 0 && (double)s.xAbs >= goalX
+                    && (!solved || roomierRoute(s.tight, goalState.tight))) {
                     solved = true;
                     goalState = s;
                 }
@@ -2177,6 +2193,13 @@ inline int cliMain(int argc, char** argv) {
             // hashed to the same cell -- which is the whole bug the rHover
             // note in keyOf describes.
             kid.s.action = (uint8_t)input;
+            // Route tightness rides along with the child (State c = s copies it
+            // already, so this only adds this tick's own contribution). Read by
+            // the goal pick below; nothing else looks at it.
+            if (!dead && kid.s.tight < 0xffff
+                && tightHere(near, (double)kid.s.xAbs, (double)kid.s.y,
+                             playerHalf(kid.s.mode, kid.s.mini != 0), kTightPx))
+                ++kid.s.tight;
             kid.dead = dead ? 1 : 0;
             kid.valid = 1;
             // the dedupe key is a pure function of the child, so it belongs on
@@ -2194,6 +2217,39 @@ inline int cliMain(int argc, char** argv) {
             pool->parallelFor(kids.size(), stepKid);
         else
             for (size_t i = 0; i < kids.size(); ++i) stepKid(i);
+
+        // ---- clearance probe (instrumentation, --clearprobe) ----------------
+        // Every child has been stepped and keyed by now, and this only READS
+        // them -- no slot, no ordinal and no key is touched -- so the emitted
+        // plan is the same with the flag on or off. That equality is the
+        // acceptance test (py/quick_regress.py, bit-identical).
+        // Serial on purpose: the stepping above is what needed the threads, and
+        // a probe that took a lock per child would be measuring the lock.
+        if (g_clearProbe) {
+            clearKids.clear();
+            for (size_t i = 0; i < kids.size(); ++i) {
+                if (kidFlag[i] != 2) continue;   // 1 = died, 0 = never expanded
+                const State& c = kids[i].s;
+                // A turned frame has "above" and "below" on a different axis;
+                // measuring it here would mix two coordinate systems in one
+                // histogram. Counted instead, so the omission is visible.
+                if (c.frame != 0) { ++g_clear.framesSkipped; continue; }
+                const double px = (double)c.xAbs, py = (double)c.y;
+                ClearSample cs;
+                cs.key = kidKeys[i];
+                cs.vy = c.vy;
+                cs.solid = solidClearance(near, px, py,
+                                          playerHalf(c.mode, c.mini != 0),
+                                          &g_clear.slopesSkipped);
+                cs.haz = hazardClearance(near, px, py,
+                                         hazardHalfFor(c.mode, c.mini),
+                                         c.mode, c.mini);
+                cs.mode = c.mode;
+                cs.goal = (uint8_t)(c.frame == 0 && px >= goalX ? 1 : 0);
+                clearKids.push_back(cs);
+            }
+            g_clear.addLayer(clearKids);
+        }
 
         // ---- phase 2p: dedupe in parallel shards (big layers) ---------------
         // Same result as the serial loop below, built in three steps:
@@ -2260,9 +2316,17 @@ inline int cliMain(int argc, char** argv) {
                             accepted = true;
                         }
                     }
-                    if (accepted && !solved && sm.goalOrd == kNone
-                        && (double)kids[i].s.xAbs >= goalX)
+                    // Same change as the serial path: keep the roomiest goal
+                    // state this shard saw rather than its first. `goalTight`
+                    // starts at 0xffff, so with the score off the first one wins
+                    // and nothing after it can tie-break past it -- the old
+                    // "smallest accepted ordinal" rule, unchanged.
+                    if (accepted && !solved && (double)kids[i].s.xAbs >= goalX
+                        && (sm.goalOrd == kNone
+                            || roomierRoute(kids[i].s.tight, sm.goalTight))) {
                         sm.goalOrd = i;
+                        sm.goalTight = kids[i].s.tight;
+                    }
                 }
             });
             // counters (compact array, trivial serial pass)
@@ -2289,9 +2353,21 @@ inline int cliMain(int argc, char** argv) {
                 nxt.back().action = action;
             }
             if (!solved) {
+                // Across shards, the same rule as within one: roomiest first,
+                // the smaller ordinal breaking ties. With the score off every
+                // tight is 0, no candidate is ever "roomier", and this reduces
+                // to min(goalOrd) -- the rule it replaced, bit for bit.
                 uint32_t g = kNone;
-                for (size_t si = 0; si < nsh; ++si)
-                    g = std::min(g, shards[si].goalOrd);
+                uint16_t gt = 0xffff;
+                for (size_t si = 0; si < nsh; ++si) {
+                    const uint32_t o = shards[si].goalOrd;
+                    if (o == kNone) continue;
+                    const uint16_t ot = shards[si].goalTight;
+                    if (g == kNone || ot < gt || (ot == gt && o < g)) {
+                        g = o;
+                        gt = ot;
+                    }
+                }
                 if (g != kNone) {
                     const State& from = cur[gidx[g >> 1]];
                     const uint8_t action = (uint8_t)(g & 1);
@@ -2497,6 +2573,10 @@ inline int cliMain(int argc, char** argv) {
             for (uint32_t i : keepIdx) kept.push_back(nxt[i]);
             nxt.swap(kept);
         }
+        // How many complete routes the final pick is choosing between, and how
+        // far back they are actually different (--clearprobe only; reads the
+        // arena, changes nothing).
+        if (g_clearProbe && solved) measureGoalDiversity(nxt, arena, goalX);
         prevAlive = cur.size();
         cur.swap(nxt);
         nBornPrev = nBorn;
@@ -2715,6 +2795,7 @@ inline int cliMain(int argc, char** argv) {
     // cannot change the answer and the next tier is skipped.
     std::printf("capstat: maxAlive=%zu capHits=%lld dropped=%lld cap=%zu\n",
                 maxAlive, capHits, capDropped, g_aliveCap);
+    clearReport();
     g_outcome.capHits = capHits;
     if (!g_fixups.empty())
         std::printf("fixups: %lld transitions overridden this call\n",

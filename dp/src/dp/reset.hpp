@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "dp/fixup.hpp"
+#include "dp/clearance.hpp"
 
 namespace dp {
 
@@ -63,6 +64,12 @@ inline void resetInvocationState() {
     g_bandDbg = false;
     g_shipCeilSet = false;
     g_playerCeils.clear();
+
+    // clearance.hpp -- instrumentation. The tallies are per solve, so a second
+    // in-process call must not read the first one's cells.
+    g_clearProbe = false;
+    g_clear.reset();
+    g_goalDiv = GoalDiversity{};
 
     // constants.hpp -- the measured values, which --flags override per call
     g_noMiniWave = false;

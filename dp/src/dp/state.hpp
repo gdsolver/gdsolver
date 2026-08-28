@@ -285,6 +285,19 @@ struct State {
     // passed via --start came out as 0 when the replay started (start:
     // init.rev=1 / revdbg init.rev=0).
     uint8_t rev = 0;
+    // ROUTE TIGHTNESS (dp/clearance.hpp).
+    //
+    // How many ticks this lineage has spent with less vertical room than the
+    // model's own error. It is carried, not recomputed: a route property has no
+    // meaning at a single state, and the thing it exists to rank -- the states
+    // that reach goalX -- all sit in open sky past the last object, where their
+    // own clearance is identical and says nothing (measured: spread 0.00).
+    //
+    // NOT in keyOf, deliberately. It is a property of how a state was REACHED,
+    // not of the state, and two states that differ only in it answer every
+    // future input identically. Keying on it would split every cell by history
+    // and multiply the frontier for nothing.
+    uint16_t tight = 0;
 };
 
 // arena entry for witness reconstruction, packed: bit31 = action, rest parent
