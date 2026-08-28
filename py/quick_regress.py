@@ -90,7 +90,7 @@ sys.path.insert(0, str(_PY))
 sys.path.insert(0, str(_PY.parent / "mcp"))
 
 from gdtas.solveutil import (has_grouped_colliders, grounded_of, held_before,
-                             MODE_ID)
+                             FLYING, MODE_ID)
 from fidelity_diff import groups_args, model_replay, gd_cut_tick, gd_replay
 from gdmcp.data import diff_trace
 from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
@@ -102,7 +102,7 @@ BASELINE = REF / "baseline.json"
 # an anchor is built from a GD dump row).
 # The raw dump is 2.5MB on lv20; trimmed it comes to less than half that
 REF_COLS = ["attempt", "tick", "x", "y", "yvel", "mode", "vsize",
-            "dual", "p2y", "p2vy", "p2up", "p2ground",
+            "dual", "p2y", "p2vy", "p2up", "p2ground", "p2ground2",
             "upsideDown", "onGround", "onGround2", "speed", "pmin", "pmax",
             "snapuid", "snapdist", "gframe", "ctrlOff", "rot"]
 
@@ -255,7 +255,24 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
     y2 = (r.get("p2y") or 0) if du else 0
     vy2 = (r.get("p2vy") or 0) if du else 0
     f2 = (1 if r.get("p2up") == "1" else 0) if du else 0
-    g2 = (1 if r.get("p2ground") == "1" else 0) if du else 0
+    # p2ground gets the SAME treatment as p1's onGround. GD's ground flag is
+    # sticky for the flying modes -- it stays 1 for hundreds of ticks after the
+    # body has left the surface -- and the model's `grounded` means "resting",
+    # which restarts the velocity from 0. grounded_of filters p1's with
+    # |yvel| < 0.01; the second body was copied raw.
+    # Measured on lv16 t=9,400 (dual ship, p2ground=1 with p2vy=+0.069): the
+    # anchor grounded p2, the model's first step gave it 0.086 (one gravity step
+    # from rest) where GD has 0.155 (0.069 + one step), and that ONE MISSING
+    # STEP is the whole of the section's divergence -- p1 tracks GD to 0.0000
+    # for 400 ticks while p2's error grows 0.0193 px a tick.
+    # p2ground2 is the second body's partner flag. A reference recorded before
+    # the column existed simply has no value, and the |p2vy| test alone carries
+    # the rule (the mod's groundedOf2 has both flags to hand).
+    g2b = r.get("p2ground2")
+    g2 = (1 if (r.get("p2ground") == "1"
+                and (g2b is None or g2b == "" or g2b == "1")
+                and (mode not in FLYING or abs(float(vy2 or 0)) < 0.01))
+          else 0) if du else 0
     # the rotation frame. Converts GD's gframe (0-3) into the model's
     # (frame, rev, flip). Passed raw it gives "the DP says SOLVED, GD dies in
     # the same place" (the same conversion as the note in mkstart. frame 2 =

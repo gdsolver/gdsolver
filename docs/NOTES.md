@@ -14,6 +14,15 @@ numbers — so nothing you need in order to understand or change the code lives 
 the private notes. If you find a comment where that is not true, it is a bug in
 the comment.
 
+Custom levels are cited the same way, and for a second reason. A few comments
+name one — the inverted cube's world-floor kill was first measured on one, twice,
+on two plans — because that is where the measurement was taken and saying so is
+the point (that one was afterwards confirmed on lv4, and the comment says so). But
+**custom levels are not supported here yet**: their data is somebody else's
+work, and the runner that solves them cold, its acceptance record and the levels
+themselves all live in the lab tree. What is published is the physics the
+measurement produced, which is the part that applies to every level.
+
 What is published here:
 
 * [`ARCHITECTURE.md`](ARCHITECTURE.md) — how the solver, the mod and the tools

@@ -33,7 +33,9 @@ def main(argv=None) -> int:
     ap.add_argument("--horizon", type=int, default=0)
     # A worker's save is a generated minimal one, so it holds no downloaded levels and
     # `level=<id>` alone gives "error: level not found". Hand it the object string
-    # instead (py/extract_custom_level.py pulls it out of the player's own save).
+    # instead -- the mod passes it to GD's own compressor, so a worker can play a level
+    # it never downloaded. Getting that string out of a save is the lab tree's business
+    # (docs/NOTES.md): custom levels are not supported here.
     ap.add_argument("--levelfile", default="")
     a = ap.parse_args(argv)
 

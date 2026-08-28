@@ -32,6 +32,14 @@ namespace dp {
 // it runs once -- which is also how the change is proven safe: byte-identical solver output on
 // the replay/cold suite (py/quick_regress.py; see rule 3 in CLAUDE.md).
 //
+// **Write the DECLARED default, not the value it happens to have today.** A line here that
+// repeats a literal is a second copy of the default, and when the declaration is changed and
+// this is not, every in-process solve silently runs the OLD behaviour while the header says
+// otherwise -- which is un-reproducible with the CLI, exactly as above. That cost a day on
+// 2026-08-28: a rule flipped on in step.hpp was held off by a `= false` here, and the level it
+// was measured on came back failing with the rule's own signature. Prefer naming the constant
+// the declaration uses; if the default is a bare literal, changing it means changing both.
+//
 // TWO DELIBERATE EXCEPTIONS, both set from OUTSIDE a call:
 //   * g_levelCsv -- the mod puts the level in here before calling and clears it after, so this
 //     is the caller's data, not the last solve's. Clearing it here would leave the mod unable to
@@ -159,7 +167,6 @@ inline void resetInvocationState() {
     g_needSkip = 0;
     g_oriented = true;
     g_obbAll = false;
-    g_invCubeFloorKill = false;
 }
 
 }  // namespace dp

@@ -186,6 +186,19 @@ struct State {
     float y2, vy2, slopeM2, snapDist2;
     uint8_t grounded2, flip2, ringHold2, onSlope2;
     uint8_t slopeT2 = 0;   // second body's ride counter (see slopeT)
+    // The second body's own MODE and its own ceiling-ramp push-down counters.
+    // `mode` and `ceilT`/`ceilM4` used to be shared outright ("shared fields
+    // come from the first half", stepBoth), which is right only for as long as
+    // the two bodies meet everything on the same tick -- and they do not. Each
+    // is tested at its own y, so one can clear a portal's window, or be pressed
+    // by a ramp, while the other is not: measured on lv20 t=17,110, p1 clears
+    // the mode portal uid13881 (cy=239 hh=43) by 0.16 px while p2 is 2.2 px
+    // outside, and p1 has been pressed down the ceiling chain for 14 ticks while
+    // p2 has just arrived from below.
+    // Everything inside stepOne reads these off the state it was handed, so
+    // swapHalves carrying them is the whole of the mechanism -- and they cost
+    // nothing: sizeof(State) is 232 either way, they land in existing padding.
+    uint8_t mode2 = 0, ceilT2 = 0, ceilM42 = 0;
     const Obj* snapObj2;
     const Obj* usedOrb2;
     const Obj* usedPad2[4];

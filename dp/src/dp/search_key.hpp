@@ -146,6 +146,14 @@ inline uint64_t keyOf(const State& s) {
                      : 0)
            ^ ((uint64_t)s.dual << 7) ^ ((uint64_t)s.flip2 << 6)
            ^ ((uint64_t)s.mode << 3) ^ ((uint64_t)s.flip << 2)
+           // The SECOND BODY'S mode, on the ticks it differs from the first's
+           // (State::mode2). Two pairs whose halves are in different modes
+           // answer the next tick differently, so they must not merge. Gated on
+           // the difference so every key where the pair agrees -- all of them
+           // outside the one-tick window a mode portal opens between the halves
+           // -- stays bit-identical to before.
+           ^ ((s.dual && s.mode2 != s.mode)
+                  ? ((uint64_t)s.mode2 * 0xFF51AFD7ED558CCDull) : 0)
            // ...and the BAND, for the same reason as flip: two states at the
            // same y and vy that came in through different mode portals are
            // clamped by different ceilings and floors, so they are not

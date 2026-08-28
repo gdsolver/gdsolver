@@ -3481,6 +3481,15 @@ class $modify(GJBaseGameLayer) {
                                   ? -this->m_objectLayer->getPositionX() : 0.f)
                    << ',' << (this->m_objectLayer
                                   ? -this->m_objectLayer->getPositionY() : 0.f)
+                   // p2ground2: the SECOND body's second contact flag, the partner of
+                   // p2ground exactly as onGround2 is of onGround. GD's ground flag is
+                   // sticky for the flying modes and the pair plus a still velocity is what
+                   // actually says "resting" (see grounded_of / groundedOf). p1 has had both
+                   // since the beginning; p2 had only one, so an anchor built from this dump
+                   // could not apply the same rule to the second body.
+                   // Appended at the END of the row on purpose -- readers index the earlier
+                   // columns by position.
+                   << ',' << (m_player2 ? (int)m_player2->m_isOnGround2 : 0)
                    << '\n';
         }
     }

@@ -55,7 +55,9 @@ struct AnchorRow {
     int mini = 0;            // vehicle size < 0.9 (a size portal has been passed)
     int dual = 0;
     float y2 = 0.f, v2 = 0.f;
-    int f2 = 0, g2 = 0;
+    // g2 / g2b are the SECOND body's two contact flags, kept raw exactly like p1's pair above
+    // and filtered by groundedOf2() where the anchor is built.
+    int f2 = 0, g2 = 0, g2b = 0;
     // A dash is held for hundreds of ticks (lv21 holds one for 300+), and an anchor taken inside
     // one that resumes without it restarts in free fall through the whole thing. The driver has
     // to infer both of these from a 420-tick window of its dump; in the game they are just there
@@ -154,6 +156,7 @@ inline void record(GJBaseGameLayer* l, long long t) {
     r.v2 = (r.dual && l->m_player2) ? (float)l->m_player2->m_yVelocity : 0.f;
     r.f2 = (r.dual && l->m_player2 && l->m_player2->m_isUpsideDown) ? 1 : 0;
     r.g2 = (r.dual && l->m_player2 && l->m_player2->m_isOnGround) ? 1 : 0;
+    r.g2b = (r.dual && l->m_player2 && l->m_player2->m_isOnGround2) ? 1 : 0;
     r.dashing = p->m_isDashing ? 1 : 0;
     // dp/step.hpp builds this from the ring object's rotation in degrees, so take it from the
     // ring GD says the player is riding rather than from m_dashAngle, whose units and meaning
@@ -711,6 +714,22 @@ inline int groundedOf(const AnchorRow& r) {
     return (r.onGround || r.vy == 0.f) ? 1 : 0;
 }
 
+// ...AND THE SAME FOR THE SECOND BODY. The stickiness is a property of the flag, not of which
+// player owns it, but p2's was going into `--start` raw -- so an anchor taken while the dual's
+// second half was flying with a stale m_isOnGround told the model "resting", and the model's
+// resting branch restarts the velocity from zero.
+// Measured on lv16 t=9,400 (dual ship, p2 flying with m_isOnGround still 1 and vy = +0.069): the
+// model's next tick gave p2 0.086 -- one gravity step from rest -- where GD has 0.155 = 0.069 +
+// one step. p1 then tracks GD to 0.0000 for the whole section while p2's error grows 0.0193 px a
+// tick, which is what four of lv16's ten failing sections were.
+inline int groundedOf2(const AnchorRow& r) {
+    if (!r.dual) return 0;
+    const bool flying = (r.mode == 1 || r.mode == 3 || r.mode == 4);
+    if (flying)
+        return (r.g2 && r.g2b && std::fabs(r.v2) < 0.01f) ? 1 : 0;
+    return (r.g2 || r.v2 == 0.f) ? 1 : 0;
+}
+
 // How much of the robot's hover the anchor still has. GD keeps no counter for it, so it is read
 // off the trajectory -- the way the driver reads it out of its dump, and for the same reason:
 // while hovering, GD holds vy EXACTLY constant, so counting back over "airborne and the same vy"
@@ -782,7 +801,7 @@ inline std::string startArg(long long t0, const AnchorRow& r, int held) {
     s += "," + std::to_string(held) + "," + std::to_string(flip)
        + "," + std::to_string(r.mini) + "," + std::to_string(r.dual);
     s += "," + num(r.y2) + "," + num(r.v2) + "," + std::to_string(r.f2)
-       + "," + std::to_string(r.g2) + "," + num(r.speed);
+       + "," + std::to_string(groundedOf2(r)) + "," + num(r.speed);
     // robotHover, dashHeld, dashSlope. A dash wins: dp gates the hover seed on the 16th field
     // and the dash on the 17th, and crediting a hover to a dash is how the driver once got the
     // right trajectory from the wrong mechanism (lv21 x=18,105 -- a rot=0 ring holds vy at 0 and

@@ -178,9 +178,12 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     bool d2 = false;
     State cb = stepOne(sb, input, K, d2);
     swapHalves(cb);
-    // shared fields (x, mode, size, speed, dual) come from the first half; the
-    // second half only contributes its own body
+    // shared fields (x, size, speed, dual) come from the first half; the second
+    // half only contributes its own body -- and `mode` / the ceiling press
+    // counters are ITS fields now, not shared ones (State::mode2 says why).
     c.y2 = cb.y2;            c.vy2 = cb.vy2;
+    c.mode2 = cb.mode2;
+    c.ceilT2 = cb.ceilT2;    c.ceilM42 = cb.ceilM42;
     c.slopeM2 = cb.slopeM2;  c.snapDist2 = cb.snapDist2;
     c.grounded2 = cb.grounded2; c.flip2 = cb.flip2;
     c.ringHold2 = cb.ringHold2; c.onSlope2 = cb.onSlope2;

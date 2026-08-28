@@ -138,6 +138,20 @@ def one(level: int, wid: int, budget: float, extra: list[str],
                                                        errors="replace")
     except OSError:
         pass
+    out = read_result(txt, getattr(r, "timed_out", False))
+    out["lv"] = level
+    out["wall"] = time.time() - t0
+    return out
+
+
+def read_result(txt: str, timed_out: bool = False) -> dict:
+    """Read one session's log into the numbers a cold run is judged by.
+
+    Split out of one() so that the private tree's custom-level runner reads a
+    session EXACTLY the same way (docs/NOTES.md; custom levels are not supported
+    here yet). The point of that runner is that the same loop is being measured
+    and only the level source differs, which is worth nothing if the two
+    disagree about what counts as cleared."""
     iters = re.findall(r"^dpsolve: iter (\d+):", txt, re.M)
     deaths = [(int(a), float(b)) for a, b in
               re.findall(r"^death: attempt=\d+ tick=(\d+) x=([\d.]+)", txt, re.M)]
@@ -148,15 +162,14 @@ def one(level: int, wid: int, budget: float, extra: list[str],
         m = re.search(r"^dpsolve: giving up - (.*)$", txt, re.M)
         if m:
             why = "stuck: " + m.group(1)[:60]
-        elif getattr(r, "timed_out", False):
+        elif timed_out:
             why = "stuck: out of wall time"
     rec = re.search(r"^level record changed: (.*)$", txt, re.M)
-    return {"lv": level, "cleared": saved, "why": why, "iters": len(iters),
+    return {"cleared": saved, "why": why, "iters": len(iters),
             "deepest_t": max((d[0] for d in deaths), default=-1),
             "deepest_x": max((d[1] for d in deaths), default=-1.0),
             "fx": len(re.findall(r"\[fixup\] t=\d+ x=", txt)),
             "record": rec.group(1) if rec else "?",
-            "wall": time.time() - t0,
             # The last [fp] is the state the run ended in -- the cheapest single
             # value to diff two runs by (see logFingerprint in repair.hpp).
             "fp": fps[-1] if fps else ""}

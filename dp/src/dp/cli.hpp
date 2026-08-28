@@ -84,12 +84,6 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;
         if (!std::strcmp(argv[i], "--rotlast")) g_rotLast = true;
-        // The inverted-cube ground kill, both ways (step.hpp g_invCubeFloorKill). Value-less,
-        // and the mod appends cfg `dparg` LAST of all, which is exactly the position the loop
-        // below cannot see -- put here, a `dparg=--invcubefloor` finally reaches the search.
-        // It did not before, and two A/B rounds were read off a switch that never moved.
-        if (!std::strcmp(argv[i], "--invcubefloor")) g_invCubeFloorKill = true;
-        if (!std::strcmp(argv[i], "--no-invcubefloor")) g_invCubeFloorKill = false;
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below
@@ -240,8 +234,6 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--oriented")) g_oriented = true;
         if (!std::strcmp(argv[i], "--no-oriented")) g_oriented = false;
         if (!std::strcmp(argv[i], "--obb-all")) g_obbAll = true;
-        if (!std::strcmp(argv[i], "--invcubefloor")) g_invCubeFloorKill = true;
-        if (!std::strcmp(argv[i], "--no-invcubefloor")) g_invCubeFloorKill = false;
         if (!std::strcmp(argv[i], "--trigclosed")) g_trigClosed = true;
         if (!std::strcmp(argv[i], "--no-trigclosed")) g_trigClosed = false;
         if (!std::strcmp(argv[i], "--bands")) g_bandPath = argv[i + 1];
@@ -590,6 +582,13 @@ inline int cliMain(int argc, char** argv) {
                 init.vy2 = (float)a[11];
                 init.flip2 = (uint8_t)a[12];
                 init.grounded2 = (uint8_t)a[13];
+                // The dump has one `mode` column for the pair, so an anchor
+                // cannot tell the two apart: seed the second body with the
+                // first's. They differ for at most the tick between one
+                // clearing a mode portal's window and the other reaching it
+                // (State::mode2), and an anchor taken inside that single tick
+                // is not something the dump can express either way.
+                init.mode2 = init.mode;
             }
         }
     }
@@ -986,30 +985,57 @@ inline int cliMain(int argc, char** argv) {
     // ticks later at x=9,372, while GD rode the ramp for hundreds more.
     // The dump has no such column, so infer it from the geometry exactly the
     // way the ride does: grounded, and sitting on a ramp's resting height.
-    if (init.grounded) {
+    // ...and the SECOND BODY needs exactly the same inference. It rides its own
+    // ramps, it has its own onSlope2 / slopeM2 / slopeT2, and `--start` carries
+    // none of them -- so an anchor taken while the dual's second half was mid-ride
+    // restarted it at slopeT2 = 0 while p1 got the saturated 24, and the two halves
+    // left the ramp with different launches.
+    // Measured on lv16 t=7,816 (both bodies on mirrored m=+-0.5 ramps, jumping
+    // together): GD gives an exact mirror, p1 +12.663 / p2 -12.663. The model had
+    // p1 +12.663 to the digit and p2 -12.197 -- the slope-exit bonus scaled by
+    // slopeRampFactor(14 + 1) instead of (24 + 1), because p2 had only been able to
+    // count the 15 ticks since the anchor. That 0.466 is the whole of the section.
+    auto rideAtAnchor = [&](uint8_t grounded, uint8_t flip, float y,
+                            uint8_t& onSlope, float& slopeM, uint8_t& slopeT) {
+        if (!grounded) return;
         const double pH = init.mini ? kMiniHalf : kCubeHalf;
         for (const Obj& sp : L.slopes) {
             const double sx0 = sp.cx - sp.hw, sx1 = sp.cx + sp.hw;
             const double m = (sp.sy1 - sp.sy0) / (sx1 - sx0);
             if (m == 0.0) continue;
+            // Which corner of the box touches the line is decided in the
+            // player's OWN gravity frame, so a hanging body takes the offset on
+            // the other side -- the same mirror the hang-side rules make about
+            // everything else. Written as "m as this body sees it".
+            // With the upright sign both ways, p2's seat test missed by exactly
+            // 2*slopeXOffset: lv16 t=7,800, ceiling ramp uid3357 (m=-0.5,
+            // sy0=570), GD has p2 at 538.580 and the unmirrored formula asks for
+            // 542.120. Mirrored it lands on 538.580 to the digit, the same way
+            // p1 lands on its own 451.420.
+            const double mEff = flip ? -m : m;
             const double xr0 =
-                x0 + (m > 0 ? slopeXOffset(m, pH) : -slopeXOffset(m, pH));
+                x0 + (mEff > 0 ? slopeXOffset(m, pH) : -slopeXOffset(m, pH));
             if (xr0 < sx0 || xr0 > sx1 + 1.5) continue;
             const double top =
-                sp.sy0 + m * (std::min(xr0, sx1) - sx0) + (init.flip ? -pH : pH);
-            if (std::fabs((double)init.y - top) > 0.6) continue;
-            init.onSlope = 1;
-            init.slopeM = (float)m;
+                sp.sy0 + m * (std::min(xr0, sx1) - sx0) + (flip ? -pH : pH);
+            if (std::fabs((double)y - top) > 0.6) continue;
+            onSlope = 1;
+            slopeM = (float)m;
             // KNOWN GAP (same class as the missing snapObj above): the dump
             // carries no slope-ride age, so an anchor taken mid-ride guesses
             // SATURATED (24 = full exit impulse). Right whenever the real ride
             // is >= 0.1 s -- the long chained climbs where anchors actually
             // land -- and over-launches on a shorter one; the loop's own GD
             // replay catches that case.
-            init.slopeT = 24;
+            slopeT = 24;
             break;
         }
-    }
+    };
+    rideAtAnchor(init.grounded, init.flip, init.y,
+                 init.onSlope, init.slopeM, init.slopeT);
+    if (init.dual)
+        rideAtAnchor(init.grounded2, init.flip2, init.y2,
+                     init.onSlope2, init.slopeM2, init.slopeT2);
     const double goalX = L.maxX + 60.0;
     // 120 px = 4 blocks of slack above the highest surface, so a legitimate
     // arc over the top of the level is still allowed
@@ -1555,7 +1581,14 @@ inline int cliMain(int argc, char** argv) {
         // a type-4 portal looks like a no-op and never fires).
         tr << "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act"
               ",onslope,slopem,slopet,bandf,bandc,mini,held,dx,nearorb,clamp"
-              ",clampuid,clampcx,clampcy,flip,frame,rot,rotneg\n";
+              ",clampuid,clampcx,clampcy,flip,frame,rot,rotneg"
+              // The SECOND BODY's own ride state. The dual runs the whole of
+              // stepOne twice and the second half keeps its own copy of every
+              // one of these, but only p1's was ever written -- so a divergence
+              // that lives in p2's ride ("only p2 is off, by exactly the slope
+              // exit bonus") had nothing to read. Appended at the end; existing
+              // readers index the columns before this by position.
+              ",grounded2,onslope2,slopem2,slopet2,mode2,ceilt,ceilt2\n";
         // Make --snaplog usable in replay too (it used to exist only on the
         // SOLVE side, so a known plan's stair snaps could never be checked
         // against GD's snaptrace).
@@ -1808,6 +1841,10 @@ inline int cliMain(int argc, char** argv) {
                // over a 281-tick anchor). Columns are appended at the end
                // (existing readers index by position).
                << ',' << s.rot << ',' << (int)s.rotNeg
+               << ',' << (int)s.grounded2 << ',' << (int)s.onSlope2
+               << ',' << s.slopeM2 << ',' << (int)s.slopeT2
+               << ',' << (int)s.mode2 << ',' << (int)s.ceilT
+               << ',' << (int)s.ceilT2
                << "\n";
             if (rdead) {
                 diedT = t;
@@ -2294,11 +2331,30 @@ inline int cliMain(int argc, char** argv) {
                         else
                             std::snprintf(why, sizeof why, " %s", kid.why);
                     }
+                    // The second body, when there is one. Without it a dual
+                    // layer prints two parents with the SAME (y, vy) and no way
+                    // to tell what separated them -- which is how lv20's
+                    // t=17,115 layer reads: four lines, two distinct children,
+                    // nothing on the line that explains the split.
+                    // `held` is on every line for the same reason: GD runs
+                    // buttons AFTER the update, so a wave's direction on this
+                    // tick follows the PREVIOUS tick's button, and two parents
+                    // differing only in `held` step apart under the same input.
+                    char two[160] = "";
+                    if (s.dual)
+                        std::snprintf(two, sizeof two,
+                                      " | p2 (%.3f,%.3f)->(%.3f,%.3f) flip2=%d "
+                                      "g2=%d free=%d",
+                                      (double)s.y2, (double)s.vy2,
+                                      (double)c.y2, (double)c.vy2,
+                                      (int)c.flip2, (int)c.grounded2,
+                                      (int)c.freeHalf);
                     std::printf("dbg t=%lld in=%d: (%.3f,%.3f)->(%.3f,%.3f) "
-                                "x=%.2f mode=%d flip=%d g=%d dead=%d%s\n",
+                                "x=%.2f mode=%d flip=%d g=%d held=%d dead=%d%s%s\n",
                                 t, input, (double)s.y, (double)s.vy, (double)c.y,
                                 (double)c.vy, (double)c.xAbs, (int)c.mode,
-                                (int)c.flip, (int)c.grounded, (int)dead, why);
+                                (int)c.flip, (int)c.grounded, (int)s.held,
+                                (int)dead, why, two);
                 }
                 if (!dead) emit(c, s, (uint8_t)input, kid.key);
             }

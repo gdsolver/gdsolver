@@ -38,24 +38,6 @@ struct StepCtx {
 // ThreadPool): every worker kills its own children and would otherwise stamp on
 // the others' reason. --dbg reads them on the same thread that stepped the
 // child, so the reason is still the right one there.
-// `--invcubefloor` / `--no-invcubefloor`: the inverted-cube ground kill (the branch in stepOne
-// that carries this name).
-//
-// DEFAULT OFF, and the reason is a conflict that is not resolved yet. The rule is measured on
-// 1474319 -- GD kills an inverted cube the tick its box bottom crosses y=90, twice, on two
-// different plans, with no object and no collider anywhere near -- and with it the three custom
-// levels go from 3% to CLEARED. But it costs lv20 its cold clear, deterministically: the same
-// binary solves lv20's first plan to the end with the rule off (3572 edges) and dies at
-// x=28,823 with it on (3128), and the firings that do it are at t=2,528 x=3,280, an inverted
-// cube descending at vy=-14.5 onto the plane. GD has never been observed in that state on lv20
-// -- its verified clear is a WAVE at y=349 there -- so whether the game kills it is UNMEASURED,
-// and a corpus level is not worth trading for an unmeasured generalisation.
-//
-// What settles it: inject an inverted cube at y~105, vy~-14.5 into lv20 at t=2,528 and see
-// whether GD kills or blocks. If it kills, the rule is right and lv20 loses a scaffold its
-// search needs (a search problem, not a physics one); if it blocks, the rule needs the
-// narrower form.
-inline bool g_invCubeFloorKill = false;
 inline thread_local const char* g_deadWhy = "";
 inline thread_local const Obj* g_deadObj = nullptr;
 // Whether something that can deliver an impulse (orb / pad) was within reach on this
@@ -729,6 +711,20 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // y. Written just before the slope block, read on the portal side (a different
     // scope).
     float yFreeBeforeSlope = 0.f;
+    // [2026-08-27] **The y the UPDATE phase wrote, before any collision clamp.**
+    // GD's tick is update -> collisions -> buttons, and the collision pass reads
+    // the player rect it snapshotted at entry (disassembly 0x2149b8; the long
+    // note at `yColl`). Every clamp, seat, ride and push-out below happens
+    // INSIDE that pass, so none of them is visible to it -- which makes this,
+    // not `c.y`, the position the pass works from.
+    // Only the DUAL BIRTH reads it so far (`c.y2` in the type-23 branch);
+    // `yColl` and `yPort` still carry their own approximations of the same
+    // quantity and are left alone on purpose (they decide portal timing on
+    // every level, this decides where a second body appears).
+    // Written next to each mode branch's own integration, never next to a
+    // clamp. `s.y` is the right value for a branch that integrates nothing:
+    // a body at rest moves by kYScale * 0 = 0.
+    float yFree = s.y;
     // [2026-08-21 r52] Whether a "gravity portal right after a frame change" was
     // suppressed on this tick. Needed so State::frameChg is not lowered while the
     // suppression continues.
@@ -1083,6 +1079,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         const double dyDir = (s.held ? 1.0 : -1.0) * (s.flip ? -1.0 : 1.0);
         const double dy = dyDir * useDx * waveSlope;
         c.y = (float)((double)s.y + dy);
+        yFree = c.y;
         c.vy = (float)(dyDir * useDx * 4.0);
         c.held = (uint8_t)input;
         c.grounded = 0;
@@ -1629,6 +1626,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // and straight into the solid uid1616 (2415,345) 5 ticks later.
             pinnedOnBlock = false;
             c.y = (float)bestY;
+            yFree = c.y;
             // GD leaves 1.0 of velocity pointing the way the teleport went, not
             // zero. Straight off its own dumps (lv21, cfg gatetrace):
             //   t=9057  y 406 -> 223.5 (down), yvel = -1, onGround 0
@@ -1871,12 +1869,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // lv16 t=5,991: GD y=232.217 = the seat's next step, vy=11.42 = the
                 // raw jump value. Asymmetric with the uphill freeze (the note just
                 // below). Measured for the cube only.
-                else if (s.onSlope && c.mode == 0)
+                else if (s.onSlope && c.mode == 0) {
                     c.y = (float)((double)c.y
                                   + (double)s.slopeM
                                         * std::fabs((double)useDx)
                                         * (((double)K.dxF < 0.0
                                             || s.rev != 0) ? -1.0 : 1.0));
+                    yFree = c.y;
+                }
             }
             c.grounded = 0;
             // ...and the HELD re-jump also MOVES on this tick, where a fresh
@@ -1893,12 +1893,20 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // ceiling at 1035 -> 1032.431 = -11.42 * kYScale on the jump tick.
             // Without this the model runs exactly one tick behind for the rest
             // of the level (a flat 2.5695 px on lv22).
-            if (s.action && s.mode == 0)
+            if (s.action && s.mode == 0) {
                 c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
+                yFree = c.y;
+            }
         } else if (groundedNow) {
             vpNew = 0;
             c.grounded = 1;
             c.rHover = 0;
+            // ...but GD's update phase still took this tick's gravity step
+            // before the collision pass put the body back on the surface --
+            // that step is what `prePinY` holds (the 9-of-9 pad/orb split in
+            // the note at `pinnedOnBlock` measures exactly this quantity), so
+            // it, and not the seat, is the pre-collision position.
+            yFree = prePinY;
         } else {
             c.grounded = 0;
             // ROBOT hover: while the button is STILL held from the jump and the
@@ -1924,6 +1932,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 c.rHover = 0;
                 vpNew = 0.0;
                 c.y = (float)((double)s.y + (double)s.dashSlope * useDx);
+                yFree = c.y;
             } else if (isRobot && s.rHover && s.action) {
                 vpNew = vp;
                 // FORCE BOX (id 2069): the field applies during hover too, at the
@@ -1942,6 +1951,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     vpNew += forceBoxAcc(modX, modY, pHalf, s.mode) * gdSign;
                 c.rHover = (uint8_t)(s.rHover - 1);
                 c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
+                yFree = c.y;
             } else {
                 c.dashing = 0;
                 double acc = gAcc;
@@ -1964,6 +1974,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                                   : qVy(std::max(vp + acc * tScale, gTerm));
                 if (isRobot) c.rHover = 0;
                 c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
+                yFree = c.y;
             }
         }
         if (!ballFlipped) c.vy = (float)(vpNew * gsign);
@@ -2102,11 +2113,39 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // plane itself. The model instead landed the cube at y=105 exactly (bottom
             // 90.000, vy=0) and flew the rest of the level from a state GD had ended, which
             // is why every plan it built there died in the game at the same three x's.
+            // Confirmed on an OFFICIAL level, so the rule does not rest on levels this
+            // repository does not carry: lv4 t=8,358 x=10,863, where the player is
+            // genuinely an inverted cube and the nearest object of any kind is 210 px away
+            // in y (nothing within 120 px of that x below y=200). Injected at y=120 with
+            // vy=-14.5, GD ran it down 120 -> 116.79 -> 113.62 -> 110.50 -> 107.44 ->
+            // 104.42 and fired destroyPlayer on that last tick -- the tick, and the only
+            // tick, on which the box bottom went under 90 (92.44 -> 89.42). Every suspect
+            // came back with POSITIVE clearance, the nearest at +180.6 px. Two controls at
+            // the same tick: vy=0 floats up and lives, and vy=-2 (which descends to a
+            // bottom of ~100 and reverses) lives 42 ticks -- so it is the CROSSING of 90
+            // that kills, not the descending. The plane is not level-specific, which is
+            // what makes lv4 an answer to the question lv20 could not host (every one of
+            // lv20's 872 inverted-cube ticks has geometry in the y=70..122 band, so any
+            // death there is an object's, and the state cannot be injected either: mode
+            // and gravity are not injectable and lv20 is a WAVE at the tick in question).
             // Ground modes other than the cube are left alone: the ball's catch at lv20
             // t=9,055 is measured UPRIGHT (the flip tap lands on the same tick), so nothing
             // in the corpus says what an inverted one does, and inventing it would be the
             // same mistake in the other direction.
-            if (g_invCubeFloorKill && c.mode == 0 && c.flip) {
+            // The rule was for a day a switch, off by default, because it cost lv20 its
+            // cold clear -- not on physics but on the CAP: the route survives the rule and
+            // the first solve is PARTIAL at x=28,823 at cap 2000 and 4000 and SOLVED at cap
+            // 8000, both frontiers identical to t=2,500 and parting at the rule's first
+            // firing (t=2,528, an inverted cube descending at vy=-14.5), then sitting at
+            // the cap with 7.3M states dropped. What the loop actually could not get past
+            // was x=25,760.9, where GD kills the dual's SECOND body in the corridor mode
+            // portal uid13881 opens; three measured holes fed it (a mode portal did not end
+            // a ceiling press the way it ends a slope ride, a ceiling release fired on the
+            // tick the body came to rest instead of the tick after, and the two bodies
+            // shared one `mode` and one press counter although each is tested at its own
+            // y). With those closed the suite clears cold with the rule unconditional --
+            // 22/22, net -29 iterations -- so there is nothing left for a switch to select.
+            if (c.mode == 0 && c.flip) {
                 DIE("ground/floor-inverted-cube", nullptr);
                 return c;
             }
@@ -2857,6 +2896,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                                 thrFlipRest));
                 pinnedOnBlock = true;
                 prePinY = (float)((double)c.y + kYScale * vpRest * gsign);
+                // the same statement as the cube's grounded branch: the update
+                // phase's step happened, the seat is the collision pass undoing it
+                yFree = prePinY;
             }
         } else if (isSwing) {
             // The toggle lands ONE TICK AFTER the press edge: on the edge tick
@@ -2926,6 +2968,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 vpS = -1.0;                    // no gravity step on this tick
                 c.vy = (float)(qVy(vpS) * gsS);
                 c.y = s.y;
+                yFree = c.y;
             } else {
                 // The TIME WARP scales the swing's step too. It was missing
                 // here because this branch does its own integration: measured
@@ -2979,6 +3022,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 }
                 c.vy = (float)vyW;
                 c.y = (float)((double)s.y + kYScale * (double)c.vy * tScale);
+                yFree = c.y;
             }
         } else {
             c.grounded = 0;
@@ -3018,6 +3062,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 + fbAcc);
             c.vy = (float)(vpNew * gsign);
             c.y = (float)((double)s.y + kYScale * (double)c.vy);
+            yFree = c.y;
             // [2026-08-21 r86] **The flight modes also carry over "the half gravity
             // step of the tick they sat on a block".** The cube side held it in
             // pinnedOnBlock, but the flight branch had none, and on the tick it
@@ -5428,10 +5473,34 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // kShipLandTol (6.0) stays for the DESCENDING side: there it
                 // is a penetration limit (the line drops onto the ship), which
                 // is a different quantity from an above-the-surface gap.
+                // [2026-08-28] ...and that reading of it is wrong. The test this
+                // feeds is `(c.y - top) * gs <= landAllow`, in which penetration
+                // is the NEGATIVE side and passes whatever the constant is; all
+                // 6.0 buys is a grab from up to 6 px ABOVE a line that is
+                // falling away from the ship. GD does not do that: measured on
+                // lv16 t=9,402 (dual ship, uid4070 m=-0.5, sy0=390 sy1=360) p2's
+                // foot is 0.989 px above the seat and the gap GROWS 0.807 px a
+                // tick, and GD leaves it alone -- its two bodies stay exact
+                // mirrors, p1 + p2 = 960.000 to the digit.
+                // So a SHIP acquires either side of a ramp the same way, by
+                // crossing the seat. Both sides of the price were measured cold
+                // on builds identical but for it:
+                //   lv16  55 iterations / 120 fixups  ->  118 / 296
+                //   lv20  DOES NOT CLEAR (walled 70+  ->  35, clears
+                //         iterations at t=17,123)
+                // lv16's 63 iterations are the cost of being right; lv20 is why
+                // it was never worth keeping the 6 px reach-back for. Both
+                // numbers are about the SAME corridor as the dual-birth work of
+                // the same day, and with that corridor closed both levels clear
+                // cold with this unconditional (lv16 at 69, lv20 at 33). The
+                // corpus's replay never visits a case that still wants the
+                // reach-back on the downhill side, so there is no reading left
+                // that a switch here could select between.
+                // kShipLandTol (6.0) stays for the UFO, whose own acquisition
+                // has not been measured this way.
                 const double landAllow =
                     (ridesTop && (c.mode == 1 || c.mode == 3) && !ufoRising)
-                        ? ((c.mode == 1 && m * (double)useDx > 0.0)
-                               ? 0.001 : kShipLandTol)
+                        ? (c.mode == 1 ? 0.001 : kShipLandTol)
                         : 0.001;
                 // The stick must stay CONTINUOUS. It bypasses the acquisition
                 // test entirely, so with several ramps stacked in the same x
@@ -6547,12 +6616,25 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         //   (pH=15 unchanged):
         //     uid4445 @4,635 |dx|=31.06 <= 32 fires / 32.68 no fire
         //     uid8743 30.99 fires / 32.39 no fire
-        // A slope-riding tick approximates pre-clamp = s.y + vy*kYScale
-        // (vy is still the free-integration bookkeeping while riding, so this is
-        // GD's register value).
-        const double yPort = (s.onSlope && c.onSlope)
-            ? (double)s.y + (double)c.vy * kYScale
-            : (double)c.y;
+        // [2026-08-27] ...and that is `yFree`, which the tick now carries
+        // outright (see its declaration). The two things this replaces were both
+        // approximations of it: `c.y`, correct only when nothing in the
+        // collision pass moved the player, and a slope-riding special case
+        // `s.y + vy*kYScale` reconstructing the same number from the free
+        // bookkeeping vy keeps while riding.
+        // What the general value adds is every OTHER way the pass moves the
+        // player. Measured on lv20 t=17,108/17,109 (a UFO pressed down a ceiling
+        // ramp -- not a slope ride, so the old special case did not apply):
+        //   t=17,108  seat 299.193 (fires, wrongly)   free 300.105 (does not)
+        //   t=17,109  seat 297.580                    free 298.492 (fires)
+        // and GD fires the dual portal uid13879 at 17,109. The seat runs ~0.9 px
+        // ahead of the free y here, so the model was buying a mode change one
+        // tick early and planning the rest of the section from it.
+        // This is also what the "the dual portal's box is 0.7 px shorter than
+        // objrects says" reading of 2026-08-27 really was: swept from the
+        // player's post-clamp y it needs a shortened box, from the free y it
+        // fires at the dump's own h=91.
+        const double yPort = (double)yFree;
         const double gapY = std::fabs(yPort - p->cy) - (p->hh + pHalfP);
         // --slopedbg: `changes` and the y gap, the two things between a portal
         // being a candidate and it firing. `portfire` above only says "in the x
@@ -6632,6 +6714,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             teleportedThisTick = true;
             teleUid = p->uid;      // uid-order gate (measured, see teleUid's decl.)
             c.y = (float)tpTarg;   // exit half for 2902, closed tpY for 747
+            // A teleport is the one thing in the pass that MOVES the player for
+            // the objects behind it: the uid-order gate above exists because
+            // lv20 t=7,295's pad and gravity portal (both larger uids) fire at
+            // the landing site on the arrival tick. So the position the rest of
+            // the pass judges from is the target, not the free y that got here.
+            // Without this the gravity portal uid7028 stops firing and the
+            // yellow pad's -16 is never halved to GD's -8.000.
+            yFree = c.y;
             c.grounded = 0;
             c.snapObj = nullptr;
             c.snapDist = 0.f;
@@ -6734,12 +6824,34 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // player appears AT THE SAME POINT with the opposite gravity and
             // the opposite vy, so the two are mirror images until one of them
             // touches something. The solo portal drops the second half.
+            //
+            // "THE SAME POINT" IS THE PRE-COLLISION ONE (`yFree`), not `c.y`.
+            // In free space the two are the same number, which is why this went
+            // unnoticed: it only shows on a tick where the collision pass moved
+            // p1 -- and there it puts the whole dual section in the wrong place.
+            // Measured on lv20 t=17,109 (UFO pressed down a ceiling ramp at
+            // x=25,750, dual portal uid13879):
+            //   GD  p1 y = 297.580 (the ramp's seat), p2 born at **298.472**
+            //   298.472 = 299.193 (p1's y one tick earlier) + 0.225 * -3.204
+            //           = p1's position before the ramp pushed it back down
+            // and three injections at the same site pin it further: p1 clamps to
+            // the same 297.2145 for vy = -2.172 / -4.086 / -6.400 while p2 is
+            // born at 298.675 / 298.581 / 298.060 -- i.e. at a place that still
+            // depends on vy, so it cannot be the clamped position.
+            // The old `c.y` put p2 0.892 px off, the mirror axis split by the
+            // same amount, and the offset survived to the end of the level.
             if (p->type == 23 || p->type == 24) {
                 const uint8_t wantDual = (p->type == 23) ? 1 : 0;
                 if (c.dual == wantDual) continue;
                 if (wantDual) {
-                    c.y2 = c.y;
+                    c.y2 = yFree;
                     c.vy2 = -c.vy;
+                    // born in whatever mode the first body is in right now
+                    // (this pass's earlier portals included), and with no press
+                    // behind it -- it has not been anywhere yet.
+                    c.mode2 = c.mode;
+                    c.ceilT2 = 0;
+                    c.ceilM42 = 0;
                     c.flip2 = c.flip ? 0 : 1;
                     c.grounded2 = 0;
                     c.ringHold2 = 0;
@@ -7243,6 +7355,26 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     // only y is restored.
                     c.y = yFreeBeforeSlope;
                 }
+                // [2026-08-28] **...and the y half of that is not the swing's,
+                // nor the slope ride's.** "GD leaves the tick a portal ends the
+                // ride on with a free step" is a statement about being CARRIED,
+                // and a ceiling ramp's push-down carries just as much as a seat
+                // does. Measured on lv20 t=17,110 -- a UFO pressed down the
+                // ceiling ramp chain at x=25,750, mode portal uid13881:
+                //   t=17,109  GD and the model both y=297.5798, vy=-3.204
+                //   t=17,110  GD    y=296.8395  (-0.7403 = 0.225 x (-3.204
+                //                   - 0.086), the free UFO integration)
+                //             model y=295.9665  (-1.6133 = the press's own
+                //                   step, m*dx)
+                // -- the same 1.087-shaped parallel offset the swing case
+                // measured at lv22 t=8,231, and it is what puts the model's
+                // second body 1.585 px clear of the slope GD kills it on
+                // 5 ticks later (p2dead=1 at t=17,115, x=25,760.89).
+                // The swing's vy assignment above stays swing-only: what is
+                // measured twice is the POSITION, and the ceiling press has its
+                // own release velocity (ceil/release) already.
+                else if (oldMode != wantMode && s.ceilT > 0 && !s.onSlope)
+                    c.y = yFreeBeforeSlope;
                 // A MODE portal that changes the resting half re-seats a
                 // grounded player the same tick, exactly like the size portal
                 // above (and by the same mechanism: the box GROWS into the
@@ -8543,17 +8675,39 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // [2026-08-21 r81] The spider receives it too. Measured lv22 t=8,273 (a
         // 14-tick m=-2 push-down chain, sp1.1): GD places vy := -7.621.
         // 7.621 = base x 14/24 -> base 13.064 -- the very shape of this formula.
-        if (c.mode == 1 || c.mode == 3 || c.mode == 6 || c.mode == 7) {
-            const double exU = slopeExitVy((double)s.ceilM4 / 4.0, c.mode,
-                                           useDx, c.mini != 0)
-                               * slopeRampFactor((int)s.ceilT);
-            if ((double)c.vy > -exU) {
-                c.vy = (float)-exU;
-                CLAMP0("ceil/release");
+        // [2026-08-28] **...and not on a tick the body has come to rest.** The
+        // release is a launch off the surface that was pressing, and a body that
+        // ended this tick standing on something is not leaving anything: GD
+        // holds it still and the launch appears on the tick it actually goes.
+        // Measured on lv20 t=17,110 (the dual's second body, flipped, coming out
+        // of the ceiling ramp chain at x=25,752 onto slope uid13913):
+        //   GD    t=17,110 p2y=295.9665 p2vy=**0.000** p2ground=1
+        //         t=17,111 p2y=295.9955 (+0.029 = 0.225 x 0.129, the launch
+        //                  convention's "y moves with the OLD velocity")
+        //                  p2vy=**-2.762**
+        //   model t=17,110 y2=295.9665 (right) but vy2=-2.762 already, while
+        //         reporting grounded2=1 -- a launch velocity on a resting body
+        // and the tick it costs is what leaves the model's p2 1.585 px clear of
+        // the slope GD kills it on five ticks later.
+        if (c.grounded && !s.grounded) {
+            // landed THIS tick: the launch waits one tick, held not dropped, so
+            // the same value comes out where GD puts it (t=17,111 above). A body
+            // that was already resting is not this case -- gating on `grounded`
+            // alone withheld the launch for as long as the body stayed down, and
+            // cost lv22 its whole run (cold, t=19,037 -> stuck at t=2,783).
+        } else {
+            if (c.mode == 1 || c.mode == 3 || c.mode == 6 || c.mode == 7) {
+                const double exU = slopeExitVy((double)s.ceilM4 / 4.0, c.mode,
+                                               useDx, c.mini != 0)
+                                   * slopeRampFactor((int)s.ceilT);
+                if ((double)c.vy > -exU) {
+                    c.vy = (float)-exU;
+                    CLAMP0("ceil/release");
+                }
             }
+            c.ceilT = 0;
+            c.ceilM4 = 0;
         }
-        c.ceilT = 0;
-        c.ceilM4 = 0;
     }
     // [2026-08-21 r93] **The launch of a ride interrupted by a warp appears on
     // the next tick.** The value is computed on the interrupting tick and stored
@@ -8606,6 +8760,9 @@ inline void swapHalves(State& s) {
     std::swap(s.ringHold, s.ringHold2);
     std::swap(s.onSlope, s.onSlope2);
     std::swap(s.slopeT, s.slopeT2);
+    std::swap(s.mode, s.mode2);
+    std::swap(s.ceilT, s.ceilT2);
+    std::swap(s.ceilM4, s.ceilM42);
     std::swap(s.snapObj, s.snapObj2);
     std::swap(s.usedOrb, s.usedOrb2);
     for (int i = 0; i < 4; ++i) std::swap(s.usedPad[i], s.usedPad2[i]);
