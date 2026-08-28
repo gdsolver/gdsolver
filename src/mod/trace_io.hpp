@@ -70,7 +70,7 @@ inline void openFiles() {
     g_dump << "frame,attempt,tick,x,y,yvel,rot,mode,upsideDown,onGround,onGround2,"
               "dead,speed,gravityMod,platXVel,vsize,gy1,gy2,"
               "dual,p2y,p2vy,p2up,p2ground,p2dead,pmin,pmax,snapuid,snapdist,"
-              "camscale,gframe,ctrlOff,camx,camy,p2ground2\n";
+              "camscale,gframe,ctrlOff,camx,camy,p2ground2,p2mode,p2vsize,p2x\n";
 }
 
 inline void ev(const char* name, double a = 0, double b = 0, double c = 0) {

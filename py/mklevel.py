@@ -1422,6 +1422,43 @@ def build_sawcal_moved(mode: str, mini: bool = False) -> str:
     return ";".join(parts) + ";"
 
 
+# ---- A dual whose two halves are NOT in the same mode (2026-08-28) ---------
+# WHY. The anchor seeds the second body's mode from the first
+# (dp/src/dp/cli.hpp, `init.mode2 = init.mode`) because the mod's dump carried
+# one mode column for the pair, and justifies it as "they differ for at most the
+# tick between one clearing a mode portal's window and the other reaching it".
+# With p2mode/p2vsize emitted that became measurable, and on lv16's solution the
+# two never differ across 5,557 dual ticks -- so the assumption holds for the
+# OFFICIAL corpus. It is not true in general: in custom levels, which this solver
+# already clears cold, differing modes and sizes between the halves are ordinary.
+#
+# Rather than hunt for a custom level, build the case. A dual ship with no input
+# separates on its own -- the first body falls to the floor, the second (flipped)
+# climbs -- so a portal placed at FLOOR height is taken by one half and never
+# reached by the other. Each station changes exactly one thing about the first
+# body and leaves the second alone, which is what makes the dump columns readable
+# as an answer.
+#
+# The third question the rig is for is whether the two can differ in X at all.
+# The model gives the pair a single x (State::xAbs, which swapHalves does not
+# swap), so that case would not be mis-modelled but unrepresentable. p2x is
+# emitted alongside; this rig is where "always equal" gets its first evidence.
+def build_dualmode() -> str:
+    parts = [header(start_mode="ship", mini=False, dual=True)]
+    parts += floor_run(0, 9000, y=GROUND_Y)
+    # No wall here: the run has to REACH the stations, and the session ends by
+    # completing the level rather than by dying on the way in.
+    #
+    # Every station sits at floor height. With no input the first body rests at
+    # y=105 and the second climbs away, so the first takes them all and the
+    # second keeps what it started with.
+    parts.append(obj(P_CUBE, 1500, 105))      # p1 -> cube, p2 stays ship
+    parts.append(obj(SIZE_MINI, 3000, 105))   # p1 -> mini, p2 stays normal
+    parts.append(obj(P_BALL, 4500, 105))      # p1 -> ball
+    parts.append(obj(P_SHIP, 6000, 105))      # ...and back, to see it swap twice
+    return ";".join(parts) + ";"
+
+
 def build_minhdr() -> str:
     """For triage: minimal header + floor. Which header key is causing trouble."""
     h = "kA2,0,kA3,0,kA4,0,kA6,1,kA7,1,kA8,0,kA10,0,kA13,0"
@@ -2603,6 +2640,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcalmv_spider": lambda: build_sawcal_moved("spider"),
             "sawcalmv_ship_mini": lambda: build_sawcal_moved("ship", True),
             "sawcalmv_cube_mini": lambda: build_sawcal_moved("cube", True),
+            "dualmode": build_dualmode,
             "ceilrel": build_ceilrel, "ceilrel11": build_ceilrel11,
             "ceilrel07": build_ceilrel07, "seam": build_seam,
             "seam07": build_seam07, "seam11": build_seam11,

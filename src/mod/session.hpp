@@ -118,7 +118,7 @@ inline void pollCommandFileImpl(const std::string& cmd) {
                           "onGround2,dead,speed,gravityMod,platXVel,vsize,gy1,gy2,"
                           "dual,p2y,p2vy,p2up,p2ground,p2dead,pmin,pmax,"
                           "snapuid,snapdist,camscale,gframe,ctrlOff,camx,camy,"
-                          "p2ground2\n";
+                          "p2ground2,p2mode,p2vsize,p2x\n";
             }
             if (g_trace.is_open()) {
                 g_trace.close();

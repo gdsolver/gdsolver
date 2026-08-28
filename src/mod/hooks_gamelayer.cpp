@@ -3630,6 +3630,43 @@ class $modify(GJBaseGameLayer) {
                    // Appended at the END of the row on purpose -- readers index the earlier
                    // columns by position.
                    << ',' << (m_player2 ? (int)m_player2->m_isOnGround2 : 0)
+                   // p2mode/p2vsize: THE SECOND BODY'S GAME MODE AND SIZE. Neither
+                   // was emitted anywhere -- not here, not in leveldp's trace, not in
+                   // the 22 --start fields -- while the model does carry mode2/mini2
+                   // (swapHalves swaps them). So the loop compared p2 on y and vy
+                   // alone and called that agreement.
+                   //
+                   // That blind spot fits the corpus' largest grind exactly. lv16
+                   // t=13,017 is hit 26 times: GD kills p2 twelve ticks before the
+                   // model does and the fixup pass writes nothing, because "apart
+                   // there by 0.00/0.00" is all it can see. GD names the killer --
+                   // a 2.6x4.8 spike (uid 6563) at dy=-10.30 -- which needs an
+                   // effective player half above 7.90 to reach: 9 (mini) or 15 does,
+                   // the wave's hazard rect(5,3) does not. A mode the model has
+                   // wrong is the first suspect, and lv16's dual span carries lone
+                   // single-height portals (a ball at 19,219 / a ship at 20,499),
+                   // which is precisely how the two halves come to differ.
+                   //
+                   // Emitted to TEST that, not on the strength of it. Appended at
+                   // the end of the row like p2ground2: readers index by position.
+                   //
+                   // Measured as soon as the column existed: on lv16's solution the
+                   // two bodies are in the same mode and size for all 5,557 dual
+                   // ticks, so the anchor's assumption holds for the OFFICIAL corpus.
+                   // It does not hold in general -- differing modes and sizes between
+                   // the halves are ordinary in custom levels, which this solver
+                   // already clears cold. So the assumption is a corpus artefact, and
+                   // the column is what will show it the moment a custom level needs
+                   // it.
+                   << ',' << (m_player2 ? modeStr(m_player2) : "-")
+                   << ',' << (m_player2 ? m_player2->m_vehicleSize : 0.f)
+                   // p2x: and the same question one level down. The model gives the
+                   // pair a SINGLE x (State::xAbs; swapHalves does not swap it), so
+                   // two bodies at different x would not be representable at all
+                   // rather than merely mis-anchored. Whether GD can produce that is
+                   // not known, and guessing either way is worse than a column that
+                   // answers it.
+                   << ',' << (m_player2 ? m_player2->getPositionX() : -1.f)
                    << '\n';
         }
     }
