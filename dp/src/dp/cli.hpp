@@ -357,13 +357,16 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--cubeyq")) g_cubeYq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--cubevq")) g_cubeVq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--start")) {
-            // 25 fields (21st=frame, 22nd=rev, 23rd/24th=sprite rotation,
-            // 25th=boost). FORGET TO GROW THE SIZE AND
+            // 27 fields (21st=frame, 22nd=rev, 23rd/24th=sprite rotation,
+            // 25th=boost, 26th/27th=the second body's mode and size).
+            // FORGET TO GROW THE SIZE AND
             // sscanf WRITES PAST THE ARRAY: when rev was added it was left at
             // 21, and it showed up as rev=0/1 not changing the result by a
             // single bit.
-            double a[25] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                            0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0};
+            // -1 in the last two = "the caller did not say", which is not the
+            // same as 0 (a real mode) -- see the note at the dual block.
+            double a[27] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, -1, -1};
             // 8th field = flip. It used to be absent entirely, so every
             // re-anchor taken while the player was upside down restarted the
             // solve in NORMAL gravity -- the tail was then solved for a world
@@ -461,13 +464,18 @@ inline int cliMain(int argc, char** argv) {
             // straight off GD's byte [player+0x952]. An anchor taken during a
             // boosted stretch (a fast slope exit, a red ring/pad) without it
             // re-clamps the swing at 8 while GD keeps accelerating.
+            // 26th/27th = THE SECOND BODY'S OWN MODE AND SIZE. -1 = the caller
+            // did not say, and gets the old behaviour (copy the first body's);
+            // see the note where they are applied. 0 is a real mode, so the
+            // sentinel cannot be 0 the way the earlier optional fields' is.
             std::sscanf(argv[i + 1],
                         "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,"
-                        "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf",
+                        "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,"
+                        "%lf",
                         &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6], &a[7],
                         &a[8], &a[9], &a[10], &a[11], &a[12], &a[13], &a[14],
                         &a[15], &a[16], &a[17], &a[18], &a[19], &a[20], &a[21],
-                        &a[22], &a[23], &a[24]);
+                        &a[22], &a[23], &a[24], &a[25], &a[26]);
             const uint8_t startRev = (uint8_t)((int)a[21] & 1);
             startFrame = (int)a[20] & 3;
             startSnapUid = (long long)a[18];
@@ -586,13 +594,29 @@ inline int cliMain(int argc, char** argv) {
                 init.vy2 = (float)a[11];
                 init.flip2 = (uint8_t)a[12];
                 init.grounded2 = (uint8_t)a[13];
-                // The dump has one `mode` column for the pair, so an anchor
-                // cannot tell the two apart: seed the second body with the
-                // first's. They differ for at most the tick between one
-                // clearing a mode portal's window and the other reaching it
-                // (State::mode2), and an anchor taken inside that single tick
-                // is not something the dump can express either way.
-                init.mode2 = init.mode;
+                // The second body's own mode and size (26th/27th fields).
+                //
+                // These used to be seeded from the first body unconditionally,
+                // because the dump had one `mode` column for the pair and an
+                // anchor could not tell the two apart. The justification given
+                // for it -- "they differ for at most the tick between one
+                // clearing a mode portal's window and the other reaching it"
+                // -- was never measurable, precisely because of the thing it
+                // was justifying, and it is FALSE. Measured 2026-08-28 on the
+                // rig `dualmode` (py/mklevel.py), which separates the halves
+                // with floor-height portals: 3,471 CONSECUTIVE ticks with the
+                // modes differing (p1 cube / p2 ship, 50% of the run) and 4,676
+                // with the sizes differing.
+                //
+                // It is true of the official corpus -- lv16's whole cold run is
+                // 207,761 dual ticks and the halves never differ -- and false
+                // wherever the corpus is not, which now includes levels this
+                // solver clears. So an anchor that is told takes what it is
+                // told; -1 (or an older caller passing 25 fields) keeps the
+                // copy, which is what every official anchor resolves to anyway.
+                init.mode2 = (a[25] >= 0.0) ? (uint8_t)a[25] : init.mode;
+                init.mini2 = (a[26] >= 0.0) ? (uint8_t)(a[26] != 0.0)
+                                            : init.mini;
             }
         }
     }
@@ -1595,7 +1619,7 @@ inline int cliMain(int argc, char** argv) {
               // that lives in p2's ride ("only p2 is off, by exactly the slope
               // exit bonus") had nothing to read. Appended at the end; existing
               // readers index the columns before this by position.
-              ",grounded2,onslope2,slopem2,slopet2,mode2,ceilt,ceilt2\n";
+              ",grounded2,onslope2,slopem2,slopet2,mode2,ceilt,ceilt2,mini2\n";
         // Make --snaplog usable in replay too (it used to exist only on the
         // SOLVE side, so a known plan's stair snaps could never be checked
         // against GD's snaptrace).
@@ -1851,7 +1875,7 @@ inline int cliMain(int argc, char** argv) {
                << ',' << (int)s.grounded2 << ',' << (int)s.onSlope2
                << ',' << s.slopeM2 << ',' << (int)s.slopeT2
                << ',' << (int)s.mode2 << ',' << (int)s.ceilT
-               << ',' << (int)s.ceilT2
+               << ',' << (int)s.ceilT2 << ',' << (int)s.mini2
                << "\n";
             if (rdead) {
                 diedT = t;

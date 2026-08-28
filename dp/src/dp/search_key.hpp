@@ -154,6 +154,12 @@ inline uint64_t keyOf(const State& s) {
            // -- stays bit-identical to before.
            ^ ((s.dual && s.mode2 != s.mode)
                   ? ((uint64_t)s.mode2 * 0xFF51AFD7ED558CCDull) : 0)
+           // ...and its SIZE, on the ticks that differs (State::mini2). Same
+           // argument as `mini` above -- two bodies of different extents stand
+           // on different surfaces and die to different boxes -- and the same
+           // gate, so every key where the halves agree stays bit-identical.
+           ^ ((s.dual && s.mini2 != s.mini)
+                  ? ((uint64_t)s.mini2 * 0xC4CEB9FE1A85EC53ull) : 0)
            // ...and the BAND, for the same reason as flip: two states at the
            // same y and vy that came in through different mode portals are
            // clamped by different ceilings and floors, so they are not

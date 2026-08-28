@@ -199,6 +199,18 @@ struct State {
     // swapHalves carrying them is the whole of the mechanism -- and they cost
     // nothing: sizeof(State) is 232 either way, they land in existing padding.
     uint8_t mode2 = 0, ceilT2 = 0, ceilM42 = 0;
+    // ...and its own SIZE, for exactly the same reason. `mini` stayed on the
+    // shared list above long after `mode` left it, and that is wrong in both
+    // directions: a size portal one half clears and the other misses resized
+    // NEITHER body (the swapped step's result was dropped by stepBoth's merge)
+    // when only the second took it, and BOTH when only the first did.
+    // Measured on the calibration rig `dualmode` (py/mklevel.py; an input-free
+    // dual ship separates by itself, so a portal at floor height is taken by one
+    // half and never reached by the other): the halves differ in size for 4,676
+    // of its 6,964 dual ticks, 67%. The official corpus never does -- lv16's
+    // whole cold run is 207,761 dual ticks with p2vsize == vsize throughout --
+    // so this costs it nothing and is not measurable on it either.
+    uint8_t mini2 = 0;
     const Obj* snapObj2;
     const Obj* usedOrb2;
     const Obj* usedPad2[4];

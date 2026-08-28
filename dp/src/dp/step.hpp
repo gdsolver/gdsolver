@@ -6846,10 +6846,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 if (wantDual) {
                     c.y2 = yFree;
                     c.vy2 = -c.vy;
-                    // born in whatever mode the first body is in right now
-                    // (this pass's earlier portals included), and with no press
-                    // behind it -- it has not been anywhere yet.
+                    // born in whatever mode and size the first body is in right
+                    // now (this pass's earlier portals included), and with no
+                    // press behind it -- it has not been anywhere yet.
                     c.mode2 = c.mode;
+                    c.mini2 = c.mini;
                     c.ceilT2 = 0;
                     c.ceilM42 = 0;
                     c.flip2 = c.flip ? 0 : 1;
@@ -8761,6 +8762,7 @@ inline void swapHalves(State& s) {
     std::swap(s.onSlope, s.onSlope2);
     std::swap(s.slopeT, s.slopeT2);
     std::swap(s.mode, s.mode2);
+    std::swap(s.mini, s.mini2);
     std::swap(s.ceilT, s.ceilT2);
     std::swap(s.ceilM4, s.ceilM42);
     std::swap(s.snapObj, s.snapObj2);

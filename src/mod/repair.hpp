@@ -58,6 +58,12 @@ struct AnchorRow {
     // g2 / g2b are the SECOND body's two contact flags, kept raw exactly like p1's pair above
     // and filtered by groundedOf2() where the anchor is built.
     int f2 = 0, g2 = 0, g2b = 0;
+    // ...and its own MODE and SIZE. The pair used to be anchored with one of each, copied from
+    // p1, on the grounds that the halves cannot differ for more than the tick between them
+    // reaching the same portal -- measured false on the rig `dualmode` (thousands of ticks
+    // apart), true of the official corpus. -1 = "not a dual", which is what the solver reads as
+    // "say nothing and keep the copy".
+    int m2 = -1, mini2 = -1;
     // A dash is held for hundreds of ticks (lv21 holds one for 300+), and an anchor taken inside
     // one that resumes without it restarts in free fall through the whole thing. The driver has
     // to infer both of these from a 420-tick window of its dump; in the game they are just there
@@ -157,6 +163,9 @@ inline void record(GJBaseGameLayer* l, long long t) {
     r.f2 = (r.dual && l->m_player2 && l->m_player2->m_isUpsideDown) ? 1 : 0;
     r.g2 = (r.dual && l->m_player2 && l->m_player2->m_isOnGround) ? 1 : 0;
     r.g2b = (r.dual && l->m_player2 && l->m_player2->m_isOnGround2) ? 1 : 0;
+    r.m2 = (r.dual && l->m_player2) ? modeIdx(l->m_player2) : -1;
+    r.mini2 = (r.dual && l->m_player2)
+                  ? ((l->m_player2->m_vehicleSize < 0.9f) ? 1 : 0) : -1;
     r.dashing = p->m_isDashing ? 1 : 0;
     // dp/step.hpp builds this from the ring object's rotation in degrees, so take it from the
     // ring GD says the player is riding rather than from m_dashAngle, whose units and meaning
@@ -773,10 +782,10 @@ inline int heldBefore(const std::vector<InputCmd>& plan, long long t0) {
     return held;
 }
 
-// The 25 fields of `--start`, in the order leveldp reads them:
+// The 27 fields of `--start`, in the order leveldp reads them:
 //   t0, x, y, vy, mode, grounded, held, flip, mini, dual, y2, v2, f2, g2, speed,
 //   robotHover, dashHeld, dashSlope, snapUid, snapDist, gframe, reversed,
-//   rot, rotNeg, boost
+//   rot, rotNeg, boost, mode2, mini2
 inline std::string startArg(long long t0, const AnchorRow& r, int held) {
     // GD's rotated frames do not map one-to-one onto the model's. Measured over all 2,069 ticks
     // of lv22's rotated section: GD frame 2 is the model's (frame 0, reversed), and GD frame 3
@@ -820,6 +829,11 @@ inline std::string startArg(long long t0, const AnchorRow& r, int held) {
     s += "," + num(r.rot) + "," + std::to_string(rotNeg);
     // 25th: the velocity-limit exemption (GD's byte 0x952 -> State::boost).
     s += "," + std::to_string(r.boost);
+    // 26th/27th: the SECOND body's own mode and size. -1 outside a dual, which the solver reads
+    // as "not told" and answers with the old copy-from-p1 -- so this is inert on every anchor
+    // the official corpus produces (measured: lv16's cold run never has the halves differ) and
+    // carries the truth on the custom levels where they do.
+    s += "," + std::to_string(r.m2) + "," + std::to_string(r.mini2);
     return s;
 }
 
@@ -1038,6 +1052,11 @@ enum FixupWrite {
 };
 inline const char* fixupWhy(int w) {
     switch (w) {
+        // The two that are not refusals. A caller reporting a refusal should never see these,
+        // and if it does, the sentence has to say so rather than fall through to "could not be
+        // written" -- a mark IS on file, it just answers nothing.
+        case FixupReal:     return "it went on file";
+        case FixupMark:     return "it was already right, so only a mark went on file";
         case FixupCapped:   return "the record budget is spent";
         case FixupNoTrace:  return "the resim has no row for one side of it";
         case FixupNoRow:    return "the game's recording has no row for one side of it";
@@ -1287,17 +1306,29 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
     // prunes a first player that was perfectly fine.
     bool agreedAtDeath = false;
     double gapY = -1.0, gapVy = -1.0;   // how far apart they were there, for the report
+    // ...AND THE SAME FOR THE SECOND BODY, because the report was printing the first body's gap
+    // and calling it the answer. On a pair the verdict test below is an AND over both, so a run
+    // where p1 matches to the digit and p2 does not reads as
+    //     nothing recordable: ... apart there by 0.00/0.00
+    // with no record written and no reason given -- the two numbers on the line say "they agree"
+    // while the decision they are attached to says the opposite. Measured on lv16 t=13,017, the
+    // corpus' largest single grind (11 of the run's 66 iterations): every census taken of that
+    // site, including this session's, recorded it as "y/vy agree 0.00/0.00" ON THE STRENGTH OF
+    // THIS LINE, and the second body was never in it. -1 = there was no row to compare.
+    double gapY2 = -1.0, gapVy2 = -1.0;
     {
         auto mp = m.find(deathTick - 1);
         const AnchorRow* gp = anchors::row(deathTick - 1);
         if (mp != m.end() && gp) {
             gapY = std::fabs(mp->second.y - gp->y);
             gapVy = std::fabs(mp->second.vy - gp->vy);
-            agreedAtDeath = std::fabs(mp->second.y - gp->y) <= kDivergeEps
-                         && std::fabs(mp->second.vy - gp->vy) <= kDivergeEps;
-            if (agreedAtDeath && mp->second.dual != 0 && gp->dual != 0)
-                agreedAtDeath = std::fabs(mp->second.y2 - gp->y2) <= kDivergeEps
-                             && std::fabs(mp->second.vy2 - gp->v2) <= kDivergeEps;
+            agreedAtDeath = gapY <= kDivergeEps && gapVy <= kDivergeEps;
+            if (mp->second.dual != 0 && gp->dual != 0) {
+                gapY2 = std::fabs(mp->second.y2 - gp->y2);
+                gapVy2 = std::fabs(mp->second.vy2 - gp->v2);
+                if (agreedAtDeath)
+                    agreedAtDeath = gapY2 <= kDivergeEps && gapVy2 <= kDivergeEps;
+            }
         }
     }
     // Whatever the trajectories did, the two runs also disagree about WHO DIED, and that is a
@@ -1306,10 +1337,20 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
     // nothing. Gating it on `made` instead starved it completely: measured on lv16's second
     // wall, four passes in a row ended by marking t=8,615..8,618 as already-right and the death
     // at t=8,768 was never once asked about.
+    // WHY THE VERDICT RECORD DID NOT GO ON FILE. The two writes below are the only records that
+    // can express "the two ran the same trajectory and disagreed about who died", and their
+    // return value was thrown away -- so a refusal was indistinguishable from never trying, and
+    // the same tick was ground for iteration after iteration with the log saying only "nothing
+    // recordable". Measured on lv16 t=13,017: 11 of the run's 66 iterations died there, and every
+    // one of them called writeFixup(t, kill=1) and discarded the answer.
+    // Kept as one number plus fixupWhy()'s sentence; -1 = neither branch was entered, which is
+    // itself an answer (the preconditions on this if are the ones that failed).
+    int verdictWhy = -1;
     if (real == 0) {
         if (modelDied >= 0 && modelDied < deathTick && anchors::row(modelDied + 1)) {
             // The model killed a run GD carried on: the delta record revives it
-            if (writeFixup(modelDied, 0, m) == FixupReal) ++real, ++made;
+            verdictWhy = writeFixup(modelDied, 0, m);
+            if (verdictWhy == FixupReal) ++real, ++made;
         } else if ((modelDied < 0 || modelDied > deathTick) && agreedAtDeath
                    && anchors::row(deathTick - 1) && m.find(deathTick) != m.end()) {
             // ...and the mirror: GD ended the run here and the model let it live. The
@@ -1324,7 +1365,8 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
             // t=7,903, they agreed on every tick they shared, and the loop replayed the same
             // plan ten more times because the one record that could express the disagreement
             // was gated on where the model happened to die 3,150 ticks later.
-            if (writeFixup(deathTick, 1, m) == FixupReal) ++real, ++made;
+            verdictWhy = writeFixup(deathTick, 1, m);
+            if (verdictWhy == FixupReal) ++real, ++made;
         }
     }
     // A pass that records nothing and says nothing is indistinguishable from one that was never
@@ -1332,12 +1374,45 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
     // doomed plan for a whole budget while this function returned 0 in silence. Say why.
     if (real == 0) {
         char b[280];
+        char p2[64] = "";
+        if (gapY2 >= 0.0) snprintf(p2, sizeof(p2), " (p2 %.2f/%.2f)", gapY2, gapVy2);
         snprintf(b, sizeof(b), "dpsolve:   [fixup] nothing recordable: GD died t=%lld, model died "
-                 "t=%lld, apart there by %.2f/%.2f, compared to t=%lld, marks %d, skipped %d, "
+                 "t=%lld, apart there by %.2f/%.2f%s, compared to t=%lld, marks %d, skipped %d, "
                  "trace %lld..%lld",
-                 deathTick, modelDied, gapY, gapVy, lastCommon, made, skipped,
+                 deathTick, modelDied, gapY, gapVy, p2, lastCommon, made, skipped,
                  m.empty() ? -1 : m.begin()->first, m.empty() ? -1 : m.rbegin()->first);
         writeResult(b);
+        // ...and the verdict record's own answer, with enough of its key to find the entry that
+        // blocked it. `a record already covers this state` and `the resim did not record the
+        // input` are different bugs with the same silence, and the difference is one grep.
+        const long long vt = (verdictWhy >= 0 && modelDied >= 0 && modelDied < deathTick)
+                                 ? modelDied : deathTick;
+        auto vp = m.find(vt - 1);
+        char c[320];
+        if (verdictWhy < 0)
+            // Every gate on the two branches, so the one that closed is readable without the
+            // source open. `died same tick` is the healthy case -- there is no disagreement to
+            // record -- and the rest are not.
+            snprintf(c, sizeof(c), "dpsolve:   [fixup] no verdict record was attempted: "
+                     "model died %s, agreed=%d, GD row at model death+1=%d, GD row at t-1=%d, "
+                     "model row at t=%d",
+                     modelDied < 0 ? "not at all"
+                                   : modelDied < deathTick ? "first"
+                                   : modelDied > deathTick ? "later" : "on the same tick",
+                     agreedAtDeath ? 1 : 0,
+                     (modelDied >= 0 && anchors::row(modelDied + 1)) ? 1 : 0,
+                     anchors::row(deathTick - 1) ? 1 : 0,
+                     m.find(deathTick) != m.end() ? 1 : 0);
+        else if (vp == m.end())
+            snprintf(c, sizeof(c), "dpsolve:   [fixup] the verdict record at t=%lld was refused: "
+                     "%s", vt, fixupWhy(verdictWhy));
+        else
+            snprintf(c, sizeof(c), "dpsolve:   [fixup] the verdict record at t=%lld was refused: "
+                     "%s (key x=%.4f y=%.4f vy=%.4f in=%d mode=%d mini=%d flip=%d g=%d dual=%d)",
+                     vt, fixupWhy(verdictWhy), vp->second.x, vp->second.y, vp->second.vy,
+                     m.count(vt) ? m.at(vt).act : -1, vp->second.mode, vp->second.mini,
+                     vp->second.flip, vp->second.grounded, vp->second.dual);
+        writeResult(c);
     }
     return made;
 }

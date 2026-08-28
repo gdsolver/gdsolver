@@ -3632,9 +3632,14 @@ class $modify(GJBaseGameLayer) {
                    << ',' << (m_player2 ? (int)m_player2->m_isOnGround2 : 0)
                    // p2mode/p2vsize: THE SECOND BODY'S GAME MODE AND SIZE. Neither
                    // was emitted anywhere -- not here, not in leveldp's trace, not in
-                   // the 22 --start fields -- while the model does carry mode2/mini2
-                   // (swapHalves swaps them). So the loop compared p2 on y and vy
-                   // alone and called that agreement.
+                   // `--start`. So the loop compared p2 on y and vy alone and called
+                   // that agreement.
+                   // [correction 2026-08-28] "while the model does carry mode2/mini2
+                   // (swapHalves swaps them)" stood here and was HALF WRONG: State
+                   // had mode2, but size was still on stepBoth's shared list, so the
+                   // model had no second-body size to be told about. Both ends were
+                   // built afterwards -- State::mini2, and the 26th/27th --start
+                   // fields -- so the sentence is true now and was not then.
                    //
                    // That blind spot fits the corpus' largest grind exactly. lv16
                    // t=13,017 is hit 26 times: GD kills p2 twelve ticks before the

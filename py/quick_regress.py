@@ -229,11 +229,17 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
     section of lv22 (stuck at t=6,010 for 8+ iterations) -- IT WAS ONLY VISIBLE
     IN A TWO-HOUR COLD RUN.
 
-    The fields follow the order of leveldp's --start (a[0..21]):
+    The fields follow the order of leveldp's --start (a[0..25]):
       0 t / 1 x / 2 y / 3 vy / 4 mode / 5 grounded / 6 held / 7 flip / 8 mini
       9 dual / 10 y2 / 11 vy2 / 12 flip2 / 13 grounded2 / 14 speed
       15 rHover / 16 dashing / 17 dashSlope / 18 snapuid / 19 snapdist
-      20 frame / 21 rev
+      20 frame / 21 rev / 22 rot / 23 rotNeg / 24 boost / 25 mode2 / 26 mini2
+
+    24 (boost) IS WRITTEN OUT AS A LITERAL 0 rather than left off the end. The
+    harness has no column for it and never had one, so omitting it was free --
+    right up until something was appended AFTER it, at which point everything
+    past the gap shifts one place left and mode2 lands in boost. Explicit 0 is
+    what the solver defaults an absent field to anyway, so this is inert.
     """
     mode = MODE_ID.get(r["mode"], 0)
     g = grounded_of(mode, r.get("onGround", "0"), r.get("onGround2", "0"),
@@ -329,9 +335,26 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
     # the reference rows) get the benefit; without it, the old 0.
     rh = robot_hover_left(t, r, ref, held) if ref is not None else 0
     dsh, dsl = dash_at(t, r, ref, held, prev) if ref is not None else (0, 0)
+    # fields 26/27 = the SECOND BODY'S OWN mode and size. The pair used to be
+    # anchored with one of each, copied from p1, because the dump had one column
+    # for both; the mod emits p2mode/p2vsize since 2026-08-28. -1 means "not
+    # told", and the solver answers that with the old copy -- which is what a
+    # reference recorded before those columns existed, and every non-dual row,
+    # resolves to.
+    # NOTE THAT THEY DIFFER FOR THOUSANDS OF TICKS AT A TIME, not the one tick
+    # the old comment claimed: measured on the rig `dualmode`, 3,471 consecutive
+    # with the modes apart and 4,676 with the sizes. The official corpus never
+    # does it (lv16's whole cold run agrees on both), so this is inert here.
+    m2 = MODE_ID[r["p2mode"]] if du and r.get("p2mode") in MODE_ID else -1
+    mn2 = -1
+    if du and r.get("p2vsize") not in (None, ""):
+        try:
+            mn2 = 1 if float(r["p2vsize"]) < 0.9 else 0
+        except ValueError:
+            mn2 = -1
     return (f"{t},{r['x']},{r['y']},{r['yvel']},{mode},{g},{held},{fl},{mn},"
             f"{du},{y2},{vy2},{f2},{g2},{sp},{rh},{dsh},{dsl},{su},{sd},"
-            f"{frame},{rev},{rot},{rotneg}")
+            f"{frame},{rev},{rot},{rotneg},0,{m2},{mn2}")
 
 
 def dash_at(t: int, r: dict, ref: dict, held: int, prev: dict | None
