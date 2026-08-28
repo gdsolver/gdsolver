@@ -1102,8 +1102,39 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
     // and the recorder examines the same tick forever.
     const double eDy = dyG - (mCur->second.y - mPrev->second.y);
     const double eDvy = dvG - (mCur->second.vy - mPrev->second.vy);
+    // ...AND THE SECOND BODY'S OWN TRANSITION ERROR. The scan that picks the tick to record
+    // already compares both bodies (dy2/dv2 above); this test, which decides whether there is
+    // anything TO record, asked only the first -- so in a dual the second body's error was
+    // invisible here even though the record format carries dy2/dvy2 and applyFixup applies them.
+    //
+    // The failure it produces is not a missed record, it is a POISONED one: p1's transition is
+    // perfect, the record is filed as a no-op mark, and from the next pass that mark answers
+    // "a record already covers this state" at the one key that could have carried the fix. The
+    // pass then walks forward one tick and marks that one too.
+    //
+    // Measured on lv16 t=13,017, the corpus' largest grind (11 of 66 cold iterations). The scan
+    // finds the pair parting at t=12,991 every round; writeFixup answers `err 0.000/0.000` --
+    // p1's -- and marks it; the next round marks 12,992, then 12,993, one tick per iteration,
+    // while p2's accumulated gap runs out to 15.73 px and vy 2.83 by the death tick. Every one
+    // of those marks is on file saying the model was already right about a transition it was
+    // getting wrong by 0.6 px a tick.
+    // Same blindness as the report's `apart there by` line, in the same function, found the same
+    // day and by the same measurement.
+    //
+    // The two numbers are computed and PRINTED unconditionally -- that is the instrument, and it
+    // costs nothing. Whether they may VETO the no-op is cfg `dpfixp2`, off by default: promoting
+    // those 27 transitions to records costs lv16 66 -> 150 iterations, because a patch applied at
+    // 27 matched states leaves the model wrong between them and the search plans through the
+    // gaps. The records are a to-fix list for the physics, not a fix. See config.hpp.
+    const double eDy2 = dual ? (gCur ? gCur->y2 - gPrev->y2 : 0.0)
+                                   - (mCur->second.y2 - mPrev->second.y2) : 0.0;
+    const double eDvy2 = dual ? (gCur ? gCur->v2 - gPrev->v2 : 0.0)
+                                   - (mCur->second.vy2 - mPrev->second.vy2) : 0.0;
     const bool noop = (kill == 0 && std::fabs(eDy) < kNoopEps
-                       && std::fabs(eDvy) < kNoopEps);
+                       && std::fabs(eDvy) < kNoopEps
+                       && (!g_cfg.dpFixP2
+                           || (std::fabs(eDy2) < kNoopEps
+                               && std::fabs(eDvy2) < kNoopEps)));
     // The key of the record about to be written -- every field the solver matches on, taken from
     // the same variables the line below is built out of.
     // flip and mini come from the MODEL's trace row when it carries them (see
@@ -1149,10 +1180,15 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         f << line << "\n";
     }
     char b[600];
+    // Both lines carry the second body's error too, for the same reason the test above now
+    // consults it: `err 0.000/0.000` next to a record that was decided by a body those two
+    // numbers do not describe is how this went unread for a day.
+    char e2[48] = "";
+    if (dual) snprintf(e2, sizeof(e2), " p2 %.3f/%.3f", eDy2, eDvy2);
     if (noop) {
         ++g_fixupNoop;
-        snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld already right (err %.3f/%.3f) "
-                 "- marked only (%d)", t, eDy, eDvy, g_fixupNoop);
+        snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld already right (err %.3f/%.3f%s) "
+                 "- marked only (%d)", t, eDy, eDvy, e2, g_fixupNoop);
     } else {
         ++g_fixupCount;
         // ...and on the map (itermap.hpp). A fixup is where the MODEL was wrong, which is the
@@ -1160,9 +1196,9 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // pixels apart, which is the single most useful thing the picture says.
         itermap::addFixup(g_iter, t, (float)mPrev->second.x, (float)mPrev->second.y, kill != 0);
         snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld x=%.1f mode=%d in=%d "
-                 "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f (%d total)",
+                 "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f%s (%d total)",
                  t, mPrev->second.x, mPrev->second.mode, act, dyG, dvG, kill,
-                 eDy, eDvy, g_fixupCount);
+                 eDy, eDvy, e2, g_fixupCount);
     }
     writeResult(b);
     return noop ? FixupMark : FixupReal;

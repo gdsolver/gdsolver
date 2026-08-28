@@ -206,6 +206,39 @@ inline void pollCommandFileImpl(const std::string& cmd) {
     writeResult("cmd_ack: " + cmd + " tick=" + std::to_string(g_tick));
 }
 
+// The solve loop's own keys, lifted out of loadConfig's chain.
+//
+// Not a tidy-up: MSVC counts each `else if` as a nesting level and stops at 128, and the chain
+// reached it (`error C1061: blocks nested too deeply`, on the line the NEXT key would have been
+// written). One `if` per key is the shape the file wants, so the answer is a second chain rather
+// than a table -- and `dp*` is the group that grows.
+// Returns whether the key was one of these; loadConfig moves on if so, so a name here shadows the
+// same name in the main chain (there are none).
+inline bool loadDpCfg(const std::string& key, const std::string& val) {
+    if (key == "dpselftest") g_cfg.dpSelfTest = (val == "1");
+    else if (key == "dpsolve") {
+        g_cfg.dpSolve = (val == "1");
+        // A solve needs to know where the moving geometry went, and the only source is its
+        // own replays. Turned on with the solve rather than left to a separate key: a run
+        // without it plans against a level frozen at its entry positions, and on the levels
+        // built out of moving parts it cannot get past the first one.
+        if (g_cfg.dpSolve) grouptrace::g_on = true;
+    }
+    else if (key == "dphorizon") g_cfg.dpHorizon = std::stoi(val);
+    else if (key == "dpmaxiters") g_cfg.dpMaxIters = std::stoi(val);
+    else if (key == "dpseedplan") g_cfg.dpSeedPlan = val;
+    else if (key == "dpshow") g_cfg.dpShow = std::stoi(val);
+    else if (key == "dpfixups") g_cfg.dpFixups = (val == "1");
+    else if (key == "dpfixp2") g_cfg.dpFixP2 = (val == "1");
+    else if (key == "dpworld") g_cfg.dpWorld = (val == "1");
+    else if (key == "dpgroups") g_cfg.dpGroups = (val == "1");
+    else if (key == "dpbandtrack") g_cfg.dpBandTrack = (val == "1");
+    else if (key == "dpfingerprint") g_cfg.dpFingerprint = (val == "1");
+    else if (key == "dparg") g_cfg.dpArgs.push_back(val);
+    else return false;
+    return true;
+}
+
 inline void loadConfig() {
     std::ifstream f(std::string(DATA_DIR) + "/autorun.cfg");
     if (!f.is_open()) return;
@@ -215,6 +248,7 @@ inline void loadConfig() {
         if (eq == std::string::npos) continue;
         auto key = line.substr(0, eq);
         auto val = line.substr(eq + 1);
+        if (loadDpCfg(key, val)) continue;
         if (key == "enabled") g_cfg.enabled = (val == "1");
         else if (key == "level") g_cfg.levelId = std::stoi(val);
         else if (key == "levelfile") g_cfg.levelFile = val;
@@ -299,7 +333,6 @@ inline void loadConfig() {
         else if (key == "hud") g_hudOn = (val == "1");
         else if (key == "retryafter") g_retryAfterSec = std::stod(val);
         else if (key == "notrace") g_cfg.noTrace = (val == "1");
-        else if (key == "dpselftest") g_cfg.dpSelfTest = (val == "1");
         // cfg `hitboxes=<0|1|2>`: start with GD's hitbox drawing off / on / on-and-nothing-else.
         // The same state F6 cycles through, reachable without a keyboard (for filming, and for
         // checking the display from a headless harness). Clamped and applied right away -- an
@@ -309,24 +342,6 @@ inline void loadConfig() {
             hitbox::g_mode = std::clamp(std::stoi(val), 0, 2);
             hitbox::apply();
         }
-        else if (key == "dpsolve") {
-            g_cfg.dpSolve = (val == "1");
-            // A solve needs to know where the moving geometry went, and the only source is its
-            // own replays. Turned on with the solve rather than left to a separate key: a run
-            // without it plans against a level frozen at its entry positions, and on the levels
-            // built out of moving parts it cannot get past the first one.
-            if (g_cfg.dpSolve) grouptrace::g_on = true;
-        }
-        else if (key == "dphorizon") g_cfg.dpHorizon = std::stoi(val);
-        else if (key == "dpmaxiters") g_cfg.dpMaxIters = std::stoi(val);
-        else if (key == "dpseedplan") g_cfg.dpSeedPlan = val;
-        else if (key == "dpshow") g_cfg.dpShow = std::stoi(val);
-        else if (key == "dpfixups") g_cfg.dpFixups = (val == "1");
-        else if (key == "dpworld") g_cfg.dpWorld = (val == "1");
-        else if (key == "dpgroups") g_cfg.dpGroups = (val == "1");
-        else if (key == "dpbandtrack") g_cfg.dpBandTrack = (val == "1");
-        else if (key == "dpfingerprint") g_cfg.dpFingerprint = (val == "1");
-        else if (key == "dparg") g_cfg.dpArgs.push_back(val);
         else if (key == "dumpearly") g_cfg.dumpEarly = (val == "1");
         else if (key == "endtrace") g_cfg.endTrace = (val == "1");
         else if (key == "orbtrace") g_cfg.orbTrace = (val == "1");

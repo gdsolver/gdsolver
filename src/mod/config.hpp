@@ -129,6 +129,21 @@ struct Config {
     bool dpFixups = true;
     bool dpWorld = true;
     bool dpGroups = true;
+    // cfg `dpfixp2`: let the SECOND BODY's transition error decide, on its own, that a dual
+    // transition is worth a record. Off by default, and the reason is a measurement rather than
+    // caution -- see writeFixup's no-op test, which is where it acts.
+    //
+    // What it finds is real: on lv16 it promotes 27 transitions that were being filed as "already
+    // right" on the strength of the first body alone, and 26 of them are p2 errors of half a
+    // pixel or more (up to dvy 11.42, a whole cube jump). It also closes the corpus' largest
+    // grind -- t=13,017, where the model then dies on GD's own tick instead of twelve later.
+    // What it costs is the level: lv16 goes 66 -> 150 iterations and lv20 38 -> 44. A fixup is a
+    // patch applied at matched states, so a model made faithful at 27 points and left wrong
+    // between them steers the search into routes it then has to abandon; the fix those 27 records
+    // describe belongs in the physics, not in the file.
+    // So: ON to regenerate the list (GDSOLVER_LAB/oneoff/py/p2_gap_list.py reads it back out of
+    // the log), OFF to solve.
+    bool dpFixP2 = false;
     // cfg `dpbandtrack`: hand the search the CAMERA's recorded flight band
     // (--bandtrack). On since 81f2a09; off is how that commit's remaining half is
     // A/B'd, since lv22's second cold regression bisects to it.
