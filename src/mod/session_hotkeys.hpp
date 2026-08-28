@@ -132,7 +132,7 @@ inline void pollProbeHotkeys() {
             if (auto* pl = PlayLayer::get())
                 if (pl->m_level) lv = pl->m_level->m_levelID.value();
         itermap::toggle(lv);
-        log::info("hotkey: F10 -> iteration map {}", itermap::g_showMap ? "on" : "off");
+        log::info("hotkey: F10 -> iteration map {}", itermap::mapWanted() ? "on" : "off");
     }
     s_f10Down = f10;
 #endif
@@ -287,6 +287,15 @@ inline void pollHotkeys() {
                             && t - last >= repeatEvery;
         down = now;
         if (!press && !repeat) return;
+        // NOT WHILE THE LOOP OWNS THE LEVEL. Both halves of this key move it -- a seek restarts
+        // it, a step advances it -- and during a solve the level IS the loop's verification replay,
+        // held still between rounds by repair.hpp's spawn. Nudging it there corrupts the round the
+        // recorder is about to be asked about. The bar is not drawn for the same reason and a press
+        // on it is refused by barLive(); the keys never had the equivalent guard, and now that the
+        // map is watchable live they are keys a person has a reason to be pressing.
+        // The edge tracking above still runs, so a key held across the end of a solve is not
+        // mistaken for a fresh press afterwards.
+        if (showingSolve()) return;
         if (press) { repeats = 0; since = t; }
         last = t;
         if (stopped) {

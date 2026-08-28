@@ -481,6 +481,32 @@ class $modify(GJBaseGameLayer) {
                 return;
             }
         }
+        // Consume a render-resume request at the frame boundary: reset the level and
+        // rebuild the render state with it. The order -- reset first, then resume
+        // rendering -- is the point; in the reverse order the first updateVisibility after
+        // resuming steps on state that piled up while stopped
+        //
+        // ABOVE THE STOPS, and that is the whole reason it is here rather than below them.
+        // A search holds the level with g_paused (repair.hpp's spawn), so for the entire time the
+        // solver thread is working, every frame returned before reaching this -- the request sat
+        // raised, the screen stayed black, and pressing the key again did nothing because the
+        // request it wanted to raise was already up. Reported 2026-08-28 as "F5 sometimes does not
+        // switch": it always switched, just not until the search let a frame through. The reset is
+        // safe here for the same reason the freeze is: the solver thread reads the recorder's
+        // finished buffers, never the level.
+        if (g_visResetPending && g_started && !g_sessionOver) {
+            g_visResetPending = false;
+            // The spectating speed is deliberately left alone: F8 is a render toggle now, and
+            // forcing 1x here would silently undo the arrow keys. The cfg-driven paths
+            // (watchat / watchback) set the speed themselves before asking for the reset.
+            if (auto* pl = PlayLayer::get()) {
+                log::info("watch: reset level, then resume rendering");
+                pl->resetLevel();
+                g_realtimeOverride = true;
+                return;   // this frame ends here
+            }
+            g_realtimeOverride = true;
+        }
         // Update the HUD before the pause branch (keep HUD and liveness display alive
         // while paused)
         // A seek in flight lifts the stop for as long as it takes to land, and the arrival puts
@@ -517,23 +543,6 @@ class $modify(GJBaseGameLayer) {
                 flushAll();
             }
             return;
-        }
-        // Consume a render-resume request at the frame boundary: reset the level and
-        // rebuild the render state with it. The order -- reset first, then resume
-        // rendering -- is the point; in the reverse order the first updateVisibility after
-        // resuming steps on state that piled up while stopped
-        if (g_visResetPending && g_started && !g_sessionOver) {
-            g_visResetPending = false;
-            // The spectating speed is deliberately left alone: F8 is a render toggle now, and
-            // forcing 1x here would silently undo the arrow keys. The cfg-driven paths
-            // (watchat / watchback) set the speed themselves before asking for the reset.
-            if (auto* pl = PlayLayer::get()) {
-                log::info("watch: reset level, then resume rendering");
-                pl->resetLevel();
-                g_realtimeOverride = true;
-                return;   // this frame ends here
-            }
-            g_realtimeOverride = true;
         }
         // A seek asked for by clicking the iteration map (itermap.hpp), when the target is
         // BEHIND the player and the level has to run again. A frame-boundary job, like every
@@ -3495,7 +3504,15 @@ class $modify(GJBaseGameLayer) {
         // ...and the seek bar's own, much smaller record: one x per tick, which is what turns
         // "five seconds earlier" into a place on the bar. Not the anchors buffer, which is
         // twenty-odd fields wide and only exists during a solve.
-        if (g_started && m_player1) itermap::trackX(g_tick, m_player1->getPositionX());
+        //
+        // NOT AFTER THE SESSION ENDS. g_tick keeps counting for as long as the level is left
+        // standing -- the results screen is not a stopped game, it is a game still being updated
+        // once a frame -- and the bar's axis is the deepest tick it has seen. Reported 2026-08-28:
+        // sit on the clear screen and the axis grows without limit, so the whole run's marks creep
+        // leftwards and the playhead slides back off the end of a run that is over. The run ended
+        // at the tick it ended at; that is where the bar stops.
+        if (g_started && !g_sessionOver && m_player1)
+            itermap::trackX(g_tick, m_player1->getPositionX());
         // GD's max-gameplay-y bound (layer+0x36a8, updateMaxGameplayY), logged
         // on change. On dynamic-height levels the bound moves with the world,
         // and whether it does -- and when -- decides how --maxplayy has to be

@@ -262,8 +262,8 @@ level. The keys are:
 | `F6` | hitboxes: off / on / **only** (the game's own debug drawing; "only" hides the artwork so nothing is left but the geometry the physics uses) |
 | `F7` | replay from the start — works after the replay has finished too |
 | `F9` | quit to the level screen |
-| `F10` | the iteration map: where the repair loop spent its rounds (below) |
-| `←` `→` | seek back / forward. A tap is five seconds; holding accelerates |
+| `F10` | the iteration map: where the repair loop spent its rounds (below). On during a solve, off in a replay, and this flips whichever it currently is |
+| `←` `→` | seek back / forward. A tap is five seconds; holding accelerates. While the game is stopped they step a frame instead. Refused during a solve: the level is the loop's own verification replay and nudging it would spoil the round |
 | `↑` `↓` | spectating speed, one notch (0.25x … 16x). Physics stays at 1/240 either way, so the trajectory and the tick numbers do not change |
 
 There are no keys that let a player do what the game does not allow: no warp, no noclip, no forced
@@ -279,12 +279,13 @@ hundreds of physics steps a frame and is not worth looking at. Rendering is *not
 this — resuming it is the path that restarts the level (and crashes on the way back), so the level
 is painted over instead.
 
-### The iteration map (`F10`, off by default)
+### The iteration map (`F10`)
 
 "Cleared in 62 rounds" says nothing about *where* the rounds went, and they are never spread
 evenly: a level is usually solved by the first plan for nine tenths of its length, and then the
-loop grinds against two or three walls. `F10` draws that distribution back onto the level — during
-a replay of the solution, or live while the solve is still running:
+loop grinds against two or three walls. The map draws that distribution back onto the level — live
+while the solve is still running, which is where it is on by default, and over a replay of the
+solution, where `F10` asks for it:
 
 * a **column** at every place a replay died, its opacity the share of the run's worst wall and the
   round count printed above it;

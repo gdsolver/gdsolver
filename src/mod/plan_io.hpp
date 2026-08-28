@@ -60,11 +60,13 @@ inline void resetSessionState() {
     // draw the PREVIOUS level's rounds over this one -- the same family of bug as the grouptrace
     // and HUD leaks above, and just as convincing to look at.
     itermap::clear();
-    // The KEY's state is deliberately not reset here. It starts off (the default of g_show) and
-    // is owned by F10 and cfg `itermap` alone -- resetting it as well would mean the cfg key
-    // worked for a worker-driven replay and silently did nothing for a panel-driven one, and
-    // that turning the map on and replaying (F7 does not come through here, level exit does)
-    // gave two different answers depending on how the level was re-entered.
+    // The PREFERENCE is deliberately not reset here. Until someone expresses one it is not a
+    // stored value at all -- mapWanted() reads it off the session's mode, so a solve draws the map
+    // and a replay does not without anything having to be reset between them. Once F10 or cfg
+    // `itermap` has answered, that answer is theirs and outlives the session: resetting it would
+    // mean the cfg key worked for a worker-driven replay and silently did nothing for a
+    // panel-driven one, and that turning the map on and replaying (F7 does not come through here,
+    // level exit does) gave two different answers depending on how the level was re-entered.
     probe::reset(); g_probeRequest = 0;
     g_blockedAch = 0; g_blockedStat = 0; g_blockedCoin = 0; g_blockedProgress = 0;
     g_progressRestores = 0;

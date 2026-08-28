@@ -125,24 +125,50 @@ inline int g_generation = 0;
 //
 // The MAP is the analysis -- the marks over the level, the histogram in the bar, the summary
 // text. It draws on top of the level, which is exactly what you do not want while watching a
-// solution, so it is off by default and F10 turns it on.
+// solution and exactly what you do want while one is being searched for. So there is no single
+// right default, and it does not have one: see mapWanted below.
 //
 // The BAR is transport: where you are in the level, and a place to click to go somewhere else.
 // That is useful in every replay whether or not anyone is analysing anything, so it is always
 // there. F1 (hide the overlay) is the only thing that takes it away.
-inline bool g_showMap = false;
+//
+// -1 = nobody has said, 0 / 1 = an explicit answer from F10 or from cfg `itermap`. Three states
+// rather than a bool because the answer to "is the map on" is different before anyone has
+// expressed a preference (it follows the mode) and after (it is whatever they asked for), and a
+// bool cannot tell those apart -- a solve would either override a choice the operator had just
+// made, or never get its own default.
+inline int g_mapPref = -1;
+
+// [2026-08-28, user direction] A SOLVE SHOWS IT BY DEFAULT. That is the session where the map is
+// the thing worth watching: the marks appear as the loop produces them, and a run's walls are
+// visible while it grinds at them. A replay is the opposite -- you are there to watch the level,
+// and analysis drawn over it is in the way -- so there it stays off until F10 asks.
+//
+// solveSession(), not showingSolve(): the showing of the solution at the end is part of the same
+// session, and a map that switched itself off at that moment would vanish exactly when the run it
+// describes has finished. It ends with the session, so the next plain replay is off again.
+inline bool mapWanted() { return g_mapPref >= 0 ? g_mapPref != 0 : solveSession(); }
 
 // F1 and cfg `hud=0` reach both, like every other drawn thing except the bot badge (spec §9).
 //
-// NEITHER IS DRAWN WHILE SOLVING. The bar is transport for a replay and the loop owns the level
-// while it searches -- there is nothing to seek. The map is worse than useless there: it is being
-// WRITTEN by the run underneath it, so it draws a picture of the rounds so far over the round
-// currently being flown. showingSolve() is false again for the showing of the solution, which is
-// a replay in every sense and is where both belong.
+// THE BAR IS NOT DRAWN WHILE SOLVING. It is transport for a replay, and the loop owns the level
+// while it searches: there is nowhere to seek to, and a press on it is refused (barLive).
+//
+// THE MAP IS. [2026-08-28, user direction] It was off there too, on the grounds that it is being
+// WRITTEN by the run underneath it -- a picture of the rounds so far drawn over the round
+// currently being flown. That is the argument for it, not against it: with the screen on (F5) the
+// marks appear as the loop produces them, so the wall a run is grinding at is visible while it
+// grinds instead of only in the file afterwards. What must not happen while solving is the map
+// READING a file over a run that is writing one, and that is ensureLoaded's job, not this one.
 inline bool barVisible() {
     return g_hudOn && !g_overlayHidden && botDriving() && !showingSolve();
 }
-inline bool mapVisible() { return g_showMap && barVisible(); }
+inline bool mapVisible() {
+    return mapWanted() && g_hudOn && !g_overlayHidden && botDriving();
+}
+// Either of them is enough to draw the strip: it carries the map's histogram as well as the
+// playhead, so a solve gets a bar with no transport in it.
+inline bool stripVisible() { return barVisible() || mapVisible(); }
 
 // ---- seeking (click the strip) ----
 //
@@ -729,14 +755,19 @@ inline void drawWorld(cocos2d::CCNode* objectLayer) {
     //    are both near the maximum look identical whether they cost 11 rounds or 3. The figure is
     //    the thing you actually compare, so it is printed.
     //
-    //    ONLY FROM TWO UP. A "1" over every isolated death is noise over most of the level, and
-    //    the convention costs nothing to learn: no figure means one round died here.
+    //    EVERY COLUMN, including the ones that cost a single round. This skipped 1 at first, on
+    //    the grounds that a "1" over every isolated death is noise and that "no figure" is a
+    //    convention costing nothing to learn. Both were wrong, and the data says so: ten of lv20's
+    //    sixteen columns are singletons, so the unlabelled case is the COMMON one -- and a reader
+    //    who meets it first reads a column with no number as a number that failed to draw, which
+    //    is exactly how it was reported (2026-08-28). A count you have to know a rule to read is
+    //    not a count.
     //
     //    Placed just above the topmost death in the column rather than at the column's own top
     //    edge -- the box runs 200px past the marks into empty sky, which on a tall section is off
     //    the screen you are reading the number from.
     for (const Hot& h : g_hot) {
-        if (h.deaths < 2) continue;
+        if (h.deaths <= 0) continue;
         char cb[16];
         snprintf(cb, sizeof(cb), "%d", h.deaths);
         auto* lbl = CCLabelBMFont::create(cb, "bigFont.fnt");
@@ -848,7 +879,7 @@ inline void drawStrip(cocos2d::CCNode* parent) {
     using namespace cocos2d;
     auto* n = drawNode(parent, STRIP_TAG, 1 << 20);
     if (!n) return;
-    const bool on = barVisible();
+    const bool on = stripVisible();
     n->setVisible(on);
     if (!on) { g_stripW = 0.f; return; }   // not drawn = not clickable
     const CCRect box = stripBox();
@@ -991,7 +1022,7 @@ inline void summary(char* out, size_t cap, float px, float levelLen) {
                      (long long)g_nowTick, total,
                      100.0 * (double)g_nowTick / (double)total, (double)px);
     if (n < 0 || (size_t)n >= cap) return;
-    if (!g_showMap) return;         // the bar alone says where you are and stops there
+    if (!mapWanted()) return;       // the bar alone says where you are and stops there
     // "Nothing recorded and nothing loaded", not "no file loaded": a solve in progress has rounds
     // in memory and no file yet, and that is exactly when watching the map grow is worth
     // something.
@@ -1032,9 +1063,12 @@ inline void summary(char* out, size_t cap, float px, float levelLen) {
     // Two lines, not one. Measured on a 1706x960 worker: the single 118-character line ran off
     // the right edge and lost its last item. The overlay column has no wrapping, so the length of
     // every line here is a fixed budget of about 80 characters.
+    // The last item is transport, and while the loop owns the level there is none -- saying so
+    // beats offering a click that barLive() will refuse.
     snprintf(out + n, cap - n,
              "  deaths: green deeper / cyan followed / violet forced / red rewound / pink wedged\n"
-             "  amber fixup, magenta kill fixup, purple veto   -   click the strip to seek");
+             "  amber fixup, magenta kill fixup, purple veto   -   %s",
+             barVisible() ? "click the strip to seek" : "live: the solve is writing this");
 }
 
 // ---- the block in the corner ----
@@ -1050,7 +1084,7 @@ inline void drawLabel(cocos2d::CCNode* parent, float px, float levelLen) {
     auto* lbl = static_cast<CCLabelBMFont*>(parent->getChildByTag(LABEL_TAG));
     // The bar gets a readout of its own -- where you are, in ticks -- and the map adds its
     // analysis under it. summary() decides which of the two it is writing.
-    if (!barVisible()) {
+    if (!stripVisible()) {
         if (lbl) lbl->setVisible(false);
         g_labelW = g_labelH = 0.f;      // ...so the strip stops painting a panel for it
         return;
@@ -1346,8 +1380,8 @@ inline void draw(cocos2d::CCNode* parent, PlayLayer* pl) {
     if (!parent) return;
     const float levelLen = pl ? pl->m_levelLength : 0.f;
     const float px = (pl && pl->m_player1) ? pl->m_player1->getPositionX() : 0.f;
-    if (g_showMap && pl && pl->m_level) ensureLoaded(pl->m_level->m_levelID.value());
-    if (g_showMap) logScreenMetrics(parent);
+    if (mapWanted() && pl && pl->m_level) ensureLoaded(pl->m_level->m_levelID.value());
+    if (mapWanted()) logScreenMetrics(parent);
     // The touch target is attached to whatever node the overlay is drawing into, and re-attached
     // if that node changes -- which it does when the results screen replaces the scene, and which
     // is exactly when you want the bar (to go back and look at something).
@@ -1372,13 +1406,16 @@ inline void toggle(int levelId) {
     // ensureLoaded is the one loader: it refuses to read a file over a run that is recording its
     // own map, which is what the key would otherwise do on the victory lap of a solve.
     ensureLoaded(levelId);
-    g_showMap = !g_showMap;
+    // Flip whatever is on screen NOW, which during a solve is the mode's default rather than
+    // anything anyone chose -- so the first press there turns the map OFF, as it looks like it
+    // should. From here on the answer is explicit and the mode stops deciding.
+    g_mapPref = mapWanted() ? 0 : 1;
     char b[192];
     {
         std::lock_guard<std::mutex> lk(g_mu);
         ++g_generation;   // force a rebuild: the parent is unchanged but the visibility is not
         snprintf(b, sizeof(b), "itermap: %s (level %d, %zu deaths, %zu fixups, %d rounds)",
-                 g_showMap ? "shown" : "hidden", levelId, g_deaths.size(), g_fixups.size(),
+                 mapWanted() ? "shown" : "hidden", levelId, g_deaths.size(), g_fixups.size(),
                  g_rounds);
     }
     writeResult(b);

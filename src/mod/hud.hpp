@@ -97,6 +97,14 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
                  renderingOn() ? "on" : "off");
         snprintf(renderLine, sizeof(renderLine), "F5   render on / off\n");
     }
+    // Why time is stopped, not just that it is. A solve holds the level still for the whole of
+    // every search (repair.hpp's spawn) and with the screen on that is most of what you watch --
+    // reported 2026-08-28 as the run "going to PAUSE by itself". It is not the F2 stop and it is
+    // not waiting for the operator to do anything, so it does not get the same word.
+    const char* stopPart = probe::g_pause ? "  [PAUSED]"
+                         : !g_paused      ? ""
+                         : solvingNow()   ? "  [HELD - SEARCHING]"
+                                          : "  [PAUSED]";
     // Listed in key order. Anything else reads as a jumble -- there is no other order a reader
     // can predict, and this list is scanned, not read.
     char buf[640];
@@ -112,13 +120,15 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
         "F10  iteration map: %s\n"
         "left / right   %s\n"
         "up / down   speed up / down   -   or drag the bar",
-        spd, (g_paused || probe::g_pause) ? "  [PAUSED]" : "", renderPart,
+        spd, stopPart, renderPart,
         showingSolve() ? "  (disabled while solving)" : "",
-        renderLine, itermap::g_showMap ? "on" : "off",
+        renderLine, itermap::mapWanted() ? "on" : "off",
         // The arrows change job with the stop: seeking needs time to flow, so while it is frozen
-        // they are frame-step keys instead. Saying which they are right now costs one word.
-        (g_paused || probe::g_pause) ? "step back / forward (10 substeps)"
-                                     : "seek back / forward (hold to accelerate)");
+        // they are frame-step keys instead. Saying which they are right now costs one word. While
+        // the loop owns the level they are neither -- both would move a round it is measuring.
+        showingSolve()                ? "(disabled while solving)"
+        : (g_paused || probe::g_pause) ? "step back / forward (10 substeps)"
+                                       : "seek back / forward (hold to accelerate)");
     lbl->setString(buf);
 }
 

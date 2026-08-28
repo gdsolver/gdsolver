@@ -1,8 +1,8 @@
 # The iteration map
 
-`F10` in a replay. Off by default. (The transport it shares a corner with — the seek bar, the
-arrow keys — is in the [README](../README.md#the-iteration-map-f10-off-by-default); this document
-is about reading what the map draws.)
+On while a solve runs, off in a replay until `F10` asks. (The transport it shares a corner with —
+the seek bar, the arrow keys — is in the [README](../README.md#the-iteration-map-f10); this
+document is about reading what the map draws.)
 
 A cold run reports one number — *cleared in 62 rounds* — and that number says nothing about
 **where** the rounds went. They are never spread evenly. A level is solved by the first plan for
@@ -23,9 +23,8 @@ x=3,497.
 **Column.** One GD block wide (30 px). Its opacity is that block's share of the run's worst block,
 so the picture answers *where did the rounds go* rather than *was anything ever wrong here*. It
 tops out under a third opaque: the column has to be findable without hiding the geometry you came
-to look at once it has told you where to look. From two rounds up the count is printed above the
-marks — opacity alone cannot tell 11 rounds from 3, and the figure is the thing you actually
-compare. No figure means one round died there.
+to look at once it has told you where to look. The count is printed above the marks — opacity alone
+cannot tell 11 rounds from 3, and the figure is the thing you actually compare.
 
 **Death.** The dot sits where GD had the player when it killed them — `destroyPlayer`'s own
 argument, not the recorder's last row, which is one tick short of that and on a fast fall tens of
@@ -105,6 +104,21 @@ lv16's x=19,725 is the textbook case. Eleven deaths, ten of them rewound — and
 signature of *the model is right and there is no route*, and the place to fix it is not that
 pillar. lv21's x=14,625 is a pillar of the same size with 26 fixups sitting on it: there, the wall
 is the fidelity hole, and the place to fix it is exactly where the pillar stands.
+
+## Watching it live
+
+A solve draws the map by default, from the rounds the loop has recorded so far — so a run's pillars
+appear as it produces them rather than only in the file afterwards. That is the session the map is
+worth watching in, which is why it is the one that does not wait to be asked. A solve turns the
+screen off for speed; `F5` turns it back on. The summary then reads `[in progress]`, and the bar is
+a picture with no transport in it: the level belongs to the loop while it works, so seeking and
+frame-stepping are refused until the solution is being shown.
+
+`F10` still flips it, and once pressed the answer is explicit and the mode stops deciding — as does
+cfg `itermap=0`, which turns it off in a solve too.
+
+The map is drawn from memory there, never read back from `itermap_lv<N>.txt`. A solve is the file's
+author, and a solve that loaded it at its head would append its own rounds to the previous run's.
 
 ## Where the data comes from
 

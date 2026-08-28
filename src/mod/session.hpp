@@ -242,10 +242,14 @@ inline void loadConfig() {
         else if (key == "endpurge") g_endPurge = (val == "1");
         else if (key == "endburn") g_endzoneBurnOn = (val == "1");
         else if (key == "syncprobe") g_syncProbe = (val == "1");
-        // Start with the iteration map already drawn (the F10 key's state). For filming and for
-        // the replay-watching tools, which cannot press a key. The seek bar under it is always
-        // there and has no key of its own.
-        else if (key == "itermap") itermap::g_showMap = (val == "1");
+        // Start with the iteration map already drawn, or explicitly not. For filming and for the
+        // replay-watching tools, which cannot press a key. The seek bar under it is always there
+        // and has no key of its own.
+        //
+        // Either value is an ANSWER, including 0: a run that says itermap=0 has asked for it off
+        // and gets it off, even in the solve session that would otherwise have drawn it (see
+        // mapWanted). Only the absence of the key leaves the mode to decide.
+        else if (key == "itermap") itermap::g_mapPref = (val == "1") ? 1 : 0;
         else if (key == "trigtrace") g_trigTrace = (val == "1");
         // Observation of moving gates: gatetrace=x0,x1 is the target x window, gatetick=t0,t1
         // the recording tick window
