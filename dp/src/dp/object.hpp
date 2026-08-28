@@ -304,7 +304,7 @@ inline bool hazardHit(const Obj* o, double px, double py, double half,
     if (o->radius > 0.0) {
         const double dx = px - o->cx, dy = py - o->cy;
         const double hRect = sawRectHalfB(mode, mini);   // -1 when unmeasured
-        if (hRect >= 0.0 && !o->dynObj) {
+        if (hRect >= 0.0) {
             // GD branch B, exact. The rig puts the true boundary at the
             // dumped radius itself (+-0.01), so the only addend is the flat
             // float-drift allowance -- NOT the caller's per-mode sawAdd,
@@ -315,8 +315,34 @@ inline bool hazardHit(const Obj* o, double px, double py, double half,
             if (ex < 0.0 && ey < 0.0) return true;      // centre inside rect
             return ex * ex + ey * ey < r * r;           // nearest corner
         }
-        // Branch A: CIRCLE vs CIRCLE -- movers (o->dynObj) and every combo
-        // the rig has not measured. 0x211df0 reads getObjectRect().width*0.5
+        // [2026-08-28] MOVERS TAKE BRANCH B TOO. This used to read
+        // `hRect >= 0.0 && !o->dynObj`, on the strength of the lv22 uid710 sweep
+        // below. That reading does not reproduce: the sawcal rig, rebuilt with
+        // its saws carried by an autonomous Move trigger (mklevel.py
+        // build_sawcal_moved), puts the SAME configuration -- spider, moved saw,
+        // r=4 -- on branch B.
+        //
+        //   spider vs moved r=4   dead 13.04 / alive 14.54  -> 13.5, not A's 17.5
+        //   cube   vs moved r=4   dead 14.50 / alive 17.00  -> 15.0, not A's 19.0
+        //   spider vs moved r=24  alive at dy=35.0 for two ticks, dead on the
+        //                         third -- B calls the death TICK exactly (corner
+        //                         distance 24.66 -> 23.90 against r=24), while A
+        //                         would have killed on the first
+        //
+        // and lv21 says the same in a real level: 12 probes, mini ship vs a
+        // ROTATED r=4 blade and full cube vs a moved r=24, every one on B, with A
+        // wrong in BOTH directions (it over-kills on axis and under-kills on the
+        // diagonal, so no margin constant reconciles it). 17 probes, 3 modes, 3
+        // radii, moved and rotated, rig and real level; nothing left supporting A.
+        //
+        // The disassembly agrees that the object cannot be what selects the
+        // branch: 0x211df0 reads the flag at [[layer+0xdb0]+0x1cf] -- off the
+        // LAYER, not off either object. What that field is has not been pinned
+        // down; `dynObj` simply was not it.
+        // GDSOLVER_LAB/notes/measure-moving-saw-branch-2026-08-28.md
+        //
+        // Branch A now only catches combos sawRectHalfB has no measurement for.
+        // 0x211df0 reads getObjectRect().width*0.5
         // for the player term, so use the SAME rect half as branch B when it
         // is known: the one measured mover (lv22 uid710 vs the spider, dome
         // 17.5..17.7 = 13.5+4+m) confirms it, and lv20's moving id918s kill
