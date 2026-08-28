@@ -1,6 +1,6 @@
 #pragma once
 // Census of live effect nodes and sweeping of leaked circle waves (fast-mode hygiene).
-#include "mod/config.hpp"
+#include "mod/itermap.hpp"
 
 namespace p1 {
 

@@ -1136,6 +1136,10 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
                  "- marked only (%d)", t, eDy, eDvy, g_fixupNoop);
     } else {
         ++g_fixupCount;
+        // ...and on the map (itermap.hpp). A fixup is where the MODEL was wrong, which is the
+        // cause the deaths around it are the symptom of -- and the two are often hundreds of
+        // pixels apart, which is the single most useful thing the picture says.
+        itermap::addFixup(g_iter, t, (float)mPrev->second.x, (float)mPrev->second.y, kill != 0);
         snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld x=%.1f mode=%d in=%d "
                  "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f (%d total)",
                  t, mPrev->second.x, mPrev->second.mode, act, dyG, dvG, kill,
@@ -1967,6 +1971,14 @@ inline void giveUp(const char* reason, const char* sessionWhy) {
              "gdsolver: could not solve lv%d - stopped at %.0f%% (x %.0f) after %d round%s",
              g_cfg.levelId, pct, (double)g_hudVerifiedX, g_iter, g_iter == 1 ? "" : "s");
     writeResult(std::string("dpsolve: giving up - ") + reason + " | " + note);
+    // Keep the iteration map. A run that did NOT clear is the one whose map is worth reading --
+    // the level is left standing where the loop stopped, and F10 now draws every round it spent
+    // getting there over the top of it.
+    // "itermap", not "iteration map": py/cold_regress.py matches `^dpsolve: iter (\d+):` for the
+    // round count, and a line that starts `dpsolve: iteration ...` is one loosened regex away
+    // from being counted as a round.
+    if (itermap::save(g_cfg.levelId, false))
+        writeResult("dpsolve: itermap saved -> " + itermap::pathFor(g_cfg.levelId));
     notify::show(note, NotificationIcon::Error, 6.f);
     // Stop the level where it is and leave it there. endSession gives the screen back, so what
     // was a black window during the solve becomes the level at the point the bot stopped, with
@@ -2093,6 +2105,11 @@ inline void checkPhantom(long long dt, double deathX, bool wedged = false,
             return;
         }
     g_phantomBands.emplace_back(band);
+    // On the map as a wash over the stretch the box covers (itermap.hpp). Only the x extent: the
+    // y bounds and the mode are what makes the box honest, but on a picture of the level they
+    // would draw a shape that reads as "the route goes around here", which is the one thing a
+    // veto explicitly does not claim.
+    itermap::addVeto(g_iter, (float)((double)r->x - pdx), (float)((double)r->x + pdx));
     char b[224];
     snprintf(b, sizeof(b), "dpsolve:   [veto] a SOLVED tail died in the game %d times at t=%lld "
              "(x=%.0f) - dropping the box: --deadband %s [%d]",
@@ -2275,6 +2292,10 @@ inline void onDeath(long long dt, float deathX) {
         return;
     }
     long long useT = dt;
+    // How this round gets scored, kept for the iteration map (itermap.hpp). A column of deaths
+    // says where the loop spent its rounds; the kind is what says whether it was working through
+    // a hard section or stuck against a wall, and only the branch below knows which.
+    int outcome = itermap::KindRewind;
     // !wasWedged: a wedge never ranks. Its credited tick measures when the route ARRIVED at
     // the dead point, not how far it got -- any route that dawdles before wedging at the same
     // frozen state scores higher (measured: best walked 16,538 -> 17,237 -> 20,920, every one
@@ -2320,7 +2341,9 @@ inline void onDeath(long long dt, float deathX) {
         g_curBackoff = kBackOff;
         g_followSolved = 0;
         g_followForced = 0;    // the route made progress; the normal flow owns it now
+        outcome = itermap::KindDeeper;
     } else if (g_lastTailSolved && (dt > g_lastDeath || g_followSolved < 4)) {
+        outcome = itermap::KindFollow;
         g_followSolved = (dt > g_lastDeath) ? 0 : g_followSolved + 1;
         snprintf(b, sizeof(b), "dpsolve:   regression to t=%lld on a solved branch - following "
                  "it (%d/4, best %lld)", dt, g_followSolved, g_bestDeath);
@@ -2339,6 +2362,7 @@ inline void onDeath(long long dt, float deathX) {
         // how a new route gets developed at all.
         // Progress along the forced line keeps the grace whole (the same shape as the
         // solved-branch follow); only actual stagnation spends it.
+        outcome = itermap::KindForced;
         if (dt <= g_lastDeath) --g_followForced;
         snprintf(b, sizeof(b), "dpsolve:   %s t=%lld on the forced route - "
                  "following it (%d left, best %lld)",
@@ -2385,6 +2409,38 @@ inline void onDeath(long long dt, float deathX) {
         // round for as long as the stall lasts -- which on lv16 was the whole budget, visibly
         // slowing the search and buying nothing. It stays in escalate(), where it is only
         // reached after the ladder has actually run out of anchors.
+    }
+    // Put the round on the map (itermap.hpp). Recording only -- nothing below reads it back, so
+    // whether the overlay is on cannot change what the loop does.
+    //
+    // A wedge overrides whatever branch it fell down: it is credited where it stopped moving,
+    // never ranks, and drawing it as an ordinary death would put a mark at a point no route ever
+    // reached. The anchor is the one THIS plan was spliced at (the previous round's choice), so
+    // the line the map draws from it to the death is the causal one: "the ladder reached back to
+    // here, and what came out of it died there".
+    if (wasWedged) outcome = itermap::KindWedge;
+    {
+        // The recorder's last row is one tick short of the death, and the death tick itself has
+        // no row at all -- so walk down to the last one there is. Explicitly against the attempt
+        // that just died: g_src points at whatever the branch above left it on.
+        const std::vector<AnchorRow>* savedSrcIm = anchors::g_src;
+        anchors::ladderOn(false);
+        float dy = 0.f;
+        for (long long k = std::min(dt, 400000LL); k > 0 && k > dt - 8; --k)
+            if (const AnchorRow* r = anchors::row(k)) { dy = r->y; break; }
+        // The tail this round flew, straight out of the recorder that is already sitting here --
+        // the same rows the ladder re-anchors on. From the splice point, because that is where
+        // this round stops being every other round (see itermap::Path).
+        {
+            const long long p0 = (g_anchorT > 0) ? g_anchorT : 0;
+            const long long p1 = std::min(dt, 400000LL);
+            itermap::beginPath(g_iter, outcome);
+            for (long long k = p0; k <= p1; k += itermap::kPathStep)
+                if (const AnchorRow* r = anchors::row(k)) itermap::addPathPoint(r->x, r->y);
+            itermap::endPath();
+        }
+        anchors::g_src = savedSrcIm;
+        itermap::addDeath(g_iter, dt, deathX, dy, outcome, g_anchorT, g_anchorX, g_curBackoff);
     }
     g_lastDeath = dt;
     g_lastDeathX = deathX;

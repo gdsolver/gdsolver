@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="286" viewBox="0 0 880 286"
+     font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+  <title>How the loop scored each round, and the colour it draws that death in</title>
+  <rect width="880" height="286" rx="8" fill="#111820"/>
+  <text x="24" y="30" font-size="11.5" font-weight="700" fill="#79838f" letter-spacing="1.6">
+    THE COLOUR OF A DEATH IS HOW THE LOOP SCORED THAT ROUND
+  </text>
+
+  <g>
+    <line x1="46" y1="46" x2="46" y2="76" stroke="#4df273" stroke-width="2.4" opacity="0.45"/>
+    <circle cx="46" cy="61" r="7.5" fill="#4df273"/>
+    <text x="76" y="66" font-size="13.5" font-weight="700" fill="#4df273">deeper</text>
+    <text x="182" y="66" font-size="12.5" fill="#9aa4b1">got further than any round before it — progress, and the back-off resets</text>
+  </g>
+
+  <g>
+    <line x1="46" y1="92" x2="46" y2="122" stroke="#59ccff" stroke-width="2.4" opacity="0.45"/>
+    <circle cx="46" cy="107" r="7.5" fill="#59ccff"/>
+    <text x="76" y="112" font-size="13.5" font-weight="700" fill="#59ccff">followed</text>
+    <text x="182" y="112" font-size="12.5" fill="#9aa4b1">a regression on a branch the model had solved to the end — a different</text>
+    <text x="182" y="129" font-size="12.5" fill="#9aa4b1">route the game refuted at the seam, so it is followed rather than rewound</text>
+  </g>
+
+  <g>
+    <line x1="46" y1="150" x2="46" y2="180" stroke="#b38cff" stroke-width="2.4" opacity="0.45"/>
+    <circle cx="46" cy="165" r="7.5" fill="#b38cff"/>
+    <text x="76" y="170" font-size="13.5" font-weight="700" fill="#b38cff">forced</text>
+    <text x="182" y="170" font-size="12.5" fill="#9aa4b1">the same grace, for the route a forced mode-portal crossing opened</text>
+  </g>
+
+  <g>
+    <line x1="46" y1="196" x2="46" y2="226" stroke="#ff4d40" stroke-width="2.4" opacity="0.45"/>
+    <circle cx="46" cy="211" r="7.5" fill="#ff4d40"/>
+    <text x="76" y="216" font-size="13.5" font-weight="700" fill="#ff4d40">rewound</text>
+    <text x="182" y="216" font-size="12.5" fill="#9aa4b1">no improvement: the round was thrown away, the deepest plan restored</text>
+    <text x="182" y="233" font-size="12.5" fill="#9aa4b1">and the back-off multiplied by four. A stack of these is the loop stuck.</text>
+  </g>
+
+  <g>
+    <line x1="46" y1="248" x2="46" y2="278" stroke="#ff73f2" stroke-width="2.4" opacity="0.45"/>
+    <circle cx="46" cy="263" r="7.5" fill="#ff73f2"/>
+    <text x="76" y="268" font-size="13.5" font-weight="700" fill="#ff73f2">wedged</text>
+    <text x="182" y="268" font-size="12.5" fill="#9aa4b1">stopped moving and the guard ended it — never ranked for depth</text>
+  </g>
+</svg>

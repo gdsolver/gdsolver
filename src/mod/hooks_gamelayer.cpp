@@ -483,7 +483,12 @@ class $modify(GJBaseGameLayer) {
         }
         // Update the HUD before the pause branch (keep HUD and liveness display alive
         // while paused)
-        if (probe::g_pause) {
+        // A seek in flight lifts the stop for as long as it takes to land, and the arrival puts
+        // it back (g_seekRepause). It has to: a seek gets where it is going by running the level,
+        // and with time frozen it never arrives -- a forward seek asked for while F2 was down
+        // used to hang the level behind its own blackout for good. The one that needs this is a
+        // backward frame-step, which physics cannot do in reverse and so must replay.
+        if (probe::g_pause && !itermap::seeking()) {
             if (probe::g_step > 0) {
                 GJBaseGameLayer::update(probe::g_step / 240.0f);
                 probe::g_step = 0;
@@ -504,7 +509,7 @@ class $modify(GJBaseGameLayer) {
         }
         // While paused: do not call update at all, freezing game time. If a step was
         // requested, advance by exactly that much
-        if (g_started && g_paused) {
+        if (g_started && g_paused && !itermap::seeking()) {   // ...and the same for this stop
             if (g_stepTicks > 0) {
                 ev("STEP_exec", g_stepTicks);
                 GJBaseGameLayer::update(g_stepTicks / 240.0f);
@@ -529,6 +534,96 @@ class $modify(GJBaseGameLayer) {
                 return;   // this frame ends here
             }
             g_realtimeOverride = true;
+        }
+        // A seek asked for by clicking the iteration map (itermap.hpp), when the target is
+        // BEHIND the player and the level has to run again. A frame-boundary job, like every
+        // other level change in this file -- resetLevel() from inside touch handling would be
+        // the mistake the stall guard's deferred reset exists to avoid.
+        if (itermap::g_seekRestart && g_started) {
+            itermap::g_seekRestart = false;
+            // The bar keeps working on the results screen, which is exactly when you want to go
+            // back and look at something. Reviving is the same three lines F7 uses, and for the
+            // same reason: the session ended with the level, not with the watching of it. Replays
+            // only -- in serve mode the session belongs to the driver.
+            if (itermap::g_seekRevive) {
+                itermap::g_seekRevive = false;
+                if (g_sessionOver && !g_serveMode) {
+                    g_sessionOver = false;
+                    g_finishedAttempts = 0;
+                    ++g_cfg.maxAttempts;
+                    writeResult("session_resume: the seek bar restarted the replay");
+                }
+            }
+            g_paused = false;
+            clearManualPause();
+            g_pauseAtXFired = false;
+            if (!g_sessionOver) {
+                if (auto* pl = PlayLayer::get()) {
+                    itermap::dismissEndScreen();   // or every clear stacks another one
+                    // Before the reset, not after: resetLevel starts the song from the top, and
+                    // audio::sync only gets to pause it on the NEXT frame -- which is the blip of
+                    // the track's first moment you hear on every rewind.
+                    audio::muteForSeek();
+                    pl->resetLevel();
+                    // ...and again on the OTHER side of it. The reset starts the song on a
+                    // channel it creates itself, so the group silenced a line ago is not the
+                    // group that is now playing (see hushNow).
+                    audio::hushNow();
+                    return;   // this frame ends here; the seek runs from the next one
+                }
+            }
+            itermap::endSeek("nothing to restart");
+        }
+        // ...and the arrival. The seek ends where it was asked to end, or on a death that got
+        // there first -- a plan that dies on the way is the answer to "what is at that point", so
+        // the seek hands the speed back and lets it be seen rather than racing past it.
+        if (itermap::seeking()) {
+            const float sx = m_player1 ? m_player1->getPositionX() : 0.f;
+            const bool sdead = !m_player1 || m_player1->m_isDead;
+            const bool over = g_sessionOver;
+            if (over) itermap::endSeek("the session ended");
+            else if (itermap::seekArrived(sdead, dt))
+                itermap::endSeek(sdead ? "died on the way" : "arrived");
+            // Landed: put back the stop the seek had to lift to get here (a frame-step
+            // backwards while paused is the case -- see g_seekRepause).
+            if (!itermap::seeking() && itermap::g_seekRepause) {
+                itermap::g_seekRepause = false;
+                probe::g_pause = true;
+                // A backward step aimed short on purpose; walk the last few ticks with the
+                // step mechanism, which is exact where a seek batch is not. The pause branch
+                // above consumes this on the next frame.
+                long long fin = 0;
+                if (itermap::g_seekStepTo >= 0)
+                    fin = itermap::g_seekStepTo - itermap::g_nowTick;
+                probe::g_step = (fin > 0 && fin < 240) ? (int)fin : 0;
+                // The whole arithmetic of a backward step, in one line, because from outside the
+                // process a step that lands in the wrong place and one that never ran look the
+                // same. Reported 2026-08-28: a step back of 10 moved the tick FORWARD by 40.
+                if (itermap::g_seekStepTo >= 0) {
+                    char sb[192];
+                    snprintf(sb, sizeof(sb),
+                             "itermap: [stepback] landed t=%lld, wanted t=%lld, finishing +%d",
+                             (long long)itermap::g_nowTick,
+                             (long long)itermap::g_seekStepTo, probe::g_step);
+                    writeResult(sb);
+                }
+                itermap::g_seekStepTo = -1;
+            }
+            // A rewind restarts the level, and GD's spawn effect is born behind the cover. Its
+            // animation is driven by cocos ACTIONS, which only advance on rendered frames, and a
+            // seek renders very few -- so the effect is still near its beginning when the cover
+            // lifts and plays out over the arrival.
+            //
+            // NOT purgeDanglingActions() here, whatever the render toggle does. Tried
+            // 2026-08-28: it takes the PLAYER's actions with everything else, and the player
+            // came back from a rewind invisible -- its spawn animation is an action like any
+            // other, and purging one mid-flight leaves the sprite wherever that action had got
+            // to. The toggle can afford it because it resets the level immediately afterwards;
+            // an arrival cannot.
+            //
+            // The circle waves are safe (they are effects that remove themselves on the
+            // scheduler, which is why the sweep exists) but do not appear to be what is seen.
+            if (!itermap::seeking() && g_fxSweep) sweepCircleWaves();
         }
         ev("BGL_update_pre", dt);
         // cfg `watchat`: at the given tick, cause the same state transition as F8 (return to
@@ -657,6 +752,30 @@ class $modify(GJBaseGameLayer) {
             // count
             int loops = (g_started && !g_sessionOver)
                             ? std::max(1, (int)g_watchSpeed) : 1;
+            // A seek (the seek bar, the arrows) rides this same loop rather than the notch,
+            // which stops at 16x. It only ever RAISES the count, so the arrows keep meaning what
+            // they meant and the level is back at the user's own speed the moment it ends. The
+            // count falls as the target approaches, so it decelerates into it.
+            //
+            // AND IT PINS dt. The note above is the whole reason: the fast side of the speed has
+            // to be more CALLS at the same dt, never a bigger dt, or processing tied to frame
+            // boundaries lands somewhere else. During a seek the frames are heavy by
+            // construction -- hundreds of batches each -- so the real dt inflates, and passing
+            // that through moved exactly the thing the note forbids moving. Measured on lv22: a
+            // rewind replayed the plan into a death it does not have at 1x. 1/60 is the value
+            // the solve's own verification replays use (cfg fastdt), where the plan reproduces
+            // exactly, and it also makes the seek's speed independent of slow motion for free.
+            const bool seekNow = g_started && !g_sessionOver && itermap::seeking();
+            const float stepDt = seekNow ? (1.f / 60.f) : dt;
+            if (g_started && !g_sessionOver)
+                loops = std::max(loops, itermap::seekLoops(stepDt));
+            // The game is STOPPED: run nothing. Normally the pause branch far above has already
+            // returned and this is unreachable -- but a seek that lands puts the stop back AFTER
+            // that branch has been passed, so the arrival frame would run its ordinary batch on
+            // top of a game that is supposed to be frozen. Measured: a backward frame-step landed
+            // exactly where it was asked to and the tick had crept 8 further on by the next
+            // keypress, which made a sequence of steps drift the wrong way.
+            if (g_paused || probe::g_pause) loops = 0;
             // Burning the end animation (a safety net). The end animation is a GD action =
             // driven by rendered frames, so running extra physics does not shorten real
             // time, only inflates ticks -- in realtime replay, correct behaviour is to not
@@ -693,7 +812,7 @@ class $modify(GJBaseGameLayer) {
                 // "keep running multiple times after the end"
                 if (i > 0 && g_sessionOver) break;
                 stallwatch::Mark gm(stallwatch::GD_UPDATE);
-                GJBaseGameLayer::update(dt);
+                GJBaseGameLayer::update(stepDt);   // pinned while seeking; see above
             }
         }
         // Post-session heartbeat. "Freezes after replay" cannot be told from a hang, so
@@ -3373,6 +3492,10 @@ class $modify(GJBaseGameLayer) {
         // repair loop resumes the search from.
         if (g_started && !g_sessionOver && g_cfg.dpSolve && m_player1)
             anchors::record(this, g_tick);
+        // ...and the seek bar's own, much smaller record: one x per tick, which is what turns
+        // "five seconds earlier" into a place on the bar. Not the anchors buffer, which is
+        // twenty-odd fields wide and only exists during a solve.
+        if (g_started && m_player1) itermap::trackX(g_tick, m_player1->getPositionX());
         // GD's max-gameplay-y bound (layer+0x36a8, updateMaxGameplayY), logged
         // on change. On dynamic-height levels the bound moves with the world,
         // and whether it does -- and when -- decides how --maxplayy has to be

@@ -10,6 +10,7 @@ Unlike a headless run, this one needs a window size and focus:
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -43,10 +44,16 @@ def kill_all_gd() -> None:
 def launch_visible(worker_id: int, cfg_lines: list[str],
                    resolution_index: int = 25, mod_file: Path = BUILD_MOD,
                    kill_others: bool = False, workers_root: Path = WORKERS_ROOT,
-                   foreground: bool = True) -> tuple[subprocess.Popen, Path]:
+                   foreground: bool = True,
+                   extra_files: list[Path] | None = None,
+                   ) -> tuple[subprocess.Popen, Path]:
     """Start one session with a visible window. Returns (process, data_root).
 
     cfg_lines is the body of autorun.cfg verbatim (`input=` lines may be mixed in).
+    extra_files are copied into the worker's data root under their own names,
+    before the process starts -- for the side files a session reads by name
+    (itermap_lv{N}.txt and the like). Copied here rather than by the caller
+    because the data root does not exist until _prepare has run.
     """
     if kill_others:
         kill_all_gd()
@@ -59,6 +66,9 @@ def launch_visible(worker_id: int, cfg_lines: list[str],
     for name in ("result.txt", "trace.csv", "dump.csv", "cmd.txt", "plan_in.txt"):
         (w.data / name).unlink(missing_ok=True)
     (w.data / "autorun.cfg").write_bytes(("\n".join(cfg_lines) + "\n").encode("ascii"))
+    for src in extra_files or ():
+        if Path(src).exists():
+            shutil.copyfile(src, w.data / Path(src).name)
 
     gdsave.ensure_windowed(worker_id)
     gdsave.set_resolution_index(worker_id, resolution_index)

@@ -76,10 +76,17 @@ plan and the model trace the next divergence is measured against.
 * `src/solver/*.hpp` — level-data export, moving-geometry recording
   (grouptrace), the clearance table, the raw player snapshot and the section
   solver (§3.1).
+* `src/mod/itermap.hpp` — what the repair loop's rounds cost, and where. Each
+  round's death, each fixup and each veto is recorded as the loop makes it,
+  filed as `itermap_lv<N>.txt` when the solve ends either way, and drawn back
+  over the level by `F10` (off by default). Recording only: nothing in the loop
+  reads it back. `py/itermap_from_log.py` rebuilds the same file from a run's
+  log, so runs made before it existed are readable too. How to read what it
+  draws: [ITERMAP.md](ITERMAP.md).
 * Protocol, per data root: `autorun.cfg` (session config and plan),
   `plan_in.txt` / `cmd.txt` (the next plan, live commands), `result.txt`
   (session results, one line per event), `dump.csv` (per-tick player state),
-  `grouptrace*.txt` (moving geometry).
+  `grouptrace*.txt` (moving geometry), `itermap_lv<N>.txt` (the iteration map).
 * `src/mod/dp_bridge.{hpp,cpp}` — the one translation unit that compiles the
   solver core inside the mod. It mentions neither Geode nor cocos; everything
   crosses the boundary as plain C++. `dpselftest=1` reports what the core made

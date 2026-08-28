@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="200" viewBox="0 0 880 200"
+     font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+  <title>The five marks the iteration map draws over a level</title>
+  <rect width="880" height="200" rx="8" fill="#111820"/>
+
+  <!-- 1. hot column -->
+  <g>
+    <rect x="20" y="20" width="152" height="104" rx="4" fill="#05080c"/>
+    <rect x="40"  y="20" width="26" height="104" fill="#ff4d40" opacity="0.09"/>
+    <rect x="88"  y="20" width="26" height="104" fill="#ff4d40" opacity="0.30"/>
+    <rect x="128" y="20" width="26" height="104" fill="#ff4d40" opacity="0.06"/>
+    <text x="101" y="46" text-anchor="middle" font-size="15" font-weight="700" fill="#4df273">7</text>
+    <text x="96" y="145" text-anchor="middle" font-size="13" font-weight="600" fill="#e7ebf1">column</text>
+    <text x="96" y="164" text-anchor="middle" font-size="11.5" fill="#8b95a3">rounds that died</text>
+    <text x="96" y="180" text-anchor="middle" font-size="11.5" fill="#8b95a3">in that block</text>
+  </g>
+
+  <!-- 2. death -->
+  <g>
+    <rect x="192" y="20" width="152" height="104" rx="4" fill="#05080c"/>
+    <line x1="268" y1="42" x2="268" y2="102" stroke="#4df273" stroke-width="2.4" opacity="0.45"/>
+    <circle cx="268" cy="72" r="7" fill="#4df273" opacity="0.92"/>
+    <text x="268" y="145" text-anchor="middle" font-size="13" font-weight="600" fill="#e7ebf1">death</text>
+    <text x="268" y="164" text-anchor="middle" font-size="11.5" fill="#8b95a3">where GD stopped</text>
+    <text x="268" y="180" text-anchor="middle" font-size="11.5" fill="#8b95a3">the replay</text>
+  </g>
+
+  <!-- 3. re-anchor -->
+  <g>
+    <rect x="364" y="20" width="152" height="104" rx="4" fill="#05080c"/>
+    <line x1="384" y1="72" x2="486" y2="72" stroke="#598fff" stroke-width="1.8" opacity="0.32"/>
+    <line x1="384" y1="56" x2="384" y2="88" stroke="#598fff" stroke-width="2.6" opacity="0.6"/>
+    <circle cx="486" cy="72" r="6" fill="#ff4d40" opacity="0.92"/>
+    <text x="440" y="145" text-anchor="middle" font-size="13" font-weight="600" fill="#e7ebf1">re-anchor</text>
+    <text x="440" y="164" text-anchor="middle" font-size="11.5" fill="#8b95a3">how far back the</text>
+    <text x="440" y="180" text-anchor="middle" font-size="11.5" fill="#8b95a3">ladder reached</text>
+  </g>
+
+  <!-- 4. fixup -->
+  <g>
+    <rect x="536" y="20" width="152" height="104" rx="4" fill="#05080c"/>
+    <circle cx="592" cy="72" r="6" fill="#ffcc33" opacity="0.9"/>
+    <circle cx="632" cy="72" r="6" fill="#ff59d9" opacity="0.92"/>
+    <text x="612" y="145" text-anchor="middle" font-size="13" font-weight="600" fill="#e7ebf1">fixup</text>
+    <text x="612" y="164" text-anchor="middle" font-size="11.5" fill="#8b95a3">where the MODEL</text>
+    <text x="612" y="180" text-anchor="middle" font-size="11.5" fill="#8b95a3">was wrong</text>
+  </g>
+
+  <!-- 5. veto -->
+  <g>
+    <rect x="708" y="20" width="152" height="104" rx="4" fill="#05080c"/>
+    <rect x="770" y="20" width="18" height="104" fill="#8c26a6" opacity="0.34"/>
+    <text x="784" y="145" text-anchor="middle" font-size="13" font-weight="600" fill="#e7ebf1">veto</text>
+    <text x="784" y="164" text-anchor="middle" font-size="11.5" fill="#8b95a3">ruled out as</text>
+    <text x="784" y="180" text-anchor="middle" font-size="11.5" fill="#8b95a3">a route at all</text>
+  </g>
+</svg>

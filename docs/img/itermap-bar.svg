@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="210" viewBox="0 0 880 210"
+     font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+  <title>The iteration histogram inside the seek bar</title>
+  <rect width="880" height="210" rx="8" fill="#111820"/>
+  <text x="24" y="30" font-size="11.5" font-weight="700" fill="#79838f" letter-spacing="1.6">
+    THE WHOLE LEVEL AT ONCE — LEFT EDGE THE START, RIGHT EDGE THE END
+  </text>
+
+  <!-- trough -->
+  <rect x="40" y="76" width="800" height="72" fill="#05080c"/>
+  <rect x="40" y="144" width="800" height="4" fill="#ffffff" opacity="0.22"/>
+
+  <!-- veto washes -->
+  <rect x="424" y="76" width="9" height="72" fill="#8c26a6" opacity="0.36"/>
+  <rect x="612" y="76" width="9" height="72" fill="#8c26a6" opacity="0.36"/>
+
+  <!-- bars -->
+  <g>
+    <rect x="104" y="130" width="8" height="14" fill="#4df273" opacity="0.88"/>
+    <rect x="160" y="122" width="8" height="22" fill="#4df273" opacity="0.88"/>
+    <rect x="216" y="114" width="8" height="30" fill="#59ccff" opacity="0.88"/>
+    <rect x="284" y="130" width="8" height="14" fill="#4df273" opacity="0.88"/>
+    <rect x="368" y="100" width="8" height="44" fill="#ff4d40" opacity="0.88"/>
+    <rect x="424" y="108" width="8" height="36" fill="#59ccff" opacity="0.88"/>
+    <rect x="504" y="130" width="8" height="14" fill="#4df273" opacity="0.88"/>
+    <rect x="612" y="84" width="8" height="60" fill="#ff4d40" opacity="0.88"/>
+    <rect x="684" y="122" width="8" height="22" fill="#b38cff" opacity="0.88"/>
+    <rect x="768" y="130" width="8" height="14" fill="#4df273" opacity="0.88"/>
+  </g>
+
+  <!-- fixup row along the top edge -->
+  <g fill="#ffcc33" opacity="0.92">
+    <rect x="148" y="76" width="5" height="8"/>
+    <rect x="212" y="76" width="5" height="8"/>
+    <rect x="364" y="76" width="5" height="8"/>
+    <rect x="374" y="76" width="5" height="8"/>
+    <rect x="418" y="76" width="5" height="8"/>
+    <rect x="606" y="76" width="5" height="8"/>
+    <rect x="616" y="76" width="5" height="8"/>
+    <rect x="626" y="76" width="5" height="8"/>
+  </g>
+  <rect x="432" y="76" width="5" height="8" fill="#ff59d9" opacity="0.92"/>
+
+  <!-- playhead -->
+  <rect x="322" y="70" width="4" height="84" fill="#ffffff" opacity="0.95"/>
+
+  <!-- annotations -->
+  <g font-size="11.5" fill="#79838f">
+    <line x1="324" y1="56" x2="324" y2="68" stroke="#79838f" stroke-width="1"/>
+    <text x="324" y="50" text-anchor="middle" fill="#c2cad4">playhead</text>
+
+    <line x1="612" y1="176" x2="612" y2="164" stroke="#79838f" stroke-width="1"/>
+    <text x="612" y="192" text-anchor="middle">height = rounds, against the worst block</text>
+
+    <line x1="180" y1="176" x2="180" y2="164" stroke="#79838f" stroke-width="1"/>
+    <text x="180" y="192" text-anchor="middle">colour = the kind that dominates it</text>
+
+    <line x1="620" y1="58" x2="620" y2="72" stroke="#79838f" stroke-width="1"/>
+    <text x="700" y="50" text-anchor="middle" fill="#c2cad4">fixups, on their own row</text>
+  </g>
+</svg>

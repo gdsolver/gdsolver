@@ -2,6 +2,14 @@
 
 Trap: PrintWindow on a minimised window returns a pure white bitmap. A worker meant to
 be captured must be launched non-minimised (minimized=False in worker._spawn).
+
+Trap: DPI. Measured 2026-08-28 on a 144-DPI (150%) display -- a worker window whose real
+client area is 2560x1440 reports 1706x960 to a DPI-unaware process, and PrintWindow then
+captures only the top-left 1706x960 of it. Every screenshot was silently cropped to two
+thirds of the window, and anything drawn in the bottom-right corner was invisible in the
+picture while being perfectly fine on screen. (The note in src/mod/hud.hpp about the right
+and bottom of getWinSize() not being reliably on screen came from this same instrument.)
+So: declare DPI awareness before touching any window API.
 """
 
 from __future__ import annotations
@@ -19,6 +27,30 @@ from .worker import processes_under
 
 # PW_RENDERFULLCONTENT. Without it, GL/DX surfaces come back pure black
 PW_RENDERFULLCONTENT = 2
+
+
+def _declare_dpi_aware() -> None:
+    """Ask for real pixels, newest API first. Failure is not fatal: without it every
+    measurement here is scaled by the display's DPI factor, which is wrong but not
+    broken, and on a 100% display there is no difference at all."""
+    # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Windows 10 1703+)
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(-4):
+            return
+    except Exception:  # noqa: BLE001 - older Windows has no such export
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # PER_MONITOR_DPI_AWARE
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_declare_dpi_aware()
 
 
 def windows_of_pid(pid: int) -> list[int]:

@@ -1,4 +1,4 @@
-// GameManager / FMODAudioEngine / AppDelegate / GameStatsManager hooks: achievement and stat blocking, music, focus.
+﻿// GameManager / FMODAudioEngine / AppDelegate / GameStatsManager hooks: achievement and stat blocking, music, focus.
 #include "mod/playlayer_helpers.hpp"
 
 using namespace p1;
@@ -92,13 +92,65 @@ class $modify(FMODAudioEngine) {
                         + " (screen=" + (renderingOn() ? "on" : "off")
                         + " fast=" + (fastModeActive() ? "1" : "0") + ")");
     }
+    // ...and the other half of the tally: what was ASKED FOR and refused.
+    //
+    // Reported 2026-08-28 -- a solve made a sound with the screen off, and the passed-tally above
+    // was empty, which says the sound did not come through any of these three. That is only
+    // actionable if the refused side is counted too: if GD is calling them and being refused, the
+    // sound has another way out of the engine; if it is not calling them at all, these hooks are
+    // not the ones that matter for it.
+    static void notedBlocked(const char* what, const gd::string& path) {
+        if (!solveSession() || g_dpShowSolution) return;
+        if (++g_soundBlockedWhileSolving <= 5)
+            writeResult(std::string("audio: ") + what + " REFUSED while solving: "
+                        + std::string(path.c_str()));
+    }
     void playMusic(gd::string path, bool shouldLoop, float fadeInTime, int channel) {
-        if (audio::silent()) return;
+        if (audio::silent()) { notedBlocked("music", path); return; }
+        // A seek restarts the level, and the restart starts the song from the top. Hold the call
+        // instead of making it; audio::sync plays it when the seek lands, seeked to where the
+        // game arrived. Muting or pausing after the fact is a frame too late -- that frame is the
+        // blip of the track's opening you hear on every rewind.
+        if (audio::effectsMuted()) {
+            audio::holdMusic(path, shouldLoop, fadeInTime, channel);
+            return;
+        }
         notedSound("music", path);
         FMODAudioEngine::playMusic(path, shouldLoop, fadeInTime, channel);
     }
+    // THE OTHER DOORS. Measured 2026-08-28: a whole lv21 solve with the screen off made a sound,
+    // and the three hooks below it counted two calls in total (both refused). So GD 2.2 does not
+    // reach the engine this way for most of what it plays -- it queues. These are the queued and
+    // async siblings of the same calls, gated identically. Refusing a call that starts a sound is
+    // the same contract the originals have, and outside a driven session both gates are false, so
+    // ordinary play is untouched.
+    void loadAndPlayMusic(gd::string path, unsigned int time, int musicID) {
+        if (audio::silent() || audio::effectsMuted()) { notedBlocked("loadAndPlayMusic", path); return; }
+        notedSound("loadAndPlayMusic", path);
+        FMODAudioEngine::loadAndPlayMusic(path, time, musicID);
+    }
+    void queueStartMusic(gd::string path, float pitch, float unk, float volume, bool loop,
+                         int start, int end, int fadeIn, int fadeOut, int musicID, bool p10,
+                         int channelID, bool noPrepare, bool dontReset) {
+        if (audio::silent() || audio::effectsMuted()) { notedBlocked("queueStartMusic", path); return; }
+        notedSound("queueStartMusic", path);
+        FMODAudioEngine::queueStartMusic(path, pitch, unk, volume, loop, start, end, fadeIn,
+                                         fadeOut, musicID, p10, channelID, noPrepare, dontReset);
+    }
+    int queuePlayEffect(gd::string path, float speed, float unk, float volume, float pitch,
+                        bool fft, bool reverb, int start, int end, int fadeIn, int fadeOut,
+                        bool loop, int effectID, bool override, int uniqueID, float minInterval,
+                        int group) {
+        if (audio::silent() || audio::effectsMuted()) { notedBlocked("queuePlayEffect", path); return 0; }
+        notedSound("queuePlayEffect", path);
+        return FMODAudioEngine::queuePlayEffect(path, speed, unk, volume, pitch, fft, reverb,
+                                                start, end, fadeIn, fadeOut, loop, effectID,
+                                                override, uniqueID, minInterval, group);
+    }
+    // (playEffectAsync is inline on Windows and cannot be hooked. It forwards into the queued
+    // path above, which is hooked, so nothing is lost by not having it.)
     int playEffect(gd::string path, float speed, float unknown, float volume) {
-        if (audio::silent()) return 0;
+        if (audio::silent() || audio::effectsMuted()) { notedBlocked("effect", path); return 0; }
         notedSound("effect", path);
         return FMODAudioEngine::playEffect(path, speed, unknown, volume);
     }
@@ -107,7 +159,10 @@ class $modify(FMODAudioEngine) {
                            int fadeIn, int fadeOut, bool loopEnabled, int effectID,
                            bool override, bool noPreload, int channelID, int uniqueID,
                            float minInterval, int sfxGroup) {
-        if (audio::silent()) return 0;
+        if (audio::silent() || audio::effectsMuted()) {
+            notedBlocked("effectAdv", path);
+            return 0;
+        }
         notedSound("effectAdv", path);
         return FMODAudioEngine::playEffectAdvanced(path, speed, unknown, volume, pitch, fft,
             reverb, startMillis, endMillis, fadeIn, fadeOut, loopEnabled, effectID,
@@ -140,6 +195,14 @@ class $modify(AppDelegate) {
             return;
         }
         AppDelegate::applicationWillResignActive();
+    }
+    // The mod holds the engine's volume at zero while it is driving quietly (audio::hushVolumes),
+    // and gives it back when the session ends. If the app goes away first -- a crash, an exit
+    // mid-solve -- it has to be given back here, or the player's next launch is silent for a
+    // reason nothing on screen explains.
+    void trySaveGame(bool p0) {
+        audio::restoreVolumes();
+        AppDelegate::trySaveGame(p0);
     }
 };
 

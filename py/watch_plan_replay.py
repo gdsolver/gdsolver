@@ -36,6 +36,11 @@ def main(argv=None) -> int:
                          "picture. 0 = do not freeze; without it GD's own retry "
                          "starts replaying with no input, which is confusing")
     ap.add_argument("--resolution-index", type=int, default=25)
+    ap.add_argument("--itermap", action="store_true",
+                    help="draw the iteration map over the level from the start "
+                         "(otherwise F10 toggles it). Needs "
+                         "data/itermap_lv{N}.txt -- build one from a run's log "
+                         "with py/itermap_from_log.py")
     ap.add_argument("--keep-others", action="store_true",
                     help="do not kill the other workers (when a solve or a "
                          "regression is running alongside)")
@@ -59,6 +64,21 @@ def main(argv=None) -> int:
             if last_x > a.pause_before:
                 pause_at = last_x - a.pause_before
 
+    # The map the F10 overlay reads. It is a side file the session opens by name, so it has to
+    # travel to the worker's data root with the plan; without it the overlay says there is
+    # nothing recorded for this level, which is true of that worker and misleading about the run.
+    # Carried whenever there is one, so F10 works during any replay; --itermap only decides
+    # whether it starts drawn.
+    extra: list[Path] = []
+    itermap_path = DATA / f"itermap_lv{a.level}.txt"
+    if itermap_path.exists():
+        extra.append(itermap_path)
+    elif a.itermap:
+        print(f"no iteration map: {itermap_path}\n"
+              f"  build one with: python py/itermap_from_log.py "
+              f"data/coldlog_lv{a.level}.txt")
+        return 1
+
     cfg = [
         "enabled=1", f"level={a.level}",
         "solve=0",          # replay, not search
@@ -70,14 +90,16 @@ def main(argv=None) -> int:
         "deathfx=0",        # see the note at the top
         "notrace=1", "cbs=0", "cos=1",
         f"pauseatx={pause_at}", f"slowmo={a.slowmo}",
-    ] + inputs
+    ] + (["itermap=1"] if a.itermap else []) + inputs
 
     note = f"  (pauses at x={int(pause_at)})" if pause_at > 0 else ""
-    print(f"lv{a.level}: {len(inputs)} inputs from {plan_path.name}{note}")
+    print(f"lv{a.level}: {len(inputs)} inputs from {plan_path.name}{note}"
+          + ("  + iteration map (F10)" if extra else ""))
 
     observe.launch_visible(a.worker_id, cfg, a.resolution_index, Path(a.mod),
                            kill_others=not a.keep_others,
-                           workers_root=Path(a.workers_root))
+                           workers_root=Path(a.workers_root),
+                           extra_files=extra)
     print(f"watching lv{a.level} at {a.slowmo}x-slow. Close the window when done.")
     return 0
 

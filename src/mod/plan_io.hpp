@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // Per-session state reset, plan_in.txt input loader, inject=/stopat= extras.
 #include "mod/speedgate.hpp"
 
@@ -14,6 +14,12 @@ inline void resetSessionState() {
     speedgate::reset();      // the level changes, so rebuild
     g_paused = false; g_stepTicks = 0; g_realtimeOverride = false;
     g_dpShowSolution = false;   // a finished solve must not make the next session start as one
+    // ...and neither must its SOLVING flag. It is raised when a search starts and lowered when
+    // that search returns; a session that ends in between (F9, leaving the level, a give-up that
+    // beat the worker home) left it raised, and solvingNow() then answered yes for the NEXT
+    // session. Measured 2026-08-28: after one Solve, a Replay had no music (audio::silent asks
+    // solvingNow) and a dead seek bar (it refuses to drive a level the loop owns).
+    g_dpSolving = false;
     watchSpeedSet(WATCH_SPEED_1X); g_visRefresh = false;
     g_pauseAtXFired = false;   // stop once again in the next session
     g_ckpt = nullptr; g_ckptTick = -1; g_headHeld = 0;
@@ -50,10 +56,21 @@ inline void resetSessionState() {
     solver::g_injThisAttempt = 0; solver::g_injAtDeath = 0;
     solver::g_restoreTickDbg = -1;
     solver::g_pois.clear(); solver::g_poisBuilt = false;
+    // The iteration map belongs to one level's run. Left behind, the next session's F10 would
+    // draw the PREVIOUS level's rounds over this one -- the same family of bug as the grouptrace
+    // and HUD leaks above, and just as convincing to look at.
+    itermap::clear();
+    // The KEY's state is deliberately not reset here. It starts off (the default of g_show) and
+    // is owned by F10 and cfg `itermap` alone -- resetting it as well would mean the cfg key
+    // worked for a worker-driven replay and silently did nothing for a panel-driven one, and
+    // that turning the map on and replaying (F7 does not come through here, level exit does)
+    // gave two different answers depending on how the level was re-entered.
     probe::reset(); g_probeRequest = 0;
     g_blockedAch = 0; g_blockedStat = 0; g_blockedCoin = 0; g_blockedProgress = 0;
     g_progressRestores = 0;
     g_soundWhileSolving = 0;
+    g_soundBlockedWhileSolving = 0;
+    g_silenceReasserts = 0;
     notify::g_forced = 0;
     if (g_trace.is_open()) g_trace.close();
     if (g_dump.is_open()) g_dump.close();

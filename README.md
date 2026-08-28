@@ -262,10 +262,55 @@ level. The keys are:
 | `F6` | hitboxes: off / on / **only** (the game's own debug drawing; "only" hides the artwork so nothing is left but the geometry the physics uses) |
 | `F7` | replay from the start — works after the replay has finished too |
 | `F9` | quit to the level screen |
-| `←` `→` | spectating speed, one notch (0.25x … 16x). Physics stays at 1/240 either way, so the trajectory and the tick numbers do not change |
+| `F10` | the iteration map: where the repair loop spent its rounds (below) |
+| `←` `→` | seek back / forward. A tap is five seconds; holding accelerates |
+| `↑` `↓` | spectating speed, one notch (0.25x … 16x). Physics stays at 1/240 either way, so the trajectory and the tick numbers do not change |
 
 There are no keys that let a player do what the game does not allow: no warp, no noclip, no forced
 mode, no infinite jump. The overlay is for watching a run, not for changing one.
+
+A **seek bar** sits in the bottom-right of every replay. Click or drag it to go somewhere; the
+level fast-forwards there (restarting first if you asked to go backwards, since a forced-scroll
+game has no reverse) and hands the speed back exactly where it found it. It works on the results
+screen too, which is when you most want it. `←` / `→` do the same thing in five-second steps.
+
+The level is blacked out while it fast-forwards, with a `▶▶▶` indicator: the picture is running at
+hundreds of physics steps a frame and is not worth looking at. Rendering is *not* switched off for
+this — resuming it is the path that restarts the level (and crashes on the way back), so the level
+is painted over instead.
+
+### The iteration map (`F10`, off by default)
+
+"Cleared in 62 rounds" says nothing about *where* the rounds went, and they are never spread
+evenly: a level is usually solved by the first plan for nine tenths of its length, and then the
+loop grinds against two or three walls. `F10` draws that distribution back onto the level — during
+a replay of the solution, or live while the solve is still running:
+
+* a **column** at every place a replay died, its opacity the share of the run's worst wall and the
+  round count printed above it;
+* the **death** itself, coloured by how the loop scored that round — green deeper (progress),
+  cyan followed, violet the forced portal route, red rewound (stuck), pink wedged;
+* a **fixup** in amber (magenta for a kill record) wherever the *model* was wrong. This is the
+  cause the deaths are the symptom of, and the two are often hundreds of pixels apart;
+* the **path each round flew** from its re-anchor to its death. Rounds share the verified prefix
+  by construction, so they are one line until the splice point and a fan after it — and the fan
+  is the wall;
+* the same histogram inside the seek bar, so the whole level's shape is readable at once.
+
+The data is the loop's own: it writes `itermap_lv<N>.txt` next to the solution when it clears, and
+also when it gives up — a run that did *not* clear is the one whose map is worth reading. Runs made
+before this existed can be recovered from their logs, which hold the same lines:
+
+```bash
+python py/itermap_from_log.py --all
+```
+
+```bash
+python py/watch_plan_replay.py --level 22 --itermap
+```
+
+What each mark means, and how to tell a wall the *model* gets wrong from a wall with no route
+through it, is in [docs/ITERMAP.md](docs/ITERMAP.md).
 
 A solve makes no sound while it is solving: it runs hundreds of attempts a minute with the physics
 tens of times faster than the song, so every note lands in the wrong place. The sound comes back

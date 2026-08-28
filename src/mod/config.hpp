@@ -490,6 +490,12 @@ inline long long g_deathFxSkipped = 0;  // times not created (so that "zero" is 
 // -- so "a solve made a sound" is not one question but two, and the number of calls and what they
 // were is the only way to tell a leak from that decision. Reported at session end.
 inline long long g_soundWhileSolving = 0;
+// ...and what was asked for and refused, which is the other half of the same question: a solve
+// that makes a sound with an EMPTY passed-tally is a sound that never went through the hooks at
+// all, and only the refused count can tell that apart from "the hooks are not being called".
+inline long long g_soundBlockedWhileSolving = 0;
+// Times the silence had to be imposed again on something already sounding (audio::sync).
+inline long long g_silenceReasserts = 0;
 // Reproduce retry (cfg `retryafter=<seconds>`). The retry button is really PlayLayer::resetLevel(),
 // so firing it after the session ends walks the same path in batch
 inline double g_retryAfterSec = 0.0;

@@ -13,16 +13,21 @@ using namespace p1;
 constexpr int HUD_TAG = 0x51D50;
 constexpr int KEYS_TAG = 0x51D52;
 constexpr int BADGE_TAG = 0x51D53;
+constexpr int ITERMAP_TAG = 0x51D54;
 
 // Every overlay is one column down the LEFT edge, laid out top to bottom in a single pass.
 //
-// It is not spread over the corners because the right and bottom of getWinSize() are not
-// reliably on screen: measured 2026-08-23 in a 1706x960 worker window, getWinSize() reports
-// 569x320 with the scene at scale 1 and position (0,0), yet a label at design y=10 does not
-// appear at all and one anchored to design x=559 is clipped at the right edge (its glyphs run
-// off screen). Whatever the cause -- the framebuffer is 2276x1280, four times the design size
-// rather than three -- the top-left corner is the one region that is always visible, so
-// everything hangs off it and the column grows downwards by each label's own height.
+// [2026-08-23] It used to say here that the right and bottom of getWinSize() are not reliably on
+// screen: measured in a "1706x960 worker window", a label at design y=10 did not appear at all
+// and one at design x=559 was clipped. [2026-08-28] THAT WAS THE INSTRUMENT. The display is at
+// 144 DPI, GD is DPI-aware and the capture tool was not, so the window's real client area is
+// 2560x1440 and every screenshot was cropped to the top-left 1706x960 of it. The labels were on
+// screen; they were outside the picture. Asking Windows the same question with and without DPI
+// awareness settles it, and py/gdtas/window.py now declares awareness.
+//
+// The column stays at the top-left, which is a good place for it and where everything already
+// expects to find it -- but a corner is now a corner (the iteration map's strip uses the
+// bottom-right), and nothing here should be justified by that retracted measurement again.
 struct OverlayCursor { float y; };
 
 // Fetch or create one overlay label. `y` is advanced past it, so the next one lands below.
@@ -104,10 +109,16 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
         "F6   hitboxes: off / on / only\n"
         "F7   replay from the start\n"
         "F9   quit to the level screen\n"
-        "left / right   speed down / up",
+        "F10  iteration map: %s\n"
+        "left / right   %s\n"
+        "up / down   speed up / down   -   or drag the bar",
         spd, (g_paused || probe::g_pause) ? "  [PAUSED]" : "", renderPart,
         showingSolve() ? "  (disabled while solving)" : "",
-        renderLine);
+        renderLine, itermap::g_showMap ? "on" : "off",
+        // The arrows change job with the stop: seeking needs time to flow, so while it is frozen
+        // they are frame-step keys instead. Saying which they are right now costs one word.
+        (g_paused || probe::g_pause) ? "step back / forward (10 substeps)"
+                                     : "seek back / forward (hold to accelerate)");
     lbl->setString(buf);
 }
 
@@ -132,24 +143,58 @@ inline void fillBotBadge(cocos2d::CCLabelBMFont* lbl) {
     }
 }
 
+// ---- The progress bars ----
+// The bars are spelled out in text inside the HUD label, and chatFont (Aller) is PROPORTIONAL, so
+// the two glyphs must have the same advance or the bar grows sideways as it fills -- which also
+// makes it lie: '#' is 12 units against '.' at 4, so a half-full 20-cell bar covered three
+// quarters of its own width, and everything printed after it slid right as the run progressed.
+//
+// [2026-08-28] Measured over Resources/chatFont.fnt and its -hd / -uhd variants (the game picks
+// one by texture quality, so a pair has to match in all three). Characters whose advance is equal
+// at every resolution fall into a handful of groups; exactly one of them holds both an inked and
+// an empty glyph: ' ' '.' ':' ';' at 4 / 8 / 16 units. Every heavier glyph -- '#' at 12/24/32
+// included -- has a width nothing light shares. So the fill is ';' on a '.' track: the densest of
+// that group against the lightest. A cell is 4 units now instead of 12, so the count is doubled to
+// keep the band a band -- 40 cells hold at 160 units, between the old bar's 80 empty and 240 full,
+// which is to say no line here got longer than it already was.
+//
+// The numbers after the bar still shift a little -- '1' is 10 units against a pad space's 4, and
+// the detail text changes width on its own -- but that is the tail of the line moving, not a box
+// that grows while it fills.
+//
+// GD does ship a true monospace (gjFont52, "Public Pixel", advance == size for all of ASCII at
+// every resolution), but at equal glyph height its lines run ~20% wider, and the widest line here
+// is already 430 of the 569 design px across. Not worth redrawing the whole overlay for a bar.
+constexpr char BAR_FILL = ';';
+constexpr char BAR_TRACK = '.';
+constexpr int BAR_CELLS = 40;
+
+// The fraction a bar shows, clamped to [0,1]: the spans here are estimates (a search may stop
+// early, a replay may run past the last object), and a bar drawn wider than its own box reads as
+// a bug in the thing being measured.
+inline double barFraction(double done, double total) {
+    if (!(total > 0.0)) return 0.0;
+    const double f = done / total;
+    return (f < 0.0) ? 0.0 : (f > 1.0 ? 1.0 : f);
+}
+
+// Spell one bar's cells into `out`, which needs BAR_CELLS + 1 bytes. `f` is already clamped.
+inline void barCells(char* out, double f) {
+    const int fill = (int)(f * BAR_CELLS + 0.5);
+    for (int i = 0; i < BAR_CELLS; ++i) out[i] = (i < fill) ? BAR_FILL : BAR_TRACK;
+    out[BAR_CELLS] = 0;
+}
+
 // What the solver is doing. Solve sessions only: a replay has nothing to report that the badge
 // and the key line do not already say.
-// One "label [####............]  41%   detail" line, newline-terminated. Returns how much was
+// One "label [;;;;;;......]  41%   detail" line, newline-terminated. Returns how much was
 // written so the caller can keep appending into the same buffer.
-//
-// The fraction is clamped to [0,1]: the spans here are estimates (a search may stop early, a
-// replay may run past the last object), and a bar drawn wider than its own box reads as a bug in
-// the thing being measured.
 inline int barLine(char* out, size_t cap, const char* label,
                    double done, double total, const char* detail) {
     if (cap == 0) return 0;
-    double f = (total > 0.0) ? done / total : 0.0;
-    if (f < 0.0) f = 0.0;
-    if (f > 1.0) f = 1.0;
-    char bar[24];
-    const int fill = (int)(f * 20.0 + 0.5);
-    for (int i = 0; i < 20; ++i) bar[i] = (i < fill) ? '#' : '.';
-    bar[20] = 0;
+    const double f = barFraction(done, total);
+    char bar[BAR_CELLS + 1];
+    barCells(bar, f);
     const int n = snprintf(out, cap, "%s [%s] %5.1f%%   %s\n", label, bar, f * 100.0, detail);
     if (n < 0) return 0;
     return (n < (int)cap) ? n : (int)cap - 1;
@@ -220,11 +265,9 @@ inline void fillSessionHud(cocos2d::CCLabelBMFont* hud) {
     const double nowPct = (len > 1.f) ? (px / len * 100.0) : 0.0;
     const double vPct = (len > 1.f && g_hudVerifiedX > 0)
                       ? (g_hudVerifiedX / len * 100.0) : 0.0;
-    // Bar of the verified prefix (20 characters)
-    char bar[24];
-    const int fill = (int)(vPct / 5.0 + 0.5);
-    for (int i = 0; i < 20; ++i) bar[i] = (i < fill) ? '#' : '.';
-    bar[20] = 0;
+    // Bar of the verified prefix
+    char bar[BAR_CELLS + 1];
+    barCells(bar, barFraction(vPct, 100.0));
     char buf[512];
     snprintf(buf, sizeof(buf),
         "iter %d   %s\n"
@@ -268,4 +311,9 @@ inline void updateOverlays(cocos2d::CCNode* gameLayer) {
     //    reads as "the mod is running something", which is exactly the wrong impression
     fillKeysHud(overlayLabel(parent, KEYS_TAG, "chatFont.fnt", 0.5f,
                              show && botDriving(), cur));
+    // 4. the iteration map (F10). It owns its own corner rather than joining this column: the
+    //    strip is a timeline of the whole level and the column reaches the middle of the screen,
+    //    where a timeline sits on top of the thing it is a timeline OF. It takes no part in the
+    //    cursor above, so turning it on cannot move any of the lines already there.
+    itermap::draw(parent, PlayLayer::get());
 }

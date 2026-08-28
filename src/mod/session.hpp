@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // Session lifecycle: configuration from the UI, live commands, loadConfig, endSession.
 #include "mod/plan_io.hpp"
 
@@ -242,6 +242,10 @@ inline void loadConfig() {
         else if (key == "endpurge") g_endPurge = (val == "1");
         else if (key == "endburn") g_endzoneBurnOn = (val == "1");
         else if (key == "syncprobe") g_syncProbe = (val == "1");
+        // Start with the iteration map already drawn (the F10 key's state). For filming and for
+        // the replay-watching tools, which cannot press a key. The seek bar under it is always
+        // there and has no key of its own.
+        else if (key == "itermap") itermap::g_showMap = (val == "1");
         else if (key == "trigtrace") g_trigTrace = (val == "1");
         // Observation of moving gates: gatetrace=x0,x1 is the target x window, gatetick=t0,t1
         // the recording tick window
@@ -482,6 +486,7 @@ inline void endSession(const std::string& why) {
     // the showing began; `notifyForced` counts the notifications the mod had to re-arm or take
     // off the screen itself (the purge, see notify.hpp).
     writeResult("audio: soundWhileSolving=" + std::to_string(g_soundWhileSolving)
+        + " blocked=" + std::to_string(g_soundBlockedWhileSolving) + " reasserts=" + std::to_string(g_silenceReasserts)
         + " notifyForced=" + std::to_string(notify::g_forced));
     // NOT notify::clear() here. giveUp() raises its "could not solve, stopped at N%" and then
     // ends the session, and the level is deliberately left standing so the operator can see

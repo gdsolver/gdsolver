@@ -182,6 +182,7 @@ class $modify(PlayLayer) {
             g_tick = 0;
             g_gameFrame = 0;   // rotation does not carry across attempts
             anchors::onAttemptStart();   // the re-anchor record is per attempt
+            itermap::onAttemptStart();   // ...and so is the seek bar's tick -> x record
             solver::g_coinPickupTick.assign(solver::g_coins.size(), -1);
             g_attemptStart = std::chrono::steady_clock::now();
             // The moving-geometry recording is rewritten every attempt (leaving the previous
@@ -336,6 +337,14 @@ class $modify(PlayLayer) {
                 object ? object->getPositionX() : 0.f,
                 object ? object->getPositionY() : 0.f);
             writeResult(kb);
+            // The same verdict, latched for the iteration map (itermap.hpp). GD holds the killer
+            // in an argument at this instant and nowhere afterwards, and the recorder's last row
+            // is a tick short of the death -- so this is the only place the mark's y and the
+            // object that put it there can both be had.
+            if (player == m_player1)
+                itermap::latchKiller((long long)g_tick, player->getPositionY(),
+                                     object ? (int)object->m_objectID : -1,
+                                     object ? (int)object->m_uniqueID : -1);
         }
         if (secsolve::g_active && secsolve::g_killLog && player == m_player1) {
             char kb[220];
@@ -608,6 +617,14 @@ class $modify(PlayLayer) {
                     writeResult(std::string("dpsolve: solution saved -> ") + name);
                     notify::show("gdsolver: solution saved", NotificationIcon::Success, 3.f);
                 }
+                // ...and next to it, the map of where the rounds went (itermap.hpp), so the
+                // showing that follows -- and every later replay of this solution -- can draw
+                // the run's own history over the level. Written on the clear, alongside the
+                // solution, for the same reason: this is the moment both are true.
+                // "itermap saved", never "iteration ...": see the note at the giveUp() copy.
+                if (itermap::save(g_cfg.levelId, true))
+                    writeResult("dpsolve: itermap saved -> "
+                                + itermap::pathFor(g_cfg.levelId));
             }
             // The first clear of a solve session ends the SOLVING, not the session: the run that
             // proved the plan was one of the loop's own verification replays, which are drawn

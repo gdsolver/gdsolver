@@ -36,6 +36,10 @@ inline void endSession(const std::string& why);
 // Release the manual (F2) pause. Defined further down the chain -- probe:: is not visible from
 // here, and the keys have to be handled in this header
 inline void clearManualPause();
+// ...and whether it is on, and whether a step is still owed. All defined in helpers_game.hpp,
+// where probe:: is visible.
+inline bool manualPaused();
+inline bool manualStepPending();
 
 // Accept hotkeys only while the GD window is in the foreground. GetAsyncKeyState returns the
 // physical key state regardless of focus = a key in another app would kill the session.
@@ -113,6 +117,24 @@ inline void pollProbeHotkeys() {
     bool f6 = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
     if (f6 && !s_f6Down) g_probeRequest = 6;
     s_f6Down = f6;
+    // F10: the iteration map (itermap.hpp). OFF by default -- it draws over the level, and the
+    // point of a replay is the replay. It reads a file and a draw node and touches nothing the
+    // physics can see, so unlike F1 it is not refused while solving; there is simply nothing to
+    // look at until the run has produced some rounds.
+    //
+    // The level is taken from the session when there is one and from the game otherwise, so the
+    // key also works while watching a level in plain manual play.
+    static bool s_f10Down = false;
+    bool f10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+    if (f10 && !s_f10Down) {
+        int lv = g_cfg.levelId;
+        if (lv <= 0)
+            if (auto* pl = PlayLayer::get())
+                if (pl->m_level) lv = pl->m_level->m_levelID.value();
+        itermap::toggle(lv);
+        log::info("hotkey: F10 -> iteration map {}", itermap::g_showMap ? "on" : "off");
+    }
+    s_f10Down = f10;
 #endif
 }
 
@@ -209,28 +231,86 @@ inline void pollHotkeys() {
             g_pauseAtXFired = false;   // stop short of the wall again on the next lap
             g_paused = false;          // release it so it does not start out stuck paused
             clearManualPause();        // ...and F2's, so the replay does not start frozen
+            // GD leaves its end-of-level screen parented across resetLevel, so replaying a level
+            // you have cleared stacks another one on every clear (see dismissEndScreen).
+            itermap::dismissEndScreen();
             log::info("hotkey: F7 -> replay from the start");
             pl->resetLevel();
         }
     }
     s_f7Down = f7;
-    // Left / right step the spectating speed one notch (0.25 / 0.5 / 1 / 2 / 4 / 8 / 16).
-    // Right = faster, left = slower. The ends just saturate; no wrap-around.
-    // Up and down are deliberately NOT bound: up is a jump in GD, and a spectator key that also
-    // jumps is a trap. The speed no longer touches the rendering either (F8 owns that), so it
-    // can be changed while the screen is off -- the overlay still shows the current value,
-    // because it hangs off the scene rather than the game layer.
-    static bool s_rightDown = false, s_leftDown = false;
-    bool kRight = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
-    bool kLeft  = (GetAsyncKeyState(VK_LEFT)  & 0x8000) != 0;
+    // [2026-08-28, user direction] The arrows were remapped once the seek bar existed. They are
+    // now the transport a person actually reaches for while watching a replay:
+    //
+    //   left / right   seek back / forward. A tap is five seconds; holding accelerates.
+    //   up / down      the spectating speed, one notch (0.25 ... 16x).
+    //
+    // Up and down used to be deliberately unbound on the grounds that up is a jump in GD and a
+    // spectator key that also jumps is a trap. That reasoning does not reach here: this whole
+    // function only runs while the mod is DRIVING, where the plan owns the input and a keypress
+    // cannot jump. (pollProbeHotkeys, the one that also works in plain manual play, binds
+    // neither.)
+    static bool s_upDown = false, s_downDown = false;
+    const bool kUp   = (GetAsyncKeyState(VK_UP)   & 0x8000) != 0;
+    const bool kDown = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
     int step = 0;
-    if (kRight && !s_rightDown) step = +1;
-    if (kLeft && !s_leftDown) step = -1;
-    s_rightDown = kRight; s_leftDown = kLeft;
+    if (kUp && !s_upDown) step = +1;
+    if (kDown && !s_downDown) step = -1;
+    s_upDown = kUp; s_downDown = kDown;
     if (step != 0) {
         watchSpeedStep(step);
         log::info("hotkey: {} -> {:g}x", step > 0 ? "faster" : "slower", g_watchSpeed);
     }
+    // Seeking -- or STEPPING, while the game is stopped.
+    //
+    // A seek needs the game to run: it fast-forwards to the target and stops when it arrives.
+    // While F2 has time frozen nothing arrives, so a forward seek issued there hung the level
+    // behind its own blackout forever. Stopped, the arrows are frame-step keys instead:
+    //
+    //   right   exactly F4 -- ten substeps, same request, same timing
+    //   left    ten substeps BACKWARDS, which physics cannot do, so it is a seek to
+    //           tick-10 that puts the stop back when it lands (g_seekRepause)
+    //
+    // The step is refused while such a seek is still running, or a held key would keep moving
+    // the target the in-flight one is chasing.
+    auto transportKey = [](int vk, int dir, bool& down, int& repeats,
+                           std::chrono::steady_clock::time_point& since,
+                           std::chrono::steady_clock::time_point& last) {
+        const bool stopped = g_paused || manualPaused();
+        // Stopped: F3/F4's timing exactly, because that is the key this becomes.
+        const auto repeatAfter = std::chrono::milliseconds(stopped ? 500 : 400);
+        const auto repeatEvery = std::chrono::milliseconds(stopped ? 100 : 140);
+        const bool now = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        const auto t = std::chrono::steady_clock::now();
+        const bool press = now && !down;
+        const bool repeat = now && !press && t - since >= repeatAfter
+                            && t - last >= repeatEvery;
+        down = now;
+        if (!press && !repeat) return;
+        if (press) { repeats = 0; since = t; }
+        last = t;
+        if (stopped) {
+            // ONE STEP AT A TIME, and a step is not over until the tick it owes has been walked.
+            // A backward step aims short of its target and finishes with probe::g_step; a repeat
+            // arriving in that gap sees a tick the run is not going to stay at, computes its own
+            // target from it, and overwrites the finishing step -- two half-moves compounding
+            // into a jump in the wrong direction.
+            if (itermap::seeking() || manualStepPending()) return;
+            if (dir > 0) g_probeRequest = 4;   // ...which IS F4
+            else         itermap::stepBack(10);
+            return;
+        }
+        // A BACKWARD repeat waits for the restart it already asked for. Rewinding runs the level
+        // again from the top, and re-asking before that has even begun throws the work away and
+        // starts over -- so a held key made no progress at all.
+        if (dir < 0 && itermap::g_seekRestart) return;
+        itermap::seekBy(dir * itermap::seekStep(press ? 0 : ++repeats));
+    };
+    static bool s_rightDown = false, s_leftDown = false;
+    static int s_rightRep = 0, s_leftRep = 0;
+    static std::chrono::steady_clock::time_point s_rSince, s_rLast, s_lSince, s_lLast;
+    transportKey(VK_RIGHT, +1, s_rightDown, s_rightRep, s_rSince, s_rLast);
+    transportKey(VK_LEFT,  -1, s_leftDown,  s_leftRep,  s_lSince, s_lLast);
 #endif
 }
 
