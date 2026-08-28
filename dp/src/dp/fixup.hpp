@@ -190,6 +190,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     c.grounded2 = cb.grounded2; c.flip2 = cb.flip2;
     c.ringHold2 = cb.ringHold2; c.onSlope2 = cb.onSlope2;
     c.slopeT2 = cb.slopeT2;
+    c.slopeUid02 = cb.slopeUid02;  c.slopeUidNow2 = cb.slopeUidNow2;
     c.snapObj2 = cb.snapObj2;   c.usedOrb2 = cb.usedOrb2;
     for (int i = 0; i < 4; ++i) c.usedPad2[i] = cb.usedPad2[i];
     // Dual mode portal: GD re-MIRRORS the pair. playerWillSwitchMode

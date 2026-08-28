@@ -211,6 +211,10 @@ struct State {
     // whole cold run is 207,761 dual ticks with p2vsize == vsize throughout --
     // so this costs it nothing and is not measurable on it either.
     uint8_t mini2 = 0;
+    // The second body's own slopeUid0 / slopeUidNow (see those two). Same reason as mode2 and
+    // mini2: each half rides its own ramp, and the pair's ramps are mirror images that never
+    // share a uid.
+    int32_t slopeUid02 = -1, slopeUidNow2 = -1;
     const Obj* snapObj2;
     const Obj* usedOrb2;
     const Obj* usedPad2[4];

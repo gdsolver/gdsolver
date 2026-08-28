@@ -6327,8 +6327,32 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // Gated on slopeT > 0 as well as grounded, so that acquiring a ramp from flat
         // ground still starts at 0 -- the contact tick is not a seam.
         const bool rampSeam = (s.grounded != 0 && s.slopeT > 0);
+        // ...and the seam does not require the player to have stayed GROUNDED. A TAP breaks a
+        // ride the same way a chain's joint does -- the ball flips, onSlope drops for one tick,
+        // and the SAME ramp is re-acquired on the next -- but it is airborne throughout, so
+        // rampSeam is false and the count restarts from nothing.
+        //
+        // Two conditions, and both are needed. A live count is at most one tick old (the
+        // off-slope branch keeps slopeT only while grounded, so the second airborne tick clears
+        // it), AND the ramp has to be the one already being ridden: carrying on the age alone
+        // also carries across a real launch that happens to land on a ramp a tick later, where
+        // GD does restart the clock -- measured, and it cost lv16 66 -> 201 (stuck) and lv22
+        // 50 -> 94 before this uid test was added.
+        //
+        // Measured on lv16's second dual, the corpus' largest grind (11 of 66 cold iterations at
+        // t=13,017). p2 rides uid6532 from t=12,972; the plan taps at t=12,988:
+        //   t=12,987  onSlope 1  slopeT 15  grounded 1
+        //   t=12,988  onSlope 0  slopeT 15  grounded 0   (kept: s.grounded was still 1)
+        //   t=12,989  onSlope 1  slopeT **0**            (s.grounded is 0 now, so it resets)
+        //   t=12,992  exit at factor 3/24 -> vy2 2.762, where GD has 5.467
+        // The same ramp ridden WITHOUT the tap (the solution's own replay) exits at 5.755 off a
+        // 20-tick ride, and 5.755 x 19/20 = 5.4673 = GD's value to four decimals. Carrying the
+        // count gives 5.466925, so this PREDICTS GD's number rather than being fitted to it.
+        const bool sameRide = (s.slopeT > 0 && c.slopeUid0 >= 0
+                               && c.slopeUid0 == s.slopeUid0);
         c.slopeT = c.onSlope
-            ? (uint8_t)((s.onSlope || rampSeam) ? std::min<int>(24, (int)s.slopeT + 1) : 0)
+            ? (uint8_t)((s.onSlope || rampSeam || sameRide)
+                            ? std::min<int>(24, (int)s.slopeT + 1) : 0)
             : (uint8_t)(rampSeam ? s.slopeT : 0);
         (void)0;
     }
@@ -8763,6 +8787,13 @@ inline void swapHalves(State& s) {
     std::swap(s.slopeT, s.slopeT2);
     std::swap(s.mode, s.mode2);
     std::swap(s.mini, s.mini2);
+    // ...and WHICH RAMP each half is riding. slopeUid0/slopeUidNow were left behind, so the
+    // second body's step read the FIRST body's ramp uid -- which decides the seam hand-over
+    // clamp (rTopIsSeam ... sp->uid != s.slopeUid0) and whether a re-acquisition counts as the
+    // same ride. Two halves on mirrored ramps never share a uid, so the comparison was answering
+    // about the wrong body every time.
+    std::swap(s.slopeUid0, s.slopeUid02);
+    std::swap(s.slopeUidNow, s.slopeUidNow2);
     std::swap(s.ceilT, s.ceilT2);
     std::swap(s.ceilM4, s.ceilM42);
     std::swap(s.snapObj, s.snapObj2);
