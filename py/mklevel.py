@@ -1347,6 +1347,81 @@ def build_sawcal_mode(mode: str, mini: bool = False) -> str:
     return ";".join(parts) + ";"
 
 
+# ---- The same rig, with the saws GROUP-MOVED (2026-08-28) ------------------
+# WHY. hazardHit (object.hpp) sends a moving circle down branch A (circle vs
+# circle) and a static one down branch B (the player rect plus corner discs).
+# The gate rests on ONE reading -- lv22 uid710, spider vs a group-moved saw --
+# and lv21 contradicts it: 12 injection probes there (mini ship vs a rotated
+# r=4 blade, full cube vs a moved r=24) ALL land on branch B, with A wrong in
+# both directions. The disassembly says the branch is chosen by
+# [[layer+0xdb0]+0x1cf] (0x211df0 @0x211e15), which is read off the LAYER and so
+# cannot be a per-object property at all.
+#
+# Re-reading it in a real level failed: lv22's own circles sit in decorated
+# columns and gd_death_context names four overlapping objects at once, exactly
+# the pollution this rig family exists to avoid. So: the sawcal stations, with
+# the saws group-moved, which reproduces lv21's condition in clean air and
+# covers all 8 modes at once.
+#
+# THE LEVEL-STRING KEYS BELOW ARE NOT MEASURED. mklevel has never emitted a
+# trigger, so 57 (group list), 51 (target group), 10 (duration), 28/29 (move
+# x/y) and their units are taken from the community spec and MUST be closed by
+# generating this rig, loading it, and reading the MOD's own trigger dump back
+# (target / dur / ox / oy). The move offset's unit in particular is unverified,
+# which is why the probe reads the saw's position out of grouptrace rather than
+# predicting it.
+TRIG_MOVE = 901
+K_GROUPS, K_TARGET, K_DURATION, K_MOVE_X, K_MOVE_Y = 57, 51, 10, 28, 29
+K_EASING, K_EASING_RATE = 30, 85
+SAW_GROUP = 1
+
+# One extra pair over the static rig: id 1582/1583 are lv21's r=4 blades, the
+# objects the contradiction was measured on, and a small radius is the only way
+# to separate the branches for the SPIDER (its rect half 13.5 exceeds r=4, so
+# B's corner test cannot fire and B collapses to the bare rect -- a 4 px gap
+# against A's 17.5).
+SAWCAL_STATIONS = [(1734, 2000, 0.0), (1735, 3000, 0.0), (1734, 4000, 0.5),
+                   (88, 5000, 0.0), (918, 6000, 0.0), (1582, 7000, 0.0),
+                   (1583, 8000, 0.0)]
+
+
+def build_sawcal_moved(mode: str, mini: bool = False) -> str:
+    """sawcal with every saw carried by an autonomous Move trigger.
+
+    The move is slow and vertical (the stations keep their x, so a dx=0 column
+    -- where the two branches differ most -- is still reachable by injecting y
+    alone), and long enough that the saws are STILL ANIMATING across the whole
+    probe window rather than parked at the end of their travel.
+    """
+    parts = [header(start_mode=mode, mini=mini)]
+    parts += floor_run(0, 9000, y=GROUND_Y)
+    for k in range(12):
+        parts.append(obj(BLOCK, 230, 105 + GRID * k))
+    for oid, x, scale in SAWCAL_STATIONS:
+        extra = {K_GROUPS: str(SAW_GROUP)}
+        parts.append(obj(oid, x, 300, scale=scale, extra=extra))
+    # x=45, NOT past the wall at 230. Probes reach a station by injecting x, and
+    # the trigger has to have fired BEFORE that: the natural attempt dies on the
+    # wall at x=211, so anything placed beyond it never fires at all (measured --
+    # the first cut put this at 500 and the dump came back with the trigger read
+    # correctly and the saws never moving). At 1x the player crosses x=45 around
+    # t=35, well before any probe tick.
+    #
+    # 10 s of travel keeps the saws ANIMATING across every probe tick rather than
+    # parked at the end. The displacement at any tick is small but not zero, so
+    # the probe reads the saw's position out of grouptrace instead of predicting
+    # it -- which also sidesteps the unverified unit of the move offset.
+    parts.append(obj(TRIG_MOVE, 45, 300, extra={
+        K_TARGET: str(SAW_GROUP),
+        K_DURATION: "10",
+        K_MOVE_X: "0",
+        K_MOVE_Y: "120",
+        K_EASING: "0",
+        K_EASING_RATE: "2",
+    }))
+    return ";".join(parts) + ";"
+
+
 def build_minhdr() -> str:
     """For triage: minimal header + floor. Which header key is causing trouble."""
     h = "kA2,0,kA3,0,kA4,0,kA6,1,kA7,1,kA8,0,kA10,0,kA13,0"
@@ -2518,6 +2593,16 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcal_wave_mini": lambda: build_sawcal_mode("wave", True),
             "sawcal_ship_mini": lambda: build_sawcal_mode("ship", True),
             "sawcal_cube_mini": lambda: build_sawcal_mode("cube", True),
+            "sawcalmv_wave": lambda: build_sawcal_moved("wave"),
+            "sawcalmv_ship": lambda: build_sawcal_moved("ship"),
+            "sawcalmv_ball": lambda: build_sawcal_moved("ball"),
+            "sawcalmv_cube": lambda: build_sawcal_moved("cube"),
+            "sawcalmv_robot": lambda: build_sawcal_moved("robot"),
+            "sawcalmv_ufo": lambda: build_sawcal_moved("ufo"),
+            "sawcalmv_swing": lambda: build_sawcal_moved("swing"),
+            "sawcalmv_spider": lambda: build_sawcal_moved("spider"),
+            "sawcalmv_ship_mini": lambda: build_sawcal_moved("ship", True),
+            "sawcalmv_cube_mini": lambda: build_sawcal_moved("cube", True),
             "ceilrel": build_ceilrel, "ceilrel11": build_ceilrel11,
             "ceilrel07": build_ceilrel07, "seam": build_seam,
             "seam07": build_seam07, "seam11": build_seam11,
