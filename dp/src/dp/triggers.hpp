@@ -497,11 +497,33 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
     // rotate-only 16.7x, move-only 1.63x, static 0.45x. Small n on the first
     // (13 hazards, 37 deaths), so read the ORDER, not the ratio.
     //
-    // Fixing it means splitting the recording: subtract the move's closed form to
-    // get the rotation-only path, re-time the two separately, add them back. That
-    // needs no rotation degrees and no centre. NOT DONE -- it rewrites the hot
-    // placement path, and "a wrong retiming is worse than the recording as-is"
-    // still holds. GDSOLVER_LAB/notes/measure-rotate-1346-2026-08-28.md.
+    // A ROTATION IS A CLOSED FORM TOO -- measured the same day, so the recording
+    // is not needed for either half:
+    //
+    //   pos(t) = C(t) + Rot(theta(t - t0)) * (entry - C(0))
+    //   theta  = degrees * gdEase(ease, erate, (t - t0) / (dur * 240))
+    //   t0     = the player's crossing of the trigger + 1        (106/107 above)
+    //   C      = the object in the `center` group -- ALWAYS EXACTLY ONE, and its
+    //            dumped position is the recovered orbit centre to 0.00 px
+    //
+    // Fitting `degrees` against the recording over lv21's autonomous rotates:
+    // every object with no move controller has a constant radius, lands on a
+    // round figure (-720, +720, 580, -720, -720) and reproduces to 0.003-0.013
+    // px. The three that failed at 181 px are rotations about a MOVING centre --
+    // their radius about the dumped centre swings 8.8..164.1, but about the
+    // recorded centre it is 60.000..60.005, spread 0.005 px. So the composition
+    // is a rotation riding on the centre's own move, and both halves are already
+    // machinery this file has.
+    //
+    // The ONE thing missing is `degrees`, which the trigger dumper does not emit
+    // (solver.hpp: target/center/dur/ox/oy/ease/erate, and a rotate has ox=oy=0).
+    // The bindings carry it as EffectGameObject::m_rotationDegrees plus
+    // m_times360 -- checked in the generated header that also holds the
+    // m_centerGroupID this dumper already uses, not guessed from a .bro.
+    //
+    // NOT DONE -- it rewrites the hot placement path, and "a wrong retiming is
+    // worse than the recording as-is" still holds until it is proven on the
+    // suite. GDSOLVER_LAB/notes/measure-rotate-1346-2026-08-28.md.
     g_rotated.clear();
     for (const auto& kv : trig) {
         const TrigRow& T = kv.second;
