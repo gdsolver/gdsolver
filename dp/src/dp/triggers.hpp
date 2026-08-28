@@ -366,8 +366,17 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
 // same rule as below); a toggle carries no offset and contributes nothing but
 // its timing, which is the whole point -- the `on` flag comes from the
 // recording and only its PHASE was ever wrong.
-// Rotate (1346) roots are still left out: nothing measured yet, and a wrong
-// retiming is worse than the recording as-is.
+// Rotate (1346) roots are NOT left out -- see the second loop at the bottom of
+// this function, which anchors them with the same delay of 1. (This comment used
+// to say "nothing measured yet"; it was already stale when the retiming landed
+// on 2026-08-10, and a plan was written off it in 2026-08-28 before the code
+// below was read.) The delay is now measured level-wide rather than at one site:
+// replaying lv21's plan with grouptrace on puts the recording and the player
+// trace on ONE clock, and 106 of 107 (trigger, object) pairs put the first
+// turned tick at exactly crossing+2 -- i.e. fire at crossing+1, then one tick
+// before the motion shows -- against a Move control of +2 x181 in the same run.
+// The phase is settled; what is NOT is an object carrying a move AND a rotation
+// (see the note over g_rotated at the bottom).
 // lv1-18 dump no triggers at all, so this is inert everywhere the suite is
 // green; lv19 has one autonomous toggle and lv20 has fifteen.
 inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
@@ -464,6 +473,35 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
     // The ctl entries carry ZERO offset, so nothing downstream places anything
     // from them: `parts` skips them (|dx|>0.001), adx/ady stay 0, and autoClosed
     // is already vetoed. All they do is give the uid an aAnchor.
+    //
+    // WHAT ONE ANCHOR CANNOT DO (measured 2026-08-28, lv21). Replaying the plan
+    // with grouptrace on gives GD's own answer for every recorded object, and the
+    // base recording shifted by the anchor can be held against it directly. Split
+    // by what drives the object, over lv21's 106 recorded rotated objects:
+    //
+    //   1 rotate + 0 move   46 reproduce to <=0.01 px, 0 fail
+    //   1 rotate + 1 move    9 reproduce, 12 fail
+    //   1 rotate + 2 move   20 reproduce, 19 fail
+    //
+    // A rigid rotation IS a pure time shift, so the first row is exact by
+    // construction and confirms the delay. The failures are structural, not a
+    // tuning error: a move and a rotation cross at DIFFERENT x (uid 15877 turns
+    // from cx=15,372.7 but is moved from 15,224.7 and 15,432.7), so their phases
+    // shift by different amounts and NO single shift carries both. Searching
+    // every shift leaves 1.65-2.18 px on the table. Over the 31 objects and
+    // 16,849 object-ticks: median 0.208 px, p90 0.591, p99 1.858, max 2.176 --
+    // on id-1582 hazards whose kill radius is 4 px.
+    //
+    // Those 31 are also where the deaths are. Hazard deaths per near-path hazard
+    // of the same class (lv19-22, exposure hazard-matched): rotate+move 79.8x,
+    // rotate-only 16.7x, move-only 1.63x, static 0.45x. Small n on the first
+    // (13 hazards, 37 deaths), so read the ORDER, not the ratio.
+    //
+    // Fixing it means splitting the recording: subtract the move's closed form to
+    // get the rotation-only path, re-time the two separately, add them back. That
+    // needs no rotation degrees and no centre. NOT DONE -- it rewrites the hot
+    // placement path, and "a wrong retiming is worse than the recording as-is"
+    // still holds. GDSOLVER_LAB/notes/measure-rotate-1346-2026-08-28.md.
     g_rotated.clear();
     for (const auto& kv : trig) {
         const TrigRow& T = kv.second;
