@@ -426,6 +426,31 @@ inline std::map<long long, int> g_phantomScale;
 constexpr int kPhantomScaleMax = 2;
 inline std::vector<std::string> g_phantomBands;   // --deadband strings, in the order found
 inline bool g_phantomLifted = false;      // released once; never veto again after that
+// A KILL-ONLY DEATH IS WORTH TWO ORDINARY ONES. When the recorder finds that the
+// game killed the player where the model did not AND the transition physics
+// agrees to within kNoopEps on both bodies, there is nothing else that death can
+// teach: the model already moves the player exactly as the game does and only
+// the kill test differs. That is precisely the veto's own claim -- "the model is
+// not disagreeing about a transition, it is planning through a place the game
+// does not allow at all" -- established in one round rather than inferred from
+// four repeats, so the recorder adds a second hit and the box drops on the
+// second round instead of the fourth.
+//
+// Measured on lv20's cold run (2026-08-29): three sites cost exactly four
+// rounds each and every one of them is this shape --
+//   [fixup] t=16250 x=24354.3 mode=3 in=0 dy=-1.440 dvy=0.000 kill=1 err 0.000/0.000
+//   [fixup] t=16647 x=24994.8 mode=3 in=0 dy=-1.037 dvy=-0.086 kill=1 err -0.000/0.000
+//   [fixup] t=16670 x=25031.9 mode=3 in=0 dy=0.733  dvy=-0.129 kill=1 err 0.000/-0.000
+// -- all three a moving spike the player grazes by a fraction of a pixel
+// (0.203, 0.253 and 0.540 px against the recording's own rects), which no
+// margin can close: --dynhazpad kills lv19's and lv21's own solutions at 0.1 px.
+// The veto is the mechanism that fits, and it was already firing at all three;
+// what it was spending was the four rounds of evidence.
+//
+// ONE CREDIT PER ITERATION. A multi-tick divergence writes one record per tick,
+// and the claim being made is about the DEATH, not about each record.
+// (the test itself lives in writeFixup, where kNoopEps and the errors are)
+inline int g_killVetoIter = -1;
 inline bool g_stop = false;               // the loop has given up; do not start another job
 // What the worker thread produced (read on the main thread after g_finished)
 inline bool g_haveNewPlan = false;
@@ -1202,6 +1227,23 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
                  eDy, eDvy, e2, g_fixupCount);
     }
     writeResult(b);
+    // KILL-ONLY: the second veto hit (see g_killVetoIter). The p2 halves are
+    // consulted whatever cfg dpFixP2 says -- unlike the noop test above, being
+    // strict here only ever withholds credit.
+    const bool physAgrees =
+        std::fabs(eDy) < kNoopEps && std::fabs(eDvy) < kNoopEps
+        && (!dual || (std::fabs(eDy2) < kNoopEps && std::fabs(eDvy2) < kNoopEps));
+    if (!noop && kill != 0 && physAgrees && g_lastTailSolved && !g_phantomLifted
+        && g_killVetoIter != g_iter) {
+        g_killVetoIter = g_iter;
+        const long long site = (long long)std::floor((double)g_lastDeathX / 8.0);
+        const int n = ++g_phantomHits[site];
+        char kb[224];
+        snprintf(kb, sizeof(kb), "dpsolve:   [veto] t=%lld is kill-only (the "
+                 "physics agrees) - counting it twice at x=%.0f (%d/%d)",
+                 t, (double)g_lastDeathX, n, kPhantomAfter);
+        writeResult(kb);
+    }
     return noop ? FixupMark : FixupReal;
 }
 
@@ -1981,6 +2023,7 @@ inline void start(GJBaseGameLayer* l) {
     g_phantomScale.clear();
     g_phantomBands.clear();
     g_phantomLifted = false;
+    g_killVetoIter = -1;
     g_forcePortalBand.clear();
     g_cfg.noDeath = false;
     // How long a plan to ask for. Ticks, not pixels: the player advances between 1.01 px
