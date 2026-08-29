@@ -80,8 +80,14 @@ inline bool isLevelLaunchScreen(cocos2d::CCNode* n, int depth = 0) {
     return false;
 }
 
-// Resident ticker that follows scene transitions and re-attaches the panel to the current scene.
-// (This Geode version has no keepAcrossScenes, so we follow by ourselves)
+// Resident ticker that decides whether the panel is attached at all. It hangs off Geode's
+// OverlayManager, a node that outlives the running scene, so nothing here has to follow scene
+// transitions.
+//
+// [2026-08-30] This used to re-parent the panel onto each new running scene, under a comment
+// saying "This Geode version has no keepAcrossScenes, so we follow by ourselves". That was wrong
+// about the SDK rather than about GD: geode::OverlayManager is in 5.8.2 and is exactly this.
+// The attach/detach below is NOT part of what it replaces -- see the note on touches.
 class PanelKeeper : public cocos2d::CCObject {
 public:
     void tick(float) {
@@ -97,11 +103,8 @@ public:
                 g_panel->removeFromParentAndCleanup(false);
             return;
         }
-        if (g_panel->getParent() != scene) {
-            if (g_panel->getParent())
-                g_panel->removeFromParentAndCleanup(false);
-            scene->addChild(g_panel, 9999);
-        }
+        if (!g_panel->getParent())
+            OverlayManager::get()->addChild(g_panel, 9999);
         g_panel->setVisible(true);
     }
 };
