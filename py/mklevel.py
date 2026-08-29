@@ -368,6 +368,122 @@ def build_rampseam() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+DUAL_CEIL = 380.0        # one continuous ceiling for every unit (see below)
+
+
+def ceil_unit_dual(x: float, mode: str, m: float, mini: bool
+                   ) -> tuple[list[str], float]:
+    u"""A ceiling-ramp unit for THE SECOND BODY of a dual.
+
+    `ceil_unit`'s sibling, and the differences are all forced by the pair:
+      * NO GRAVITY PORTALS. In a dual the second body is already flipped, and it
+        has to STAY flipped from one unit to the next -- `ceil_unit` flips and
+        restores per unit because it drives a single player.
+      * THE MODE/SIZE PORTALS SIT AT THE CEILING, not at the floor. A portal at
+        floor height is taken by the first body and never reached by the second
+        (measured on `dualmode`: 3,471 consecutive ticks with the halves in
+        different modes), so putting them up here is what addresses the second.
+      * ONE CEILING HEIGHT FOR EVERY UNIT. `ceil_y_for` raises it with the
+        gradient, which is fine when each unit re-sticks its player; here the
+        second body flies between units and would meet a different ceiling each
+        time. 380 clears the deepest chain (|m|=2 over three ramps drops 180,
+        ending at 200, well above the floor).
+    """
+    oid, rot, fx, fy, w, h = CEIL_RAMP[m]
+    objs: list[str] = []
+    ceil = DUAL_CEIL
+    objs.append(obj(MODE_PORTAL[mode], x, ceil - 15.0))
+    objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID, ceil - 15.0))
+    n_ramps = 3
+    x_ramp = x + 20 * GRID
+    xx = x + 4 * GRID + GRID / 2
+    while xx < x_ramp:
+        objs.append(obj(BLOCK, xx, ceil + GRID / 2))
+        xx += GRID
+    for i in range(n_ramps):
+        cy = ceil - h / 2.0 - i * h
+        objs.append(obj(oid, x_ramp + i * w + w / 2.0, cy,
+                        rot=rot, flip_x=fx, flip_y=fy))
+        yy = cy + h / 2.0 + GRID / 2
+        while yy <= ceil + GRID / 2 + 1.0:
+            for k in range(int(w / GRID)):
+                objs.append(obj(BLOCK, x_ramp + i * w + GRID / 2 + k * GRID, yy))
+            yy += GRID
+    # Back to the flat ceiling at the original height (the `ceil_unit` trap: a
+    # ceiling matching the ramp's far end crushes the player against the line).
+    x_flat = x_ramp + n_ramps * w
+    x_end = x_flat + 16 * GRID
+    xx = x_flat + GRID / 2
+    while xx < x_end:
+        objs.append(obj(BLOCK, xx, ceil + GRID / 2))
+        xx += GRID
+    return objs, x_end + 14 * GRID
+
+
+def build_ceilrampdual() -> str:
+    u"""Does the SECOND BODY release the ride's seat on a ramp exit?
+
+    The last thing lv16 t=13,264 can be. 95 launches across `ramps` and
+    `rampseam` say the seat is released and y takes the free step, which is what
+    the model does; `rampseamdual` then showed that being half of a pair changes
+    nothing for the FIRST body (47 exits, identical tick for tick). What is left
+    is the second body itself, and this puts it on the ramps.
+
+    The first body walks the floor underneath and rides nothing, so its own
+    column in the dump stays a control for the run's timing.
+
+    Compare against `ceilramp`, which is the same geometry driven by a single
+    flipped player.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for mode in ("cube", "ball"):
+        for m in (1.0, 0.5, 2.0):
+            for mini in (False, True):
+                x0 = x
+                u, x = ceil_unit_dual(x, mode, m, mini)
+                objs += u
+                UNITS.append({"x0": x0, "x1": x, "mode": mode, "m": m,
+                              "mini": int(mini)})
+    objs += floor_run(0, PAVE_X)
+    return header(dual=True) + ";" + ";".join(objs) + ";"
+
+
+def build_rampseamdual() -> str:
+    """`rampseam` again, with the level STARTED IN DUAL. Halves the question.
+
+    lv16 t=13,264 is the one ramp exit in the corpus where GD keeps the ride's
+    seat, and 95 launches across `ramps` and `rampseam` say it should not. What
+    that site has and those rigs do not is that the rider is HALF OF A PAIR --
+    so ask whether that alone changes anything, before building the harder rig
+    where the SECOND body is the one on the ramp.
+
+    Only the header differs. The first body still rides every ramp exactly as it
+    does in `rampseam` (the portals sit at floor height, so in a dual the first
+    body takes them and the second never reaches them -- measured on `dualmode`).
+    The second body flips away upward and is held by the band, out of the way.
+
+    So: p1's exits here against p1's exits there is a clean one-variable A/B.
+      * they differ  -> being in a dual is what does it, and the second body is
+                        a red herring
+      * they match   -> it is the second body specifically, and the next rig has
+                        to put IT on the ramp
+    """
+    objs: list[str] = []
+    x = 90.0
+    for mode in ("cube", "ball", "robot", "spider"):
+        for m in (1.0, 0.5, 2.0):
+            for mini in (False, True):
+                for ledge in (0, 1, 3):
+                    x0 = x
+                    u, x = rampseam_unit(x, mode, m, mini, ledge)
+                    objs += u
+                    UNITS.append({"x0": x0, "x1": x, "mode": mode, "m": m,
+                                  "mini": int(mini), "ledge": ledge})
+    objs += floor_run(0, PAVE_X)
+    return header(dual=True) + ";" + ";".join(objs) + ";"
+
+
 def build_ramps() -> str:
     """Calibration rig for slope-exit launches. CLEARS EVERY UNIT WITH ZERO INPUT.
 
@@ -2711,6 +2827,8 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "portwavebig": build_portwavebig,
             "recttop": build_recttop,
             "ramps": build_ramps, "rampseam": build_rampseam,
+    "rampseamdual": build_rampseamdual,
+    "ceilrampdual": build_ceilrampdual,
     "rampjump": build_rampjump,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
