@@ -730,8 +730,16 @@ inline void drawWorld(cocos2d::CCNode* objectLayer) {
     //    it died. Faint on purpose: they overlap, and where several rounds took the same line the
     //    overlap is meant to build up into a brighter one on its own. Coloured by the round, so a
     //    fan of red tails is the loop trying the same wall a dozen ways.
+    //    A FIXED INK BUDGET, not a fixed alpha per tail. Rounds share the verified prefix by
+    //    construction, so their tails lie on top of each other for most of their length, and at a
+    //    flat 20% a fan of sixty is opaque long before the sixtieth. Worse than opaque: the kinds
+    //    are different colours, so what they mix to is not "a brighter red" but grey, and the
+    //    colour key -- the whole reason the tails are coloured -- stops meaning anything. Dividing
+    //    by the count keeps the total roughly constant, so a fan stays a fan and a lone tail is as
+    //    visible as it ever was. The floor keeps a hundred-round map from vanishing.
+    const float ta = std::max(0.05f, std::min(0.20f, 2.0f / std::max(1.f, (float)g_paths.size())));
     for (const Path& p : g_paths) {
-        const ccColor4F c = kindColor(p.kind, 0.20f);
+        const ccColor4F c = kindColor(p.kind, ta);
         for (size_t i = 2; i + 1 < p.xy.size(); i += 2)
             n->drawSegment({p.xy[i - 2], p.xy[i - 1]}, {p.xy[i], p.xy[i + 1]}, 0.8f, c);
     }
@@ -1048,8 +1056,15 @@ inline void summary(char* out, size_t cap, float px, float levelLen) {
     // recorded has not failed to clear, it has not finished.
     const char* state = (g_mapLevel < 0) ? "   [in progress]"
                                          : (g_cleared ? "" : "   [did not clear]");
-    n += snprintf(out + n, cap - n, "ITERATION MAP  %d rounds  %zu deaths  %zu fixups%s%s\n",
-                  g_rounds, g_deaths.size(), g_fixups.size(), worst, state);
+    // A map with deaths but no tails is not a map whose tails failed to draw -- it is a map that
+    // never had any. Only a run records them; py/itermap_from_log.py cannot, because the tail is a
+    // trajectory and the log holds one line per round, not one per tick. Every file in data/ came
+    // from that rebuild, so "the trajectories are missing" is what every stored map looks like, and
+    // it was reported as a drawing bug (2026-08-29) exactly because nothing said otherwise.
+    const char* tails = (!g_deaths.empty() && g_paths.empty())
+                        ? "   [no tails in this map - rebuilt from a log]" : "";
+    n += snprintf(out + n, cap - n, "ITERATION MAP  %d rounds  %zu deaths  %zu fixups%s%s%s\n",
+                  g_rounds, g_deaths.size(), g_fixups.size(), worst, state, tails);
     if (n < 0 || (size_t)n >= cap) return;
     const Hot* here = atLocked(px);
     if (here) {

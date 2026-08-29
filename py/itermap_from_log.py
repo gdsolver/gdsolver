@@ -26,6 +26,14 @@ ONE APPROXIMATION, and it is in the file as `approx=fixup_y`: the `[fixup]`
 line carries x but no y, so a fixup is drawn at the y of its own round's death.
 Its x -- the part that says where the model was wrong -- is exact.  Maps the
 mod writes itself carry the real y and no `approx=` line.
+
+AND ONE OMISSION: no `path=` lines, so a map rebuilt here has NO TAILS -- the
+fan of trajectories each round flew.  That is not a gap that can be closed from
+here.  A tail is one point every eight ticks and the log holds one line per
+round, so the trajectory was never written down; only a run that is recording
+as it goes has it.  Re-solve the level to get a map with tails in it.  The
+overlay says `[no tails in this map]` rather than drawing nothing silently,
+which is how this was first reported as a bug (2026-08-29).
 """
 
 from __future__ import annotations
@@ -219,7 +227,7 @@ def report(run: Run, out: Path) -> str:
         dom = max(set(kinds), key=kinds.count)
         parts.append(f"x={int(b * bucket + bucket / 2)} ({len(kinds)}, {KIND_NAME[dom]})")
     return (f"lv{run.level}: {run.rounds} rounds, {len(run.deaths)} deaths, "
-            f"{len(run.fixups)} fixups, {len(run.vetoes)} vetoes"
+            f"{len(run.fixups)} fixups, {len(run.vetoes)} vetoes, no tails"
             f"{'' if run.cleared else ', DID NOT CLEAR'}\n"
             f"  hottest {round(100 * len(hot[0][1]) / total) if hot else 0}% of deaths at "
             + ", ".join(parts) + f"\n  -> {out}")

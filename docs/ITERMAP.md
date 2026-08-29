@@ -140,6 +140,12 @@ Maps rebuilt that way carry `approx=fixup_y`, because the `[fixup]` log line has
 the fixup is then drawn at the y of its own round's death. Its x, the part that says where the
 model was wrong, is exact either way.
 
+**They have no tails.** A tail is a point every eight ticks and the log holds one line per round,
+so the trajectories were never written down and cannot be recovered from it — only a run recording
+as it goes has them. Every file currently in `data/` was rebuilt this way, so replaying a stored
+map shows deaths, columns and fixups but no fan. The overlay says `[no tails in this map]` rather
+than drawing nothing without explanation; re-solve the level to get one with tails.
+
 To watch a replay with the map already on:
 
 ```bash

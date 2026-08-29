@@ -480,6 +480,21 @@ inline void loadConfig() {
 
 inline void endSession(const std::string& why) {
     if (g_sessionOver) return;
+    // The iteration map, HOWEVER the session ended.
+    //
+    // It used to be written from two places only -- the clear, and giveUp -- which between them
+    // cover a solve that ran to one end or the other and nothing else. Leave the level while the
+    // loop is still working and onQuit calls this and then resetSessionState(), which drops the
+    // records; every round the run had recorded, tails included, went with them. That is the
+    // ordinary way to end a solve you are watching, so in practice no run ever produced a file
+    // with tails in it, and every map in data/ was a log rebuild that cannot have them. Reported
+    // 2026-08-29 as "the trajectories are not drawn".
+    //
+    // This is the one funnel every ending goes through, so it is the place. save() writes nothing
+    // when there is nothing (a plain replay records nothing), and the two callers above stay: they
+    // file the map at the moment it is complete, next to the solution, rather than at teardown.
+    if (itermap::save(g_cfg.levelId, why == "level_complete"))
+        writeResult("dpsolve: itermap saved -> " + itermap::pathFor(g_cfg.levelId));
     // Do not call purgeDanglingActions() here: when endSession runs on a clear, the actions of
     // GD's result visual effects are alive, and wiping them makes it look stuck with the result
     // screen never appearing. `endpurge=1` is the old behaviour, kept only for disproof
