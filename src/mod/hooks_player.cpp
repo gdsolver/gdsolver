@@ -324,15 +324,34 @@ class $modify(PlayerObject) {
         writeResult(buf);
     }
 
+    // WHICH HALF THIS IS, for the collision traces. `hbox`/`hbin`/`slp` were all
+    // gated on `this == m_player1`, so the instrument that names what GD
+    // resolved the player against could not see the SECOND BODY at all -- and
+    // the second body is exactly what every dual investigation ends up asking
+    // about. Custom level 1777565 is the case in point: its second body is held
+    // two ticks past box overlap at an edge its first body leaves on time, and
+    // with only p1 traced there is no way to ask GD what is holding it.
+    //
+    // Returns nullptr for anything that is neither half (the trace stays off
+    // for those, as before).
+    const char* hbWho() const {
+        auto* l = GJBaseGameLayer::get();
+        if (!l) return nullptr;
+        if (this == l->m_player1) return "p1";
+        if (this == l->m_player2) return "p2";
+        return nullptr;
+    }
+
     bool collidedWithObject(float dt, GameObject* obj, cocos2d::CCRect rect, bool skip) {
         auto* l = GJBaseGameLayer::get();
+        const char* who = hbWho();
         // The player rect BEFORE resolution. This function pushes the player out in the
         // hit branch, so reading getObjectRect() after the call only shows the state AFTER
         // resolution. How deep, and along which axis, the player penetrated exists only in
         // the pre-resolution rect, and without it the gate for "which axis GD resolves on"
         // cannot be decided (the swing push-out at lv22 t=3,670 would not close because of
         // that).
-        const bool hbWatch = g_cfg.hitboxTrace && l && this == l->m_player1 && obj
+        const bool hbWatch = g_cfg.hitboxTrace && who && obj
                              && g_tick >= g_cfg.hbFrom
                              && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
         CCRect prePr = hbWatch ? this->getObjectRect() : CCRect();
@@ -340,19 +359,17 @@ class $modify(PlayerObject) {
         // Hitbox observation (cfg `hitboxtrace=1`). Emits the partner rect exactly as GD
         // passed it, plus the player rect of the same tick and the test result (without
         // both, it cannot be told whether the shrunk side is the partner or the player)
-        if (g_cfg.hitboxTrace && l && this == l->m_player1 && obj
-            && g_tick >= g_cfg.hbFrom
-            && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo)) {
+        if (hbWatch) {
             static int lines = 0;
             if (++lines <= 40000) {
                 CCRect pr = this->getObjectRect();
                 CCRect orr = obj->getObjectRect();
                 char b[352];
                 snprintf(b, sizeof(b),
-                    "hbox: t=%lld obj=%d type=%d hit=%d size=%.2f "
+                    "hbox: t=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
                     "arg=(%.2f,%.2f,%.2f,%.2f) objrect=(%.2f,%.2f,%.2f,%.2f) "
                     "player=(%.2f,%.2f,%.2f,%.2f) ppre=(%.2f,%.2f,%.2f,%.2f)",
-                    (long long)g_tick, obj->m_uniqueID, (int)obj->getType(),
+                    (long long)g_tick, who, obj->m_uniqueID, (int)obj->getType(),
                     r ? 1 : 0, this->m_vehicleSize,
                     rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
                     orr.origin.x, orr.origin.y, orr.size.width, orr.size.height,
@@ -371,8 +388,8 @@ class $modify(PlayerObject) {
     // of the player's 15px half-width, and the work stalled because the partner could not
     // be identified.
     void collidedWithSlopeInternal(float dt, GameObject* obj, bool forced) {
-        auto* l = GJBaseGameLayer::get();
-        const bool watch = g_cfg.hitboxTrace && l && this == l->m_player1 && obj
+        const char* who = hbWho();
+        const bool watch = g_cfg.hitboxTrace && who && obj
                            && g_started && !g_sessionOver
                            && g_tick >= g_cfg.hbFrom
                            && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
@@ -384,10 +401,10 @@ class $modify(PlayerObject) {
         CCRect orr = obj->getObjectRect();
         char b[288];
         snprintf(b, sizeof(b),
-                 "slp: t=%lld uid=%d id=%d forced=%d onSlope=%d up=%d top=%d "
+                 "slp: t=%lld who=%s uid=%d id=%d forced=%d onSlope=%d up=%d top=%d "
                  "y %.3f->%.3f "
                  "vy=%.3f rect=(%.2f,%.2f,%.2f,%.2f) rot=%.1f syAtX=%.3f",
-                 (long long)g_tick, obj->m_uniqueID, obj->m_objectID,
+                 (long long)g_tick, who, obj->m_uniqueID, obj->m_objectID,
                  forced ? 1 : 0, (int)this->m_isOnSlope,
                  (int)this->m_isUpsideDown, (int)this->m_isCurrentSlopeTop,
                  yBefore, this->getPositionY(), this->m_yVelocity,
@@ -402,8 +419,8 @@ class $modify(PlayerObject) {
     bool collidedWithObjectInternal(float dt, GameObject* obj, cocos2d::CCRect rect,
                                     bool skip) {
         bool r = PlayerObject::collidedWithObjectInternal(dt, obj, rect, skip);
-        auto* l = GJBaseGameLayer::get();
-        if (g_cfg.hitboxTrace && l && this == l->m_player1 && obj
+        const char* who = hbWho();
+        if (g_cfg.hitboxTrace && who && obj
             && g_tick >= g_cfg.hbFrom
             && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo)) {
             static int lines = 0;
@@ -412,10 +429,10 @@ class $modify(PlayerObject) {
                 CCRect orr = obj->getObjectRect();
                 char b[352];
                 snprintf(b, sizeof(b),
-                    "hbin: t=%lld obj=%d type=%d hit=%d size=%.2f "
+                    "hbin: t=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
                     "arg=(%.2f,%.2f,%.2f,%.2f) objrect=(%.2f,%.2f,%.2f,%.2f) "
                     "player=(%.2f,%.2f,%.2f,%.2f)",
-                    (long long)g_tick, obj->m_uniqueID, (int)obj->getType(),
+                    (long long)g_tick, who, obj->m_uniqueID, (int)obj->getType(),
                     r ? 1 : 0, this->m_vehicleSize,
                     rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
                     orr.origin.x, orr.origin.y, orr.size.width, orr.size.height,
