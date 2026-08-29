@@ -1,3 +1,22 @@
+# v0.1.2
+
+ * **The keys can be rebound.** All thirteen are Geode keybind settings now,
+   with the keys they already had as defaults, and the on-screen legend reads
+   the bindings rather than naming keys it can no longer be sure of. They were
+   read straight from the OS before, which meant hardcoded keys and a keystroke
+   meant for another window could reach the mod.
+ * **A bad number in a config or command file no longer takes the game down.**
+   Every setting was parsed with a function that raises on malformed input and
+   nothing caught it, so one bad value killed the game at launch or mid-frame.
+   A value that will not parse is now left alone and reported.
+ * The iteration map keeps the paths each round flew, and is filed however the
+   session ended -- leaving a level mid-solve used to discard the whole record.
+ * The collision trace can see the second body in a dual, which is the half
+   every dual question is actually about.
+ * The panel rides Geode's own overlay node instead of following scene changes
+   by hand.
+ * Releases are built by CI from the public source rather than on a desk.
+
 # v0.1.1
 
  * **The dual's second body.** The loop was walled on Deadlocked where the game
