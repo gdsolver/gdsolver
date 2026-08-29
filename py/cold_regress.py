@@ -45,7 +45,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from gdtas.paths import DATA
+from gdtas.paths import BUILD_MOD, DATA
 from gdtas.worker import run_session
 
 BASELINE = DATA / "cold_baseline.json"
@@ -120,12 +120,12 @@ def wipe(worker_id: int) -> None:
 
 
 def one(level: int, wid: int, budget: float, extra: list[str],
-        out_dir: Path) -> dict:
+        out_dir: Path, mod_file: Path = BUILD_MOD) -> dict:
     t0 = time.time()
     wipe(wid)
     try:
         r = run_session(wid, CFG + extra + [f"level={level}"],
-                        timeout_s=budget, stall_s=STALL_S)
+                        timeout_s=budget, stall_s=STALL_S, mod_file=mod_file)
     except Exception as e:                      # noqa: BLE001  a worker that will not start
         return {"lv": level, "cleared": False, "why": f"ERROR {e}",
                 "iters": 0, "deepest_t": -1, "deepest_x": -1.0, "fx": 0,
@@ -186,7 +186,17 @@ def main(argv=None) -> int:
                     help="extra autorun.cfg keys, e.g. dpfingerprint=0")
     ap.add_argument("--bless", action="store_true",
                     help="save this run's iteration counts as the baseline")
+    # Which binary is being measured is the question this file exists to answer,
+    # and it had no way to say. A release built by CI is not the build on the
+    # desk -- different configuration, so not obviously the same arithmetic.
+    ap.add_argument("--mod", type=Path, default=BUILD_MOD,
+                    help="the .geode to run (default: the local build)")
     a = ap.parse_args(argv)
+    if not a.mod.exists():
+        print(f"no such package: {a.mod}")
+        return 1
+    if a.mod != BUILD_MOD:
+        print(f"measuring {a.mod}\n  (not the local build at {BUILD_MOD})")
 
     base = load_baseline()
     buckets = assign(a.levels, a.pool)
@@ -211,7 +221,7 @@ def main(argv=None) -> int:
             time.sleep(k * 12.0)
         for lv in buckets[w]:
             cap = iter_cap(lv, base)
-            res = one(lv, w, a.budget, list(a.cfg), DATA)
+            res = one(lv, w, a.budget, list(a.cfg), DATA, a.mod)
             res["cap"] = cap
             with lock:
                 print(f"lv{lv:<3} {res['why']:<40} iters={res['iters']:<4}"
