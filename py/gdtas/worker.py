@@ -37,7 +37,8 @@ from . import gdsave
 from .gdsave import MINIMAL_SAVE_XML as _MINIMAL_SAVE_XML
 from .gdsave import decode_save as _decode_save
 from .gdsave import encode_save as _encode_save
-from .paths import BUILD_MOD, MOD_CACHE, WORKERS_ROOT, gd_save_root, worker_manifest
+from .paths import (BUILD_MOD, MOD_CACHE, MOD_ID, WORKERS_ROOT, gd_save_root,
+                    worker_manifest)
 
 # Default cfg for serving. attempts is large because a resident session supplies
 # 1 attempt = 1 plan over and over.
@@ -266,7 +267,13 @@ def _spawn(exe: Path, worker_dir: Path, data_root: Path,
     if minimized:
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         si.wShowWindow = SW_SHOWMINNOACTIVE
-    arg = "--geode:gdsolver.data-root=" + str(data_root).replace("\\", "/")
+    # Geode's setting override is --geode:<mod-id>.<key>=<value>, so the mod id
+    # belongs to mod.json and not to this line. It was spelled out here, and when
+    # the id changed the override started naming a mod that does not exist: the
+    # worker launched, the mod loaded, and then sat at the menu forever because it
+    # never learned where its data root was. Nothing reported an error -- the
+    # setting was simply addressed to nobody.
+    arg = f"--geode:{MOD_ID}.data-root=" + str(data_root).replace("\\", "/")
     return subprocess.Popen([str(exe), arg], cwd=str(worker_dir), startupinfo=si)
 
 

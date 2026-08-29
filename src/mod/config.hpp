@@ -4,7 +4,7 @@
 
 namespace p1 {
 
-// Root for all input/output. If the launch argument --geode:gdsolver.data-root=<absolute path>
+// Root for all input/output. If the launch argument --geode:gdsolver.solver.data-root=<absolute path>
 // is given, that is used. Without it, other GD instances on the same machine fight over
 // autorun.cfg / result.txt, so workers must always pass it.
 // Only absolute paths are accepted; immutable for the lifetime of the process (resolved before
