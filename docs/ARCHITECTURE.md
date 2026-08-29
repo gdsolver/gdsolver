@@ -55,9 +55,23 @@ plan and the model trace the next divergence is measured against.
   Setting `dp::g_levelCsv` makes it read a buffer instead of a file, which is
   how the mod solves a level it never wrote to disk.
 * States are **exact** (double y / vy plus discrete flags). The per-layer hash
-  only deduplicates (first representative wins); it never snaps a state, so
-  every surviving path is a replayable plan. The DP is a candidate generator;
-  the proof is always a plain replay in the game.
+  only deduplicates; it never snaps a state, so every surviving path is a
+  replayable plan. The DP is a candidate generator; the proof is always a plain
+  replay in the game.
+* A cell keeps **two** representatives, the highest and the lowest `vy` in it.
+  First-wins was tried and kept the slowest lineage in every cell, which
+  strangled climbs (a ship's climb rate collapsed to ~0.02 vy/tick); keeping one
+  extreme instead discarded the dive-recovery lineages. Both extremes is what
+  survives both.
+* When several states reach the goal, the plan emitted is the one whose **route
+  kept the most room**, not the one that happened to be enumerated first. Each
+  state carries `tight`: how many ticks its lineage spent with less vertical
+  clearance than the model's own error. It is carried rather than recomputed —
+  clearance at the goal itself says nothing, because every state that gets there
+  is in open sky — and it is deliberately *not* part of the dedupe key, being a
+  property of how a state was reached rather than of the state. Ties keep the
+  incumbent, so a level where nothing is tight emits exactly what the old rule
+  did.
 * Output contracts: `SOLVED at ...`, `PARTIAL: frontier died at t=.. x=..`,
   `FAILED: ...` on stdout; files `<out>` (the plan, `input=<tick>,<0|1>` lines),
   `<out>.trace.csv` (per-tick model state) and `<out>.bands.txt` (per-layer
@@ -230,6 +244,15 @@ iteration, plan hash, death tick and x, fixup hash. The loop prints those itself
 (cfg `dpfingerprint`), and `py/cold_regress.py --bless` records the per-level
 iteration counts they belong to. The iteration count is the number to compare;
 the wall clock is not deterministic and is never the criterion.
+
+The two halves of that measure different things, and the section suite does not
+predict the loop. It anchors on the game's real state every few hundred ticks
+and asks how long the model tracks from there, so it sees physics and nothing
+else. The loop's iteration count also carries which corridor the search walked,
+and the search is deepest-first: one rule can close four sections and leave the
+count untouched, or improve the physics and double it by sending the run down a
+different route. Both have been measured on the same change. Read the section
+suite as "did the physics move", never as "is this an improvement".
 
 ## 5. What the model covers
 
