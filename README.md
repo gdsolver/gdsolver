@@ -4,14 +4,16 @@
 solves a level by playing it — inside the game, from cold.
 
 <p align="center">
-  <img src="docs/media/solve-to-replay.gif" width="720"
-       alt="gdsolver solving a level: the fast dark loop with the overlay bars climbing, then the screen coming back for the solution replayed at 1x">
+  <img src="docs/media/solve-to-replay.webp" width="720"
+       alt="gdsolver solving Dash: the dark fast loop with the overlay counters climbing, then the screen coming back for the solution replayed at 1x">
 </p>
 
 <p align="center"><sub>
-  Solving Stereo Madness from cold. The screen is dark because the search is
-  running: the frames go to the fast loop instead. It comes back when a
-  candidate has actually cleared.
+  The last five seconds of solving <b>Dash</b>, then the first seven of the
+  replay. The overlay is the loop's own: which round it is on, how far the best
+  plan has reached, how far the search has got. The screen is dark because the
+  search is running — the frames go to the fast loop instead — and it comes back
+  when a candidate has actually cleared.
 </sub></p>
 
 Give it a level and it finds an input sequence that clears it. It does not
