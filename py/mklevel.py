@@ -368,6 +368,128 @@ def build_rampseam() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def wavein_unit(x: float, mode: str, mini: bool, n: int = 4,
+                floor_top: float = GROUND_TOP) -> tuple[list[str], float]:
+    u"""Cross a WAVE PORTAL while GROUNDED, and come out the other side alive.
+
+    lv20 t=17,116 is the corpus' one sample of this and it costs the level eight
+    rounds: a UFO resting on the floor (onGround 1, vy 0) crosses a wave portal,
+    and on that tick GD moves it by +0.029 and sets vy := -2.762, while the model
+    moves it a full wave step (-1.613 = -dx) straight away. 1.643 px, and it never
+    comes back. The sample cannot say whether that is about being grounded or
+    about being the second body of a pair, because the first body was airborne.
+
+    Building it on flat ground does not work: THE WAVE DESCENDS AS FAST AS IT
+    ADVANCES, so a body that becomes a wave at floor+15 has thirteen pixels of
+    headroom and is in the floor within a dozen ticks -- and one death ends the
+    session. So the unit gives it a surface that falls away at the wave's own
+    angle:
+
+        [portals][run-up][n ramps up][flat top + WAVE PORTAL][n ramps down]
+
+    The player climbs grounded, meets the portal standing on the flat top, and
+    the descent that follows is a |m|=1 ramp -- exactly the wave's 45 degrees --
+    so it flies just clear of it instead of into it. Zero input throughout.
+    """
+    oid, rot, fx, fy, w, h = RAMP[1.0]
+    doid, drot, dfx, dfy, dw, dh = DOWNRAMP[1.0]
+    objs: list[str] = []
+    objs.append(obj(MODE_PORTAL[mode], x, floor_top + 15.0))
+    objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID,
+                    floor_top + 15.0))
+    xr = x + 8 * GRID
+    bottom = floor_top
+    for i in range(n):                       # climb
+        objs.append(obj(oid, xr + w / 2.0, bottom + h / 2.0,
+                        rot=rot, flip_x=fx, flip_y=fy))
+        yy = floor_top + GRID / 2
+        while yy < bottom + 1.0:
+            for k in range(int(w / GRID)):
+                objs.append(obj(BLOCK, xr + GRID / 2 + k * GRID, yy))
+            yy += GRID
+        bottom += h
+        xr += w
+    # NO FLAT TOP. One was tried and it is what breaks the rig: GD supports on
+    # box overlap, so a half-15 body is still held up 15 px past the last block,
+    # and it then free-falls while the descent runs away from it at 45 degrees.
+    # Measured on that cut: the body leaves the top at x=555 and is STILL
+    # AIRBORNE at the portal 33 px later (onGround 0, vy -5.4) -- the one thing
+    # the rig exists to avoid. Crest straight from the climb into the descent
+    # and the ride carries across the seam instead.
+    top = bottom
+    x_down = xr
+    for i in range(n + 3):                   # and back down at the wave's angle
+        bottom -= dh
+        objs.append(obj(doid, xr + dw / 2.0, bottom + dh / 2.0,
+                        rot=drot, flip_x=dfx, flip_y=dfy))
+        yy = floor_top + GRID / 2
+        while yy < bottom + 1.0:
+            for k in range(int(dw / GRID)):
+                objs.append(obj(BLOCK, xr + GRID / 2 + k * GRID, yy))
+            yy += GRID
+        xr += dw
+        if bottom <= floor_top:
+            break
+    # THE PORTAL GOES OVER THE DESCENT, not over the flat top. A portal fires
+    # when the boxes overlap, so it catches the player about 30 px before its
+    # own centre -- and a body that becomes a wave has only 13.5 px of headroom
+    # over whatever it was standing on (half 15 -> half 1.5). On the flat top
+    # those 30 px of run are 30 px of descent into the blocks, every time; over
+    # a |m|=1 descent the surface drops with it and the wave stays clear.
+    # And well down it. Leaving the flat top the player FLOATS for half its own
+    # width first -- GD supports on box overlap, so a half-15 body is still held
+    # up 15 px past the last block -- and then falls until it catches the ramp.
+    # Measured on the first cut of this rig: the top ends at x=540, the body
+    # leaves it at 555 and is still airborne at 560. A portal one and a half
+    # ramps in fired mid-fall and measured nothing. Two and a half is past the
+    # re-acquisition and still 45 px short of the ground.
+    objs.append(obj(P_WAVE, x_down + 2.5 * dw, top - 2.5 * dh + 15.0))
+    return objs, xr + 20 * GRID
+
+
+def build_wavein() -> str:
+    u"""Crossing a wave portal off a ramp. 6 modes x normal/mini = 12 units.
+
+    **IT DOES NOT YET MEASURE WHAT IT WAS BUILT FOR.** The target is a body that
+    is GROUNDED on the tick a wave portal fires (lv20 t=17,116), and every unit
+    here enters AIRBORNE -- the crest launches it, so it meets the portal at
+    vy -9.0 with onGround 0. That is still a useful control (it is lv20's first
+    body, which the model already matches), and the run is clean end to end, so
+    it is kept rather than deleted.
+
+    Two geometries were tried and both are recorded above, because between them
+    they say why this is hard:
+
+      * a flat top before the descent -- GD supports on box overlap, so the body
+        floats 15 px past the last block and then free-falls while the descent
+        runs away at 45 degrees. Airborne at the portal.
+      * crest straight from climb to descent -- the ride's exit launch fires.
+        Airborne again, and faster.
+
+    Underneath both is one constraint: A WAVE DESCENDS AS FAST AS IT ADVANCES,
+    and a body that becomes one keeps its position, so a half-15 body has 13.5 px
+    of headroom over whatever it was standing on. The portal fires on box
+    overlap, i.e. about 30 px before its own centre. So a flat surface under a
+    wave portal is 30 px of run against 13.5 px of clearance -- the body is
+    always inside the floor, and one death ends the session.
+
+    What lv20 has and this does not is the DUAL GROUND LAYER: the second body
+    stands on it with open space below, so it can become a wave and simply
+    leave. The next cut should build the grounded side out of a dual band rather
+    than out of blocks.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for mode in ("cube", "ball", "robot", "spider", "ufo", "ship"):
+        for mini in (False, True):
+            x0 = x
+            u, x = wavein_unit(x, mode, mini)
+            objs += u
+            UNITS.append({"x0": x0, "x1": x, "mode": mode, "mini": int(mini)})
+    objs += floor_run(0, PAVE_X)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 DUAL_CEIL = 380.0        # one continuous ceiling for every unit (see below)
 
 
@@ -2828,7 +2950,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "recttop": build_recttop,
             "ramps": build_ramps, "rampseam": build_rampseam,
     "rampseamdual": build_rampseamdual,
-    "ceilrampdual": build_ceilrampdual,
+    "ceilrampdual": build_ceilrampdual, "wavein": build_wavein,
     "rampjump": build_rampjump,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
