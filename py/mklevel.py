@@ -1076,6 +1076,123 @@ def build_ridemode() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def ridedrop_unit(x: float, mode: str, target: str, mini: bool,
+                  port_x: float | None = None, n_ramps: int = 6,
+                  top: float = 375.0) -> tuple[list[str], float, dict]:
+    u"""ARRIVE AT THE RAMP BY PENETRATING IT, not by sliding onto it.
+
+    `ridemode` asked GD 39 times whether a mode portal ends a ramp ride and got
+    "no" every time, across the ramp's side, six modes, both sizes, a box that
+    stays the same or shrinks to a fifth, a ride 0 to 40 ticks old, and both
+    halves of a dual. lv20 t=17,117 still does the opposite. The one thing all
+    39 hold fixed is HOW THE BODY GOT ONTO THE RAMP: every one of them slides on,
+    following the surface down, and its first contact tick moves LESS than a full
+    ride step (-0.354 measured). lv20's second body is born inside the ramp by
+    the dual portal and pushed out of it -- its first contact tick moves -2.583,
+    MORE than the ride step.
+
+    So this unit arrives the other way. A gravity flip under an open sky lets the
+    body fall upward for ~95 ticks while a ceiling ramp descends to meet it, and
+    they close at about 4 px/tick -- the same order as lv20's 2.583. The body
+    cannot follow that surface onto itself; it goes through and is pushed back.
+
+        [mode][size][flip]......(open, the body accelerates upward)......
+                          [6 ceiling ramps descending from `top`][flat][restore]
+
+    `port_x` is the mid-ride mode portal. It is left off on the first pass --
+    where the body meets the ramp is a measurement, not a calculation -- and
+    placed on the second from the contact tick the dump reports.
+    """
+    oid, rot, fx, fy, w, h = CEIL_RAMP[1.0]
+    objs: list[str] = []
+    for py in (GROUND_TOP + 15.0, GROUND_TOP + 105.0):
+        objs.append(obj(MODE_PORTAL[mode], x, py))
+        objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID, py))
+    objs.append(obj(GRAV_FLIP, x + 6 * GRID, GROUND_TOP + 15.0))
+    x_ramp = x + 8 * GRID
+    for i in range(n_ramps):
+        cy = top - h / 2.0 - i * h
+        objs.append(obj(oid, x_ramp + i * w + w / 2.0, cy,
+                        rot=rot, flip_x=fx, flip_y=fy))
+        # Fill ABOVE the diagonal only. The body comes up from underneath, so
+        # the diagonal has to be the lowest solid thing it can meet.
+        yy = cy + h / 2.0 + GRID / 2
+        while yy <= top + GRID / 2 + 1.0:
+            for k in range(int(w / GRID)):
+                objs.append(obj(BLOCK, x_ramp + i * w + GRID / 2 + k * GRID, yy))
+            yy += GRID
+    x_flat = x_ramp + n_ramps * w
+    low = top - n_ramps * h
+    x_end = x_flat + 16 * GRID
+    xx = x_flat + GRID / 2
+    while xx < x_end:
+        objs.append(obj(BLOCK, xx, low + GRID / 2))
+        xx += GRID
+    port_cy = 0.0
+    if port_x is not None:
+        # The seat is line(centre + 6.21) - half (measured on `ridemode`), and
+        # the portal fires ~32 px before its own centre.
+        s = port_x - 32.0 + 6.21
+        line = top - max(0.0, min(s - x_ramp, n_ramps * h))
+        port_cy = line - (9.0 if mini else 15.0)
+        objs.append(obj(MODE_PORTAL[target], port_x, port_cy))
+    objs.append(obj(GRAV_NORM, x_flat + 12 * GRID, low - 15.0))
+    return objs, x_end + 14 * GRID, {"x_ramp": x_ramp, "ramp_w": w,
+                                     "ramp_h": h, "top": top,
+                                     "port_cx": port_x or 0.0,
+                                     "port_cy": port_cy, "ceil_y": low}
+
+
+# WHERE EACH MODE FIRST TOUCHES THE RAMP, relative to the unit's own x0, and
+# what its arrival looks like. Measured on the first pass (the same geometry
+# with no mid portal), which is the only honest way to place a portal by tick:
+#
+#   ufo    +333.13   dy +0.53 against a free +1.44   (both ufo units agree
+#                                                     to 0.19 px)
+#   cube   +279.02   dy +1.28 against a free +3.38
+#   ball   +301.47   dy +0.37 against a free +3.28
+#
+# Every one is CLAMPED SHORT on the contact tick -- the body would have gone
+# 1 to 3 px further into the ramp and GD stops it at the seat. That is the
+# arrival lv20's second body has (its own tick moves -2.583 against a velocity
+# of +2.86) and the one `ridemode` never produced: there the body slides on and
+# the first tick moves -0.354, LESS than a full ride step and in the same
+# direction it was already going.
+RIDEDROP_CONTACT = {"ufo": 333.13, "cube": 279.02, "ball": 301.47}
+
+
+def build_ridedrop() -> str:
+    u"""Does contact ACQUIRED BY A CLAMP start a ride? lv20's last difference.
+
+    Pass 1 is this same file with `RIDEDROP_CONTACT` empty: build the drop
+    geometry, let the run say where each mode meets the ramp, and read it back
+    with `grabcontact`. Pass 2 places the mid portal 0, 1 and 2 ticks after that
+    contact -- lv20's is 1 -- so the answer does not hang on a single placement
+    being right to the tick.
+
+    The `wave` unit is LAST and dies: it is lv20's own target, and one death
+    ends the run.
+    """
+    objs: list[str] = []
+    x = 90.0
+    plan = [(mode, target, k)
+            for mode, target in (("ufo", "ball"), ("cube", "ball"),
+                                 ("ball", "cube"))
+            for k in (0, 1, 2)]
+    plan.append(("ufo", "wave", 1))
+    for mode, target, k in plan:
+        x0 = x
+        port = None
+        if mode in RIDEDROP_CONTACT:
+            port = x0 + RIDEDROP_CONTACT[mode] + k * DX_1X + 32.0
+        u, x, info = ridedrop_unit(x, mode, target, False, port)
+        objs += u
+        UNITS.append({"x0": x0, "x1": x, "mode": mode, "target": target,
+                      "m": 1.0, "mini": 0, "ceiling": 1, "age": k, **info})
+    objs += floor_run(0, PAVE_X)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 # THE CEILING HAS TO SIT UNDER THE BAND, and 380 does not. `ceil_unit_dual`
 # picked DUAL_CEIL = 380 to clear the deepest |m|=2 chain; measured on the first
 # cut of this rig, a `header(dual=True)` level reports pmax = 360, so the second
@@ -3264,6 +3381,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
     "rampseamdual": build_rampseamdual,
     "ceilrampdual": build_ceilrampdual, "wavein": build_wavein,
     "ridemode": build_ridemode, "ridemodedual": build_ridemodedual,
+    "ridedrop": build_ridedrop,
     "rampjump": build_rampjump,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
