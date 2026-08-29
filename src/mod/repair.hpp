@@ -1148,10 +1148,15 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
     // day and by the same measurement.
     //
     // The two numbers are computed and PRINTED unconditionally -- that is the instrument, and it
-    // costs nothing. Whether they may VETO the no-op is cfg `dpfixp2`, off by default: promoting
-    // those 27 transitions to records costs lv16 66 -> 150 iterations, because a patch applied at
-    // 27 matched states leaves the model wrong between them and the search plans through the
-    // gaps. The records are a to-fix list for the physics, not a fix. See config.hpp.
+    // costs nothing. Whether they may VETO the no-op is cfg `dpfixp2`, ON since 2026-08-29.
+    //
+    // It was off for most of that day, and both settings were measurements rather than policy:
+    // with the physics as it stood in the morning, promoting those 27 transitions to records
+    // cost lv16 66 -> 150 iterations, because a patch applied at 27 matched states leaves the
+    // model wrong between them and the search plans through the gaps. Once the ramp-ride and
+    // second-body fixes landed, the same 27 became 7 and the same flag became a win
+    // (lv16 95 -> 55). WHAT A FLAG IS WORTH DEPENDS ON THE PHYSICS UNDERNEATH IT, so re-measure
+    // before reading either number as settled. config.hpp carries the table.
     const double eDy2 = dual ? (gCur ? gCur->y2 - gPrev->y2 : 0.0)
                                    - (mCur->second.y2 - mPrev->second.y2) : 0.0;
     const double eDvy2 = dual ? (gCur ? gCur->v2 - gPrev->v2 : 0.0)
