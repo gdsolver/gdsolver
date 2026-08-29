@@ -175,6 +175,23 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     }
     State sb = s;
     swapHalves(sb);
+    // GD PROCESSES p1 FIRST, so the second body sees the first one's FINISHED tick -- and the
+    // one thing that reads across the pair is the dual ball's flip, whose gate is "has the
+    // partner landed" (stepOne's `s.grounded2`). Both halves are stepped from the same start
+    // state here, so that gate was answering with p1's state BEFORE its own step, and the flip
+    // came out a tick late. Same class as [[gd-same-tick-landing]].
+    //
+    // Measured on lv16 t=12,617 (dual ball, both full size, both flipped, climbing):
+    //   GD     p1 lands at y=585 on this tick; p2 y2=555.604 and vy2 := **-2.000**, up 1 -> 0
+    //   model  p2 y2=555.6039 -- the position to four decimals -- but vy2 8.973, still
+    //          climbing, and it flips on 12,618 instead
+    // The threshold itself is right: two attempts bracket it at |sep| 33.4 fires / 35.4 does
+    // not, against the rule's 2*pHalf+5 = 35. Only the tick was wrong.
+    //
+    // Just the flag, not the whole of `c`. Handing p2 every post-step field of p1 is what GD's
+    // ordering really means, but it is a much larger change than the one measurement here
+    // supports, and this gate is the only cross-body read in stepOne.
+    sb.grounded2 = c.grounded;
     bool d2 = false;
     State cb = stepOne(sb, input, K, d2);
     swapHalves(cb);

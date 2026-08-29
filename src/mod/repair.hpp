@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 // Stage C: the repair loop, inside the game.
 //
 // The loop is a loop around two things the mod already has: solving (dp/, linked in since
@@ -1481,10 +1482,30 @@ inline void recordFixups(long long deathTick) {
     const std::string arg = startArg(t0, *r, heldBefore(g_plan, t0));
     std::string band;
     if (r->pmax > r->pmin) band = num(r->pmin) + "," + num(r->pmax);
+    // TIME IT. Every other second of the loop is on the record -- the search prints `done in Ns`
+    // and each replay prints its own wallMs -- and those two are what "the loop spends its time
+    // chasing fidelity" was measured from. The recorder was not among them, and it is not small:
+    // each pass is a full `--replay` of the plan from t0 to the end of the level, run up to
+    // kFixupPasses times per death. On lv16 the two add up to 58% of a cold run's wall clock,
+    // which leaves 42% that no line accounts for -- and that gap is this loop.
+    // Printed per death, so a change can be judged on what it costs rather than on the iteration
+    // count alone (iterations are not equal: an early death re-solves a long tail, a late one
+    // does not).
+    const auto fxT0 = std::chrono::steady_clock::now();
+    int passes = 0;
     for (int pass = 1; pass <= kFixupPasses; ++pass) {
         // A divergence spanning several ticks needs one delta each, and the next one only
         // becomes visible once the previous is being applied -- hence the passes.
+        ++passes;
         if (fixupPass(t0, arg, band, deathTick) == 0) break;
+    }
+    {
+        const double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - fxT0).count();
+        char b[160];
+        snprintf(b, sizeof(b), "dpsolve:   [fixup] recorder: %d pass(es) in %.0f ms "
+                 "(anchor t=%lld, death t=%lld)", passes, ms, t0, deathTick);
+        writeResult(b);
     }
 }
 
