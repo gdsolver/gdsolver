@@ -294,7 +294,13 @@ class _WorkerBase:
         snap, digest = snapshot_mod(mod_file)
         mods = self.root / "geode" / "mods"
         mods.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(snap, mods / "gdsolver.geode")
+        # A worker's mods folder holds ours and nothing else, so anything else
+        # in it is a package under a name we no longer build. Geode would load
+        # it alongside this one -- two solvers hooking the same game.
+        for stale in mods.glob("*.geode"):
+            if stale.name != BUILD_MOD.name:
+                stale.unlink()
+        shutil.copyfile(snap, mods / BUILD_MOD.name)
         ensure_appid_480(self.root, self.worker_id)
         ensure_steam()
         repair_save(self.worker_id)

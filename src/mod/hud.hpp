@@ -31,7 +31,10 @@ constexpr int ITERMAP_TAG = 0x51D54;
 struct OverlayCursor { float y; };
 
 // Fetch or create one overlay label. `y` is advanced past it, so the next one lands below.
-inline cocos2d::CCLabelBMFont* overlayLabel(cocos2d::CCNode* parent, int tag, const char* font,
+// `id` is the Geode node ID: the lookup is still by tag, but these hang off a layer the game
+// owns, so other mods need a name for them.
+inline cocos2d::CCLabelBMFont* overlayLabel(cocos2d::CCNode* parent, int tag,
+                                            const std::string& id, const char* font,
                                             float scale, bool visible, OverlayCursor& cur) {
     using namespace cocos2d;
     auto* lbl = static_cast<CCLabelBMFont*>(parent->getChildByTag(tag));
@@ -43,6 +46,7 @@ inline cocos2d::CCLabelBMFont* overlayLabel(cocos2d::CCNode* parent, int tag, co
         lbl = CCLabelBMFont::create("", font);
         if (!lbl) return nullptr;
         lbl->setTag(tag);
+        lbl->setID(id);
         lbl->setAnchorPoint({0.f, 1.f});
         lbl->setScale(scale);
         lbl->setZOrder(1 << 20);
@@ -304,7 +308,8 @@ inline void updateOverlays(cocos2d::CCNode* gameLayer) {
     if (!parent) return;
     OverlayCursor cur{CCDirector::sharedDirector()->getWinSize().height - 4.f};
     // 1. the bot badge -- neither F1 nor cfg hud=0 reaches it (spec 9)
-    fillBotBadge(overlayLabel(parent, BADGE_TAG, "bigFont.fnt", 0.35f, botDriving(), cur));
+    fillBotBadge(overlayLabel(parent, BADGE_TAG, "bot-badge"_spr, "bigFont.fnt", 0.35f,
+                              botDriving(), cur));
     const bool show = g_hudOn && !g_overlayHidden;
     // 2. what the solver is doing (solve sessions only)
     //    Visible for the whole solve, not only while the search thread runs: the loop's
@@ -314,12 +319,12 @@ inline void updateOverlays(cocos2d::CCNode* gameLayer) {
     //
     //    It also stays up after the session ends. A solve that gave up leaves the level standing
     //    at the point it stopped, and the one thing worth reading then is how far it got.
-    fillSessionHud(overlayLabel(parent, HUD_TAG, "chatFont.fnt", 0.6f,
+    fillSessionHud(overlayLabel(parent, HUD_TAG, "session-hud"_spr, "chatFont.fnt", 0.6f,
                                 show && showingSolve(), cur));
     // 3. the keys, the current speed and whether time is stopped. Only while the mod is
     //    driving: during ordinary play these keys do nothing, and a legend for them on screen
     //    reads as "the mod is running something", which is exactly the wrong impression
-    fillKeysHud(overlayLabel(parent, KEYS_TAG, "chatFont.fnt", 0.5f,
+    fillKeysHud(overlayLabel(parent, KEYS_TAG, "keys-hud"_spr, "chatFont.fnt", 0.5f,
                              show && botDriving(), cur));
     // 4. the iteration map (F10). It owns its own corner rather than joining this column: the
     //    strip is a timeline of the whole level and the column reaches the middle of the screen,

@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gdtas.paths import REPO
+from gdtas.paths import BUILD_MOD, REPO
 
 def _gd_dir() -> Path:
     """Where Geometry Dash is installed.
@@ -111,13 +111,20 @@ def main(argv=None) -> int:
     pkgs = sorted(build.rglob("*.geode"))
     if pkgs:
         print(f"Built package: {pkgs[0]}")
-    deployed = GD_DIR / "geode" / "mods" / "gdsolver.geode"
+    deployed = GD_DIR / "geode" / "mods" / BUILD_MOD.name
     if deployed.exists():
         print(f"Deployed: {deployed}")
     elif pkgs:
         deployed.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(pkgs[0], deployed)
         print(f"Copied package to: {deployed}")
+    # This is your own GD, so nothing here removes anything from it -- but a
+    # package left over from a previous mod id would be loaded next to this
+    # one, and two solvers hooking the same game is not a subtle failure.
+    for stale in sorted(deployed.parent.glob("gdsolver*.geode")):
+        if stale.name != deployed.name:
+            print(f"WARNING: an older package is still installed: {stale}\n"
+                  f"         delete it, or Geode will load both.")
 
     if not a.no_run:
         print("=== Launching GD (via Steam) ===")

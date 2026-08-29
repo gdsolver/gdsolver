@@ -196,7 +196,7 @@ not progress on a save file.
 
 ## Installing
 
-Grab **[`gdsolver.geode` from the latest release](https://github.com/gdsolver/gdsolver/releases/latest)**
+Grab **[`gdsolver.solver.geode` from the latest release](https://github.com/gdsolver/gdsolver/releases/latest)**
 and drop it into Geometry Dash's `geode/mods/` folder, then start the game — the
 usual place is
 
@@ -234,7 +234,7 @@ cmake -S . -B build-dp -DGDSOLVER_BUILD_MOD=OFF
 cmake --build build-dp --config Release        # -> build-dp/dp/Release/leveldp.exe
 
 # mod + CLI
-geode build                                    # -> build/gdsolver.geode
+geode build                                    # -> build/gdsolver.solver.geode
 ```
 
 ## Watching a run

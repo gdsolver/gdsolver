@@ -32,7 +32,11 @@ LAB_RIGS = LAB / "rigs"
 SRC = REPO / "src"
 SCRIPTS = REPO / "scripts"
 DOCS = REPO / "docs"
-BUILD_MOD = REPO / "build" / "gdsolver.geode"
+# Geode's CMake writes build/<mod.id>.geode, so the package name follows the id.
+# Read it rather than repeating it: the name was spelled out in four places and
+# every one of them would have gone on deploying a file that no longer existed.
+MOD_ID = json.loads((REPO / "mod.json").read_text(encoding="utf-8"))["id"]
+BUILD_MOD = REPO / "build" / f"{MOD_ID}.geode"
 # Where a measurement session snapshots the .geode it is using, so that a
 # rebuild of the mainline does not swap the binary under a running measurement.
 MOD_CACHE = REPO / "mcp" / ".cache"

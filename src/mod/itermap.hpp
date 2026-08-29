@@ -650,7 +650,10 @@ inline cocos2d::ccColor4F kindColor(int k, float a) {
 // Fetch or create one of our draw nodes. Looked up by tag every time and never cached in a raw
 // pointer -- the same rule the HUD labels follow, and for the same reason: a scene rebuild frees
 // the node while a cached pointer keeps pointing at it.
-inline cocos2d::CCDrawNode* drawNode(cocos2d::CCNode* parent, int tag, int z) {
+// `id` is the Geode node ID. The lookup stays by tag; the name is there because these hang off
+// layers the game owns, where another mod has no other way to refer to them.
+inline cocos2d::CCDrawNode* drawNode(cocos2d::CCNode* parent, int tag, const std::string& id,
+                                     int z) {
     using namespace cocos2d;
     if (!parent) return nullptr;
     auto* n = static_cast<CCDrawNode*>(parent->getChildByTag(tag));
@@ -658,6 +661,7 @@ inline cocos2d::CCDrawNode* drawNode(cocos2d::CCNode* parent, int tag, int z) {
         n = CCDrawNode::create();
         if (!n) return nullptr;
         n->setTag(tag);
+        n->setID(id);
         n->setZOrder(z);
         parent->addChild(n);
     }
@@ -680,7 +684,7 @@ inline void fillRect(cocos2d::CCDrawNode* n, float x0, float y0, float x1, float
 inline void drawWorld(cocos2d::CCNode* objectLayer) {
     using namespace cocos2d;
     if (!objectLayer) return;
-    auto* n = drawNode(objectLayer, WORLD_TAG, 1 << 20);
+    auto* n = drawNode(objectLayer, WORLD_TAG, "itermap-world"_spr, 1 << 20);
     if (!n) return;
     // The counts hang off a plain node beside the draw node: a CCDrawNode cannot hold text, and
     // the two have to appear and disappear together.
@@ -689,6 +693,7 @@ inline void drawWorld(cocos2d::CCNode* objectLayer) {
         counts = CCNode::create();
         if (!counts) return;
         counts->setTag(COUNT_TAG);
+        counts->setID("itermap-counts"_spr);
         counts->setZOrder((1 << 20) + 1);
         objectLayer->addChild(counts);
     }
@@ -877,7 +882,7 @@ inline cocos2d::CCRect stripBox() {
 // have none of that, and they are what the keys were already asking in.
 inline void drawStrip(cocos2d::CCNode* parent) {
     using namespace cocos2d;
-    auto* n = drawNode(parent, STRIP_TAG, 1 << 20);
+    auto* n = drawNode(parent, STRIP_TAG, "itermap-strip"_spr, 1 << 20);
     if (!n) return;
     const bool on = stripVisible();
     n->setVisible(on);
@@ -976,7 +981,7 @@ inline void drawStrip(cocos2d::CCNode* parent) {
 // triangles pointing the right way need no font at all.
 inline void drawCover(cocos2d::CCNode* parent, bool forward) {
     using namespace cocos2d;
-    auto* n = drawNode(parent, COVER_TAG, (1 << 20) - 1);
+    auto* n = drawNode(parent, COVER_TAG, "seek-cover"_spr, (1 << 20) - 1);
     if (!n) return;
     const bool on = (seeking() || g_dragging) && barVisible();
     n->setVisible(on);
@@ -1093,6 +1098,7 @@ inline void drawLabel(cocos2d::CCNode* parent, float px, float levelLen) {
         lbl = CCLabelBMFont::create("", "chatFont.fnt");
         if (!lbl) return;
         lbl->setTag(LABEL_TAG);
+        lbl->setID("itermap-readout"_spr);
         lbl->setAnchorPoint({1.f, 0.f});
         lbl->setScale(0.5f);
         // ABOVE the strip, which is where its backing panel is drawn. Both sat at 1<<20, and
@@ -1389,6 +1395,7 @@ inline void draw(cocos2d::CCNode* parent, PlayLayer* pl) {
     if (barVisible() && !parent->getChildByTag(TOUCH_TAG)) {
         if (auto* tl = StripTouch::create()) {
             tl->setTag(TOUCH_TAG);
+            tl->setID("seek-bar-touch"_spr);
             parent->addChild(tl, (1 << 20) + 1);
         }
     }

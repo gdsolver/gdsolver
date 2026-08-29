@@ -228,7 +228,7 @@ false plan was spliced. The level was cleared later by fixing the model instead.
 
 ## 4. Running inside the game
 
-A user needs only Geometry Dash, Geode and `gdsolver.geode`:
+A user needs only Geometry Dash, Geode and `gdsolver.solver.geode`:
 
 * **`dp/` is linked into the mod.** The level model is built in memory from the
   loaded `PlayLayer` by the same code that writes the text exports, and a solve

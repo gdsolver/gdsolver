@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .paths import REPO, WORKERS_ROOT, gd_save_root
+from .paths import BUILD_MOD, REPO, WORKERS_ROOT, gd_save_root
 from .worker import CREATE_NO_WINDOW, WorkerError, repair_save
 
 # Steam's default location. Can be overridden with --base-game.
@@ -58,7 +58,7 @@ def seed_worker(worker_id: int, base_game: Path = DEFAULT_BASE_GAME,
         raise WorkerError(f"the Geode loader is incomplete ({loader_dir}): {missing}")
 
     if mod is None:
-        mod = REPO / "build" / "gdsolver.geode"
+        mod = BUILD_MOD
     mod = Path(mod)
     if not mod.exists():
         raise WorkerError(f"the mod is missing: {mod} (run cmake --build build first)")

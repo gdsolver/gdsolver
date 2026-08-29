@@ -26,11 +26,13 @@ public:
     bool init() override {
         using namespace cocos2d;
         if (!CCLayer::init()) return false;
+        this->setID("panel"_spr);
         auto* tag = CCLabelBMFont::create("GDSOLVER", "bigFont.fnt");
         tag->setScale(0.3f);
         tag->setAnchorPoint({0.f, 0.5f});
         tag->setPosition({10.f, 52.f});
         tag->setOpacity(140);
+        tag->setID("panel-tag"_spr);
         this->addChild(tag);
         m_modeLabel = CCLabelBMFont::create(uiModeName(g_uiMode), "bigFont.fnt");
         m_modeLabel->setScale(0.55f);
@@ -38,6 +40,8 @@ public:
             menu_selector(SolverPanelLayer::onMode));
         item->setAnchorPoint({0.f, 0.5f});
         auto* menu = CCMenu::create(item, nullptr);
+        menu->setID("panel-menu"_spr);
+        item->setID("mode-button"_spr);
         menu->setPosition({0, 0});
         item->setPosition({10.f, 32.f});
         this->addChild(menu);

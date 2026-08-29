@@ -3,9 +3,17 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"id": "gdsolver",
+	"id": "gdsolver.solver",
 	"name": "GD Solver",
 	"version": "v0.1.1",
-	"developer": "gdsolver",
-	"description": "TAS solver research mod. Drives GD's own physics as the replay verifier for a reachability-DP solver."
+	"developers": ["gdsolver"],
+	"description": "Automatically finds an input sequence that clears a level, with the game itself as the verifier.",
+	"tags": ["gameplay", "utility", "offline", "cheat"],
+	"links": {
+		"source": "https://github.com/gdsolver/gdsolver"
+	},
+	"issues": {
+		"info": "Report problems on the GitHub issue tracker.",
+		"url": "https://github.com/gdsolver/gdsolver/issues"
+	}
 }
