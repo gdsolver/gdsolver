@@ -41,17 +41,17 @@ run again on every change that reaches the loop.
 
 | # | Level | Repairs | Time | | # | Level | Repairs | Time |
 |--:|---|--:|--:|---|--:|---|--:|--:|
-| 1 | Stereo Madness | 0 | 14 s | | 12 | Theory of Everything | 3 | 13 s |
-| 2 | Back On Track | 1 | 12 s | | 13 | Electroman Adventures | 0 | 15 s |
-| 3 | Polargeist | 0 | 12 s | | 14 | Clubstep | 7 | 28 s |
-| 4 | Dry Out | 0 | 11 s | | 15 | Electrodynamix | 2 | 16 s |
-| 5 | Base After Base | 3 | 15 s | | 16 | Hexagon Force | 102 | 8 m 42 s |
-| 6 | Can't Let Go | 0 | 11 s | | 17 | Blast Processing | 5 | 32 s |
-| 7 | Jumper | 2 | 20 s | | 18 | Theory of Everything 2 | 11 | 38 s |
-| 8 | Time Machine | 1 | 17 s | | 19 | Geometrical Dominator | 11 | 1 m 04 s |
-| 9 | Cycles | 3 | 14 s | | 20 | Deadlocked | 24 | 5 m 36 s |
-| 10 | xStep | 6 | 24 s | | 21 | Fingerdash | 78 | 13 m 02 s |
-| 11 | Clutterfunk | 3 | 19 s | | 22 | Dash | 60 | 7 m 52 s |
+| 1 | Stereo Madness | 0 | 17 s | | 12 | Theory of Everything | 3 | 13 s |
+| 2 | Back On Track | 1 | 13 s | | 13 | Electroman Adventures | 0 | 15 s |
+| 3 | Polargeist | 0 | 14 s | | 14 | Clubstep | 7 | 30 s |
+| 4 | Dry Out | 0 | 12 s | | 15 | Electrodynamix | 2 | 19 s |
+| 5 | Base After Base | 3 | 16 s | | 16 | Hexagon Force | 55 | 4 m 13 s |
+| 6 | Can't Let Go | 0 | 12 s | | 17 | Blast Processing | 1 | 25 s |
+| 7 | Jumper | 2 | 23 s | | 18 | Theory of Everything 2 | 8 | 40 s |
+| 8 | Time Machine | 1 | 19 s | | 19 | Geometrical Dominator | 18 | 1 m 34 s |
+| 9 | Cycles | 3 | 16 s | | 20 | Deadlocked | 37 | 6 m 55 s |
+| 10 | xStep | 6 | 27 s | | 21 | Fingerdash | 30 | 3 m 47 s |
+| 11 | Clutterfunk | 1 | 18 s | | 22 | Dash | 57 | 7 m 48 s |
 
 **Repairs** is how many times the loop had to go back: solve, replay, die,
 re-anchor on the game's real state, solve the tail. `0` means the very first
@@ -59,17 +59,20 @@ plan the DP produced cleared the level. That count is deterministic — it is wh
 `py/cold_regress.py` compares against `data/cold_baseline.json` — and it is a
 much better measure of how wrong the model is on a level than the clock is.
 
-**Time** is one run (2026-08-27), each level solved on its own — one game session
+**Time** is one run (2026-08-29), each level solved on its own — one game session
 at a time, 8 solver threads, 16-core desktop — and it counts everything from
-launching the game to the solution being written. The whole suite takes 41
+launching the game to the solution being written. The whole suite takes 30
 minutes that way. Read it as a guide and not as a contract: the clock is not what
 the regression compares, the repair count is, and only that one is deterministic.
 Solving four levels at once — which is how the suite is normally run — costs each
 expensive level 34–49 % more search time and moves none of the counts.
 
-Almost all of it is the search. The DP calls are 86 % of the total and 88–93 % on
-the four expensive levels; on the ones that finish inside half a minute, most of
-what is left is starting the game and loading the level.
+Almost all of it is the search. Broken down on the 2026-08-27 run, the DP calls
+were 86 % of the total and 88–93 % on the four expensive levels; on the ones that
+finish inside half a minute, most of what is left is starting the game and
+loading the level. That split has not been re-measured since — the suite wipes
+each session's log before the next level, so it needs its own run — but nothing
+about where the time goes has changed.
 
 ## How it works
 
