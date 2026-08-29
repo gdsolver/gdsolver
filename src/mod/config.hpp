@@ -130,20 +130,30 @@ struct Config {
     bool dpWorld = true;
     bool dpGroups = true;
     // cfg `dpfixp2`: let the SECOND BODY's transition error decide, on its own, that a dual
-    // transition is worth a record. Off by default, and the reason is a measurement rather than
-    // caution -- see writeFixup's no-op test, which is where it acts.
+    // transition is worth a record -- see writeFixup's no-op test, which is where it acts.
     //
-    // What it finds is real: on lv16 it promotes 27 transitions that were being filed as "already
-    // right" on the strength of the first body alone, and 26 of them are p2 errors of half a
-    // pixel or more (up to dvy 11.42, a whole cube jump). It also closes the corpus' largest
-    // grind -- t=13,017, where the model then dies on GD's own tick instead of twelve later.
-    // What it costs is the level: lv16 goes 66 -> 150 iterations and lv20 38 -> 44. A fixup is a
-    // patch applied at matched states, so a model made faithful at 27 points and left wrong
-    // between them steers the search into routes it then has to abandon; the fix those 27 records
-    // describe belongs in the physics, not in the file.
-    // So: ON to regenerate the list (GDSOLVER_LAB/oneoff/py/p2_gap_list.py reads it back out of
-    // the log), OFF to solve.
-    bool dpFixP2 = false;
+    // ON since 2026-08-29, and it was OFF for most of that day. Both settings were measurements,
+    // not policy, and what moved between them was the PHYSICS. When it went in, the second body
+    // had 27 unrecorded transition errors on lv16 in 12 clusters, and recording them cost the
+    // level: 66 -> 150 iterations. A fixup is a patch applied at matched states, so a model made
+    // faithful at 27 points and left wrong between them steers the search into routes it then
+    // abandons -- the records were a to-fix list for the physics, not a fix.
+    //
+    // Three of those clusters have since been closed in the physics (the ramp ride's counter
+    // across a tap, the dual ball's flip on the tick its partner lands, and "already inside" a
+    // rotated portal). lv16 is down to SEVEN records in two clusters, and with so few the flag
+    // is cheaper to run with than without. Measured back to back, same build, same machine:
+    //
+    //            lv16              lv17      lv20
+    //   off   95 iters / 847 s    1 / -    34 / 1358 s
+    //   on    55 iters / 527 s    1 / -    40 / 1448 s
+    //
+    // lv20 pays 6 iterations and 7% for what lv16 gains 40 and 38% on; across the three dual
+    // levels -- the only ones this can reach -- it is 2,205 s -> 1,975 s. lv20's heavy solves
+    // (>= 10 s) move 806 -> 817 s, i.e. the extra iterations there are the cheap kind.
+    // Turn it OFF to A/B the records back out; GDSOLVER_LAB/oneoff/py/p2_gap_list.py reads the
+    // remaining gaps out of a run's log.
+    bool dpFixP2 = true;
     // cfg `dpbandtrack`: hand the search the CAMERA's recorded flight band
     // (--bandtrack). On since 81f2a09; off is how that commit's remaining half is
     // A/B'd, since lv22's second cold regression bisects to it.
