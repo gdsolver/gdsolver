@@ -15,5 +15,78 @@
 	"issues": {
 		"info": "Report problems on the GitHub issue tracker.",
 		"url": "https://github.com/gdsolver/gdsolver/issues"
+	},
+	"settings": {
+		"key-overlay": {
+			"type": "keybind",
+			"name": "Hide the overlay",
+			"description": "Refused while solving, and it never hides the bot badge.",
+			"default": "F1"
+		},
+		"key-pause": {
+			"type": "keybind",
+			"name": "Pause / resume",
+			"default": "F2"
+		},
+		"key-step1": {
+			"type": "keybind",
+			"name": "Step one substep",
+			"description": "Held down, it repeats.",
+			"default": "F3"
+		},
+		"key-step10": {
+			"type": "keybind",
+			"name": "Step ten substeps",
+			"description": "Held down, it repeats.",
+			"default": "F4"
+		},
+		"key-render": {
+			"type": "keybind",
+			"name": "Rendering on / off",
+			"description": "Only during a solve, where the frames go back to the fast loop. A replay you cannot see is not a replay.",
+			"default": "F5"
+		},
+		"key-hitboxes": {
+			"type": "keybind",
+			"name": "Hitboxes: off / on / only",
+			"default": "F6"
+		},
+		"key-replay": {
+			"type": "keybind",
+			"name": "Replay from the start",
+			"default": "F7"
+		},
+		"key-quit": {
+			"type": "keybind",
+			"name": "Quit to the level screen",
+			"default": "F9"
+		},
+		"key-itermap": {
+			"type": "keybind",
+			"name": "The iteration map",
+			"default": "F10"
+		},
+		"key-faster": {
+			"type": "keybind",
+			"name": "Spectating speed up",
+			"default": "Up"
+		},
+		"key-slower": {
+			"type": "keybind",
+			"name": "Spectating speed down",
+			"default": "Down"
+		},
+		"key-seek-back": {
+			"type": "keybind",
+			"name": "Seek back",
+			"description": "A frame step instead while the game is stopped. Refused during a solve.",
+			"default": "Left"
+		},
+		"key-seek-forward": {
+			"type": "keybind",
+			"name": "Seek forward",
+			"description": "A frame step instead while the game is stopped. Refused during a solve.",
+			"default": "Right"
+		}
 	}
 }

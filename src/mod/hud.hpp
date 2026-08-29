@@ -99,7 +99,8 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
     if (showRender) {
         snprintf(renderPart, sizeof(renderPart), "        RENDER %s",
                  renderingOn() ? "on" : "off");
-        snprintf(renderLine, sizeof(renderLine), "F5   render on / off\n");
+        snprintf(renderLine, sizeof(renderLine), "%s   render on / off\n",
+                 keyName(Key::Render).c_str());
     }
     // Why time is stopped, not just that it is. A solve holds the level still for the whole of
     // every search (repair.hpp's spawn) and with the screen on that is most of what you watch --
@@ -111,28 +112,38 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
                                           : "  [PAUSED]";
     // Listed in key order. Anything else reads as a jumble -- there is no other order a reader
     // can predict, and this list is scanned, not read.
-    char buf[640];
+    // The key names are read from the bindings rather than spelled out, since they can be rebound.
+    char buf[768];
     snprintf(buf, sizeof(buf),
         "SPEED  %s%s%s\n"
-        "F1   hide this overlay%s\n"
-        "F2   pause / resume\n"
-        "F3 / F4   step 1 / 10 substeps (hold to repeat)\n"
+        "%s   hide this overlay%s\n"
+        "%s   pause / resume\n"
+        "%s / %s   step 1 / 10 substeps (hold to repeat)\n"
         "%s"
-        "F6   hitboxes: off / on / only\n"
-        "F7   replay from the start\n"
-        "F9   quit to the level screen\n"
-        "F10  iteration map: %s\n"
-        "left / right   %s\n"
-        "up / down   speed up / down   -   or drag the bar",
+        "%s   hitboxes: off / on / only\n"
+        "%s   replay from the start\n"
+        "%s   quit to the level screen\n"
+        "%s  iteration map: %s\n"
+        "%s / %s   %s\n"
+        "%s / %s   speed up / down   -   or drag the bar",
         spd, stopPart, renderPart,
+        keyName(Key::Overlay).c_str(),
         showingSolve() ? "  (disabled while solving)" : "",
-        renderLine, itermap::mapWanted() ? "on" : "off",
+        keyName(Key::Pause).c_str(),
+        keyName(Key::Step1).c_str(), keyName(Key::Step10).c_str(),
+        renderLine,
+        keyName(Key::Hitboxes).c_str(),
+        keyName(Key::Replay).c_str(),
+        keyName(Key::Quit).c_str(),
+        keyName(Key::Itermap).c_str(), itermap::mapWanted() ? "on" : "off",
+        keyName(Key::SeekBack).c_str(), keyName(Key::SeekForward).c_str(),
         // The arrows change job with the stop: seeking needs time to flow, so while it is frozen
         // they are frame-step keys instead. Saying which they are right now costs one word. While
         // the loop owns the level they are neither -- both would move a round it is measuring.
         showingSolve()                ? "(disabled while solving)"
         : (g_paused || probe::g_pause) ? "step back / forward (10 substeps)"
-                                       : "seek back / forward (hold to accelerate)");
+                                       : "seek back / forward (hold to accelerate)",
+        keyName(Key::Faster).c_str(), keyName(Key::Slower).c_str());
     lbl->setString(buf);
 }
 

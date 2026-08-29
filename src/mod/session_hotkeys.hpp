@@ -41,19 +41,52 @@ inline void clearManualPause();
 inline bool manualPaused();
 inline bool manualStepPending();
 
-// Accept hotkeys only while the GD window is in the foreground. GetAsyncKeyState returns the
-// physical key state regardless of focus = a key in another app would kill the session.
-// Decide by whether the foreground window's owning process is ourselves
-inline bool hotkeysFocused() {
-#ifdef GEODE_IS_WINDOWS
-    HWND fg = GetForegroundWindow();
-    if (!fg) return false;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(fg, &pid);
-    return pid == GetCurrentProcessId();
-#else
-    return true;
-#endif
+// The keys below are Geode keybind settings, declared in mod.json, so they can be rebound and
+// they arrive through the game's own input path.
+//
+// They used to be read with GetAsyncKeyState and hardcoded virtual key codes. That is a platform
+// call where Geode has its own facility, it skips cocos' keyboard dispatcher, and it reports the
+// physical key regardless of which window has focus -- which is why there was a foreground check
+// here at all, comparing the foreground window's process to our own. Going through Geode's input
+// removes the need for it: nothing is delivered while another application has the keyboard.
+//
+// A press event says only "down" or "up". The timing further down needs to know how long a key
+// has been held (the repeat delay on the step keys, the acceleration on the transport keys), so
+// the held state is mirrored here and the polling structure is left exactly as it was.
+enum class Key {
+    Overlay, Pause, Step1, Step10, Render, Hitboxes, Replay, Quit, Itermap,
+    Faster, Slower, SeekBack, SeekForward, Count
+};
+
+inline bool g_keyDown[(size_t)Key::Count] = {};
+
+// In the order of the enum.
+inline const char* const kKeySettings[(size_t)Key::Count] = {
+    "key-overlay", "key-pause", "key-step1", "key-step10", "key-render", "key-hitboxes",
+    "key-replay", "key-quit", "key-itermap", "key-faster", "key-slower",
+    "key-seek-back", "key-seek-forward"
+};
+
+inline bool keyHeld(Key k) { return g_keyDown[(size_t)k]; }
+
+// What a key is bound to right now, for the on-screen legend. The legend used to spell the keys
+// out, which was true while they were fixed and would quietly become a lie the moment one was
+// rebound -- a legend that names the wrong key is worse than none.
+inline std::string keyName(Key k) {
+    auto binds = Mod::get()->getSettingValue<std::vector<Keybind>>(kKeySettings[(size_t)k]);
+    return binds.empty() ? "(unbound)" : binds.front().toString();
+}
+
+// Installed on the first poll rather than at load: the polls are the only readers, so there is no
+// window in which a listener could be missing, and this needs no ordering against anything else.
+inline void ensureHotkeyListeners() {
+    static bool s_installed = false;
+    if (s_installed) return;
+    s_installed = true;
+    for (size_t i = 0; i < (size_t)Key::Count; ++i) {
+        listenForKeybindSettingPresses(kKeySettings[i],
+            [i](Keybind const&, bool down, bool, double) { g_keyDown[i] = down; });
+    }
 }
 
 // The keys that also work outside a session (plain manual play). pollHotkeys is only called
@@ -65,14 +98,13 @@ inline bool hotkeysFocused() {
 // replay-watching tools use it; it is no longer reachable from the keyboard mid-play.
 // What is left only stops time (F2/F3/F4) or changes what is drawn (F1/F8 and the arrows).
 inline void pollProbeHotkeys() {
-#ifdef GEODE_IS_WINDOWS
-    if (!hotkeysFocused()) return;
+    ensureHotkeyListeners();
     // F1: show / hide the overlays. Two things it must not do (spec §9): it is refused while
     // solving, and it never hides the bot badge -- a replay has to be visibly a replay, so that
     // part is not the user's to turn off. Everything else (coordinates, progress, the key
     // legend) is. (Not F12: that is Steam's screenshot key by default.)
     static bool s_f1Down = false;
-    bool f1 = (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
+    bool f1 = keyHeld(Key::Overlay);
     if (f1 && !s_f1Down) {
         if (solvingNow()) {
             log::info("hotkey: F1 ignored (solving)");
@@ -84,18 +116,18 @@ inline void pollProbeHotkeys() {
     s_f1Down = f1;
     // F2: pause/resume (for manual experiments; also works outside a session)
     static bool s_f2Down = false;
-    bool f2 = (GetAsyncKeyState(VK_F2) & 0x8000) != 0;
+    bool f2 = keyHeld(Key::Pause);
     if (f2 && !s_f2Down) g_probeRequest = 2;
     s_f2Down = f2;
     // F3: advance 1 substep / F4: advance 10 substeps (only meaningful while paused).
     // Held down they repeat: stepping 200 substeps by hand is 200 presses otherwise. The delay
     // before the repeat starts is what keeps a single press single.
-    auto stepKey = [](int vk, int req, bool& down,
+    auto stepKey = [](Key k, int req, bool& down,
                       std::chrono::steady_clock::time_point& since,
                       std::chrono::steady_clock::time_point& last) {
         constexpr auto kRepeatAfter = std::chrono::milliseconds(500);
         constexpr auto kRepeatEvery = std::chrono::milliseconds(100);
-        const bool now = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        const bool now = keyHeld(k);
         const auto t = std::chrono::steady_clock::now();
         if (now && !down) {            // the press itself
             g_probeRequest = req;
@@ -109,12 +141,12 @@ inline void pollProbeHotkeys() {
     };
     static bool s_f3Down = false, s_f4Down = false;
     static std::chrono::steady_clock::time_point s_f3Since, s_f3Last, s_f4Since, s_f4Last;
-    stepKey(VK_F3, 3, s_f3Down, s_f3Since, s_f3Last);
-    stepKey(VK_F4, 4, s_f4Down, s_f4Since, s_f4Last);
+    stepKey(Key::Step1, 3, s_f3Down, s_f3Since, s_f3Last);
+    stepKey(Key::Step10, 4, s_f4Down, s_f4Since, s_f4Last);
     // F6: GD's own hitbox drawing (see toggleHitboxes). The game only shows it in practice
     // mode, so the flag and the node's visibility are driven here instead
     static bool s_f6Down = false;
-    bool f6 = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
+    bool f6 = keyHeld(Key::Hitboxes);
     if (f6 && !s_f6Down) g_probeRequest = 6;
     s_f6Down = f6;
     // F10: the iteration map (itermap.hpp). OFF by default -- it draws over the level, and the
@@ -125,7 +157,7 @@ inline void pollProbeHotkeys() {
     // The level is taken from the session when there is one and from the game otherwise, so the
     // key also works while watching a level in plain manual play.
     static bool s_f10Down = false;
-    bool f10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+    bool f10 = keyHeld(Key::Itermap);
     if (f10 && !s_f10Down) {
         int lv = g_cfg.levelId;
         if (lv <= 0)
@@ -135,7 +167,6 @@ inline void pollProbeHotkeys() {
         log::info("hotkey: F10 -> iteration map {}", itermap::mapWanted() ? "on" : "off");
     }
     s_f10Down = f10;
-#endif
 }
 
 // Whether anything is being drawn right now. Declared here because the hotkey needs it and
@@ -177,8 +208,7 @@ inline void renderTogglePress() {
 }
 
 inline void pollHotkeys() {
-#ifdef GEODE_IS_WINDOWS
-    if (!hotkeysFocused()) return; // do not let key input in another app stop the analysis
+    ensureHotkeyListeners();
     // F5: rendering on / off. Only in a solve session -- that is the only time there is anything
     // to gain by not drawing (the frames go back to the fast loop). In a plain replay it stays
     // dead: a replay that cannot be seen is not a replay, and turning the screen off by accident
@@ -188,7 +218,7 @@ inline void pollHotkeys() {
     // replaying its candidates, and it comes back to 1x for each replay. If the key only worked
     // while searching, the run could be slowed down but never sped up again.
     static bool s_f5Down = false, s_f9Down = false;
-    bool f5 = (GetAsyncKeyState(VK_F5) & 0x8000) != 0;
+    bool f5 = keyHeld(Key::Render);
     if (f5 && !s_f5Down && solveSession()) renderTogglePress();
     s_f5Down = f5;
     // F9: leave the level. The session is closed first if it is still open, and then GD's own
@@ -197,7 +227,7 @@ inline void pollHotkeys() {
     // more: staying behind with a finished session is the one state in which the mod is no
     // longer driving while the player is still mid-level, and the level's record would start
     // counting again from wherever the plan had got to.
-    bool f9 = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+    bool f9 = keyHeld(Key::Quit);
     if (f9 && !s_f9Down) {
         log::info("hotkey: F9 -> quit to the level screen");
         if (!g_sessionOver) {
@@ -219,7 +249,7 @@ inline void pollHotkeys() {
     // replays only -- in serve mode the session belongs to the driver, and resurrecting it
     // behind the driver's back would hand it a run it never asked for.
     static bool s_f7Down = false;
-    bool f7 = (GetAsyncKeyState(VK_F7) & 0x8000) != 0;
+    bool f7 = keyHeld(Key::Replay);
     if (f7 && !s_f7Down) {
         if (auto* pl = PlayLayer::get()) {
             if (g_sessionOver && !g_serveMode) {
@@ -251,8 +281,8 @@ inline void pollHotkeys() {
     // cannot jump. (pollProbeHotkeys, the one that also works in plain manual play, binds
     // neither.)
     static bool s_upDown = false, s_downDown = false;
-    const bool kUp   = (GetAsyncKeyState(VK_UP)   & 0x8000) != 0;
-    const bool kDown = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
+    const bool kUp   = keyHeld(Key::Faster);
+    const bool kDown = keyHeld(Key::Slower);
     int step = 0;
     if (kUp && !s_upDown) step = +1;
     if (kDown && !s_downDown) step = -1;
@@ -273,14 +303,14 @@ inline void pollHotkeys() {
     //
     // The step is refused while such a seek is still running, or a held key would keep moving
     // the target the in-flight one is chasing.
-    auto transportKey = [](int vk, int dir, bool& down, int& repeats,
+    auto transportKey = [](Key k, int dir, bool& down, int& repeats,
                            std::chrono::steady_clock::time_point& since,
                            std::chrono::steady_clock::time_point& last) {
         const bool stopped = g_paused || manualPaused();
         // Stopped: F3/F4's timing exactly, because that is the key this becomes.
         const auto repeatAfter = std::chrono::milliseconds(stopped ? 500 : 400);
         const auto repeatEvery = std::chrono::milliseconds(stopped ? 100 : 140);
-        const bool now = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        const bool now = keyHeld(k);
         const auto t = std::chrono::steady_clock::now();
         const bool press = now && !down;
         const bool repeat = now && !press && t - since >= repeatAfter
@@ -318,9 +348,8 @@ inline void pollHotkeys() {
     static bool s_rightDown = false, s_leftDown = false;
     static int s_rightRep = 0, s_leftRep = 0;
     static std::chrono::steady_clock::time_point s_rSince, s_rLast, s_lSince, s_lLast;
-    transportKey(VK_RIGHT, +1, s_rightDown, s_rightRep, s_rSince, s_rLast);
-    transportKey(VK_LEFT,  -1, s_leftDown,  s_leftRep,  s_lSince, s_lLast);
-#endif
+    transportKey(Key::SeekForward, +1, s_rightDown, s_rightRep, s_rSince, s_rLast);
+    transportKey(Key::SeekBack,  -1, s_leftDown,  s_leftRep,  s_lSince, s_lLast);
 }
 
 // Body of the experimental-hotkey handling (called from update).
