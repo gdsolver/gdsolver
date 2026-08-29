@@ -307,6 +307,67 @@ def ramp_unit(x: float, mode: str, m: float, mini: bool, n_ramps: int,
     return objs, xr + 26 * GRID
 
 
+def rampseam_unit(x: float, mode: str, m: float, mini: bool, ledge: int,
+                  floor_top: float = GROUND_TOP) -> tuple[list[str], float]:
+    """`ramp_unit` with a FLAT LEDGE butted against the ramp's top instead of a gap.
+
+    The one thing `ramps` cannot see. Its ramps end in empty space, and there GD
+    releases the ride's seat on the launch tick -- y takes the free step and the
+    seat is thrown away (47/47 on that rig; the model does the same, and the
+    lv19 t=254 measurement in step.hpp's launch branch is the same reading).
+
+    lv16 t=13,264 disagrees: p2 launches (vy 0 -> 7.680, onGround 1 -> 0) and GD
+    KEEPS THE SEAT, y = 457.150 = the ramp's surface at that x plus 9*sqrt(2).
+    The only thing different about that site is what is beyond the ramp: a plain
+    30x30 block whose top is exactly the ramp's top, so the surface continues.
+    `ledge` is how many such blocks to lay (0 reproduces `ramps`).
+
+    Zero input, like its sibling: the player rides up, and either walks onto the
+    ledge or launches off it, and both are readable from the dump.
+    """
+    oid, rot, fx, fy, w, h = RAMP[m]
+    objs: list[str] = []
+    objs.append(obj(MODE_PORTAL[mode], x, floor_top + 15.0))
+    objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID,
+                    floor_top + 15.0))
+    xr = x + 8 * GRID
+    # One ramp, its low end on the floor. Long enough to saturate the ride
+    # counter (the factor is 1.0 past 24 ticks) so the launch VALUE is not the
+    # variable under test here -- only what happens to y.
+    cy = floor_top + h / 2.0
+    objs.append(obj(oid, xr + w / 2.0, cy, rot=rot, flip_x=fx, flip_y=fy))
+    top = floor_top + h            # the ramp's high edge
+    xr += w
+    # The ledge: blocks whose TOP FACE IS THE RAMP'S TOP, butted against it.
+    for k in range(ledge):
+        objs.append(obj(BLOCK, xr + GRID / 2 + k * GRID, top - GRID / 2))
+    xr += ledge * GRID
+    # ...and then empty space, so whatever happened is visible as free flight.
+    return objs, xr + 26 * GRID
+
+
+def build_rampseam() -> str:
+    """Does a flat ledge past the ramp's top keep the ride's seat on the launch tick?
+
+    4 ground modes x 3 gradients x normal/mini x ledge 0/1/3 = 72 units. Ledge 0
+    is the `ramps` geometry and is the control: if it does not reproduce that
+    rig's answer, the rig is wrong and not the model.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for mode in ("cube", "ball", "robot", "spider"):
+        for m in (1.0, 0.5, 2.0):
+            for mini in (False, True):
+                for ledge in (0, 1, 3):
+                    x0 = x
+                    u, x = rampseam_unit(x, mode, m, mini, ledge)
+                    objs += u
+                    UNITS.append({"x0": x0, "x1": x, "mode": mode, "m": m,
+                                  "mini": int(mini), "ledge": ledge})
+    objs += floor_run(0, PAVE_X)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 def build_ramps() -> str:
     """Calibration rig for slope-exit launches. CLEARS EVERY UNIT WITH ZERO INPUT.
 
@@ -2649,7 +2710,8 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "flyramps": build_flyramps,
             "portwavebig": build_portwavebig,
             "recttop": build_recttop,
-            "ramps": build_ramps, "rampjump": build_rampjump,
+            "ramps": build_ramps, "rampseam": build_rampseam,
+    "rampjump": build_rampjump,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
             "empty": build_empty, "flat": build_flat,

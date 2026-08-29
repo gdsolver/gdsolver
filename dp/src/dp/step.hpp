@@ -5832,8 +5832,20 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                                 break;
                             }
                         }
-                        if (blockedByFlat) continue;
+                        if (blockedByFlat) {
+                            if (g_slopeDbg)
+                                std::printf("slopeblock t=%lld x=%.2f y=%.3f "
+                                            "uid=%d top=%.3f - a flat solid is "
+                                            "holding it up, no seat\n",
+                                            (long long)K.t, x, (double)c.y,
+                                            sp->uid, top);
+                            continue;
+                        }
                     }
+                    if (g_slopeDbg)
+                        std::printf("slopeseat t=%lld x=%.2f uid=%d y %.3f -> "
+                                    "%.3f\n",
+                                    (long long)K.t, x, sp->uid, (double)c.y, top);
                     c.y = (float)top;
                     // the impulse tick takes the POSITION only -- the jump or
                     // flip already set vy and cleared grounded, and the player
