@@ -57,9 +57,16 @@ run again on every change that reaches the loop.
 
 **Repairs** is how many times the loop had to go back: solve, replay, die,
 re-anchor on the game's real state, solve the tail. `0` means the very first
-plan the DP produced cleared the level. That count is deterministic — it is what
-`py/cold_regress.py` compares against `data/cold_baseline.json` — and it is a
-much better measure of how wrong the model is on a level than the clock is.
+plan the DP produced cleared the level. The count is deterministic for a given
+build, which is why it is what `py/cold_regress.py` compares against
+`data/cold_baseline.json`.
+
+It is not a fidelity score. It counts what the loop had to do, and that depends
+on which corridor the search happens to walk as much as on where the model is
+wrong — the search is deepest-first, so touching one rule reorders the frontier
+and the run takes a different route. Making the model *more* correct can raise
+it: closing a route the model only believed in sends the search off to find the
+real one.
 
 **Time** is one run (2026-08-29), each level solved on its own — one game session
 at a time, 8 solver threads, 16-core desktop — and it counts everything from
@@ -161,16 +168,17 @@ of slowly.
 *What to expect, roughly.* The official suite is 1.x apart from two levels —
 Fingerdash is 2.0 and Dash is 2.2 — so that is the era the model has been
 measured against, and the repair counts in the table above are the visible half
-of it: the 1.0 levels need 0 to 3 rounds, the two 2.x levels need 78 and 60. The
-expectation for custom levels follows: one built out of early-era parts stands a
-good chance, a recent one much less.
+of it: the earliest levels need 0 to 3 rounds, and the four most expensive are
+all late ones. The expectation for custom levels follows: one built out of
+early-era parts stands a good chance, a recent one much less.
 
 Read that as a claim about *parts*, not about dates. What costs rounds is a
 mechanic the model has not been measured against, and mechanics arrived with
-versions, which is the only reason the era works as a proxy at all — and it
-breaks where you would expect. The most expensive level in the suite is Hexagon
-Force at 102 rounds, which is 1.6, and it costs that because of its dual section,
-where the model is weakest; Blast Processing, two versions later, costs 5. A 2.2
+versions, which is the only reason the era works as a proxy at all — and the
+order does not actually follow the versions. Dash, which is 2.2, is the most
+expensive at 57 rounds; Hexagon Force, which is 1.6, is right behind it at 55,
+and it costs that because of its dual section; Fingerdash, in between at 2.0,
+needs 30, and Blast Processing, two versions after Hexagon Force, needs 1. A 2.2
 level that happens to be a plain cube level may well solve on the first plan,
 and a 1.6 level with a dual may not.
 
