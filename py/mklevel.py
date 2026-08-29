@@ -864,6 +864,318 @@ def build_ceilramp() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def ridemode_unit(x: float, mode: str, target: str, m: float, mini: bool,
+                  ceiling: bool, ride_ticks: float | None = None
+                  ) -> tuple[list[str], float, dict]:
+    u"""A MODE PORTAL PLACED MID-RIDE, on a floor ramp or on a ceiling one.
+
+    lv20's most expensive wall (8 of 40 rounds) is one tick: the second body
+    rides a 45-degree slope upside-down, meets the wave portal, and GD steps it
+    +0.029 while the model steps it -1.614 -- the ride's own step, m*dx. The
+    model has the free-step release for two cases only, both written from a
+    single site:
+
+        oldMode == 7 && s.onSlope                 (a swing leaving a ride)
+        oldMode != wantMode && s.ceilT > 0 && !s.onSlope   (a ceiling press)
+
+    and this body is neither. Widening the second gate to cover it looked
+    obvious until the corpus was asked: of the three ticks in the 22 solutions
+    where a mode portal fires with the ride running, ALL THREE HAVE GD TAKING
+    THE RIDE'S STEP (lv16 t=9,879 / t=15,537, lv18 t=9,295 -- ship to cube on a
+    floor ramp, |dy - m*dx| <= 0.001). Three samples that say the opposite of
+    the one site is not a rule either way, and they differ in more than one
+    thing at once, so this rig moves ONE: the side the ramp carries from.
+
+        floor   [mode][size][run-up][3 ramps up ....P.... ][gap]
+        ceiling [mode][size][flip][flat ceiling][3 ramps down ....P....][flat]
+
+    P is a portal to `target`, placed 2.5 ramps in so it fires with the ride
+    long since saturated, at the height the ride itself puts the body
+    (`ride_seat`). Both sides clear with zero input, which is what makes the
+    tick readable: whatever y moves by on the portal tick is the rule, not the
+    plan.
+    """
+    oid, rot, fx, fy, w, h = (CEIL_RAMP if ceiling else RAMP)[m]
+    objs: list[str] = []
+    # EACH HEAD PORTAL IS LAID TWICE, at 105 and at 195. A unit that keeps the
+    # player high for a long stretch leaves the CAMERA BAND raised behind it:
+    # measured on cut 3, after the ceiling unit at x=39,000 the band floor was
+    # pmin=150, so the body came down onto the INVISIBLE FLOOR at y=165 and
+    # every later unit's portal -- sitting at 105, below the band -- was out of
+    # reach. Six units in a row then measured nothing at all while the run still
+    # looked clean. A portal at 195 catches the body in that state; one at 105
+    # catches it in the ordinary one.
+    for py in (GROUND_TOP + 15.0, GROUND_TOP + 105.0):
+        objs.append(obj(MODE_PORTAL[mode], x, py))
+        objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID, py))
+    if ceiling:
+        objs.append(obj(GRAV_FLIP, x + 4 * GRID, GROUND_TOP + 15.0))
+    n_ramps = 3
+    ceil = ceil_y_for(h, n_ramps)
+    x_ramp = x + (20 if ceiling else 8) * GRID
+    if ceiling:
+        xx = x + 4 * GRID + GRID / 2
+        while xx < x_ramp:
+            objs.append(obj(BLOCK, xx, ceil + GRID / 2))
+            xx += GRID
+    for i in range(n_ramps):
+        if ceiling:
+            cy = ceil - h / 2.0 - i * h
+            objs.append(obj(oid, x_ramp + i * w + w / 2.0, cy,
+                            rot=rot, flip_x=fx, flip_y=fy))
+            yy = cy + h / 2.0 + GRID / 2
+            while yy <= ceil + GRID / 2 + 1.0:
+                for k in range(int(w / GRID)):
+                    objs.append(obj(BLOCK,
+                                    x_ramp + i * w + GRID / 2 + k * GRID, yy))
+                yy += GRID
+        else:
+            cy = GROUND_TOP + i * h + h / 2.0
+            objs.append(obj(oid, x_ramp + i * w + w / 2.0, cy,
+                            rot=rot, flip_x=fx, flip_y=fy))
+            yy = GROUND_TOP + GRID / 2
+            while yy < cy - h / 2.0 + 1.0:
+                for k in range(int(w / GRID)):
+                    objs.append(obj(BLOCK,
+                                    x_ramp + i * w + GRID / 2 + k * GRID, yy))
+                yy += GRID
+    # THE PORTAL FIRES ABOUT 32 px BEFORE ITS OWN CENTRE (box overlap: the mode
+    # portal's own half-width 17 plus the player's 15), so the height has to be
+    # the seat AT THE FIRING POINT, not under the centre -- on a 45-degree ramp
+    # those are 32 px apart, more than the portal's own half-height.
+    #
+    # `ride_ticks` places it by HOW OLD THE RIDE IS instead, which is the whole
+    # point of the third cut. The ride's own start is measured, not assumed: on
+    # the ceiling side the body leaves the flat ceiling at x_ramp - 5.9 (rig
+    # pass 2, unit 28, t=30,385) -- GD samples the line 6.2 px AHEAD of the
+    # centre, so the descent begins before the ramp's own left edge.
+    if ride_ticks is None:
+        port_cx = x_ramp + 2.5 * w
+    else:
+        port_cx = x_ramp - 5.9 + ride_ticks * DX_1X + 32.0
+    travel = max(0.0, port_cx - 32.0 + 6.2 - x_ramp)
+    i_at = min(n_ramps - 1, int(travel / w))
+    surf = (ceil - i_at * h - (travel - i_at * w) * (h / w)) if ceiling else \
+           (GROUND_TOP + i_at * h + (travel - i_at * w) * (h / w))
+    # The seat is the line at that sample point minus the player's own half --
+    # NOT half*sqrt(1+m^2). Measured on this rig (unit 28, a flipped UFO on the
+    # |m|=1 ceiling chain): line 241.66 - 15 = 226.66, GD's row to the digit,
+    # and the same formula lands lv20's p2 at 295.76 exactly.
+    port_cy = surf - (9.0 if mini else 15.0) if ceiling else \
+              surf + (9.0 if mini else 15.0)
+    objs.append(obj(MODE_PORTAL[target], port_cx, port_cy))
+    x_flat = x_ramp + n_ramps * w
+    if ceiling:
+        # Back to the flat ceiling at the ORIGINAL height -- a ceiling matching
+        # the ramp's far end crushes the player against the line (`ceil_unit`'s
+        # trap, stepped on twice).
+        x_end = x_flat + 16 * GRID
+        xx = x_flat + GRID / 2
+        while xx < x_end:
+            objs.append(obj(BLOCK, xx, ceil + GRID / 2))
+            xx += GRID
+        objs.append(obj(GRAV_NORM, x_flat + 12 * GRID, ceil - 15.0))
+        nxt = x_end + 14 * GRID
+    else:
+        # Nothing past the top end: the launch needs somewhere to land.
+        nxt = x_flat + 26 * GRID
+    return objs, nxt, {"x_ramp": x_ramp, "ramp_w": w, "ramp_h": h,
+                       "port_cx": port_cx, "port_cy": port_cy,
+                       "ceil_y": ceil if ceiling else 0.0}
+
+
+def build_ridemode() -> str:
+    u"""Does a mode portal end a ramp ride on its own tick? One variable: which
+    side the ramp carries from.
+
+    Floor units go FIRST and use the four ground modes only -- a flight mode
+    needs input to stay on a climbing ramp, which is why `ramps` has never had
+    one. The ceiling side sticks every mode to the underside with a gravity
+    flip and no input at all (`ceilramp`'s whole point), so the flight modes are
+    measurable there, and that is where lv20's own body is: a UFO pressed along
+    a descending ramp, upside down.
+
+    `wave` and `swing` are left out on purpose. The wave takes GD itself down
+    on `ceilramp`'s own units (2026-08-21), and the swing is the one case the
+    model already has a measured rule for.
+
+    |m| = 1 throughout: lv20's ramp is 45 degrees and the question is the side,
+    not the gradient. If the side turns out to matter, the gradient is the next
+    rig, not another axis of this one.
+
+    [2026-08-29, second cut] THE SIDE DOES NOT MATTER: all 20 units of the first
+    cut take the ride's step, floor and ceiling alike, every mode, both sizes.
+    So the model is right about lv20's tick as far as this rig can see, and what
+    is left of the difference is the ONE thing every unit above holds fixed --
+    THE NEW MODE'S BOX IS THE SAME SIZE AS THE OLD ONE. lv20's portal is a wave
+    portal: half 15 becomes half 5, and a body that was pressed against a
+    surface is suddenly 10 px clear of it with nothing to ride.
+
+    The model has the other direction of exactly this (a mode portal whose half
+    GROWS re-seats the player on the same tick, measured on lv22's spider pairs)
+    and nothing at all for the shrink, on the stated grounds that "shrinking has
+    nothing to push against" -- true of the position, silent about the contact.
+
+    So this cut adds two arms:
+      * target `spider` -- 15 to 13.5, the smallest shrink there is, and safe
+        on a ramp. On a 45-degree ramp 1.5 px of half is 2.1 px of seat, so the
+        ride step (1.27) and a free one are still far apart.
+      * one `ufo -> wave` unit, ceiling, LAST -- lv20's own shape (a flipped
+        flight body riding a descending ramp into a wave portal) and the biggest
+        shrink available. It cannot survive: a flipped wave with no input flies
+        into the ceiling it just left, ~3 ticks after the portal. That is why it
+        is last -- ONE DEATH ENDS THE RUN, and everything after it is lost.
+    """
+    objs: list[str] = []
+    x = 90.0
+    m = 1.0
+    # (ceiling, from, to, sizes)
+    plan: list[tuple[bool, str, str, tuple[bool, ...]]] = []
+    both = (False, True)
+    # (a) the half does not change -- the control
+    for mode, target in (("cube", "ball"), ("ball", "cube"),
+                         ("robot", "cube"), ("spider", "cube")):
+        plan.append((False, mode, target, both))
+    for mode, target in (("ship", "ball"), ("cube", "ball"), ("ball", "cube"),
+                         ("ufo", "ball"), ("robot", "cube"),
+                         ("spider", "cube")):
+        plan.append((True, mode, target, both))
+    # (b) the half shrinks 15 -> 13.5
+    for mode in ("cube", "ball"):
+        plan.append((False, mode, "spider", both))
+    for mode in ("ball", "ufo"):
+        plan.append((True, mode, "spider", both))
+    # (c) HOW OLD THE RIDE IS when the portal fires. Everything above meets it
+    # with the ride saturated (38 ticks, measured), and lv20's second body meets
+    # it ONE TICK after landing on the ramp -- which is the only difference left
+    # between GD's two answers. `ball` keeps the half unchanged, so these live.
+    ages: tuple[float, ...] = (1.0, 2.0, 3.0, 5.0, 9.0, 15.0)
+    # (d) ...and 15 -> 5, which is lv20's, and which dies. LAST.
+    for ceiling, mode, target, sizes in plan:
+        for mini in sizes:
+            x0 = x
+            u, x, info = ridemode_unit(x, mode, target, m, mini, ceiling)
+            objs += u
+            UNITS.append({"x0": x0, "x1": x, "mode": mode, "target": target,
+                          "m": m, "mini": int(mini), "ceiling": int(ceiling),
+                          "age": -1, **info})
+    for age in ages:
+        x0 = x
+        u, x, info = ridemode_unit(x, "ufo", "ball", m, False, True,
+                                   ride_ticks=age)
+        objs += u
+        UNITS.append({"x0": x0, "x1": x, "mode": "ufo", "target": "ball",
+                      "m": m, "mini": 0, "ceiling": 1, "age": age, **info})
+    x0 = x
+    u, x, info = ridemode_unit(x, "ufo", "wave", m, False, True)
+    objs += u
+    UNITS.append({"x0": x0, "x1": x, "mode": "ufo", "target": "wave",
+                  "m": m, "mini": 0, "ceiling": 1, "age": -1, **info})
+    # Floor LAST = a larger uid than the portals (build_ramps L305).
+    objs += floor_run(0, PAVE_X)
+    return header() + ";" + ";".join(objs) + ";"
+
+
+# THE CEILING HAS TO SIT UNDER THE BAND, and 380 does not. `ceil_unit_dual`
+# picked DUAL_CEIL = 380 to clear the deepest |m|=2 chain; measured on the first
+# cut of this rig, a `header(dual=True)` level reports pmax = 360, so the second
+# body is held by the INVISIBLE CEILING at 345 and never reaches a ceiling laid
+# at 380 -- it ran the whole level as a cube, and not one head portal fired.
+# 330 leaves the band alone: the body hangs at 315 and the three |m|=1 ramps
+# bottom out at 240.
+RIDEDUAL_CEIL = 330.0
+
+
+def ridemodedual_unit(x: float, mode: str, target: str, m: float, mini: bool
+                      ) -> tuple[list[str], float, dict]:
+    u"""`ridemode`, but THE SECOND BODY of a dual is the one on the ramp.
+
+    `ceil_unit_dual` with a mode portal added mid-ride, and it inherits that
+    unit's three rules unchanged, all of them forced by the pair: no gravity
+    portals (the second body is already inverted and has to stay that way from
+    one unit to the next), the head portals AT THE CEILING (a floor-height
+    portal is taken by the first body and never reached by the second --
+    measured on `dualmode`, 3,471 consecutive ticks with the halves in different
+    modes), and ONE ceiling height for every unit, since the second body flies
+    between them.
+
+    Why this rig exists: three cuts of `ridemode` have now failed to reproduce
+    lv20 t=17,117. GD takes the ride's own step through a mode portal on a floor
+    ramp and on a ceiling one, in every mode, at both sizes, with the box the
+    same size or shrinking to a fifth, and with the ride anything from ONE tick
+    to forty ticks old -- 29 of 29, and then 1 of 1 at age 0. lv20's body does
+    none of that: it steps +0.029, the free step, and takes the ramp exit's
+    -2.762 on the portal tick itself.
+
+    Everything that rig can vary has been varied. What is left is the thing it
+    cannot: THE BODY IS THE SECOND HALF OF A DUAL. The first body agrees with
+    the model tick for tick through the whole site, so if being the second half
+    is what does it, that is the last place it can be hiding.
+    """
+    oid, rot, fx, fy, w, h = CEIL_RAMP[m]
+    objs: list[str] = []
+    ceil = RIDEDUAL_CEIL
+    objs.append(obj(MODE_PORTAL[mode], x, ceil - 15.0))
+    objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID, ceil - 15.0))
+    n_ramps = 3
+    x_ramp = x + 20 * GRID
+    # NO PER-UNIT FLAT CEILING: `build_ridemodedual` lays one continuous run
+    # from x=0, because the second body is launched upward at the level's start
+    # and clears 435 before the first unit's ceiling would have begun -- measured
+    # on cut 2 of this rig, where it then sat above the ceiling for the whole
+    # level and not one mid-ramp portal fired.
+    for i in range(n_ramps):
+        cy = ceil - h / 2.0 - i * h
+        objs.append(obj(oid, x_ramp + i * w + w / 2.0, cy,
+                        rot=rot, flip_x=fx, flip_y=fy))
+        yy = cy + h / 2.0 + GRID / 2
+        while yy <= ceil + GRID / 2 + 1.0:
+            for k in range(int(w / GRID)):
+                objs.append(obj(BLOCK, x_ramp + i * w + GRID / 2 + k * GRID, yy))
+            yy += GRID
+    port_cx = x_ramp + 2.5 * w
+    travel = max(0.0, port_cx - 32.0 + 6.2 - x_ramp)
+    i_at = min(n_ramps - 1, int(travel / w))
+    surf = ceil - i_at * h - (travel - i_at * w) * (h / w)
+    port_cy = surf - (9.0 if mini else 15.0)
+    objs.append(obj(MODE_PORTAL[target], port_cx, port_cy))
+    x_flat = x_ramp + n_ramps * w
+    x_end = x_flat + 16 * GRID
+    return objs, x_end + 14 * GRID, {"x_ramp": x_ramp, "ramp_w": w,
+                                     "ramp_h": h, "port_cx": port_cx,
+                                     "port_cy": port_cy, "ceil_y": ceil}
+
+
+def build_ridemodedual() -> str:
+    u"""The second body of a dual meets a mode portal mid-ride. lv20's own shape.
+
+    The `wave` unit is LAST and cannot survive: a flipped wave with no input
+    flies straight back into the ceiling it just left. A p2 death ends the run
+    ("dual: booked a p2 death as the run end"), so everything after it would be
+    lost -- and it is the one unit that matters most, so it also gets the
+    cheapest possible approach to it.
+    """
+    objs: list[str] = []
+    x = 90.0
+    m = 1.0
+    for mode, target in (("ufo", "ball"), ("ball", "cube"), ("ufo", "spider"),
+                         ("ufo", "wave")):
+        x0 = x
+        u, x, info = ridemodedual_unit(x, mode, target, m, False)
+        objs += u
+        UNITS.append({"x0": x0, "x1": x, "mode": mode, "target": target,
+                      "m": m, "mini": 0, "ceiling": 1, "dual": 1, **info})
+    # One ceiling for the whole level, laid last so its uid is above the ramps'
+    # (build_ramps L305). The ramps hang BELOW it, so where they exist they are
+    # the surface the second body meets and this row is inert.
+    xx = GRID / 2
+    while xx <= x + 20 * GRID:
+        objs.append(obj(BLOCK, xx, RIDEDUAL_CEIL + GRID / 2))
+        xx += GRID
+    objs += floor_run(0, PAVE_X)
+    return header(dual=True) + ";" + ";".join(objs) + ";"
+
+
 def build_ceilhold() -> str:
     u"""Rig that HOLDS THE BUTTON DOWN while riding a ceiling ramp (the pressed
     version of ceilramp).
@@ -2951,6 +3263,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "ramps": build_ramps, "rampseam": build_rampseam,
     "rampseamdual": build_rampseamdual,
     "ceilrampdual": build_ceilrampdual, "wavein": build_wavein,
+    "ridemode": build_ridemode, "ridemodedual": build_ridemodedual,
     "rampjump": build_rampjump,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
