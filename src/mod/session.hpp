@@ -84,6 +84,37 @@ inline double g_secReqTarget = 0.0;
 inline long long g_secReqHorizon = -1;   // -1 = keep secsolve's current value
 inline long long g_secReqCap = -1;       // -1 = keep
 
+// Read one cfg value as a number, without raising if it is not one.
+//
+// These all went through std::stoi / std::stof, which throw on malformed input, and nothing above
+// them catches: loadConfig runs at startup and pollCommandFileImpl runs inside
+// GJBaseGameLayer::update, so a single unparseable number in autorun.cfg took the game down on
+// launch and one in cmd.txt took it down mid-frame. Geode's own pitfalls page names those two
+// functions for this reason -- try/catch does not work on every platform, so the fix is to stop
+// generating the exception rather than to catch it.
+//
+// A value that will not parse leaves the setting at whatever it had and says so, which is what an
+// unrecognised key already does. Reporting rather than defaulting silently matters here: a rig
+// that quietly measures something other than what was asked for is the failure this project keeps
+// having to detect afterwards.
+template <class T>
+inline bool cfgNum(const std::string& key, const std::string& val, T& out) {
+    auto r = geode::utils::numFromString<T>(val);
+    if (!r) {
+        writeResult("cfg: " + key + "=" + val + " is not a number - ignored");
+        return false;
+    }
+    out = r.unwrap();
+    return true;
+}
+
+// The same, for the few keys that clamp or combine the parsed value instead of storing it as-is.
+template <class T>
+inline T cfgNumOr(const std::string& key, const std::string& val, T fallback) {
+    T v{};
+    return cfgNum(key, val, v) ? v : fallback;
+}
+
 inline void pollCommandFileImpl(const std::string& cmd) {
     if (cmd == "pause") { g_paused = true; log::info("phase2: paused at tick {}", g_tick); }
     else if (cmd == "resume") { g_paused = false; log::info("phase2: resumed"); }
@@ -133,8 +164,8 @@ inline void pollCommandFileImpl(const std::string& cmd) {
         }
     }
     else if (cmd.rfind("step ", 0) == 0) {
-        g_stepTicks = std::stoi(cmd.substr(5));
-        log::info("phase2: stepping {} ticks", g_stepTicks);
+        if (cfgNum("step", cmd.substr(5), g_stepTicks))
+            log::info("phase2: stepping {} ticks", g_stepTicks);
     }
     else if (cmd == "quit") {
         writeResult("user quit via cmd");
@@ -224,10 +255,10 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
         // built out of moving parts it cannot get past the first one.
         if (g_cfg.dpSolve) grouptrace::g_on = true;
     }
-    else if (key == "dphorizon") g_cfg.dpHorizon = std::stoi(val);
-    else if (key == "dpmaxiters") g_cfg.dpMaxIters = std::stoi(val);
+    else if (key == "dphorizon") cfgNum(key, val, g_cfg.dpHorizon);
+    else if (key == "dpmaxiters") cfgNum(key, val, g_cfg.dpMaxIters);
     else if (key == "dpseedplan") g_cfg.dpSeedPlan = val;
-    else if (key == "dpshow") g_cfg.dpShow = std::stoi(val);
+    else if (key == "dpshow") cfgNum(key, val, g_cfg.dpShow);
     else if (key == "dpfixups") g_cfg.dpFixups = (val == "1");
     else if (key == "dpfixp2") g_cfg.dpFixP2 = (val == "1");
     else if (key == "dpworld") g_cfg.dpWorld = (val == "1");
@@ -250,26 +281,26 @@ inline void loadConfig() {
         auto val = line.substr(eq + 1);
         if (loadDpCfg(key, val)) continue;
         if (key == "enabled") g_cfg.enabled = (val == "1");
-        else if (key == "level") g_cfg.levelId = std::stoi(val);
+        else if (key == "level") cfgNum(key, val, g_cfg.levelId);
         else if (key == "levelfile") g_cfg.levelFile = val;
-        else if (key == "attempts") g_cfg.maxAttempts = std::stoi(val);
-        else if (key == "delay") g_cfg.delaySec = std::stof(val);
+        else if (key == "attempts") cfgNum(key, val, g_cfg.maxAttempts);
+        else if (key == "delay") cfgNum(key, val, g_cfg.delaySec);
         else if (key == "quitwhendone") g_cfg.quitWhenDone = (val == "1");
-        else if (key == "fps") g_cfg.fps = std::stoi(val);
-        else if (key == "cbs") g_cfg.cbs = std::stoi(val);
-        else if (key == "cos") g_cfg.cos = std::stoi(val);
-        else if (key == "framedt") g_cfg.framedt = std::stof(val);
-        else if (key == "slowmo") g_slowmo = std::max(1.f, std::stof(val));
+        else if (key == "fps") cfgNum(key, val, g_cfg.fps);
+        else if (key == "cbs") cfgNum(key, val, g_cfg.cbs);
+        else if (key == "cos") cfgNum(key, val, g_cfg.cos);
+        else if (key == "framedt") cfgNum(key, val, g_cfg.framedt);
+        else if (key == "slowmo") g_slowmo = std::max(1.f, cfgNumOr(key, val, g_slowmo));
         else if (key == "blockinput") g_cfg.blockInput = (val == "1");
         else if (key == "progblock") g_cfg.progressBlock = (val == "1");
-        else if (key == "fastdt") g_cfg.fastdt = std::stof(val);
-        else if (key == "fastloops") g_cfg.fastloops = std::stoi(val);
+        else if (key == "fastdt") cfgNum(key, val, g_cfg.fastdt);
+        else if (key == "fastloops") cfgNum(key, val, g_cfg.fastloops);
         else if (key == "skiprender") g_cfg.skipRender = (val == "1");
-        else if (key == "watchat") g_watchAtTick = std::stoll(val);
-        else if (key == "watchatx") g_watchAtX = std::stof(val);
-        else if (key == "watchback") g_watchBackTicks = std::stoll(val);
-        else if (key == "watchafter") g_watchAfterSec = std::stod(val);
-        else if (key == "watchcycle") g_watchCycleSec = std::stod(val);
+        else if (key == "watchat") cfgNum(key, val, g_watchAtTick);
+        else if (key == "watchatx") cfgNum(key, val, g_watchAtX);
+        else if (key == "watchback") cfgNum(key, val, g_watchBackTicks);
+        else if (key == "watchafter") cfgNum(key, val, g_watchAfterSec);
+        else if (key == "watchcycle") cfgNum(key, val, g_watchCycleSec);
         else if (key == "fxsweep") g_fxSweep = (val == "1");
         else if (key == "visrefresh") g_visRefreshOn = (val == "1");
         else if (key == "watchpurge") g_watchPurge = (val == "1");
@@ -290,12 +321,13 @@ inline void loadConfig() {
         else if (key == "gatetrace") {
             auto c = val.find(',');
             if (c != std::string::npos) {
-                solver::g_gateX0 = std::stof(val.substr(0, c));
-                solver::g_gateX1 = std::stof(val.substr(c + 1));
-                solver::g_gateTrace = true;
+                if (cfgNum(key, val.substr(0, c), solver::g_gateX0)
+                    && cfgNum(key, val.substr(c + 1), solver::g_gateX1))
+                    solver::g_gateTrace = true;
             }
         }
-        else if (key == "gatestride") solver::g_gateStride = std::max(1LL, std::stoll(val));
+        else if (key == "gatestride")
+            solver::g_gateStride = std::max(1LL, cfgNumOr(key, val, solver::g_gateStride));
         else if (key == "servemode") g_serveMode = (val == "1");
         // State-injection probe: colprobe=T,y0,ystep,vy,n (explained in solver.hpp)
         else if (key == "colprobe") {
@@ -307,31 +339,29 @@ inline void loadConfig() {
                 if (c == std::string::npos) break;
                 p = c + 1;
             }
-            if (f.size() == 5) {
-                solver::g_cpT = std::stoll(f[0]);
-                solver::g_cpY0 = std::stod(f[1]);
-                solver::g_cpYStep = std::stod(f[2]);
-                solver::g_cpVy = std::stod(f[3]);
-                solver::g_cpN = std::stoi(f[4]);
+            if (f.size() == 5
+                && cfgNum(key, f[0], solver::g_cpT) && cfgNum(key, f[1], solver::g_cpY0)
+                && cfgNum(key, f[2], solver::g_cpYStep) && cfgNum(key, f[3], solver::g_cpVy)
+                && cfgNum(key, f[4], solver::g_cpN)) {
                 solver::g_colProbe = true;
             }
         }
         else if (key == "gatetick") {
             auto c = val.find(',');
             if (c != std::string::npos) {
-                solver::g_gateT0 = std::stoll(val.substr(0, c));
-                solver::g_gateT1 = std::stoll(val.substr(c + 1));
+                cfgNum(key, val.substr(0, c), solver::g_gateT0);
+                cfgNum(key, val.substr(c + 1), solver::g_gateT1);
             }
         }
-        else if (key == "lagms") g_lagMs = std::stoi(val);
-        else if (key == "lagat") g_lagAtTick = std::stoll(val);
+        else if (key == "lagms") cfgNum(key, val, g_lagMs);
+        else if (key == "lagat") cfgNum(key, val, g_lagAtTick);
         // Kill attempts that missed a speed portal (default OFF=detect and report only. In levels
         // with portals on another lane it can kill legitimate routes too, so enable it
         // explicitly per level)
         else if (key == "speedgate") speedgate::g_gate = (val == "1");
         else if (key == "deathfx") g_deathFx = (val == "1");
         else if (key == "hud") g_hudOn = (val == "1");
-        else if (key == "retryafter") g_retryAfterSec = std::stod(val);
+        else if (key == "retryafter") cfgNum(key, val, g_retryAfterSec);
         else if (key == "notrace") g_cfg.noTrace = (val == "1");
         // cfg `hitboxes=<0|1|2>`: start with GD's hitbox drawing off / on / on-and-nothing-else.
         // The same state F6 cycles through, reachable without a keyboard (for filming, and for
@@ -339,13 +369,13 @@ inline void loadConfig() {
         // out-of-range value used to leave g_mode disagreeing with what showArt() had actually
         // hidden, the same desync cycle() now guards against on its own hotkey path.
         else if (key == "hitboxes") {
-            hitbox::g_mode = std::clamp(std::stoi(val), 0, 2);
+            hitbox::g_mode = std::clamp(cfgNumOr(key, val, hitbox::g_mode), 0, 2);
             hitbox::apply();
         }
         else if (key == "dumpearly") g_cfg.dumpEarly = (val == "1");
         else if (key == "endtrace") g_cfg.endTrace = (val == "1");
         else if (key == "orbtrace") g_cfg.orbTrace = (val == "1");
-        else if (key == "orbtracex") g_cfg.orbTraceX = std::stof(val);
+        else if (key == "orbtracex") cfgNum(key, val, g_cfg.orbTraceX);
         else if (key == "padtrace") g_cfg.padTrace = (val == "1");
         else if (key == "snaptrace") g_cfg.snapTrace = (val == "1");
         else if (key == "hitboxtrace") g_cfg.hitboxTrace = (val == "1");
@@ -359,50 +389,51 @@ inline void loadConfig() {
         // Measuring mode: track EVERY object (see g_all's note there). For finding
         // movers the normal filters miss; not for solving runs, where rows matter.
         else if (key == "grouptraceall") grouptrace::g_all = (val == "1");
-        else if (key == "groupstride") grouptrace::g_stride = std::max(1LL, std::stoll(val));
+        else if (key == "groupstride")
+            grouptrace::g_stride = std::max(1LL, cfgNumOr(key, val, grouptrace::g_stride));
         // Swallow deaths and keep running (observation only: take the recording to the end in a
         // single run). Hitboxes are untouched, so portals and triggers fire as usual
         else if (key == "nodeath") g_cfg.noDeath = (val == "1");
         else if (key == "clearance") clearance::g_on = (val == "1");
-        else if (key == "practiceat") g_cfg.practiceAt = std::stoi(val);
-        else if (key == "checkpointat") g_cfg.checkpointAt = std::stoi(val);
-        else if (key == "restoreat") g_cfg.restoreAt = std::stoi(val);
-        else if (key == "restoreloop") g_cfg.restoreLoop = std::stoi(val);
+        else if (key == "practiceat") cfgNum(key, val, g_cfg.practiceAt);
+        else if (key == "checkpointat") cfgNum(key, val, g_cfg.checkpointAt);
+        else if (key == "restoreat") cfgNum(key, val, g_cfg.restoreAt);
+        else if (key == "restoreloop") cfgNum(key, val, g_cfg.restoreLoop);
         // Section solver (src/solver/secsolve.hpp)
         else if (key == "secsolve") secsolve::g_on = (val == "1");
-        else if (key == "secstart") secsolve::g_startTick = std::stoll(val);
-        else if (key == "sectarget") secsolve::g_targetX = std::stod(val);
-        else if (key == "sechorizon") secsolve::g_horizon = std::stoi(val);
-        else if (key == "seccap") secsolve::g_cap = (size_t)std::stoll(val);
+        else if (key == "secstart") cfgNum(key, val, secsolve::g_startTick);
+        else if (key == "sectarget") cfgNum(key, val, secsolve::g_targetX);
+        else if (key == "sechorizon") cfgNum(key, val, secsolve::g_horizon);
+        else if (key == "seccap") cfgNum(key, val, secsolve::g_cap);
         else if (key == "secverify") secsolve::g_verify = (val == "1");
         else if (key == "seclog") secsolve::g_log = (val == "1");
-        else if (key == "secdt") secsolve::g_dt = std::stod(val);
-        else if (key == "secoff") secsolve::g_off = std::stoi(val);
-        else if (key == "secpsnap") secsolve::g_snapCmp = std::stoi(val);
-        else if (key == "secpsnapreps") secsolve::g_snapReps = std::stoi(val);
-        else if (key == "secsnap") secsolve::g_snapMode = std::stoi(val);
-        else if (key == "secrephase") secsolve::g_rephase = std::stoi(val);
-        else if (key == "secworld") secsolve::g_worldDiff = std::stoi(val);
-        else if (key == "secmaxmov") secsolve::g_maxMoving = (size_t)std::stoll(val);
-        else if (key == "secnokill") secsolve::g_killOverride = std::stoi(val);
+        else if (key == "secdt") cfgNum(key, val, secsolve::g_dt);
+        else if (key == "secoff") cfgNum(key, val, secsolve::g_off);
+        else if (key == "secpsnap") cfgNum(key, val, secsolve::g_snapCmp);
+        else if (key == "secpsnapreps") cfgNum(key, val, secsolve::g_snapReps);
+        else if (key == "secsnap") cfgNum(key, val, secsolve::g_snapMode);
+        else if (key == "secrephase") cfgNum(key, val, secsolve::g_rephase);
+        else if (key == "secworld") cfgNum(key, val, secsolve::g_worldDiff);
+        else if (key == "secmaxmov") cfgNum(key, val, secsolve::g_maxMoving);
+        else if (key == "secnokill") cfgNum(key, val, secsolve::g_killOverride);
         else if (key == "seckilllog") secsolve::g_killLog = (val == "1");
         else if (key == "secvis") secsolve::g_visRefresh = (val == "1");
         else if (key == "secpos") psnap::g_keepSnapPos = (val == "1");
-        else if (key == "secoverlay") secsolve::g_overlay = std::stoi(val);
-        else if (key == "secmasklo") psnap::g_maskLo = (size_t)std::stoll(val);
-        else if (key == "secmaskhi") psnap::g_maskHi = (size_t)std::stoll(val);
+        else if (key == "secoverlay") cfgNum(key, val, secsolve::g_overlay);
+        else if (key == "secmasklo") cfgNum(key, val, psnap::g_maskLo);
+        else if (key == "secmaskhi") cfgNum(key, val, psnap::g_maskHi);
         else if (key == "secskipextras") psnap::g_skipExtras = (val == "1");
-        else if (key == "secmemat") secsolve::g_memAt = std::stoll(val);
-        else if (key == "secmaskexlo") psnap::g_maskExLo = (size_t)std::stoll(val);
-        else if (key == "secmaskexhi") psnap::g_maskExHi = (size_t)std::stoll(val);
+        else if (key == "secmemat") cfgNum(key, val, secsolve::g_memAt);
+        else if (key == "secmaskexlo") cfgNum(key, val, psnap::g_maskExLo);
+        else if (key == "secmaskexhi") cfgNum(key, val, psnap::g_maskExHi);
         else if (key == "secsnapobj") psnap::g_snapCollideObj = (val == "1");
-        else if (key == "secwinshift") secsolve::g_winShift = std::stoi(val);
+        else if (key == "secwinshift") cfgNum(key, val, secsolve::g_winShift);
         else if (key == "seccollog") secsolve::g_colLog = (val == "1");
-        else if (key == "secverifyevery") secsolve::g_verifyEvery = std::stoi(val);
-        else if (key == "secverifytol") secsolve::g_verifyTol = std::stod(val);
+        else if (key == "secverifyevery") cfgNum(key, val, secsolve::g_verifyEvery);
+        else if (key == "secverifytol") cfgNum(key, val, secsolve::g_verifyTol);
         else if (key == "secanchor") secsolve::g_anchor = (val == "1");
-        else if (key == "secyq") secsolve::g_yq = std::stod(val);
-        else if (key == "secvq") secsolve::g_vq = std::stod(val);
+        else if (key == "secyq") cfgNum(key, val, secsolve::g_yq);
+        else if (key == "secvq") cfgNum(key, val, secsolve::g_vq);
         // The same meaning as leveldp's --deadband, for the section solver. Format is
         // "x0,x1[,mode];x0,x1[,mode];..." (duplicate cfg keys can collapse, so packed with ;).
         //
@@ -427,50 +458,46 @@ inline void loadConfig() {
                 pos = semi + 1;
             }
         }
-        else if (key == "secxq") secsolve::g_xq = std::stod(val);
+        else if (key == "secxq") cfgNum(key, val, secsolve::g_xq);
         else if (key == "secjumpbuf") secsolve::g_jumpBuf = (val == "1");
-        else if (key == "sectargety") secsolve::g_targetY = std::stod(val);
-        else if (key == "sectargetydir") secsolve::g_targetYDir = std::stoi(val);
-        else if (key == "sectargetdepth") secsolve::g_targetDepth = std::stoi(val);
-        else if (key == "secgrace") secsolve::g_grace = std::stoi(val);
-        else if (key == "secmaxdoomed") secsolve::g_maxDoomed = std::stoll(val);
-        else if (key == "secmaxy") secsolve::g_maxY = std::stod(val);
+        else if (key == "sectargety") cfgNum(key, val, secsolve::g_targetY);
+        else if (key == "sectargetydir") cfgNum(key, val, secsolve::g_targetYDir);
+        else if (key == "sectargetdepth") cfgNum(key, val, secsolve::g_targetDepth);
+        else if (key == "secgrace") cfgNum(key, val, secsolve::g_grace);
+        else if (key == "secmaxdoomed") cfgNum(key, val, secsolve::g_maxDoomed);
+        else if (key == "secmaxy") cfgNum(key, val, secsolve::g_maxY);
         // Wall-clock budget per slice before the search hands the frame back (0 = the old
         // single-frame search). See the note on secsolve::SecTask.
-        else if (key == "secslicems") secsolve::g_sliceMs = std::stoi(val);
+        else if (key == "secslicems") cfgNum(key, val, secsolve::g_sliceMs);
         // Notification self-test (see notify.hpp): show one, purge under it, report.
         else if (key == "notifytest") notify::g_test = (val == "1");
         else if (key == "notifyfix") notify::g_fix = (val == "1");
         else if (key == "music") g_cfg.music = val;
-        else if (key == "heapcheck") g_heapCheckEvery = std::stoll(val);
+        else if (key == "heapcheck") cfgNum(key, val, g_heapCheckEvery);
         // Break the chain here (`if`, not `else if`). A huge else-if chain hits MSVC's nesting
         // limit (C1061). The keys are mutually exclusive, so the meaning is unchanged.
         // If a new key triggers C1061, cut one more level the same way
         if (key == "ckpttrace") solver::ckpttrace::g_on = (val == "1");
         // Pause once the player's x passes this (a tool to freeze and film the screen right
         // before a wall)
-        else if (key == "pauseatx") g_pauseAtX = std::stof(val);
-        else if (key == "clearmargin") g_clearMargin = std::stof(val);
+        else if (key == "pauseatx") cfgNum(key, val, g_pauseAtX);
+        else if (key == "clearmargin") cfgNum(key, val, g_clearMargin);
         else if (key == "uisim") g_uiSession = (val == "1"); // for tests: treat autorun as panel
         // For tests: supply the panel mode from cfg (0=Normal 1=Replay)
-        else if (key == "uimode") g_uiMode = std::stoi(val);
+        else if (key == "uimode") cfgNum(key, val, g_uiMode);
         else if (key == "coins") g_cfg.coinMode = (val == "1");
         else if (key == "toggle") {
             auto comma = val.find(',');
-            if (comma != std::string::npos) {
-                g_cfg.toggles.push_back({
-                    std::stoi(val.substr(0, comma)),
-                    val.substr(comma + 1)
-                });
+            int at = 0;
+            if (comma != std::string::npos && cfgNum(key, val.substr(0, comma), at)) {
+                g_cfg.toggles.push_back({ at, val.substr(comma + 1) });
             }
         }
         else if (key == "input") {
             auto comma = val.find(',');
-            if (comma != std::string::npos) {
-                g_cfg.inputs.push_back({
-                    std::stoi(val.substr(0, comma)),
-                    val.substr(comma + 1) == "1"
-                });
+            int at = 0;
+            if (comma != std::string::npos && cfgNum(key, val.substr(0, comma), at)) {
+                g_cfg.inputs.push_back({ at, val.substr(comma + 1) == "1" });
             }
         }
     }

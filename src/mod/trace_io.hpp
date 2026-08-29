@@ -59,7 +59,10 @@ inline void updateWindowTitle() {
 }
 
 inline void openFiles() {
-    std::filesystem::create_directories(DATA_DIR);
+    // The error_code overload, like every other filesystem call here: the throwing one raises if
+    // the directory cannot be made, and there is nothing above this to catch it.
+    std::error_code ec;
+    std::filesystem::create_directories(DATA_DIR, ec);
     g_trace.open(std::string(DATA_DIR) + "/trace.csv", std::ios::trunc);
     g_dump.open(std::string(DATA_DIR) + "/dump.csv", std::ios::trunc);
     g_trace << "frame,attempt,tick,event,a,b,c\n";
