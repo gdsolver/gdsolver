@@ -6997,9 +6997,27 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // it would re-fire for as long as the player is inside the box (the
             // first implementation did exactly that and broke t=13,497 onward).
             // "Was already inside" is read at the previous tick's position.
+            // ...AND "INSIDE" HAS TO MEAN THE SAME BOX THE FIRING TEST USES. This asked the
+            // BOUND while the fire above asks the ORIENTED box, and for a portal turned off the
+            // axis those are very different: lv16's dual pair at x=12,123 is 25x75 rotated 54
+            // and 58 degrees, so the bound is 76 wide against a real 25.
+            //
+            // What that costs is not an early fire but NO FIRE AT ALL. Measured on lv16 t=8,014
+            // (dual cube, gravity portals uid3450 for p1 and uid3448 for p2, GD flips both on
+            // this tick):
+            //   t=8,013  the oriented test REJECTS uid3450 (margin -0.910) -> no fire, but the
+            //            player is already inside the 76-wide bound
+            //   t=8,014  the oriented test passes -- and this line, reading the bound, answers
+            //            "already inside" and skips it
+            // p1's portal is then skipped on every later tick too, so the model runs the rest of
+            // the section at the wrong gravity: the fixup recorder wrote 30 consecutive p2
+            // records with dvy off by 0.430 = exactly two cube gravity steps.
+            // The same pairing is already written correctly 300 lines above (`wasInside`).
             const bool wasInBoxPrev =
                 std::fabs(xPrev - p->cx) <= p->hw + pHalfP
-                && std::fabs((double)s.y - p->cy) < p->hh + pHalfP;
+                && std::fabs((double)s.y - p->cy) < p->hh + pHalfP
+                && (!p->oriented
+                    || orientedHit(*p, xPrev, (double)s.y, pHalfP, pRotHere));
             const bool dualBothGrav =
                 isGrav && c.dual && !wasInBoxPrev
                 && std::fabs((double)c.y2 - p->cy) < p->hh + pHalfP;
