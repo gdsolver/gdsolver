@@ -1,0 +1,54 @@
+# Windows only, because mod.json declares `gd.win` and nothing else. The other platforms in
+# Geode's example workflow cannot build this and claiming them would be a lie about what runs.
+#
+# The point of building here rather than locally is that the binary attached to a release can be
+# traced to a commit of the public tree. The pitfalls page asks for it for that reason ("makes it
+# easier for us to verify that a mod has not been tampered with").
+#
+# This can only prove the mod compiles. The behaviour bar -- py/quick_regress.py and the cold
+# regression -- needs Geometry Dash itself, so it stays a local step.
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+  pull_request:
+  # Not on tag push: the release does not exist yet at that point and the upload below would have
+  # nowhere to go. Publishing the release is the event that wants a binary.
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # `sdk: given` (the default) takes the Geode version out of mod.json, so CI and a desk
+      # build are the same SDK without a second place to keep it up to date.
+      - name: Build the mod
+        id: build
+        uses: geode-sdk/build-geode-mod@main
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: geode-package
+          path: ${{ steps.build.outputs.build-output }}
+
+      # The file is named after the mod id, so it is matched rather than spelled out -- the id
+      # changed once already and took four hardcoded copies of the old name with it.
+      - name: Attach it to the release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${{ steps.build.outputs.build-output }}"/*.geode --clobber
