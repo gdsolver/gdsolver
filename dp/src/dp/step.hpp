@@ -1948,7 +1948,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // jumps in the corpus -- so neither half of that was measuring this.
                 // The dash branch stays pass-through, as measured for 3645.
                 if (!g_forceBoxes.empty())
-                    vpNew += forceBoxAcc(modX, modY, pHalf, s.mode) * gdSign;
+                    vpNew += forceBoxAcc(modX, modY, pHalf,
+                                         forceUnitFor(s.mode, useDx)) * gdSign;
                 c.rHover = (uint8_t)(s.rHover - 1);
                 c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;
@@ -1964,7 +1965,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // FORCE BOX (id 2069): same convention (start-of-tick position,
                 // world->player via gsign). Measurements at the declaration of kFF2069
                 if (!g_forceBoxes.empty())
-                    acc += forceBoxAcc(modX, modY, pHalf, s.mode) * gdSign;
+                    acc += forceBoxAcc(modX, modY, pHalf,
+                                       forceUnitFor(s.mode, useDx)) * gdSign;
                 // The TIME WARP scales the increment, not the terminal: the cap
                 // is a velocity. The 0.001 grid is applied to each step (GD's
                 // vy went 0 -> 0.043 -> 0.086 -> 0.129 under a 0.0432 step; the
@@ -2861,9 +2863,20 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // 0.108. The gate converts the world-up push into the player frame,
         // so a FLIPPED swing under a ceiling is pushed INTO its seat and
         // stays put (unmeasured, but the sign has nowhere else to go).
+        // [2026-08-30] The gate compares the push against THE SAME gravity it
+        // is scaled by, so it says exactly "the push beats gravity" -- which
+        // under dvy = m_force x |g| / kForceGDiv reduces to m_force > 0.9582,
+        // the same verdict in every mode and both sizes. It used to compare a
+        // per-uid constant against the FULL-SIZE kSwingG. The COMPARISON is
+        // left exactly as it was -- this change is the push's value and nothing
+        // else -- so a mini swing is still judged on kSwingG. Same verdict on
+        // the measured case (lv22's carpet: 2 boxes gave 0.216 > 0.086, and
+        // 2.4 x 0.0900 = 0.216 gives the same).
+
         const bool swingLift =
             isSwing && !g_forceBoxes.empty()
-            && forceBoxAcc(modX, modY, pHalf) * gdSign > kSwingG;
+            && forceBoxAcc(modX, modY, pHalf,
+                              forceUnitFor(s.mode, useDx)) * gdSign > kSwingG;
         if (groundedNow && !act && !(isSwing && s.rHover) && !swingLift
             && !ridingCarry) {
             c.vy = 0;
@@ -3017,7 +3030,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // the natural one here since the clamp above is already in it.
                 if (!g_forceBoxes.empty()) {
                     const double fb =
-                        forceBoxAcc(modX, modY, pHalf);
+                        forceBoxAcc(modX, modY, pHalf,
+                                    forceUnitFor(s.mode, useDx));
                     if (fb != 0.0) { vyW = qVy(vyW + fb); vpS = vyW * gsS; }
                 }
                 c.vy = (float)vyW;
@@ -3052,8 +3066,17 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // convention (start-of-tick position, world->player via gsign).
             // Measurements at the declaration of kFF2069 (a ship passing through
             // has a constant dvy +0.056 = 0.125 - 0.069).
+            // The flight modes' gravity is not one number: both switch between
+            // a weak and a strong acceleration at accelSwitchVy, and the force
+            // scales with whichever is acting. Reading it off the model that is
+            // about to integrate is NOT how it is done: the ship's and UFO's
+            // per-unit push is a measured constant (kForceUnitShip /
+            // kForceUnitUfo), because their gravity switches mid-flight and
+            // deriving the push from it reproduces neither lv22 entry. The two
+            // notes at those constants say what was measured.
             const double fbAcc = g_forceBoxes.empty()
-                ? 0.0 : forceBoxAcc(modX, modY, pHalf) * gdSign;
+                ? 0.0 : forceBoxAcc(modX, modY, pHalf,
+                                     forceUnitFor(s.mode, useDx)) * gdSign;
             const double vpNew = qVy(
                 (isUfo ? gdapprox::UfoModel::stepVy(
                             vp, act, ufoParamsFor(useDx, c.mini, K), thrFlip)
@@ -6008,7 +6031,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                                 ? (s.vy == 0.0f)
                                 : (s.grounded
                                    || (!g_forceBoxes.empty()
-                                       && forceBoxAcc(modX, modY, pHalf)
+                                       && forceBoxAcc(modX, modY, pHalf,
+                                                      forceUnitFor(s.mode, useDx))
                                                   * (s.flip ? -1.0 : 1.0)
                                               > kSwingG));
                         c.vy = walkIn0

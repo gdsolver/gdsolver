@@ -112,7 +112,15 @@ inline CubePhys cubePhysFor(float dxF) {
     // 11.180 / 0.216, which is 0.56 vy of extra jump on every press in a 0.7
     // section -- lv18 goes 0.7 the moment it takes the size portal at
     // x=20,386, so the whole route after it was planned too high.
-    // 1.6 is still unmeasured and still falls back here.
+    // [2026-08-30] "1.6 is still unmeasured and still falls back here" USED TO
+    // STAND ON THIS LINE AND WAS FALSE IN BOTH HALVES. 1.6 is GD's 4x, its dx is
+    // 2.400 (measured), and 2.400 > 1.78 -- so it takes the FIRST branch, never
+    // this one. And it is not unmeasured any more: calib_speedcal_cube_s4, one
+    // press on flat ground, gives jump 11.230 and -0.216/tick for the whole arc,
+    // which is exactly what that branch already returned. The 1x control on the
+    // same rig gives 11.180 / -0.216, matching the 0.9 row to the digit.
+    // So the 1.3 row covers 1.3 AND 1.6, now on measurements of both.
+    // What actually falls back here is 0.5x, and that IS the measured row below.
     return {10.620, -0.212};
 }
 inline double ringScaleFor(float dxF) { return cubePhysFor(dxF).jump / 11.180; }
@@ -205,6 +213,21 @@ inline double swingG(bool mini) { return mini ? kSwingGMini : kSwingG; }
 // it has a different origin so it gets its own name -- the mini ship is unmeasured
 // (the mini swing is 1.5x, but there is no basis yet for applying that to the ship).
 constexpr double kShipRampG = 0.086;
+// [2026-08-30] MEASURED TO BE WRONG IN TWO DIRECTIONS, and left alone anyway --
+// read this before "fixing" it. calib_forcedrop_swing_f10 (a swing walked into a
+// force box, m_force=10, no input):
+//   FULL SIZE ignores this cap entirely. vy climbs +0.8140/tick straight through
+//     8.140, 8.954, ... to 17.094 at t=281 and is still climbing. The model
+//     clamps at 8 unless State::boost is set, and a force box is not one of the
+//     setters (those are the ramp launch and the red orb/pad, 889549e).
+//   MINI clamps -- but at 9.385, not 8, and it holds there exactly.
+// So the cap is not one number and not simply conditional. It is NOT changed
+// here because nothing in lv1-22 reaches it this way: lv22's carpet lifts its
+// swing at ~0.216/tick over a few ticks and never approaches 8. Loosening a
+// clamp on a rig that no corpus level exercises is how a change passes every
+// regression and breaks a level later ([[gd-loosening-rule]]). What is needed
+// first is a rig where the corpus's own mechanisms (orb, pad, ramp) push a swing
+// past 8, so the two readings can be told apart.
 constexpr double kSwingTerm = 8.0;
 constexpr double kSwingFlipDamp = 0.8;
 // --dynhazpad <px>: inflation of the moving hazards' boxes (default 0 = behaviour

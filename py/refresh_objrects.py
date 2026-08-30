@@ -27,7 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gdtas.paths import LEVEL_DATA, WORKERS_ROOT
 from gdtas.worker import Worker, WorkerError
 
-DUMPS = ("objrects.txt", "triggers.txt", "objgroups.txt", "obb.txt")
+DUMPS = ("objrects.txt", "triggers.txt", "objgroups.txt", "obb.txt",
+         "forceblocks.txt")
 
 
 def refresh(level: int, worker_id: int, data_dir: Path, workers_root: Path,

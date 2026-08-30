@@ -95,8 +95,12 @@ struct ShipParams {
     // Kept as a per-speed lookup rather than a formula on purpose: GD's other
     // speed-dependent constants are lookups with non-monotonic values too (see
     // leveldp's cubePhysFor -- jump 11.180 / 11.420 / 11.230 for 0.9 / 1.1 /
-    // 1.3), so a fitted curve through two points would be an invention. 1.3 and
-    // 1.6 are UNMEASURED and keep the old value.
+    // 1.3), so a fitted curve through two points would be an invention.
+    // [2026-08-30] 1.3 and 1.6 were the two rows this said were unmeasured; both
+    // are measured now (the bracket is at accelSwitchVyForSpeed) and both keep
+    // 1.9165. The lookup-not-a-formula decision holds: the measured sequence
+    // reads 1.885 / 1.9165 / 1.9135 / 1.9165 / 1.9165 across 0.7 .. 1.6, which
+    // no monotone curve passes through.
     // [2026-08-21] 1.1 WAS NOT 1.9165. Sorting the ship ticks of all 22 gdref
     // levels by "the previous tick's vy" against "that tick's dvy" makes the
     // strong/weak boundary come out clearly per speed (mini, upright):
@@ -115,7 +119,26 @@ struct ShipParams {
         if (playerSpeed < 0.8) return 1.885;    // 0.7  injection on lv18
         if (playerSpeed < 1.0) return 1.9165;   // 0.9  (1.916, 1.917)
         if (playerSpeed < 1.2) return 1.9135;   // 1.1  (1.912, 1.915)
-        return 1.9165;                          // 1.3 / 1.6 UNMEASURED
+        // [2026-08-30] 1.3 AND 1.6 ARE NOW MEASURED, and the value stands.
+        // calib_speedcal_ship_s3: hold the input, release, and the release
+        // acceleration switches from -0.103 to -0.069 somewhere between two
+        // samples 0.103 apart -- too coarse on its own. Varying the HOLD LENGTH
+        // moves the sampled grid by 0.086-0.103 = -0.017 a time, so eight holds
+        // (40..47) give eight brackets that intersect:
+        //     hold 40 (1.879, 1.982]   hold 44 (1.914, 2.017]
+        //     hold 41 (1.862, 1.965]   hold 45 (1.897, 2.000]
+        //     hold 42 (1.845, 1.948]   hold 46 (1.880, 1.983]
+        //     hold 43 (1.828, 1.931]   hold 47 (1.863, 1.966]
+        //                    all eight -> T in (1.914, 1.931]
+        // All eight are mutually consistent, and 0.017 is the beat of the two
+        // accelerations, i.e. the floor of this method. The bracket EXCLUDES
+        // 1.885 (the 0.7 row) and 1.9135 (the 1.1 row) and contains 1.9165, so
+        // the default was right and is now distinguished from its neighbour
+        // rather than inherited from it.
+        // 1.6 shares it: calib_speedcal_ship_s4 reproduces the 3x run's y, vy
+        // and dvy tick for tick -- only dx differs (2.400 against 1.950). The
+        // ship's vertical physics does not read the speed band at all here.
+        return 1.9165;                          // 1.3 / 1.6, measured 2026-08-30
     }
 
     // [2026-08-21] The flipped-side threshold (this includes p1 of a dual).

@@ -1968,8 +1968,45 @@ inline void beginFirstAttempt() {
 // thread is still occupying the job slot is queued instead (see g_pendingLayer) rather than
 // silently dropped, which used to leave a new Solve session's HUD reading SOLVING forever with
 // nothing behind it.
+// A PLATFORMER LEVEL IS OUTSIDE THE FORMULATION, not merely unmeasured, and the
+// difference matters more than the word does. Everything below rests on two
+// properties a platformer does not have: the level sets the forward speed, so
+// the plan is one binary decision per physics tick and nothing else; and the run
+// is one pass, so a tick is reached once. A platformer has steering, the player
+// can stop, turn round and re-cross the same x, and "the input at tick t" no
+// longer describes the run at all.
+//
+// Handed one anyway, the solver used to SOLVE IT -- badly, silently, and with a
+// straight face. Refusing is not a smaller failure than being wrong here, it is
+// a different kind: an answer nobody can check versus a sentence saying there is
+// no answer. Being wrong slowly is the thing this project is built to avoid, and
+// this was its sharpest remaining instance.
+//
+// Both flags are read. m_isPlatformer is the layer's own, i.e. what the physics
+// is actually running; isPlatformer() is the level's. They should agree, and the
+// point of asking twice is that if they ever do not, the refusal is the safe
+// side of the disagreement.
+inline bool refuseIfPlatformer(GJBaseGameLayer* l) {
+    bool plat = l->m_isPlatformer;
+    if (auto* pl = PlayLayer::get())
+        if (pl->m_level && pl->m_level->isPlatformer()) plat = true;
+    if (!plat) return false;
+    if (g_sessionOver) return true;   // one ending per session
+    const char* note =
+        "gdsolver: this is a PLATFORMER level - not solving it";
+    writeResult("dpsolve: refusing - a platformer has steering and no forced "
+                "scroll, so \"the input at tick t\" does not describe the run. "
+                "The solver is not wrong here, it does not apply. Nothing was "
+                "searched and no plan was produced.");
+    notify::show(note, NotificationIcon::Error, 6.f);
+    g_paused = true;
+    endSession("platformer_unsupported");
+    return true;
+}
+
 inline void start(GJBaseGameLayer* l) {
     if (!l) return;
+    if (refuseIfPlatformer(l)) return;
     // Bumped on every request, queued or not: this generation identifies the SESSION that is
     // asking, not the job currently occupying the slot. Bumping it only in the non-queued branch
     // (as an earlier version of this fix did) left it unchanged while a request sat queued --

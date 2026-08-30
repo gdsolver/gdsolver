@@ -2171,6 +2171,167 @@ def build_sawcal_moved(mode: str, mini: bool = False) -> str:
 # The model gives the pair a single x (State::xAbs, which swapHalves does not
 # swap), so that case would not be mis-modelled but unrepresentable. p2x is
 # emitted alongside; this rig is where "always equal" gets its first evidence.
+# ---- Force blocks (2026-08-30) ---------------------------------------------
+# WHY. The push strength was a table keyed on m_uniqueID (level_loader.hpp), and
+# a uid is level-specific by construction: a custom level's force block gets the
+# default and is simply wrong. ForceBlockGameObject carries the strength as a
+# member, and dividing the model's measured k by the m_force the game reports
+# collapses the whole table:
+#
+#     uid     model k   m_force   k/m_force   mode (read off the g in each note)
+#     11412    0.283      1.4      0.20214    robot   (-0.195)
+#     14472    0.304      1.5      0.20267    robot   (-0.195)
+#     17701    0.330      1.63     0.20245    robot   (-0.195)
+#     14472    0.159      1.5      0.10600    ship    (-0.103)
+#     17701    0.172      1.63     0.10552    ship    (-0.069)
+#     carpet   0.108      1.2      0.09000    swing
+#     17581    0.270      2 (max)  0.13500    ball
+#
+# Three independent objects agree to 0.26% for the robot and two to 0.5% for the
+# ship, so dvy = m_force * C(mode) and the per-uid AND per-mode table was that
+# one division written out longhand. C is known for four modes from lv22 alone.
+# This rig is where the other four come from, and it also closes three things
+# lv22 cannot answer with one instance each: whether C depends on scale (17701
+# is 5.1x3.9 and agrees with the scale-1 boxes, but that is a single reading),
+# whether m_force is linear (every value in lv22 is between 1.2 and 4.2), and
+# the rot=180 mirror, which is an OPEN at both kFF2069 and kFF3645Max because
+# lv22 has no force block that is rotated the other way.
+#
+# The keys come from ForceBlockGameObject::customObjectSetup (win 0x4c1d30),
+# which indexes `values` (gd::string, 0x20 each) and `exists` (void*, 8 each) in
+# parallel -- both divisions give the same six numbers, which is what makes them
+# read rather than guessed.
+FKEY_FORCE, FKEY_MIN, FKEY_MAX = 149, 526, 527
+FKEY_RELATIVE, FKEY_RANGE, FKEY_ID = 528, 529, 530
+FORCE_BOX, FORCE_FIELD = 2069, 3645
+
+# (x, id, m_force, scale, rot, (min,max) when m_forceRange is set)
+# Stations 1000px apart at y=300 with nothing within 900px: the sawcal geometry,
+# for the same reason. The probes inject a state inside a box and read dvy, so a
+# polluted approach line makes the reading meaningless. The default scale is 3
+# (90x90) so an injected point sits well inside; the two scale stations are the
+# ones that vary it.
+FORCE_STATIONS = [
+    (2000, FORCE_BOX,   1.0, 3.0,   0.0, None),          # baseline
+    (3000, FORCE_BOX,   2.0, 3.0,   0.0, None),          # is m_force linear?
+    (4000, FORCE_BOX,   1.0, 1.0,   0.0, None),          # does scale enter?
+    (5000, FORCE_BOX,   1.0, 5.0,   0.0, None),          # ...at the other end
+    (6000, FORCE_BOX,   1.0, 3.0, 180.0, None),          # the box mirror
+    (7000, FORCE_FIELD, 1.0, 3.0, 180.0, (0.0, 2.0)),    # the lerp, as 17581
+    (8000, FORCE_FIELD, 1.0, 3.0,   0.0, (0.0, 2.0)),    # the field mirror
+]
+
+
+def build_forcecal_mode(mode: str, mini: bool = False) -> str:
+    """THIS RIG DOES NOT MEASURE THE FORCE. Kept for what it proves instead.
+
+    Every station reads a push of EXACTLY ZERO under injected probes, in every
+    mode. The field is not broken: the push is applied inside checkCollisions'
+    object loop (0x215b4e), and an injection teleports the player 2,370 px in one
+    tick, so the candidate list the loop walks was built somewhere else and does
+    not contain the box. calib_forcedrop_* walks the player in instead and reads
+    the field immediately.
+
+    So this is the control that establishes "injection does not reach this
+    mechanism" -- worth keeping, because the same reasoning applies to anything
+    else resolved in that loop, and because a zero from an injected probe is
+    otherwise indistinguishable from a zero force.
+    """
+    parts = [header(start_mode=mode, mini=mini)]
+    parts += floor_run(0, 10000, y=GROUND_Y)
+    # Same as sawcal: with no input the run slides along the flush floor ALIVE
+    # and completes the level, and a completed session stops polling cmd.txt.
+    for k in range(12):
+        parts.append(obj(BLOCK, 230, 105 + GRID * k))
+    for x, oid, force, scale, rot, rng in FORCE_STATIONS:
+        extra = {FKEY_FORCE: f"{force:g}"}
+        if rng is not None:
+            extra[FKEY_RANGE] = "1"
+            extra[FKEY_MIN] = f"{rng[0]:g}"
+            extra[FKEY_MAX] = f"{rng[1]:g}"
+        parts.append(obj(oid, x, 300, rot=rot, scale=scale, extra=extra))
+    return ";".join(parts) + ";"
+
+
+# The control for forcecal. The injected probes on that rig read a force of
+# EXACTLY ZERO at every station, and an injection teleports the player 2,370 px
+# in one tick -- the force is applied inside checkCollisions' object loop
+# (0x215b4e), so a candidate list built for the old position would explain a
+# zero without the field being wrong at all. Here the player reaches the box by
+# walking: the floor stops at a ledge and the box straddles the fall, so nothing
+# is injected and nothing is teleported. If dvy still does not move, the field
+# is not firing for a reason that has nothing to do with the probes.
+def build_forcedrop_mode(mode: str, mini: bool = False,
+                         force: float = 1.0) -> str:
+    """...and `force` is the whole point of the variants.
+
+    dvy = m_force * |g| / D, and D could not be pinned from the m_force=1 rigs
+    at all: the term is 0.09..0.225 there, GD's vy is on the 0.001 grid, so
+    every reading carries 0.5-1% and the D backed out of the corpus scatters
+    over 0.9556..0.9647 -- exactly that width. At m_force=10 the term is ~2.25
+    and the same 0.001 is 0.04%, which separates those. The ladder of forces
+    also settles whether m_force is linear at all, which no lv22 value shows
+    (they run 1.2..4.2 and each is one point).
+    """
+    parts = [header(start_mode=mode, mini=mini)]
+    # A gap from 300 to 700 with the floor resuming after it. The level still
+    # has to be a level: the 439-char first cut (a ledge and nothing else) never
+    # reached `serve: loaded` at all.
+    parts += floor_run(0, 300, y=GROUND_Y)
+    parts += floor_run(700, 4000, y=GROUND_Y)
+    # 30 px grid, scale 10 -> 300x300 centred on the run height, so the fall off
+    # the ledge at x=300 enters it at x=350 and leaves at x=650.
+    parts.append(obj(FORCE_BOX, 500, GROUND_Y, scale=10.0,
+                     extra={FKEY_FORCE: f"{force:g}"}))
+    # AND THE WALL, past the box. The first cut left it out and the no-input
+    # attempt COMPLETED the level (tick 3112, x=4390) -- which ends the session,
+    # so every later run got "no serve: loaded" and the rig looked broken. It is
+    # the same trap the sawcal note spells out; the wall has to be somewhere the
+    # run reaches AFTER the thing being measured.
+    # ...and it has to be TALL. At 12 blocks (435 px) the same trap came back for
+    # m_force=10 only: f3 climbs into the wall, f10 sails over it and completes,
+    # f30 leaves the world before it gets there -- so two rigs out of five failed
+    # to load and the two looked like bad levels rather than one short wall.
+    # 120 blocks clears any force this rig will be asked for.
+    for k in range(120):
+        parts.append(obj(BLOCK, 1000, 105 + GRID * k))
+    return ";".join(parts) + ";"
+
+
+# ---- Speed bands (2026-08-30) ----------------------------------------------
+# cubePhysFor and ship_params both carry an UNMEASURED row for GD's 1.6 (the 4x
+# portal), and the note at cubePhysFor says it "falls back" to the 0.7 row --
+# which cannot be right, because the first branch there is `dxF > 1.78` and 4x is
+# faster than 3x. One of the two is wrong and the level is the only place to ask.
+#
+# A plain floor and nothing else. The plan presses once, so one run gives the
+# jump (the vy the press produces) and the gravity (the dvy of the arc after it)
+# together, at whatever dx the game reports for the band.
+# The one level the solver must REFUSE. kA22 is the platformer flag: identified
+# by writing it into a working rig and asking the game (kA23 on the same rig
+# leaves it an ordinary level, which is the control -- there the solver takes its
+# normal path and reports that it cannot solve, rather than refusing).
+#
+# It is built from its own header rather than through a `platformer` argument to
+# header(), deliberately. The note there says kA22-kA45 CHANGE THE PHYSICS, and a
+# flag on the shared header is an invitation to set it on a physics rig and
+# measure a different game.
+def build_platformer() -> str:
+    parts = [header(start_mode="cube") + ",kA22,1"]
+    parts += floor_run(0, 4000, y=GROUND_Y)
+    return ";".join(parts) + ";"
+
+
+def build_speedcal(mode: str, speed: int, mini: bool = False) -> str:
+    parts = [header(start_mode=mode, mini=mini, speed=speed)]
+    parts += floor_run(0, 12000, y=GROUND_Y)
+    # The wall is far out and tall: at 4x the run covers ground fast, and a
+    # completed level ends the session (the trap the sawcal note spells out).
+    for k in range(120):
+        parts.append(obj(BLOCK, 6000, 105 + GRID * k))
+    return ";".join(parts) + ";"
+
+
 def build_dualmode() -> str:
     parts = [header(start_mode="ship", mini=False, dual=True)]
     parts += floor_run(0, 9000, y=GROUND_Y)
@@ -3368,6 +3529,43 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcalmv_spider": lambda: build_sawcal_moved("spider"),
             "sawcalmv_ship_mini": lambda: build_sawcal_moved("ship", True),
             "sawcalmv_cube_mini": lambda: build_sawcal_moved("cube", True),
+           "forcecal_cube": lambda: build_forcecal_mode("cube"),
+           "forcedrop_cube": lambda: build_forcedrop_mode("cube"),
+           "platformer": build_platformer,
+           "speedcal_cube_s0": lambda: build_speedcal("cube", 0),
+           "speedcal_cube_s1": lambda: build_speedcal("cube", 1),
+           "speedcal_cube_s2": lambda: build_speedcal("cube", 2),
+           "speedcal_cube_s3": lambda: build_speedcal("cube", 3),
+           "speedcal_cube_s4": lambda: build_speedcal("cube", 4),
+           "speedcal_ship_s4": lambda: build_speedcal("ship", 4),
+           "speedcal_ship_s3": lambda: build_speedcal("ship", 3),
+           "forcedrop_cube_mini_f10": lambda: build_forcedrop_mode("cube", True, 10),
+           "forcedrop_swing_mini_f10": lambda: build_forcedrop_mode("swing", True, 10),
+           "forcedrop_ball_mini_f10": lambda: build_forcedrop_mode("ball", True, 10),
+           "forcedrop_ship_mini_f10": lambda: build_forcedrop_mode("ship", True, 10),
+           "forcedrop_cube_f3": lambda: build_forcedrop_mode("cube", False, 3),
+           "forcedrop_cube_f10": lambda: build_forcedrop_mode("cube", False, 10),
+           "forcedrop_cube_f30": lambda: build_forcedrop_mode("cube", False, 30),
+           "forcedrop_robot_f10": lambda: build_forcedrop_mode("robot", False, 10),
+           "forcedrop_swing_f10": lambda: build_forcedrop_mode("swing", False, 10),
+           "forcedrop_ship_f10": lambda: build_forcedrop_mode("ship", False, 10),
+           "forcedrop_ball_f10": lambda: build_forcedrop_mode("ball", False, 10),
+           "forcedrop_spider_f10": lambda: build_forcedrop_mode("spider", False, 10),
+           "forcedrop_ufo_f10": lambda: build_forcedrop_mode("ufo", False, 10),
+           "forcedrop_ship": lambda: build_forcedrop_mode("ship"),
+           "forcedrop_ball": lambda: build_forcedrop_mode("ball"),
+           "forcedrop_ufo": lambda: build_forcedrop_mode("ufo"),
+           "forcedrop_wave": lambda: build_forcedrop_mode("wave"),
+           "forcedrop_robot": lambda: build_forcedrop_mode("robot"),
+           "forcedrop_spider": lambda: build_forcedrop_mode("spider"),
+           "forcedrop_swing": lambda: build_forcedrop_mode("swing"),
+           "forcecal_ship": lambda: build_forcecal_mode("ship"),
+           "forcecal_ball": lambda: build_forcecal_mode("ball"),
+           "forcecal_ufo": lambda: build_forcecal_mode("ufo"),
+           "forcecal_wave": lambda: build_forcecal_mode("wave"),
+           "forcecal_robot": lambda: build_forcecal_mode("robot"),
+           "forcecal_spider": lambda: build_forcecal_mode("spider"),
+           "forcecal_swing": lambda: build_forcecal_mode("swing"),
             "dualmode": build_dualmode,
             "ceilrel": build_ceilrel, "ceilrel11": build_ceilrel11,
             "ceilrel07": build_ceilrel07, "seam": build_seam,

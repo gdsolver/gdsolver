@@ -476,7 +476,8 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // 36 -> 41 (after dis=36: editvel, vmodx, vmody, ovrvel -- id 2900's
         //           velocity change. 2026-08-19. dis itself is still unread by
         //           leveldp)
-        std::string f[41];
+        // 41 -> 42 (force: ForceBlockGameObject::m_force. 2026-08-30)
+        std::string f[42];
         // 41, not 28. The bound was left at 26 when mvdir/gnddir were added
         // (2026-08-15), so f[26]/f[27] were never filled and BOTH of them read
         // as "column absent" -- the whole id-2900 direction change was dead
@@ -486,7 +487,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // WHEN A COLUMN IS ADDED, RAISE THIS BOUND TOO. Forgetting it throws no
         // exception and only ever shows up as "that rule was dead from the
         // start".
-        for (int i = 0; i < 41 && std::getline(ss, f[i], ','); ++i) {}
+        for (int i = 0; i < 42 && std::getline(ss, f[i], ','); ++i) {}
         if (f[5].empty()) continue;
         const int type = std::atoi(f[1].c_str());
         Obj o{std::atof(f[2].c_str()), std::atof(f[3].c_str()),
@@ -907,47 +908,63 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // orientation is not read. The strength is per-instance (the table at
         // kFF2069's declaration).
         else if (o.id == 2069) {
-            double k = kFF2069;
-            // [2026-08-22 r108b] 17701 has DIFFERENT VALUES FOR SHIP AND ROBOT.
-            // robot 0.330 is the existing measurement from the CLEARED fall
-            // (t=16,367-370). ship 0.172 is worker-98's 3-point measurement
-            // (cut the CLEARED plan at t=15,805, duck under the portal's y
-            // window and inject into the box still as a ship):
-            //   outside the box, no input: dvy=-0.069 (bare g)
-            //   inside the box, no input:  dvy=+0.103 -> field = +0.172
-            //   inside the box, pressed:   dvy=+0.280 = 0.172 + push 0.108
-            //                              (matches 14472's known value)
-            // The dvy switch at vy~+2.1 is the ship's own per-speed regime
-            // (r85); the field is flat. THE 0.433 ENTERED FIRST WAS A
-            // MIS-DECOMPOSITION THAT LOOKED ONLY AT THE FIXUP DELTA (it added
-            // the +0.103 difference to 0.330 -- correctly the difference is
-            // explained by "field 0.172 + the difference in g", and the
-            // model-side application path still needs verifying).
-            // A mode-ratio rule still does not hold -- it stays a measured
-            // uid x mode table.
-            if (o.uid == 17701) k = 0.172;   // ship (worker-98 3-point measure)
-            // uid11412 (30x30, above the shaft exit): GD dvy +0.088 = -0.195 +
-            // 0.283 (CLEARED t=16,957-16,965). Same size as 14472 with a
-            // different strength = the strength is a per-object editor
-            // property, and there is no scale law.
-            if (o.uid == 11412) k = 0.283;
-            // The 7-piece carpet at cy=105 (30 px spacing, so 2 always
-            // overlap). The swing's measured fall (t=3,459) gives +0.216
-            // combined -> 0.108 per piece.
-            if (o.uid == 3396 || o.uid == 3397 || o.uid == 3452
-                || o.uid == 3453 || o.uid == 3454 || o.uid == 3476
-                || o.uid == 3477)
-                k = 0.108;
-            // Re-measured with the robot (note at the declaration). The same
-            // box differs by mode.
-            double kRobot = 0.0;
-            if (o.uid == 14472) kRobot = 0.304;
-            if (o.uid == 17701) kRobot = 0.330;  // existing CLEARED-fall measure
-            g_forceBoxes.push_back({o.cx, o.cy, o.hw, o.hh, k, kRobot});
-            std::printf("forcebox: uid %d at (%.0f,%.0f) %gx%g push up k=%.3f"
-                        "%s\n",
-                        o.uid, o.cx, o.cy, 2 * o.hw, 2 * o.hh, k,
-                        kRobot > 0.0 ? " (robot 0.304)" : "");
+            // [2026-08-30] THE TABLE BELOW IS GONE. It is one line now:
+            //     dvy = m_force * |g(mode)| / kForceGDiv
+            // m_force is the strength the level's author set on the instance
+            // (ForceBlockGameObject, dumped into objrects' `force` column); the
+            // rest is GD applying the same dt and mode gravity scale to the
+            // force that it applies to gravity, so kForceGDiv = 0.9581990 is
+            // the constant already at kRobotHoverTicks, not a fitted one.
+            //
+            // The note at kFF2069 PROPOSED THIS LAW AND REJECTED IT, because
+            // dividing the measurements by the mode's gravity gave coefficients
+            // over 1.25..1.69. That division left out m_force, which nothing
+            // could read until the exporter emitted it. With it:
+            //     11412  0.283 / (1.4  * 0.194) = 1.042
+            //     14472  0.304 / (1.5  * 0.194) = 1.045
+            //     17701  0.330 / (1.63 * 0.194) = 1.043
+            //     carpet 0.108 / (1.2  * 0.086) = 1.047      = 1/0.9581990
+            // The 1.25..1.69 scatter WAS m_force.
+            //
+            // Independently measured on calib_forcedrop_<mode> (all 8 modes,
+            // the player walks into a scale-10 box, gravity separated in the
+            // same run): the law predicts every mode to the 0.001 grid, and
+            // wave -- no gravity, so the law says no response -- reads exactly
+            // zero inside the box as well as outside.
+            //
+            // TWO OUTLIERS, both in modes whose gravity is velocity-dependent:
+            //   - uid17701's SHIP reading (0.172) wants 1.53, not 1.043. Its own
+            //     note records a "dvy switch at vy~+2.1" for the ship, so the
+            //     bare g it was decomposed against (-0.069) is not necessarily
+            //     the g that was acting; that is the same mis-decomposition the
+            //     0.433 entry was withdrawn for. Not resolved -- the law is
+            //     applied and the regression is what says whether it was right.
+            //   - the UFO rig reads 0.087 against a predicted 0.0898.
+            // OPEN, unchanged from before: mini and speed both move the mode's
+            // gravity (kSwingGMini) and gMagForMode does not carry either.
+            // An objrects dump written before the column exists leaves this
+            // empty, and a force block silently pushing with 0 is worse than a
+            // wrong constant. Say so and fall back to the old default.
+            double force = 0.0;
+            if (f[41].empty()) {
+                force = kFF2069 * kForceGDiv / std::fabs(kCubeG);
+                std::printf("forcebox: uid %d has NO force column (old objrects "
+                            "dump) - refresh objrects\n", o.uid);
+            } else {
+                force = std::atof(f[41].c_str());
+            }
+            g_forceBoxes.push_back({o.cx, o.cy, o.hw, o.hh, force});
+            // The push this box gives a full-size cube / robot / swing at 1x.
+            // THROUGH forceUnitFor, not through a second copy of the arithmetic:
+            // the first cut of this line used the quantised gravities (0.194 for
+            // the robot) and printed 0.303 where the model runs 0.304, which is
+            // a diagnostic that disagrees with the thing it is describing.
+            std::printf("forcebox: uid %d at (%.0f,%.0f) %gx%g m_force=%.3f "
+                        "(cube %.3f / robot %.3f / swing %.3f)\n",
+                        o.uid, o.cx, o.cy, 2 * o.hw, 2 * o.hh, force,
+                        qVy(force * forceUnitFor(0, 1.29825f).v),
+                        qVy(force * forceUnitFor(5, 1.29825f).v),
+                        qVy(force * forceUnitFor(7, 1.29825f).v));
         }
     }
     auto byX = [](const Obj& a, const Obj& b) { return a.cx < b.cx; };

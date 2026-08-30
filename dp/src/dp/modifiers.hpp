@@ -57,6 +57,13 @@ constexpr double kFF3645Max = 0.270;
 //     from y 631->641)
 // OPEN: a fit to one pass of one instance. Scale dependence of the strength, the
 // mirror for rot!=0, and the application to swing/wave are unmeasured.
+//   [2026-08-30] Two of those three are closed. Scale does NOT enter (uid17701
+//   is 5.1x3.9 and agrees with the scale-1 boxes, and the forcecal rig varies
+//   scale 1/3/5 at fixed m_force), and swing and wave are both measured on
+//   calib_forcedrop -- swing 0.0900 per unit of m_force, wave exactly zero. The
+//   rot!=0 mirror is STILL unmeasured; GD takes the direction from the object's
+//   rotation as a full angle (calculateForceToTarget, win 0x4c1ec0) so there is
+//   a shape to test against, but no rig has been run rotated.
 constexpr double kFF2069 = 0.159;
 // ...and the push strength is **per-instance**. Measured on the large uid17701
 // (154.47x116.91, (20,085,675)) (the CLEARED run's fall, t=16,367-370): GD's dvy is
@@ -64,6 +71,10 @@ constexpr double kFF2069 = 0.159;
 // corner (20,145,675) at the shaft entrance and never reaches the 2900 window
 // (y 693..753). With only two points no scaling law is set up; it is held as a
 // measured table by uid (OPEN: 17041/17184/11412 are unmeasured, default 0.159).
+//   [2026-08-30] CLOSED, and it was the expensive one. 17041/17184 carry
+//   m_force=4.2 and were running at 0.159 against a true 0.850 for a robot --
+//   5.3x low, at lv22 (21555,2634) and (21555,2694), for as long as this note
+//   stood. There is no table any more, so there is no entry to leave empty.
 // [2026-08-21] ...and **the same box has a different strength per mode**. uid14472
 // gave +0.159 for the ship's pass, but a **robot** passing the same box gets +0.304.
 // Measured lv22 t=15,879-15,888 (sp1.3, no input, box uid14472 (18,975,645) 30x30):
@@ -77,16 +88,159 @@ constexpr double kFF2069 = 0.159;
 // carpet=0.108 swing) gives coefficients scattered over 1.25..1.69**, so no scaling
 // law is set up and it stays a **measured table of uid x mode** (same policy as
 // before).
-struct ForceBox { double cx, cy, hw, hh; double k; double kRobot = 0.0; };
+//
+// [2026-08-30] THE PARAGRAPH ABOVE IS KEPT BECAUSE IT WAS RIGHT AND WAS THROWN
+// OUT ANYWAY. The law is exactly the one it proposes:
+//
+//     dvy = m_force * |g(mode)| / kForceGDiv
+//
+// The division that produced 1.25..1.69 left out m_force, the per-instance
+// strength ForceBlockGameObject carries and nothing could read until the
+// exporter emitted it (objrects' `force` column). Put it back and the scatter
+// collapses onto one number.
+//
+// The FIRST attempt at that number was 1/0.9581990, the dt at kRobotHoverTicks,
+// picked because dividing the four corpus values by the QUANTISED gravity gives
+// 1.042/1.045/1.043/1.047 and 1.04362 sits in the middle. It was wrong twice
+// over -- the divisor is 0.96 and the gravity is the unquantised one -- and it
+// cost three regressions, because "a constant we already have is close to the
+// answer" is a coincidence, not a derivation. The ladder below is what settled
+// it, and it settled it by making the measurement precise enough that the two
+// candidates could not both fit.
+// 0.9601, not 0.96. Solve each measurement for the interval of divisors whose
+// ROUNDED result reproduces it (GD's vy is on the 0.001 grid, so that is the
+// only thing a reading pins) and intersect the eight:
+//     cube_f10    2.160 /D -> 2.250     D in (0.95979, 0.96021]
+//     robot_f10   1.944 /D -> 2.025     D in (0.95952, 0.96020]
+//     ball_f10    1.296 /D -> 1.350     D in (0.95964, 0.96035]
+//     swing_f10   0.864 /D -> 0.900     D in (0.95947, 0.96053]
+//     11412 robot 0.27216/D -> 0.283    D in (0.96003, 0.96339]
+//     14472 robot 0.29160/D -> 0.304    D in (0.95764, 0.96079]
+//     17701 robot 0.31687/D -> 0.330    D in (0.95877, 0.96168]
+//     carpet swng 0.10368/D -> 0.108    D in (0.95558, 0.96447]
+//                                       ------------------------
+//                              all eight D in (0.96003, 0.96020]
+// The interval is not empty, which is the check: four rigs and four corpus
+// entries, measured years apart by different means, agree on a 0.00017-wide
+// window. A round 0.96 sits 0.00003 BELOW it -- close enough to look right and
+// wrong at uid11412, whose product lands exactly on a rounding boundary
+// (1.4 x 0.2025 = 0.28350) and is where lv22 lost tracking three times.
+constexpr double kForceGDiv = 0.9601;
+// HOW IT WAS MEASURED. calib_forcedrop_<mode>[_f<n>]: the player WALKS into a
+// 300x300 box (injected probes read a force of exactly ZERO -- the push is
+// applied inside checkCollisions' object loop at 0x215b4e, so a candidate list
+// built before a 2,370 px teleport does not contain the box), and the fall
+// right after it is read in the SAME run, so the gravity subtracted is the
+// gravity that was acting.
+//
+// At m_force=1 the push is 0.09..0.225 and GD's 0.001 grid puts 0.5-1% on it --
+// the entire width of the divisor the corpus backs out. The ladder fixes that:
+//     rig             m_force   push     push/m_force
+//     cube            1         0.225      0.2250
+//     cube_f3         3         0.675      0.2250      <- linear
+//     cube_f10       10         2.250      0.2250
+//     robot_f10      10         2.025      0.2025
+//     ball_f10       10         1.350      0.1350
+//     spider_f10     10         1.350      0.1350
+//     swing          1          0.090      0.0900
+//     swing_f10      10         0.900      0.0900      <- linear
+// The push per unit of m_force divided by the cube's is 1 / 0.9 / 0.6 / 0.6 /
+// 0.4 -- GD'S OWN MODE GRAVITY SCALES, exactly. So the force rides the same
+// scale as gravity, and with the UNQUANTISED gravity every one is exact:
+//     cube    0.216   / 0.96 = 0.2250      robot  0.1944 / 0.96 = 0.2025
+//     ball    0.1296  / 0.96 = 0.1350      swing  0.0864 / 0.96 = 0.0900
+// USE cubePhysFor(dx).g, NOT gAcc. gAcc is rounded to the 0.001 grid (0.194 for
+// the robot, not 0.1944) and rounding before the division is what made the
+// first two attempts miss lv22's table by a grid step at a time.
+// wave has no gravity, so the law predicts NO response, and the wave reads
+// exactly zero dvy inside the box as well as outside. That is the law's best
+// evidence and it was a prediction, not a fit.
+//
+// SHIP AND UFO ARE MEASURED, NOT DERIVED. Their gravity switches between a weak
+// and a strong value at accelSwitchVy, so "inside minus after" straddles two
+// regimes and the rig's own subtraction is invalid for them:
+//   ship  rig f10 gives 1.024 against a weak -0.069, but the run is on the
+//         STRONG side inside the box, so the push is 1.024 + 0.103 = 1.058 ->
+//         0.1058 per unit. lv22 wants 0.159/1.5 = 0.1060 and 0.172/1.63 =
+//         0.1055 -- and 0.1058 is the only value that rounds to BOTH.
+//   ufo   1.176 + 0.129 = 1.305 -> 0.1305 per unit. One rig, no corpus check.
+// Neither divides cleanly by 0.96, which is why they sit in the table below
+// rather than being pretended into the law.
+constexpr double kForceUnitShip = 0.1058;
+constexpr double kForceUnitUfo = 0.1305;
+// The push per unit of m_force. Speed rides along for the five derived modes
+// because cubePhysFor carries it; for the ship and UFO it is unmeasured, and
+// lv22 crosses uid14472 at speed 1.3 with the same 0.1058 the 1x rig gives, so
+// a constant is what the evidence supports.
+// MINI, measured 2026-08-30 on calib_forcedrop_<mode>_mini_f10:
+//   cube  push 2.250, |g| 0.216 -- IDENTICAL to full size
+//   ball  push 1.350, |g| 0.129 -- IDENTICAL to full size
+// which is what the law predicts: neither mode's gravity changes with size, so
+// neither does its push. forceUnitFor therefore does not take a size, and for
+// six of the eight modes that is measured rather than assumed.
+//
+// THE SWING IS THE EXCEPTION AND IT DOES NOT FIT. Its gravity DOES change with
+// size (kSwingGMini 0.129 against kSwingG 0.086, confirmed here by the fall
+// after the box), so the law predicts 10 * 0.129/kForceGDiv - 0.129 = +1.221
+// net. GD gives +1.2560/tick, held for seven ticks -- 2.9% out, far outside the
+// 0.001 grid. Two things confound the reading and neither is resolved:
+//   - GD reports onGround=1 for the whole climb, at vy up to 9. If gravity is
+//     not being applied at all there, the push is 0.1256 per unit, which is not
+//     a clean scale either.
+//   - the mini swing clamps at vy 9.385 while the full one does not clamp at
+//     all (see kSwingTerm), so the window is short.
+// Left as the full-size value: no level in lv1-22 puts a mini swing in a force
+// box, so the model cannot be measured against the difference, and 0.1256 vs
+// 0.1385 cannot be told apart without settling the gravity question first.
+// A TYPE, not a double, and that is the whole point. This function replaced one
+// that took a gravity, six call sites had to change, three of them did, and
+// because both were `double` IT COMPILED AND RAN. The sites still passing a
+// gravity gave 1.4 x 0.195 = 0.273 where GD gives 0.283 at uid11412 -- and five
+// rebuilds went hunting for that 0.010 in the law, in the divisor and in the
+// rounding before anyone looked at the call sites. Make the mistake impossible
+// rather than remembering not to make it.
+struct ForceUnit { double v; };
+inline ForceUnit forceUnitFor(uint8_t mode, float dxF) {
+    const double g = std::fabs(cubePhysFor(dxF).g);
+    switch (mode) {
+        case 0: return {g / kForceGDiv};                  // cube
+        case 1: return {kForceUnitShip};
+        case 2: return {g * 0.6 / kForceGDiv};            // ball
+        case 3: return {kForceUnitUfo};
+        case 4: return {0.0};                             // wave: measured zero
+        // The scales are spelled out rather than taken from kRobotGScale /
+        // kSpiderGScale in constants.hpp: this header is below that one in the
+        // include order, and these are the numbers the ladder MEASURED. If the
+        // two ever disagree, the disagreement is the finding.
+        case 5: return {g * 0.9 / kForceGDiv};            // robot
+        case 6: return {g * 0.6 / kForceGDiv};            // spider
+        case 7: return {g * 0.4 / kForceGDiv};            // swing
+        default: return {0.0};
+    }
+}
+struct ForceBox { double cx, cy, hw, hh; double force; };   // force = m_force
 inline std::vector<ForceBox> g_forceBoxes;
-inline double forceBoxAcc(double x, double y, double pHalf,
-                          uint8_t mode = 255) {
-    double a = 0.0;
+inline double forceBoxSum(double x, double y, double pHalf) {
+    double f = 0.0;
     for (const auto& fb : g_forceBoxes)
         if (std::fabs(x - fb.cx) <= fb.hw + pHalf
             && std::fabs(y - fb.cy) <= fb.hh + pHalf)
-            a += (mode == 5 && fb.kRobot > 0.0) ? fb.kRobot : fb.k;
-    return a;
+            f += fb.force;
+    return f;
+}
+// `unit` is forceUnitFor(mode, dx) -- the push one unit of m_force gives THIS
+// player. Quantised the way GD quantises vy: every number the old uid table
+// held was a 0.001-grid observation, so the law has to be rounded the same way
+// before it can be compared with them.
+//     14472 robot   1.5  x 0.2025 = 0.30375  -> 0.304   (table 0.304)
+//     17701 robot   1.63 x 0.2025 = 0.33008  -> 0.330   (table 0.330)
+//     carpet swing  1.2  x 0.0900 = 0.10800  -> 0.108   (table 0.108, exact)
+//     11412 robot   1.4  x 0.2025 = 0.28350  -> lands ON the rounding boundary
+//                                               (table 0.283)
+//     14472 ship    1.5  x 0.1058 = 0.15870  -> 0.159   (table 0.159)
+//     17701 ship    1.63 x 0.1058 = 0.17245  -> 0.172   (table 0.172)
+inline double forceBoxAcc(double x, double y, double pHalf, ForceUnit unit) {
+    return qVy(forceBoxSum(x, y, pHalf) * unit.v);
 }
 struct ForceField { double cx, cy, R; int dir; };  // dir -1 = push world-down
 inline std::vector<ForceField> g_forceFields;

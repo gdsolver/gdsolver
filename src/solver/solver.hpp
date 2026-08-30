@@ -127,6 +127,12 @@ inline bool holdingAt(const std::vector<InputCmd>& plan, long long t) {
 // disk that the leveldp CLI reads, and the in-memory buffer the mod hands to the solver
 // core (src/mod/dp_bridge.cpp). One writer and one parser is what keeps 'the level the
 // mod solves' and 'the level the CLI solves' the same object.
+// 0 for everything that is not a force block, which is what leveldp reads it as.
+inline float forceOf(GameObject* obj) {
+    auto* fb = geode::cast::typeinfo_cast<ForceBlockGameObject*>(obj);
+    return fb ? fb->m_force : 0.f;
+}
+
 inline void writeObjRects(std::ostream& rf, GJBaseGameLayer* l) {
     // ---- objrects.txt: GD's own real hitbox dimensions -----------------------
     // Columns: id,type,cx,cy,w,h,groups,uid,radius,rot,sy0,sy1,shz,sdir,sup,w0,h0,
@@ -184,7 +190,15 @@ inline void writeObjRects(std::ostream& rf, GJBaseGameLayer* l) {
     rf << "id,type,cx,cy,w,h,groups,uid,radius,rot,sy0,sy1,shz,sdir,sup,w0,h0,"
           "tpy,tpg,tpix,tpiy,tw,zoom,zdur,zease,zrate,mvdir,gnddir,"
           "optp1,optp2,flipx,flipy,nofx,notouch,tpex,tpey,dis,"
-          "editvel,vmodx,vmody,ovrvel\n";
+    // - force: ForceBlockGameObject::m_force, the push strength the level's
+    //   author set on this instance (0 for everything that is not a force
+    //   block). It is what the uid table in level_loader.hpp was standing in
+    //   for: the strength is a per-object editor property, so no amount of
+    //   geometry recovers it and the model had to write one number per object.
+    //   The full settings (min/max/relative/range/id) are in forceblocks.txt;
+    //   only the strength is needed here, and appending one column is the
+    //   documented-safe way to reach leveldp.
+          "editvel,vmodx,vmody,ovrvel,force\n";
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
         if (!obj) continue;
         auto r = obj->getObjectRect();
@@ -320,6 +334,7 @@ inline void writeObjRects(std::ostream& rf, GJBaseGameLayer* l) {
            << "," << tpex << "," << tpey
            << "," << (obj->m_isDisabled ? 1 : 0)
            << "," << editvel << "," << vmodx << "," << vmody << "," << ovrvel
+           << "," << forceOf(obj)
            << "\n";
     }
 }
@@ -445,6 +460,54 @@ inline void buildPois(GJBaseGameLayer* l) {
             ++n;
         }
         log::info("obb: {} rotated objects", n);
+    }
+    // ---- forceblocks.txt: the force block's own settings ---------------------
+    // ForceBlockGameObject (2069, and 3645 which is the same class) carries the
+    // push as MEMBERS, and the model had none of them. It ended up with a table
+    // keyed on m_uniqueID for the strength and two unrelated special cases for
+    // the shape: a flat push for 2069, a linear ramp for 3645. Reading
+    // ForceBlockGameObject::calculateForceToTarget (win 0x4c1ec0) they are one
+    // formula:
+    //     radius    = m_objectRadius > 0 ? m_objectRadius * max(m_scaleX, m_scaleY)
+    //                                    : max(rect.w, rect.h) * k
+    //     magnitude = m_forceRange ? lerp(m_minForce, m_maxForce, clamp01(t))
+    //                              : m_force
+    //     angle     = m_relativeForce ? atan2(target - self)   <- why it takes a
+    //                                 : from the object's own rotation   target
+    // So "the strength is per-instance and there is no scale law" was right about
+    // the conclusion and wrong about the reason: it is m_force. And what looked
+    // like a per-uid AND per-mode strength (uid17701 measured 0.172 as a ship and
+    // 0.330 as a robot) is a magnitude that falls off with distance, sampled
+    // wherever the player happened to pass -- 17701 is 154x117, so a ship and a
+    // robot cross it at different heights and read different values off the same
+    // ramp. The ramp the model already fitted for 3645 IS this lerp; the "no
+    // position-linear ramp" concluded for 2069 was looked for across 10 px of a
+    // 30 px box, which is where an m_forceRange=0 instance and a ramp too shallow
+    // to see look the same.
+    // NOTHING READS THIS YET. The dump is the measurement, and the values decide
+    // what the formula should be before any of it reaches the model.
+    {
+        std::ofstream ff(std::string(DATA_DIR) + "/forceblocks.txt",
+                         std::ios::trunc);
+        ff << "uid,id,type,cx,cy,rot,scalex,scaley,radius,rectw,recth,"
+              "force,minforce,maxforce,relative,range,forceid\n";
+        long long n = 0;
+        for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+            auto* fb = geode::cast::typeinfo_cast<ForceBlockGameObject*>(obj);
+            if (!fb) continue;
+            const auto p = fb->getPosition();
+            const auto r = fb->getObjectRect();
+            ff << fb->m_uniqueID << "," << fb->m_objectID << ","
+               << (int)fb->m_objectType << "," << p.x << "," << p.y << ","
+               << fb->getRotation() << "," << fb->m_scaleX << ","
+               << fb->m_scaleY << "," << fb->m_objectRadius << ","
+               << r.size.width << "," << r.size.height << ","
+               << fb->m_force << "," << fb->m_minForce << ","
+               << fb->m_maxForce << "," << (fb->m_relativeForce ? 1 : 0) << ","
+               << (fb->m_forceRange ? 1 : 0) << "," << fb->m_forceID << "\n";
+            ++n;
+        }
+        log::info("forceblocks: {} force blocks", n);
     }
     // ---- triggers.txt / objgroups.txt: the trigger mapping -------------------
     // grouptrace only emits "what was where and when". A touch-trigger gate does
