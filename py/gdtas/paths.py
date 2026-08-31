@@ -20,10 +20,28 @@ REPO = Path(__file__).resolve().parent.parent.parent
 # Results (solution plans) and the per-run working files. Only the solutions
 # are tracked (see .gitignore's allow-list).
 DATA = REPO / "data"
+
+
+def _machine_local(name: str, env: str) -> Path:
+    """Locate a tree that sits next to the MAIN checkout, not this one.
+
+    From a git worktree (<main>/.claude/worktrees/<x>) REPO.parent points
+    inside the main checkout, so walk the parents for the first that has the
+    tree. The plain-checkout case is parents[0], i.e. unchanged behaviour.
+    """
+    override = os.environ.get(env)
+    if override:
+        return Path(override)
+    for p in REPO.parents:
+        if (p / name).exists():
+            return p / name
+    return REPO.parent / name
+
+
 # The private side: dumps of the official levels (objrects / triggers /
 # objgroups / obb), the gdref reference traces, the append-only fixups_log
 # archives, and the records of isolated runs. Never part of the public tree.
-LAB = Path(os.environ.get("GDSOLVER_LAB") or REPO.parent / "GD-lab")
+LAB = _machine_local("GD-lab", "GDSOLVER_LAB")
 LEVEL_DATA = LAB / "data"
 # Calibration rigs: the generated levels (.lvl / .units.json / .plan.txt) are
 # public, the game's measurements of them (dump.csv, objrects_calib_*) are not.
@@ -41,7 +59,7 @@ BUILD_MOD = REPO / "build" / f"{MOD_ID}.geode"
 # rebuild of the mainline does not swap the binary under a running measurement.
 MOD_CACHE = REPO / "mcp" / ".cache"
 
-WORKERS_ROOT = Path(os.environ.get("GDSOLVER_WORKERS") or REPO.parent / "GD-workers")
+WORKERS_ROOT = _machine_local("GD-workers", "GDSOLVER_WORKERS")
 # The range the mainline batch (cold_regress and friends) claims as its pool.
 # Two GD processes sharing one data root mix their result.txt, so the resident
 # side (the MCP server) has to use ids outside this range.
