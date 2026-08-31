@@ -1,3 +1,28 @@
+# v0.1.3
+
+ * **Solving a second level without restarting the game works.** One level's
+   recording of its moving geometry was still being offered to the next one, so
+   a level that has no moving parts of its own was planned in the previous
+   level's world -- solve Stereo Madness after Clubstep and the search died a
+   fifth of the way in, on a level it clears in eight rounds. The recorder now
+   publishes "nothing was recorded" as an answer instead of leaving the previous
+   answer standing, and a solve deletes the file it would have read.
+ * **The music follows the speed again after the screen comes back.** Raising the
+   spectating notch and then turning rendering back on left the song playing at
+   1x for the rest of the session: resuming rendering restarts the level, the
+   game starts the song again unpaused, and the mod had latched on what it last
+   asked for rather than on what the song was actually doing.
+ * A platformer level is refused rather than answered. It is outside the
+   formulation the search rests on -- there is steering, so "the input at tick t"
+   does not describe the run -- and it used to be solved anyway, badly and
+   silently.
+ * The force block is modelled from its own settings rather than from a table of
+   the object ids that happened to be measured, and its push is read off the real
+   object. Calibration levels for it are in `data/rigs`, one per game mode.
+ * The cold regression can solve every level in one game (`--one-session`), and
+   blessing a baseline now does. Under one launch per level nothing about a
+   second level is ever exercised, which is why the leak above went unseen.
+
 # v0.1.2
 
  * **The keys can be rebound.** All thirteen are Geode keybind settings now,
