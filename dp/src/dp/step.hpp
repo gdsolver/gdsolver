@@ -2744,6 +2744,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // one condition in the listing's guard that could not be named
                 // (`local_res18._0_1_`), and it is the conservative reading:
                 // where GD's re-seat would be undefined, the kill stands.
+                // [named 2026-09-01] That byte is CVar29's storage -- the
+                // ground/ceiling SIDE CLASSIFICATION of the contact -- so the
+                // real condition is "this contact was classified into a
+                // resolution arm during this call", and both arms qualify (the
+                // probe that lived came in over the top face). The centre test
+                // below is a static proxy for it and matched all four measured
+                // points; the classifier itself compares widened foot and head
+                // against the object at the CURRENT AND PREVIOUS positions,
+                // surface-speed widening included, so a fast mover near the
+                // boundary is where the proxy would part company with GD.
                 const bool flipGrace =
                     s.flipT < kFlipGraceTicks
                     && std::fabs((double)c.y - o->cy) > o->hh;
