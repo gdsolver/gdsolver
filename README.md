@@ -33,7 +33,7 @@ minute. The solutions are tracked in [`data/`](data/) as
 `solution_lv<N>_dp.txt`, one `input=<tick>,<0|1>` line per press or release.
 
 Those 22 are also the supported set — see [What's next](#whats-next) for where
-custom levels and coins stand.
+custom levels, platformer mode and coins stand.
 
 ## Results
 
@@ -101,12 +101,14 @@ flowchart LR
     PY -.-> GD
 ```
 
-Geometry Dash auto-scrolls, so the player's x is a function of the tick alone
-and the only decision per physics tick is *pressed or not*. Clearing a level is
+Geometry Dash gives the player no steering input: the level sets the forward speed,
+so the only decision per physics tick is *pressed or not*. Clearing a level is
 then a reachability question over `(tick, y, vy, mode, gravity, size, ...)`, and
 two properties make the game usable as the oracle for it: the physics are
-deterministic under *click on steps*, and x is a clock, so re-anchoring the
-search on a later tick costs nothing. That is the whole loop:
+deterministic under *click on steps*, and x is essentially a clock, so re-anchoring
+the search on a later tick costs nothing. (*Essentially*, because stair snapping
+leaves a sub-pixel phase and a rotation section turns the frame — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#1-the-problem).) That is the whole loop:
 
 ```mermaid
 flowchart TD
@@ -156,14 +158,26 @@ loop is specific to the official levels: level selection is the game's own, the
 level model is built out of whatever `PlayLayer` loaded, and plenty of custom
 levels already solve as they are. They are nonetheless **not supported**: the
 difference between "it worked" and "it is expected to work" is the whole gap. The
-physics model is measured against what the official levels actually use, so a
-level that leans on an object, a trigger or a gameplay mode the model has never
-met is a level the model is wrong about — and being wrong is expensive here: the
-loop finds out only by dying in the replay, and repairs one disagreement at a
-time. The regression covers the official levels only, so nothing else is being
+physics is measured on the calibration rigs in `data/rigs`, one mechanic at a time
+across the game modes, and wherever a mechanic-and-mode combination has never been
+swept the model carries a fallback that says so in a comment. A level that leans on
+one of those is a level the model is wrong about — and being wrong is expensive
+here: the loop finds out only by dying in the replay, and repairs one disagreement
+at a time. The regression covers the official levels only, so nothing else is being
 kept honest. The work is to pick a subset that is genuinely supported, say
 plainly which objects are in it, and make a level outside it fail loudly instead
 of slowly.
+
+**Platformer levels are outside the formulation, not merely unmeasured.** The
+search rests on there being no steering input; a platformer level hands the player
+one, so forward position stops being driven by the level and the decision each
+tick stops being one bit. No measurement closes that — it is a different search
+problem. So the mod refuses one instead of answering: it reads both the layer's
+flag and the level's own, and takes the refusal if the two ever disagree. Being
+wrong slowly is the thing this project is built to avoid, and an answer nobody can
+check is worse than a sentence saying there is no answer. Safety is unaffected
+either way — the record gate asks whether an automated session is open, never which
+mode is running.
 
 *What to expect, roughly.* The official suite is 1.x apart from two levels —
 Fingerdash is 2.0 and Dash is 2.2 — so that is the era the model has been
@@ -239,98 +253,18 @@ geode build                                    # -> build/gdsolver.solver.geode
 
 ## Watching a run
 
-A small panel appears on the screens a level is started from — the main-level wheel, and any
-individual level's own page, so custom levels included. It switches between three modes:
-**Normal** (the game as it is), **Replay** (replay a stored solution for the level), and
-**Solve** (solve the level in-process). Level selection itself is the game's own, so any level
-can be picked. The panel is on those screens and nowhere else: everywhere else it would just
-sit on top of the menu underneath it.
+A panel appears on the screens a level is started from, offering three modes: **Normal**,
+**Replay** (play a stored solution) and **Solve** (solve the level in-process). A solve runs
+fast, dark and silent until a candidate clears, and then plays that one through at 1x with the
+artwork and the music. While a level is on screen an overlay reports what the loop is doing, and
+F10 draws the iteration map: where the repair rounds went, and where the model — rather than
+the plan — was wrong.
 
-**It runs fast, dark and silent until it has something to show.** Candidate replays mostly
-die and each one at normal speed would cost the length of the song, so the screen goes to the
-fast loop and stays there. When a candidate finally clears, the level restarts and the solution is
-played through properly — at 1x, with the artwork and the music. That is the run worth watching,
-and it is the only one you are shown. (`F5` overrides this in either direction.)
+The overlay has no key that lets a player do what the game does not allow: no warp, no noclip,
+no forced mode, no infinite jump. It is for watching a run, not for changing one.
 
-While a level is on screen the mod draws a column down the top-left: a badge naming the run,
-what the solve is doing, and the keys with the current speed:
-
-```
-iter 3   solving the tail from GD's own state   72s
-level  [########............]  41.2%   best x 11372 / 27985
-search [##############......]  72.4%   tick 18096 / 25000   x 19300   states 16000
-```
-
-Two bars, because they answer different questions. **level** is how far into the level the run has
-actually got — the deepest point a replay reached — so it only ever grows, and it is the same
-yardstick as the game's own percentage. **search** is how much of the current search is left;
-reaching its end is the search finishing, which is not the same event as reaching the end of the
-level. The keys are:
-
-| key | |
-|---|---|
-| `F1` | hide the overlay. Refused while solving, and it never hides the bot badge |
-| `F2` | pause / resume — `F3` / `F4` step 1 / 10 substeps (held down they repeat) |
-| `F5` | rendering on / off. Only in a solve: there the frames go back to the fast loop, which is most of the speed. In a plain replay it does nothing — a replay you cannot see is not a replay |
-| `F6` | hitboxes: off / on / **only** (the game's own debug drawing; "only" hides the artwork so nothing is left but the geometry the physics uses) |
-| `F7` | replay from the start — works after the replay has finished too |
-| `F9` | quit to the level screen |
-| `F10` | the iteration map: where the repair loop spent its rounds (below). On during a solve, off in a replay, and this flips whichever it currently is |
-| `←` `→` | seek back / forward. A tap is five seconds; holding accelerates. While the game is stopped they step a frame instead. Refused during a solve: the level is the loop's own verification replay and nudging it would spoil the round |
-| `↑` `↓` | spectating speed, one notch (0.25x … 16x). Physics stays at 1/240 either way, so the trajectory and the tick numbers do not change |
-
-There are no keys that let a player do what the game does not allow: no warp, no noclip, no forced
-mode, no infinite jump. The overlay is for watching a run, not for changing one.
-
-A **seek bar** sits in the bottom-right of every replay. Click or drag it to go somewhere; the
-level fast-forwards there (restarting first if you asked to go backwards, since a forced-scroll
-game has no reverse) and hands the speed back exactly where it found it. It works on the results
-screen too, which is when you most want it. `←` / `→` do the same thing in five-second steps.
-
-The level is blacked out while it fast-forwards, with a `▶▶▶` indicator: the picture is running at
-hundreds of physics steps a frame and is not worth looking at. Rendering is *not* switched off for
-this — resuming it is the path that restarts the level (and crashes on the way back), so the level
-is painted over instead.
-
-### The iteration map (`F10`)
-
-"Cleared in 62 rounds" says nothing about *where* the rounds went, and they are never spread
-evenly: a level is usually solved by the first plan for nine tenths of its length, and then the
-loop grinds against two or three walls. The map draws that distribution back onto the level — live
-while the solve is still running, which is where it is on by default, and over a replay of the
-solution, where `F10` asks for it:
-
-* a **column** at every place a replay died, its opacity the share of the run's worst wall and the
-  round count printed above it;
-* the **death** itself, coloured by how the loop scored that round — green deeper (progress),
-  cyan followed, violet the forced portal route, red rewound (stuck), pink wedged;
-* a **fixup** in amber (magenta for a kill record) wherever the *model* was wrong. This is the
-  cause the deaths are the symptom of, and the two are often hundreds of pixels apart;
-* the **path each round flew** from its re-anchor to its death. Rounds share the verified prefix
-  by construction, so they are one line until the splice point and a fan after it — and the fan
-  is the wall;
-* the same histogram inside the seek bar, so the whole level's shape is readable at once.
-
-The data is the loop's own: it writes `itermap_lv<N>.txt` next to the solution when it clears, and
-also when it gives up — a run that did *not* clear is the one whose map is worth reading. Runs made
-before this existed can be recovered from their logs, which hold the same lines:
-
-```bash
-python py/itermap_from_log.py --all
-```
-
-```bash
-python py/watch_plan_replay.py --level 22 --itermap
-```
-
-What each mark means, and how to tell a wall the *model* gets wrong from a wall with no route
-through it, is in [docs/ITERMAP.md](docs/ITERMAP.md).
-
-A solve makes no sound while it is solving: it runs hundreds of attempts a minute with the physics
-tens of times faster than the song, so every note lands in the wrong place. The sound comes back
-with the picture, for the showing of the solution and for any plain replay, and the song is then
-kept with what is on screen — pausing the game pauses it, and the spectating notch retunes it up
-to 4x (past that it is paused and re-seeked on the way back down).
+[docs/RUNNING.md](docs/RUNNING.md) has the panel, the overlay, the full key table and the seek
+bar; [docs/ITERMAP.md](docs/ITERMAP.md) has what the map's marks mean.
 
 ## Safety / community notes
 

@@ -6,19 +6,34 @@ Geode and the mod, nothing else — which is what §4 is about.
 
 ## 1. The problem
 
-Geometry Dash auto-scrolls: the player's x position is a function of the tick
-alone (speed portals included), so the only decision per physics tick
+Geometry Dash gives the player no steering input: the level sets the forward
+speed (speed portals included), so the only decision per physics tick
 (240 Hz) is *pressed or not*. The state that matters is
 `(tick, y, y-velocity, mode, gravity, size, ...)`, and clearing a level is a
 reachability question: is there a sequence of presses under which the player
 is alive at the end?
+
+Forward position is *nearly* the clock rather than exactly it, and both exceptions
+are visible in the search key. GD's stair snapping leaves a sub-pixel phase —
+landings differ by 0.3 to 1.0 px, and one of those decides whether the next landing
+falls on tick n or n+1 — so `xAbs` is keyed at a quarter pixel (`search_key.hpp`,
+measured on lv11 x=24,863, where the only route lands at 24863.4 and jumps on the
+very next tick). And a 2.2 rotation section turns the whole gameplay frame, so
+world x can freeze for a stretch while the frame's own forward axis keeps advancing
+— lv22's reference trace at t=16,995..17,005 holds x at 20085.0996 while y climbs
+1.95 a tick under `gframe=3` (`frames.hpp`); the model holds its state in the
+current frame's coordinates so that every rule stays written as "x is the clock,
+y is height". Neither exception
+hands the player an axis to steer with, and that — not "x is the tick" — is the
+property the formulation rests on. A platformer level does hand one over, which is
+why those are out of scope rather than merely unmeasured.
 
 Two facts make the game a usable oracle for that question:
 
 * **Determinism** — with input precision set to *click on steps*, the same input
   sequence yields the same trace, independent of frame rate, window size or
   graphics settings. This is measured, not assumed; everything below rests on it.
-* **x is a clock** — re-anchoring the search on a later tick costs nothing in
+* **x is essentially a clock** — re-anchoring the search on a later tick costs nothing in
   terms of path choice, so a plan can be verified in the game and repaired
   from the first point of disagreement.
 
