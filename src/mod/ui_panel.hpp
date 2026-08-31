@@ -57,6 +57,74 @@ public:
 
 inline SolverPanelLayer* g_panel = nullptr;
 
+// ---- entering the level g_cfg names ----------------------------------------
+//
+// The body of MenuLayer's auto-enter, lifted out so that the level suite can use the SAME
+// path rather than a second one that only looks like it. Everything it needs is in g_cfg, and
+// that is the point: the second level of a suite is entered by the code that enters the first.
+//
+// Returns false when the level could not be found or built; the caller decides what that
+// means (the suite steps past it, auto-enter just stops).
+inline bool enterConfiguredLevel() {
+    if (g_started) return false;
+    g_started = true;
+    // The elapsed-time origin is set only on the first entry of the session (resetting it on
+    // re-entry would under-report the elapsed seconds)
+    if (solver::g_totalAttempts == 0)
+        solver::g_solveStart = std::chrono::steady_clock::now();
+    // Main levels are 1-22; anything else is a saved / online-cached custom level
+    GJGameLevel* level = nullptr;
+    auto* glm = GameLevelManager::sharedState();
+    // If levelfile= is given, build the level from the RAW level string in that file
+    // (the save file is never touched). Used for calibration maps.
+    if (!g_cfg.levelFile.empty()) {
+        std::ifstream lf(g_cfg.levelFile, std::ios::binary);
+        if (!lf.is_open()) {
+            log::error("phase1: cannot open levelfile {}", g_cfg.levelFile);
+            writeResult("error: levelfile not found");
+            return false;
+        }
+        std::string raw((std::istreambuf_iterator<char>(lf)),
+                        std::istreambuf_iterator<char>());
+        level = GJGameLevel::create();
+        level->m_levelName = "gdsolver calib";
+        level->m_levelID = g_cfg.levelId;
+        level->m_levelType = GJLevelType::Editor;
+        // Run it through GD's own compression. Doing base64+gzip by hand here silently
+        // fails to load because of encoding differences, so ALWAYS hand it to ZipUtils.
+        level->m_levelString = cocos2d::ZipUtils::compressString(raw, false, 0);
+        log::info("phase1: built the level from levelfile {} ({} chars)",
+                  g_cfg.levelFile, raw.size());
+    } else if (g_cfg.levelId >= 1 && g_cfg.levelId <= 22) {
+        level = glm->getMainLevel(g_cfg.levelId, false);
+    } else {
+        level = glm->getSavedLevel(g_cfg.levelId);
+        if (!level && glm->m_onlineLevels)
+            level = static_cast<GJGameLevel*>(
+                glm->m_onlineLevels->objectForKey(std::to_string(g_cfg.levelId)));
+    }
+    if (!level) {
+        log::error("phase1: level {} not found (main or saved)", g_cfg.levelId);
+        writeResult("error: level not found");
+        return false;
+    }
+    // Line for ruling out the suspicion that the calibration rig (levelfile=) and the
+    // official levels have DIFFERENT physics. The rig's gravity-flipped ship climbed at
+    // 0.069/tick while the same condition in lv7 gave 0.103. Compares the defaults of
+    // GJGameLevel::create() against the values from getMainLevel.
+    writeResult(fmt::format(
+        "levelinfo: id={} type={} levelVersion={} gameVersion={} "
+        "twoPlayer={} objCount={}",
+        g_cfg.levelId, (int)level->m_levelType, level->m_levelVersion,
+        level->m_gameVersion, (int)level->m_twoPlayerMode,
+        (int)level->m_objectCount).c_str());
+    log::info("phase1: entering level {}", g_cfg.levelId);
+    g_forceCleanStart = true;
+    auto* scene = PlayLayer::scene(level, false, false);
+    CCDirector::sharedDirector()->replaceScene(CCTransitionFade::create(0.5f, scene));
+    return true;
+}
+
 // Which screens the panel belongs on. It used to ride every scene that was not PlayLayer,
 // which parked it on top of whatever the current menu happened to keep in its bottom-left
 // corner. The mode switch only means anything on a screen a level is started from, so those
@@ -88,6 +156,79 @@ inline bool isLevelLaunchScreen(cocos2d::CCNode* n, int depth = 0) {
 // saying "This Geode version has no keepAcrossScenes, so we follow by ourselves". That was wrong
 // about the SDK rather than about GD: geode::OverlayManager is in 5.8.2 and is exactly this.
 // The attach/detach below is NOT part of what it replaces -- see the note on touches.
+// Resident poll that carries a suite from one level to the next. It hangs off the director's
+// scheduler for the same reason the panel keeper does: between two levels there is no game
+// layer and no session, so nothing else in the mod is running.
+//
+// The wait is the whole of it. endSession asks PlayLayer to quit, GD fades to the level-select
+// screen, and a level entered before that fade finishes replaces a scene that is still being
+// replaced. So: no PlayLayer, not inside a CCTransitionScene, and then a settling margin
+// longer than the 0.5 s fade before the next level goes in.
+class SuiteKeeper : public cocos2d::CCObject {
+public:
+    // Ticks of the 0.1 s poll to wait after the scene looks clear. 1 s, i.e. twice the fade --
+    // this runs 21 times in a full sweep, so it is 21 seconds spent buying the margin.
+    static constexpr int kSettleTicks = 10;
+    // ...and the bound on the wait itself. If the level never lets go, the suite must fail
+    // where it can be seen: a keeper that waits forever is a silent hang, and the reader
+    // outside sees only a game that stopped writing -- the least informative failure there is.
+    static constexpr int kGiveUpTicks = 600;   // 60 s
+
+    void tick(float) {
+        using namespace cocos2d;
+        if (!suite::g_advance) return;
+        auto* scene = CCDirector::sharedDirector()->getRunningScene();
+        const bool clear = PlayLayer::get() == nullptr && scene
+                           && !geode::cast::typeinfo_cast<CCTransitionScene*>(scene);
+        // The two counters are separate on purpose: one bounds the whole wait, the other is the
+        // margin AFTER the scene became enterable. Sharing one made a slow exit eat the margin.
+        ++suite::g_waited;
+        if (!clear) {
+            suite::g_settle = 0;
+            if (suite::g_waited < kGiveUpTicks) return;
+            suite::g_advance = false;
+            writeResult("suite: gave up waiting to leave the level after 60s (playLayer="
+                        + std::string(PlayLayer::get() ? "still up" : "gone")
+                        + ") - the remaining levels are not run");
+            writeResult("suite: done " + std::to_string(suite::g_levels.size()) + " levels");
+            if (g_cfg.quitWhenDone)
+                Loader::get()->queueInMainThread([] { utils::game::exit(false); });
+            return;
+        }
+        if (++suite::g_settle < kSettleTicks) return;
+        suite::g_advance = false;
+        suite::g_settle = 0;
+        suite::g_waited = 0;
+        // Rebuild the configuration from the file rather than patching the outgoing one: the
+        // second level of a suite is then configured by the same code, from the same bytes, as
+        // the first. (PlayLayer::onQuit has already reset g_cfg to its defaults, so this is a
+        // fresh parse and `dparg`'s append cannot double up.)
+        g_cfg = Config{};
+        loadConfig();
+        g_cfg.levelId = suite::current();
+        g_cfg.levelFile.clear();          // a suite is main levels by id, never a rig file
+        openFiles();                      // endSession closed them
+        writeResult("suite: level=" + std::to_string(g_cfg.levelId)
+                    + " (" + std::to_string(suite::g_at + 1) + "/"
+                    + std::to_string(suite::g_levels.size()) + ")");
+        updateWindowTitle();
+        if (enterConfiguredLevel()) return;
+        // It could not be entered. Do not stall the sweep on it -- report it and take the next,
+        // or end the run if this was the last.
+        writeResult("suite: level=" + std::to_string(g_cfg.levelId)
+                    + " could not be entered - skipped");
+        g_started = false;
+        if (suite::hasNext()) {
+            ++suite::g_at;
+            suite::g_advance = true;
+            return;
+        }
+        writeResult("suite: done " + std::to_string(suite::g_levels.size()) + " levels");
+        if (g_cfg.quitWhenDone)
+            Loader::get()->queueInMainThread([] { utils::game::exit(false); });
+    }
+};
+
 class PanelKeeper : public cocos2d::CCObject {
 public:
     void tick(float) {

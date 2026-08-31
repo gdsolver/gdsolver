@@ -57,6 +57,14 @@ python py/dev.py                                   # build, deploy, launch GD
    <file>`; after touching imports, paths or module-level constants run
    `python tools/import_smoke.py` (two seconds — a missing import otherwise
    shows up an hour into a run).
+   **Before publishing, the cold run is `--one-session`** — every level in one
+   game, which is also what `--bless` does, so the baseline can only come from
+   that arrangement. A launch per level cannot fail the claim that starting a
+   level leaves nothing of the last one behind: every global is at its declared
+   value and the launcher has emptied the data dir, so the mod's own cleanup is
+   never exercised. A leak of exactly that kind (one level's moving-geometry
+   recording adopted by the next) sat under a green 22/22 for months and was
+   found by hand, not by the suite.
 4. **Measure the instrument before believing it.** Buffered logs, stale dumps,
    a second process writing the same data root, an isolated data dir carrying
    yesterday's files — these have each produced convincing wrong conclusions.

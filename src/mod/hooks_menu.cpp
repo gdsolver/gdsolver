@@ -34,6 +34,12 @@ class $modify(P1MenuLayer, MenuLayer) {
                 CCDirector::sharedDirector()->getScheduler()->scheduleSelector(
                     schedule_selector(PanelKeeper::tick), keeper, 0.1f, false);
             }
+            // ...and the one that carries a `levels=` suite from one level to the next. Same
+            // scheduler and same reason: between two levels of a suite there is no game layer
+            // and no session, so this is the only thing of ours still ticking.
+            auto* suiteKeeper = new SuiteKeeper();
+            CCDirector::sharedDirector()->getScheduler()->scheduleSelector(
+                schedule_selector(SuiteKeeper::tick), suiteKeeper, 0.1f, false);
         }
         static bool s_ranOnce = false;
         if (!s_ranOnce) {
@@ -89,63 +95,12 @@ class $modify(P1MenuLayer, MenuLayer) {
         return true;
     }
 
+    // The body of this lives in ui_panel.hpp as enterConfiguredLevel(), so that the level
+    // suite enters its second and later levels through the same code as its first.
     void onAutoEnter() {
-        if (g_started) return;
-        g_started = true;
-        // The elapsed-time origin is set only on the first entry of the session (resetting
-        // it on re-entry would under-report the elapsed seconds)
-        if (solver::g_totalAttempts == 0)
-            solver::g_solveStart = std::chrono::steady_clock::now();
-        // Main levels are 1-22; anything else is a saved / online-cached custom level
-        GJGameLevel* level = nullptr;
-        auto* glm = GameLevelManager::sharedState();
-        // If levelfile= is given, build the level from the RAW level string in that file
-        // (the save file is never touched). Used for calibration maps.
-        if (!g_cfg.levelFile.empty()) {
-            std::ifstream lf(g_cfg.levelFile, std::ios::binary);
-            if (!lf.is_open()) {
-                log::error("phase1: cannot open levelfile {}", g_cfg.levelFile);
-                writeResult("error: levelfile not found");
-                return;
-            }
-            std::string raw((std::istreambuf_iterator<char>(lf)),
-                            std::istreambuf_iterator<char>());
-            level = GJGameLevel::create();
-            level->m_levelName = "gdsolver calib";
-            level->m_levelID = g_cfg.levelId;
-            level->m_levelType = GJLevelType::Editor;
-            // Run it through GD's own compression. Doing base64+gzip by hand here silently
-            // fails to load because of encoding differences, so ALWAYS hand it to ZipUtils.
-            level->m_levelString =
-                cocos2d::ZipUtils::compressString(raw, false, 0);
-            log::info("phase1: built the level from levelfile {} ({} chars)",
-                      g_cfg.levelFile, raw.size());
-        } else if (g_cfg.levelId >= 1 && g_cfg.levelId <= 22) {
-            level = glm->getMainLevel(g_cfg.levelId, false);
-        } else {
-            level = glm->getSavedLevel(g_cfg.levelId);
-            if (!level && glm->m_onlineLevels)
-                level = static_cast<GJGameLevel*>(
-                    glm->m_onlineLevels->objectForKey(std::to_string(g_cfg.levelId)));
-        }
-        if (!level) {
-            log::error("phase1: level {} not found (main or saved)", g_cfg.levelId);
-            writeResult("error: level not found");
-            return;
-        }
-        // Line for ruling out the suspicion that the calibration rig (levelfile=) and the
-        // official levels have DIFFERENT physics. The rig's gravity-flipped ship climbed at
-        // 0.069/tick while the same condition in lv7 gave 0.103. Compares the defaults of
-        // GJGameLevel::create() against the values from getMainLevel.
-        writeResult(fmt::format(
-            "levelinfo: id={} type={} levelVersion={} gameVersion={} "
-            "twoPlayer={} objCount={}",
-            g_cfg.levelId, (int)level->m_levelType, level->m_levelVersion,
-            level->m_gameVersion, (int)level->m_twoPlayerMode,
-            (int)level->m_objectCount).c_str());
-        log::info("phase1: entering level {}", g_cfg.levelId);
-        g_forceCleanStart = true;
-        auto* scene = PlayLayer::scene(level, false, false);
-        CCDirector::sharedDirector()->replaceScene(CCTransitionFade::create(0.5f, scene));
+        if (suite::active())
+            writeResult("suite: level=" + std::to_string(suite::current())
+                        + " (1/" + std::to_string(suite::g_levels.size()) + ")");
+        enterConfiguredLevel();
     }
 };

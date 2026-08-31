@@ -220,6 +220,40 @@ struct Config {
 inline Config g_cfg;
 inline bool g_started = false;
 inline bool g_uiSession = false; // this session was started from the on-screen panel
+
+// ---- the level suite (autorun.cfg `levels=1,2,...`) ------------------------
+//
+// Several levels solved one after another WITHOUT RESTARTING THE GAME. One process per level
+// is what everything here has always done, and under that arrangement nothing about a second
+// level is ever exercised: every global starts at its declared value, every file in the data
+// dir was deleted by the launcher, and the mod's own duty to clean up after a level is an
+// assumption no test can fail. It went wrong exactly there -- a level's moving-geometry
+// recording was still being offered to the next level (src/solver/grouptrace.hpp) -- and the
+// whole 22-level cold regression was green throughout, because it never once solved two
+// levels in the same game.
+//
+// So the suite is not a convenience for running the sweep with fewer launches. It is the only
+// arrangement in which "starting a level leaves nothing of the last one behind" is a claim
+// with evidence, and the iteration counts it produces have to equal the ones a fresh process
+// gives, level for level. That equality is the test.
+//
+// DELIBERATELY NOT A Config MEMBER: leaving a level resets g_cfg to its defaults
+// (PlayLayer::onQuit), and this list has to outlive that.
+namespace suite {
+
+inline std::vector<int> g_levels;   // in the order they will be solved
+inline size_t g_at = 0;             // index of the one running now
+// The session has ended and the next level is waiting for the scene to be clear enough to
+// enter (see SuiteKeeper in ui_panel.hpp -- a level cannot be entered mid-transition).
+inline bool g_advance = false;
+inline int g_waited = 0;            // resident-poll ticks since the session ended
+inline int g_settle = 0;            // ...and ticks since the scene became enterable
+
+inline bool active() { return !g_levels.empty(); }
+inline bool hasNext() { return active() && g_at + 1 < g_levels.size(); }
+inline int current() { return g_at < g_levels.size() ? g_levels[g_at] : 0; }
+
+}  // namespace suite
 // On the session's first resetLevel, turn practice mode OFF and wipe all checkpoints. If the
 // leftovers of the previous session (practice ON + a checkpoint near the end) carry over, the
 // checkpoint restore gives "instant clear -> left behind"

@@ -348,12 +348,18 @@ class SessionResult:
 def run_session(worker_id: int, cfg_lines: list[str], timeout_s: float = 360.0,
                 workers_root: Path = WORKERS_ROOT, mod_file: Path = BUILD_MOD,
                 minimized: bool = True, stall_s: float = 90.0,
-                progress=None) -> SessionResult:
-    """Run exactly one autorun session and read result.txt.
+                progress=None, done_marker: str = R.SESSION_END) -> SessionResult:
+    """Run exactly one autorun launch and read result.txt.
 
     For a plain replay that does not use servemode (attempts=1 quitwhendone=1).
     `input=t,d` lines may be mixed into cfg_lines as they are (the MOD picks them up
     from autorun.cfg).
+
+    `done_marker` is the line that means the launch is finished. It defaults to
+    `session_end`, which is right for the one-level-per-process arrangement this
+    was written for. A `levels=` suite writes one of those per LEVEL, so a reader
+    left on the default would take the first level's log for the whole run and
+    kill the game with twenty-one levels still to go: it passes `suite: done`.
     """
     w = _WorkerBase(worker_id, workers_root)
     w._wait_free()   # confirm it is free before overwriting .geode (fails if held)
@@ -376,7 +382,7 @@ def run_session(worker_id: int, cfg_lines: list[str], timeout_s: float = 360.0,
             txt = result.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             txt = ""
-        if R.SESSION_END in txt:
+        if done_marker in txt:
             timed_out = False
             break
         if len(txt) != last_len:

@@ -282,6 +282,25 @@ inline void loadConfig() {
         if (loadDpCfg(key, val)) continue;
         if (key == "enabled") g_cfg.enabled = (val == "1");
         else if (key == "level") cfgNum(key, val, g_cfg.levelId);
+        // `levels=1,2,3`: solve these in this order, in ONE game (see suite:: in config.hpp).
+        // Re-read on every level of the suite, so it must be idempotent -- the list is rebuilt
+        // rather than appended to, and g_at is left where the advance put it.
+        else if (key == "levels") {
+            suite::g_levels.clear();
+            size_t i = 0;
+            while (i < val.size()) {
+                size_t j = val.find(',', i);
+                if (j == std::string::npos) j = val.size();
+                const std::string one = val.substr(i, j - i);
+                if (!one.empty()) {
+                    int lv = 0;
+                    if (cfgNum(key, one, lv) && lv > 0) suite::g_levels.push_back(lv);
+                }
+                i = j + 1;
+            }
+            if (suite::g_at >= suite::g_levels.size()) suite::g_at = 0;
+            if (suite::active()) g_cfg.levelId = suite::current();
+        }
         else if (key == "levelfile") g_cfg.levelFile = val;
         else if (key == "attempts") cfgNum(key, val, g_cfg.maxAttempts);
         else if (key == "delay") cfgNum(key, val, g_cfg.delaySec);
@@ -296,6 +315,19 @@ inline void loadConfig() {
         else if (key == "fastdt") cfgNum(key, val, g_cfg.fastdt);
         else if (key == "fastloops") cfgNum(key, val, g_cfg.fastloops);
         else if (key == "skiprender") g_cfg.skipRender = (val == "1");
+        // The spectating notch, as an INDEX into WATCH_SPEEDS (config.hpp) -- the keys move by
+        // notch, so a rig that reproduces them has to as well. Through watchSpeedSet, which is
+        // the setter the arrow keys use: poking g_watchSpeed directly would let the harness
+        // reach a state the keys cannot, which is the mistake the note on renderTogglePress
+        // records for the render key.
+        //
+        // It exists because the audio bug of 2026-08-31 could not be reproduced without it. The
+        // case needs the notch held above kPitchMax while the loop keeps resetting the level,
+        // and there was no way to ask for that except by holding down an arrow key.
+        else if (key == "watchspeed") {
+            int idx = g_watchIdx;
+            if (cfgNum(key, val, idx)) watchSpeedSet(idx);
+        }
         else if (key == "watchat") cfgNum(key, val, g_watchAtTick);
         else if (key == "watchatx") cfgNum(key, val, g_watchAtX);
         else if (key == "watchback") cfgNum(key, val, g_watchBackTicks);
@@ -618,6 +650,30 @@ inline void endSession(const std::string& why) {
         });
         return;
     }
+    // A suite has another level to solve: leave this one the way a player does and let the
+    // resident poll enter the next once the scene is clear (SuiteKeeper, ui_panel.hpp).
+    //
+    // AFTER the F9 branch above, which is a human stopping the run and must not step the
+    // suite on, and BEFORE quitWhenDone, which is what ends the process on the last level.
+    // Whether the level cleared or gave up makes no difference here: the suite is measuring
+    // every level in the list, and a level that fails is a result, not a reason to stop.
+    if (suite::hasNext()) {
+        ++suite::g_at;
+        suite::g_advance = true;
+        suite::g_settle = 0;
+        suite::g_waited = 0;
+        writeResult("suite: next level=" + std::to_string(suite::current())
+                    + " (" + std::to_string(suite::g_at + 1) + "/"
+                    + std::to_string(suite::g_levels.size()) + ")");
+        Loader::get()->queueInMainThread([] {
+            if (auto* pl = PlayLayer::get()) pl->onQuit();
+        });
+        return;
+    }
+    // The marker the reader waits for. `session_end:` cannot serve: a suite writes one per
+    // level, and a reader that stops at the first would take level 1's log for the whole run.
+    if (suite::active())
+        writeResult("suite: done " + std::to_string(suite::g_levels.size()) + " levels");
     if (g_cfg.quitWhenDone) {
         Loader::get()->queueInMainThread([] {
             utils::game::exit(false);
