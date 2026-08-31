@@ -3366,6 +3366,29 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 }
                 continue;
             }
+            // [2026-08-31 REJECTED, kept as a warning] **"A moving surface
+            // reaches further, by its own speed."**
+            // collidedWithObjectInternal (base+0x391a70) really does build
+            //   dVar45 = sign * (10.0, or 6.0 for the four flight flags,
+            //                    or 15.0 when param_1[0x15e] > 0)
+            //   ...and then, only when the object moved this frame,
+            //   local_190 = (edge now - edge before) / dt
+            //   dVar45   += sign * ABS(local_190)
+            // and dt = 0.25 is pinned by lv20 t=19,365 (dcy 1.961 against GD's
+            // own vy 7.845 = 0.25000). The mechanism is not in doubt.
+            // WHAT WAS WRONG WAS THE PLACE IT WAS MAPPED TO. dVar45 offsets the
+            // edges GD then uses to pick WHICH SIDE the contact is on
+            // (`dVar37 = playerY - h/2*sign + dVar45`, compared against the
+            // object rect's MinY/MaxY to set CVar29 = ground vs ceiling). It is
+            // not this file's reach-back tolerance, which answers a different
+            // question -- "was the foot within tol ABOVE the face last tick, so
+            // treat it as a landing". Adding it here let the model land from
+            // 6.0 + 1.961/0.25 = 14 px away from a fast mover, which GD does
+            // not do. Measured: lv20 alone went 37 -> 105+ iterations and 61 ->
+            // 336 fixups, still climbing, grinding at x=25,760. Reverted.
+            // Both static harnesses said "identical on all 22 levels" for it,
+            // which is worth remembering: neither can reach a moving-surface
+            // contact, so on this family they have no detection power at all.
             const double shipLandTol = s.onSlope ? 0.001 : kShipLandTol;
             if (!c.grounded && (vpNow <= 0 || overtaking) && xOver
                 && prevFootP >= -shipLandTol && newFootP <= 0) {
@@ -3418,23 +3441,58 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // branch's prevHeadP=3.251 is inside 6.0 -- the gate was never the
                 // tolerance, only the transparency direction.
                 continue;
-            // A RISING PLATFORM THAT OVERTAKES THE SHIP IS NOT A CEILING.
-            // The ride below asks whether the player's head crossed the
-            // underside, which is only a contact if the two are CLOSING. When
-            // the surface itself climbs faster than the player, GD lets the
-            // object pass through and the player carries on.
-            // Measured on lv20 (2026-08-09, the `clamp:fly/ceilride/uid4627`
-            // class the fixup log kept re-recording): uid4627 is a 30x30 solid
-            // on a group that rises ~2.05 px/tick; at t=4607 the recording puts
-            // it at cy=289.167 and the model's clamp says it used exactly
-            // 289.167, so the GEOMETRY was right. The mini ship was climbing at
-            // 7.281 * 0.225 = 1.64 px/tick -- slower than the platform -- and
-            // GD simply let the block swallow it (GD's y is 6.20 px above the
-            // model's pinned one and keeps rising). The model pinned the ship
-            // to the underside for four ticks running.
-            // Static objects have dcy = 0, so nothing that already works moves.
-            } else if (!overtaking
-                       && (vpNow >= 0 || (prevHeadP > 0 && deepIn)) && xOver
+            // [2026-08-31] **A RISING CEILING STILL CATCHES A RISING SHIP.**
+            // `!overtaking` used to lead this gate, under the heading "a rising
+            // platform that overtakes the ship is not a ceiling": a head
+            // crossing an underside is only a contact if the two are CLOSING,
+            // so a surface climbing faster than the player was said to pass
+            // through it. For a player that is itself rising, GD does not do
+            // that -- it pins, however fast the surface is climbing.
+            //
+            // The old rule rested on ONE site (lv20 2026-08-09,
+            // `clamp:fly/ceilride/uid4627`): a 30x30 solid rising ~2.05 px/tick,
+            // a mini ship climbing 1.64, GD 6.20 px above the model's pin and
+            // still rising. lv20 t=19,365 is the same shape, MORE extreme in
+            // that very variable, and GD pins:
+            //   uid16320 30x30, rising 1.961 px/tick, cy 371.239
+            //   full ship climbing 1.140 * 0.225 = 0.257 px/tick (ratio 7.6x)
+            //   GD y = (371.239 - 15) - 15 = 341.2394 exactly, and
+            //   GD vy = 7.845 = dcy / 0.25, then rides for 12 ticks
+            // The x overlap is 0.133 px, the shallowest contact there is, and GD
+            // still resolves it.
+            //
+            // Swept over the run's own recordings rather than argued: every tick
+            // of every attempt where a flight-mode player's box overlapped a
+            // recorded MOVING solid in x and its free-flight head would have
+            // ended inside the underside -- 37 of them, 17 with `overtaking`
+            // true -- GD pinned, and there is no tick in the level where it did
+            // not. uid4627 is not reachable in the current corpus (no attempt
+            // puts that ship's head inside that block while the boxes overlap in
+            // x), and a single unreproducible sample is the shape of a mis-phased
+            // recording rather than of a rule.
+            //
+            // WHAT THE FLAG WAS REALLY DOING, and why it stays below. A STATIC
+            // object has dcy = 0, so `!overtaking` reads `vpNow >= 0` -- the flag
+            // was also, silently, the "no ceiling ride while DESCENDING" gate for
+            // every static ceiling in the corpus, and the `prevHeadP > 0 &&
+            // deepIn` arm next to it was dead for them (with vpNow < 0 the flag
+            // itself was already false). Dropping it outright costs three levels
+            // in the offline fidelity table -- lv3 (clean -> diverges at t=9,991,
+            // dy -4.08), lv14 (t=13,363 -> 6,124, and the model then dies) and
+            // lv19 (t=5,465 -> 5,071, dies). lv3 and lv14 report **0 moving
+            // objects**, so for them this can only be the descending-static case;
+            // lv19 has 847 movers and is restored by the same arm. Keeping the
+            // flag exactly where it was doing that work and releasing only the
+            // RISING player puts all three back to the digit.
+            //
+            // `overtaking` also still gates the LANDING branch above, where it
+            // means what it says: a rising floor catching a foot from below.
+            //
+            // Cold on lv20 afterwards: CLEARED, and the fixup log's whole
+            // x=29,054..29,199 cluster is gone (16 records with the band class
+            // off, 38 with it on). Nothing else in the level's fixup map moved.
+            } else if ((vpNow >= 0 || (prevHeadP > 0 && deepIn && !overtaking))
+                       && xOver
                        && prevHeadP <= kShipLandTol && newHeadP >= 0) {
                 // Ceiling ride. The ship stops dead against a block's underside
                 // and slides along it -- it does NOT die and it does NOT pass
@@ -3444,6 +3502,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // t=11091: block x[14430,14460] y[330,360], GD pinned the ship
                 // at y = 330 - 15 = 315.00 with vy = 0 and onGround = 0, while
                 // the model sailed on to 315.06 and kept climbing.
+                if (g_slopeDbg)
+                    std::printf("ceilride t=%lld uid=%d x=%.3f ocy=%.3f "
+                                "ohh=%.3f head=%.3f dcy=%.4f vp=%.4f "
+                                "prevH=%.4f newH=%.4f xpen=%.3f pHalf=%.2f "
+                                "mini=%d y %.4f->%.4f\n",
+                                (long long)K.t, o->uid, x, o->cy, o->hh, head,
+                                o->dcy, vpNow * kYScale, prevHeadP, newHeadP,
+                                xPen, pHalf, (int)c.mini, (double)c.y,
+                                head - gsign * pHalf);
                 c.y = (float)(head - gsign * pHalf);
                 // [2026-08-19 item 13] **A moving ceiling's pin carries the face's
                 // velocity** (dcy/0.25, same convention as the floor catch). The
@@ -3452,7 +3519,27 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // ceiling (dcy=0) stays 0 as before -- trying "free vy integration
                 // while pinned" made 8 static-ceiling sites at sp0.9 spring up at
                 // once (GD does zero it on a static one).
-                if (c.mode == 1 && o->dcy != 0.0)
+                // [2026-08-31] ...FOR ALL FOUR FLIGHT MODES, not the ship alone.
+                // Read off collidedWithObjectInternal (base+0x391a70), the arm
+                // that ends in didHitHead:
+                //   if (m_isShip || m_isBird || m_isDart || m_isSwing) && bVar14
+                //       { if (ceiling) setYVelocity(this, this[0xc6]); }
+                //   didHitHead(this);
+                // where +0xc6 is the surface velocity the same function stored
+                // earlier as `(edge delta) / dt`, and 0x9b9/9ba/9bc/9c4 are the
+                // four flight flags (ship / UFO / wave / swing) this file
+                // already names at the one-way plate above. It is a plain
+                // ASSIGNMENT there -- no max, no epsilon.
+                // The ship-only gate was what the corpus happened to show when
+                // this was fitted from lv19/lv15 sites, and lv20 t=22,158 is the
+                // disagreement it left: a full-size UFO pinned under moving
+                // block uid18743 (dcy +0.380), GD's own dump row carries
+                // vy = 1.520 = 0.380 / 0.25 exactly, and the model zeroed it.
+                // dt = 0.25 is confirmed by the same run's t=19,365 ship pin:
+                // dcy 1.961 against GD's vy 7.845 is 0.25000.
+                const bool flyMode = (c.mode == 1 || c.mode == 3
+                                      || c.mode == 4 || c.mode == 7);
+                if (flyMode && o->dcy != 0.0)
                     c.vy = (float)((double)o->dcy / 0.25);
                 else
                     c.vy = 0;
