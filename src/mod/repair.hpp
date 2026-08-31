@@ -360,6 +360,7 @@ inline std::string g_tailPath;
 inline std::chrono::steady_clock::time_point g_t0;
 inline std::string g_csv;          // the level, built once at session start
 inline int g_horizon = 0;
+inline bool g_argsLogged = false;  // the `solver args:` line has been printed for THIS session
 
 // ---- what the loop knows between iterations ----
 inline int g_iter = 0;
@@ -728,9 +729,12 @@ inline std::vector<std::string> baseArgs(const std::string& out) {
     // (2026-08-27: a cfg `dparg` was passed, believed delivered, and the A/B built on that
     // belief was wrong twice). One line, at the first solve of a session.
     {
-        static bool s_logged = false;
-        if (!s_logged) {
-            s_logged = true;
+        // ONCE PER SESSION, not once per process. As a function-local static this printed for the
+        // first level solved and for no other, so a second level in the same game -- the only
+        // place where the argv can be inherited rather than built -- was the one case the line
+        // was never there to answer. It is what would have shown the stale `--groups` outright.
+        if (!g_argsLogged) {
+            g_argsLogged = true;
             std::string line = "dpsolve: solver args:";
             for (const std::string& s : a) line += " " + s;
             writeResult(line);
@@ -2043,6 +2047,13 @@ inline void start(GJBaseGameLayer* l) {
         std::filesystem::remove(g_groupsPath, ec);   // the recordings are this run's, too
         std::filesystem::remove(g_groupsDeepPath, ec);
         std::filesystem::remove(g_groupsBootPath, ec);
+        // ...and the one they are all copied FROM. It is written by the recorder, not by this
+        // loop, so it was not in this list -- and a level that records nothing (no grouped
+        // objects at all) leaves the previous level's file sitting there under the name every
+        // harvest reads. The gate on that read is grouptrace::g_lastRoll, which now says rows=0
+        // for such a level; deleting the file as well makes "no recording from another run is
+        // reachable" true by construction rather than by one correct comparison.
+        std::filesystem::remove(std::string(DATA_DIR) + "/grouptrace_last.txt", ec);
     }
     g_fixupCount = 0;
     g_fixupNoop = 0;
@@ -2092,9 +2103,18 @@ inline void start(GJBaseGameLayer* l) {
     g_followSolved = 0;
     g_followForced = 0;
     g_anchorT = -1;
+    g_lastDeathX = 0.f;   // inert while g_lastDeath gates its only reader, but it is the same
+                          // per-run pair and the two must not drift apart
     g_stop = false;
     g_showRequest = false;
     g_dpShowSolution = false;
+    // GD's MAX GAMEPLAY Y is read off the LAYER, so it belongs to the level that was standing
+    // when it was read. Nothing lowered it again: after a level whose bootstrap pass had already
+    // run a tick, the next level's FIRST search -- the one made before any tick of it exists --
+    // was handed the previous level's ceiling as `--maxplayy`. 0 withholds the flag, which is
+    // what a freshly started game passes and what the cold logs of every level show.
+    g_maxPlayYLive = 0.f;
+    g_argsLogged = false;
     anchors::reset();
     writeResult("dpsolve: start level=" + std::to_string(g_cfg.levelId)
                 + " csv=" + std::to_string(g_csv.size()) + " bytes horizon="

@@ -98,6 +98,7 @@ inline void resetInvocationState() {
 
     // fixup.hpp -- --fixups appends, so without this the file is loaded once per call and the
     // records of every earlier call are still in the list
+    g_fixupConflictFilter = false;
     g_fixups.clear();
     g_fixupKills.clear();
     g_fixupDeltas.clear();
@@ -174,6 +175,7 @@ inline void resetInvocationState() {
     g_needSkip = 0;
     g_oriented = true;
     g_obbAll = false;
+    g_touchFromAnchor = false;
 }
 
 }  // namespace dp

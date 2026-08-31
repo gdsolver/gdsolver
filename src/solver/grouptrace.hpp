@@ -85,6 +85,28 @@ struct Roll {
 // What the last roll() committed. The external driver learns this from the `gt_last:` line in
 // result.txt; the in-process loop reads it directly, and needs the depth to decide whether this
 // run's recording is deeper than the one it already has.
+//
+// IT IS A PUBLISHED RESULT, so it has to be published on every path -- including "there was
+// nothing to record". It was not: roll() returned early on `g_objs.empty()` without touching
+// this, so a level with no grouped objects never overwrote the answer left by the level before
+// it, and harvestGroups() -- which reads THIS, not the returned Roll -- adopted the previous
+// level's grouptrace_last.txt as this one's `--groups`.
+//
+// The two halves, from the cold logs of 2026-08-31 (one process each, so neither run was
+// itself damaged):
+//   lv19  gt_last: attempt=2 rows=158608 depth=24495   <- what g_lastRoll still holds at the end
+//   lv18  gt_last: attempt=2 rows=0 depth=-1           <- every attempt; it never writes here
+// and what that costs, measured on the CLI by handing lv18's own first-solve arguments lv19's
+// recording as one extra `--groups` (leveldp, 2026-08-31):
+//   without it   SOLVED at x=29,151, 468-edge plan over the whole level
+//   with it      `groups: 158608 samples for 847 objects`, then PARTIAL: frontier died at
+//                t=4872 x=6,549 -- a fifth of the way in, on a level that clears cold in eight
+//                rounds. The samples are keyed by uid, so lv19's movers land on whichever lv18
+//                objects share their number.
+//
+// The launcher already had to work around this from the outside (py/gdtas/worker.py deletes
+// grouptrace_last.txt between runs, with the same finding). That covers a fresh process per
+// level and nothing else, which is why solving two levels in ONE game was the case left broken.
 inline Roll g_lastRoll;
 
 // Jitter below 0.05px is not written. This is a threshold, not quantisation
@@ -96,6 +118,9 @@ inline void reset() {
     g_owner = nullptr;
     g_rows = 0;
     g_lastTick = -1;
+    // ...and the published verdict, which is this session's answer and no other's. See the note
+    // at g_lastRoll: left standing it is a recording of the PREVIOUS LEVEL offered to this one.
+    g_lastRoll = Roll{};
     if (g_out.is_open()) g_out.close();
 }
 
@@ -164,7 +189,9 @@ inline void build(GJBaseGameLayer* l) {
 // on the polling timing.
 inline Roll roll() {
     Roll r;
-    if (!g_on || g_objs.empty()) return r;
+    // "Nothing was recorded" is an answer, and it is THIS attempt's answer -- publish it rather
+    // than leaving the previous one standing for the reader to mistake for it (see g_lastRoll).
+    if (!g_on || g_objs.empty()) { g_lastRoll = r; return r; }
     for (auto& t : g_objs) t.emitted = false;
     if (g_out.is_open()) {
         g_out.close();
