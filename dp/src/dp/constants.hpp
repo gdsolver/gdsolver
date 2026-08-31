@@ -181,8 +181,16 @@ constexpr double kWaveHalfMini = 2.0;
 // `wHazHalf` in stepOne. 3.000 exactly, touching counts, not speed-dependent.
 constexpr double kWaveHazHalfMini = 3.0;
 // ...and the PORTAL contact box is that same 6x6 rect, so it is 3.0 too.
-// Kept as its own name because the two are measured separately and the SPEED
-// portal still wants the 2.0 bracket above (see the portal loop in stepOne).
+// Kept as its own name because the two are measured separately.
+// [2026-09-01] **The speed portal uses this one as well.** It was the last
+// portal path still on kWaveHalfMini, on the strength of the lv20 bracket
+// above -- and that bracket does not constrain it: its site (uid4303) is a
+// FULL-SIZE wave in the reference, and it was computed with an axis-aligned
+// player square (`25.5 + 1.41077*half`) where GD tests the sprite-rotated box.
+// The model fires that same site on GD's exact tick with the full-size 5.0.
+// What the 2.0 did cost: lv21's 0.9 portal at (19587.1,239.18) fired THIRTY
+// TICKS and 48 px late, running that stretch 24% fast (census family
+// `m4/mini1/g0/gdg0/sp1.1/air/in1`, which the fix removes).
 constexpr double kWaveContactHalfMini = 3.0;
 // [2026-08-19 night 3] **The mini's portal contact half-width is smaller than the
 // collision's 9.** Lining up the ramps calibration rig tick by tick between GD and

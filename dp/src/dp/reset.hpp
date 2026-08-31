@@ -62,6 +62,7 @@ inline void resetInvocationState() {
     g_bandK = 0.0;
     g_slopeDbg = false;
     g_bandDbg = false;
+    g_spdDbg = false;
     g_shipCeilSet = false;
     g_playerCeils.clear();
 

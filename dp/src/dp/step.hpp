@@ -8738,9 +8738,54 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // Speed portals, decided on THIS state's own x and y (see State::dx) with
     // the same box-overlap rule as every other portal. The new dx only takes
     // effect from the next tick, because c.dx is read at the top of the step.
+    if (g_spdDbg)
+        std::printf("spddbg t=%lld x=%.3f dx=%.5f window=%zu\n",
+                    (long long)K.t, x, (double)c.dx,
+                    K.speeds ? K.speeds->size() : (size_t)0);
     if (K.speeds) {
+        // ...with the PORTAL's contact half, not the collision one. This loop
+        // was the only portal path still passing `pHalf`, and for a mini wave
+        // those differ: 2.0 against 3.0 (kWaveContactHalfMini = GD's own 6x6
+        // getObjectRect, which the decompiled collisionCheckObjects uses for
+        // every special object -- the type switch that separates a speed portal
+        // from a mode portal is AFTER the box test, so there is no mechanism by
+        // which the two would test different player boxes).
+        // Measured on lv21's 0.9 portal at (19587.1,239.18) (rot 44, and the
+        // level holds a 1.52x-scaled duplicate of it at the same centre, which
+        // is the copy that fires): GD switches at t=14,920 x=19,545.1 and the
+        // model switched at t=14,950 x=19,593.5, THIRTY TICKS and 48 px late,
+        // running that whole stretch 24% fast. With the portal half it fires on
+        // GD's tick. Read out of a --spddbg trace naming the gate: it is the
+        // oriented (SAT) gate that rejects, and a hand-rolled SAT over the same
+        // trace reproduces the model's verdict on all 68 candidates, so the box
+        // and not the test was wrong.
+        // The 2.0 was kept here on purpose -- constants.hpp says "the SPEED
+        // portal still wants the 2.0 bracket" -- but that bracket (lv20's
+        // uid4303, half < 2.466) was written on the FULL-SIZE wave path and
+        // computed with an AXIS-ALIGNED player square (`25.5 + 1.41077*half`).
+        // Both are superseded: GD tests the sprite-rotated box, and the model
+        // already fires that site on GD's exact tick with the full-size 5.0.
+        // Rotated objects re-read the player's box within the pass (r32) while
+        // axis-aligned ones keep the entry snapshot -- the same split the mode
+        // portal pass makes above.
         for (const Obj* sp : *K.speeds) {
-            if (std::fabs(x - sp->cx) >= sp->hw + pHalf) continue;
+            const double pHalfSp = pHalfPortal;
+            // --spddbg: what each gate computed, per candidate, per tick. The
+            // window itself is printed too (a portal that never appears here is
+            // a collection problem, not a gate one).
+            if (g_spdDbg)
+                std::printf("spddbg t=%lld x=%.3f y=%.3f uid=%d id=%d "
+                            "cx=%.2f cy=%.2f hw=%.2f hh=%.2f ori=%d obb=%d "
+                            "ohw=%.3f ohh=%.3f rc=%.5f rs=%.5f "
+                            "pHalf=%.2f |dx|=%.2f need<%.2f g1=%s\n",
+                            (long long)K.t, x, (double)c.y, (int)sp->uid,
+                            (int)sp->id, sp->cx, sp->cy, sp->hw, sp->hh,
+                            (int)sp->oriented, (int)sp->obbOk,
+                            sp->ohw, sp->ohh, sp->rc, sp->rs, pHalfSp,
+                            std::fabs(x - sp->cx), sp->hw + pHalfSp,
+                            (std::fabs(x - sp->cx) >= sp->hw + pHalfSp) ? "REJ"
+                                                                        : "pass");
+            if (std::fabs(x - sp->cx) >= sp->hw + pHalfSp) continue;
             // yColl, not c.y: the entry-snapshot registers (see its
             // declaration by pHalfPortal). c.y here already carries this
             // tick's landing clamp and any mid-pass size re-seat, which GD's
@@ -8774,11 +8819,22 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 if (s.mode == 0)
                     pRotSp += (s.rotNeg ? 1.0 : -1.0)
                               * (s.mini ? 2.25 : 1.7307692);
-                if (!orientedHit(*sp, x, (double)c.y, pHalf, pRotSp))
-                    continue;
+                const bool hit = orientedHit(*sp, x, (double)c.y, pHalfSp,
+                                             pRotSp);
+                if (g_spdDbg)
+                    std::printf("spddbg   g2 uid=%d pRot=%.3f hit=%d%s\n",
+                                (int)sp->uid, pRotSp, (int)hit,
+                                hit ? "" : "  <- REJECTED HERE");
+                if (!hit) continue;
             }
             const double gapY =
-                std::fabs(ySp - sp->cy) - (sp->hh + pHalf);
+                std::fabs(ySp - sp->cy) - (sp->hh + pHalfSp);
+            if (g_spdDbg)
+                std::printf("spddbg   g3 uid=%d ySp=%.3f cy=%.2f hh+pHalf=%.2f "
+                            "gapY=%.3f %s\n",
+                            (int)sp->uid, ySp, sp->cy, sp->hh + pHalf, gapY,
+                            gapY >= 0.0 ? "<- REJECTED HERE"
+                                        : "-> FIRE (dx from the next tick)");
             if (gapY >= 0.0) {
                 // A branch that slips OVER a speed portal by a hair is dropped,
                 // the same way g_portalDodgeMin drops one that slips past a

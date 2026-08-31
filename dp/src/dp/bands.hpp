@@ -152,6 +152,13 @@ inline bool bandTrackIsCamera() {
 inline double g_bandK = 0.0;
 inline bool g_slopeDbg = false;  // --slopedbg: one line per ramp acquisition
 inline bool g_bandDbg = false;   // --banddbg: one line per wave tick near the band ceiling
+// --spddbg: one line per SPEED PORTAL CANDIDATE per tick, naming the gate that
+// rejected it. The three gates (x overlap / oriented hit / y gap) each `continue`
+// on their own, so a portal that never fires says nothing about WHY -- and on
+// lv21 the arithmetic says all three should have passed 48 px before the model
+// actually fired. This prints what each gate computed, so the answer is read
+// rather than inferred.
+inline bool g_spdDbg = false;
 inline bool g_shipCeilSet = false;   // --shipceil given: pin the band by hand
 // --rotport: treat a portal that a trigger ROTATES as a turned object even
 // while its angle still reads 0, so it is tested with the two-box SAT against

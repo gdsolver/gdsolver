@@ -94,6 +94,18 @@ inline int cliMain(int argc, char** argv) {
         // never reads it. Parsed here as well so argv order cannot drop it;
         // the second parse at its old site is a harmless re-set.
         if (!std::strcmp(argv[i], "--needtrig-unseen")) g_needUnseen = true;
+        // [2026-09-01] The three debug switches used to sit in the argc-1 loop
+        // below, i.e. in the loop this very comment says value-less flags must
+        // not be in: passed LAST they did nothing, silently. Measured the hard
+        // way -- `--slopedbg` alone printed nothing at all, and adding a second
+        // flag after it made 216 lines appear. A diagnostic that is silently
+        // off is worse than one that is missing, because the empty output reads
+        // as an answer ("the model never even looks at this object").
+        if (!std::strcmp(argv[i], "--banddbg")) g_bandDbg = true;
+        if (!std::strcmp(argv[i], "--slopedbg")) g_slopeDbg = true;
+        // --spddbg: one line per speed-portal candidate per tick, plus the
+        // window size, plus which of the three gates rejected it.
+        if (!std::strcmp(argv[i], "--spddbg")) g_spdDbg = true;
     }
     for (int i = 2; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--threads")) g_threads = std::atoi(argv[i + 1]);
@@ -105,8 +117,6 @@ inline int cliMain(int argc, char** argv) {
             g_speedDodgeMin = std::atof(argv[i + 1]);
     for (int i = 2; i + 1 < argc; ++i) {
         if (!std::strcmp(argv[i], "--out")) outPath = argv[i + 1];
-        if (!std::strcmp(argv[i], "--banddbg")) g_bandDbg = true;
-        if (!std::strcmp(argv[i], "--slopedbg")) g_slopeDbg = true;
         if (!std::strcmp(argv[i], "--dbg")) dbgLayers = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--cap")) g_aliveCap = (size_t)std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--gcnodes")) g_gcNodes = (size_t)std::atoll(argv[i + 1]);
