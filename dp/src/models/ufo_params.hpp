@@ -26,10 +26,15 @@ struct UfoParams {
     double gravityWeak = -0.086;    // vy <= switch
     double gravityStrong = -0.129;  // vy >  switch
 
-    // Same value as ShipParams::accelSwitchVy. Measured brackets:
-    //   normal (1.840, 1.969]   mini (1.784, 1.936]
-    // Both contain 1.9165, so a single global constant is used.
-    double accelSwitchVy = 1.9165;
+    // Same value as ShipParams::accelSwitchVy, and now known to be the same
+    // MECHANISM: playerIsFallingBugged is one function and every mode calls it,
+    // so the UFO's threshold is 2 x the speed's gravity too (models/speed.hpp).
+    // The old brackets -- normal (1.840, 1.969], mini (1.784, 1.936] -- and the
+    // rig's per-speed ones all contain the formula's values; what they could not
+    // do is separate the speeds, which is why this stood as one global constant
+    // with two hand-placed exceptions in step.hpp's ufoParamsFor.
+    // This default is the 0.9 row, bit for bit what withSpeed(0.9) returns.
+    double accelSwitchVy = 1.9163980484008789;
 
     // What a flap raises vy TO, before the same call's gravity step. The
     // literal GD holds (PlayerObject::updateJump, base+0x38b900): 7.0 at full
@@ -65,7 +70,9 @@ struct UfoParams {
         UfoParams p;
         p.gravityWeak = -0.101;   // = -0.086 / 0.85, rounded to 3 dp
         p.gravityStrong = -0.152; // = -0.129 / 0.85, rounded to 3 dp
-        p.accelSwitchVy = 1.9165; // NOT scaled, same as Ship
+        // accelSwitchVy is NOT scaled by the mini factor -- same as the ship,
+        // and the listing has no size term in it. The default already carries
+        // the value, so there is nothing to set here.
         // 0.85 x 8.0. The measured 6.648 was SMALLER than the normal-size
         // 6.871 and in neither direction a 1/0.85 relationship, so the two
         // stood here as independent values; the mechanism is a different
@@ -95,10 +102,14 @@ struct UfoParams {
     // case where the answer is in doubt.
     double flapPostVy() const { return flapTargetVy + gravityStrong; }
 
-    // As with the ship, only the x advance depends on m_playerSpeed.
+    // As with the ship: the x advance AND the accel-switch threshold depend on
+    // m_playerSpeed. The threshold used to be missing here, which is why
+    // step.hpp's ufoParamsFor carried hand-built statics for the two speeds
+    // somebody had measured -- and nothing at all for 1.3 and 1.6.
     UfoParams withSpeed(double playerSpeed) const {
         UfoParams p = *this;
         p.dxPerTick = dxPerTickForSpeed(playerSpeed);
+        p.accelSwitchVy = accelSwitchVyForSpeed(playerSpeed);
         return p;
     }
 };

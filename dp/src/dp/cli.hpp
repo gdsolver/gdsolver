@@ -1600,11 +1600,12 @@ inline int cliMain(int argc, char** argv) {
         // (tight dy spread -> fit it) from "the formula is wrong" (wide spread ->
         // fix the code).
         // `dx` = this state's speed (px/tick). THE SIGNATURE NEEDS THE SPEED:
-        // the ship's acceleration switch threshold accelSwitchVy is a
-        // per-speed measured value, and 1.3 and 1.6 are still UNMEASURED,
-        // using 1.9165 (ship_params.hpp). Without knowing which speed band a
-        // divergence shows up in, "the threshold is off" cannot be told apart
-        // from some other cause.
+        // the acceleration switch threshold is 2 x GD's per-speed gravity
+        // (models/speed.hpp), so it takes a different value in every speed band.
+        // Without knowing which band a divergence shows up in, "the threshold is
+        // off" cannot be told apart from some other cause. (This used to say
+        // 1.3 and 1.6 were unmeasured and inherited 0.9's value -- they were,
+        // and that was the row the formula corrected.)
         // `flip` and `frame` are here because the rotated sections are exactly
         // where `flip` stops meaning what GD's `upsideDown` means, and without
         // them a sign disagreement reads as a physics bug (lv22 t=5,110: the

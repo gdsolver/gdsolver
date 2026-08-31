@@ -107,9 +107,19 @@ inline const gdapprox::ShipParams& shipParamsFor(float dxF, bool mini,
         gdapprox::ShipParams::normal().withSpeed(1.1);
     static const gdapprox::ShipParams kFastMini =
         gdapprox::ShipParams::mini().withSpeed(1.1);
+    // [2026-09-01] ...and 1.3/1.6 are a THIRD row, which this had no arm for at
+    // all: everything at or above 1.8 px/tick fell through to K.SP, i.e. to the
+    // 0.9 threshold. GD's gravity table gives the two fast speeds one shared
+    // row (2g = 1.9223980), so one static covers both -- only dxPerTick would
+    // differ between them, and nothing here reads it.
+    static const gdapprox::ShipParams kFaster =
+        gdapprox::ShipParams::normal().withSpeed(1.3);
+    static const gdapprox::ShipParams kFasterMini =
+        gdapprox::ShipParams::mini().withSpeed(1.3);
     // 0.7's per-tick advance is 251.16/240 = 1.0465; the next one up is 1.29825
     if (dxF < 1.2f) return mini ? kSlowMini : kSlow;
     if (dxF >= 1.45f && dxF < 1.8f) return mini ? kFastMini : kFast;
+    if (dxF >= 1.8f) return mini ? kFasterMini : kFaster;   // 1.950 / 2.400
     return mini ? *K.SPmini : *K.SP;
 }
 // [2026-08-21 r57] **The UFO too: only the mini at sp1.1 has a different threshold.**
@@ -131,25 +141,30 @@ inline const gdapprox::ShipParams& shipParamsFor(float dxF, bool mini,
 // All three contain the ship's per-speed table values (1.885 / 1.9165 / 1.9135) =
 // **the UFO uses the same table as the ship**. 1.9165 at 0.7 became a switch one
 // tick early, and 0.043/tick was accumulating (ceilrel07's 4 UFO units, dvy +0.044).
+// [2026-09-01] All of that is ONE table now, and it is the ship's: the threshold
+// comes out of playerIsFallingBugged, which every mode calls, so the UFO reads
+// the same 2g(speed). The three hand-built statics have become the same
+// withSpeed ladder shipParamsFor uses, which also gives the two cases they never
+// covered -- the NORMAL-size UFO at 1.1 (the exception was mini-only, though the
+// rig's normal-size interval [1.794, 1.923) contains the value just as well) and
+// either size at 1.3/1.6.
 inline const gdapprox::UfoParams& ufoParamsFor(float dxF, bool mini,
                                                const StepCtx& K) {
-    static const gdapprox::UfoParams kUfoFastMini = [] {
-        gdapprox::UfoParams p = gdapprox::UfoParams::mini();
-        p.accelSwitchVy = 1.910;   // (1.905, 1.915)
-        return p;
-    }();
-    static const gdapprox::UfoParams kUfoSlow = [] {
-        gdapprox::UfoParams p = gdapprox::UfoParams::normal();
-        p.accelSwitchVy = 1.885;   // same value as the ship's 0.7 (inside the rig's interval)
-        return p;
-    }();
-    static const gdapprox::UfoParams kUfoSlowMini = [] {
-        gdapprox::UfoParams p = gdapprox::UfoParams::mini();
-        p.accelSwitchVy = 1.885;
-        return p;
-    }();
+    static const gdapprox::UfoParams kUfoSlow =
+        gdapprox::UfoParams::normal().withSpeed(0.7);
+    static const gdapprox::UfoParams kUfoSlowMini =
+        gdapprox::UfoParams::mini().withSpeed(0.7);
+    static const gdapprox::UfoParams kUfoFast =
+        gdapprox::UfoParams::normal().withSpeed(1.1);
+    static const gdapprox::UfoParams kUfoFastMini =
+        gdapprox::UfoParams::mini().withSpeed(1.1);
+    static const gdapprox::UfoParams kUfoFaster =
+        gdapprox::UfoParams::normal().withSpeed(1.3);
+    static const gdapprox::UfoParams kUfoFasterMini =
+        gdapprox::UfoParams::mini().withSpeed(1.3);
     if (dxF < 1.2f) return mini ? kUfoSlowMini : kUfoSlow;
-    if (mini && dxF >= 1.45f && dxF < 1.8f) return kUfoFastMini;
+    if (dxF >= 1.45f && dxF < 1.8f) return mini ? kUfoFastMini : kUfoFast;
+    if (dxF >= 1.8f) return mini ? kUfoFasterMini : kUfoFaster;
     return mini ? *K.UPmini : *K.UP;
 }
 
