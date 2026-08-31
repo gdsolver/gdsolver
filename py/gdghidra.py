@@ -183,6 +183,65 @@ def cmd_xrefs(tok: str) -> int:
     return 0
 
 
+def cmd_dump(pattern: str, out_dir: str, timeout: int) -> int:
+    u"""Batch-decompile every function matching `pattern` into text files.
+
+    One JVM boot and one project-lock window for the whole batch, so a broad
+    read (or several parallel readers of the output) does not serialise on
+    the lock. Each file gets a header with the RVA and every reference to
+    the function. The output contains decompiled game code: keep it in the
+    lab, never in the repository.
+    """
+    pat = re.compile(pattern)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    done = failed = 0
+    with _program() as program:
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+        from ghidra.util.task import ConsoleTaskMonitor
+        base = program.getImageBase()
+        fm = program.getFunctionManager()
+        rm = program.getReferenceManager()
+        ifc = DecompInterface()
+        ifc.setOptions(DecompileOptions())
+        ifc.openProgram(program)
+        mon = ConsoleTaskMonitor()
+        targets = [f for f in fm.getFunctions(True)
+                   if pat.search(f.getName(True))]
+        print(f"{len(targets)} functions match, dumping to {out} ...")
+        for i, fn in enumerate(targets):
+            name = fn.getName(True)
+            rva = fn.getEntryPoint().subtract(base)
+            safe = re.sub(r"[^A-Za-z0-9_.]+", "_", name)
+            path = out / f"{safe}_{rva:x}.c"
+            try:
+                res = ifc.decompileFunction(fn, timeout, mon)
+                if not res.decompileCompleted():
+                    raise RuntimeError(res.getErrorMessage())
+                body = res.getDecompiledFunction().getC()
+            except Exception as e:                     # noqa: BLE001
+                failed += 1
+                print(f"  FAIL {name}: {e}")
+                continue
+            refs = []
+            for r in rm.getReferencesTo(fn.getEntryPoint()):
+                src = r.getFromAddress()
+                caller = fm.getFunctionContaining(src)
+                refs.append(
+                    f"//   base+0x{src.subtract(base):x}  "
+                    f"{r.getReferenceType()}  in "
+                    f"{caller.getName(True) if caller else '(no function)'}")
+            head = [f"// {name} @ base+0x{rva:x}",
+                    f"// references to this function ({len(refs)}):",
+                    *refs, ""]
+            path.write_text("\n".join(head) + body, encoding="utf-8")
+            done += 1
+            if (i + 1) % 25 == 0:
+                print(f"  {i + 1}/{len(targets)}")
+    print(f"dumped {done} functions to {out} ({failed} failed)")
+    return 0 if failed == 0 else 1
+
+
 def cmd_funcs(pattern: str) -> int:
     pat = re.compile(pattern, re.IGNORECASE)
     with _program() as program:
@@ -207,6 +266,12 @@ def main() -> int:
                     help="0x... or Class::method -> every reference to it")
     ap.add_argument("--funcs", default=None,
                     help="regex -> matching function names")
+    ap.add_argument("--dump", default=None,
+                    help="regex -> decompile every match into --out")
+    ap.add_argument("--out", default=str(PROJECT_DIR / "decomp"),
+                    help="output directory for --dump (lab-side; the dumps "
+                         "are decompiled game code and must stay out of the "
+                         "repository)")
     ap.add_argument("--timeout", type=int, default=120,
                     help="decompiler seconds per function")
     a = ap.parse_args()
@@ -218,6 +283,8 @@ def main() -> int:
         return cmd_xrefs(a.xrefs)
     if a.funcs:
         return cmd_funcs(a.funcs)
+    if a.dump:
+        return cmd_dump(a.dump, a.out, a.timeout)
     ap.print_help()
     return 2
 
