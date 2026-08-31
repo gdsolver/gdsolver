@@ -23,7 +23,12 @@ public:
 
     static double stepVy(double vy, bool flap, const UfoParams& p,
                          bool gravityFlipped = false) {
-        if (flap) return p.flapVy;  // overwrite: independent of vy
+        // A flap RAISES vy to the target and then the same call's gravity step
+        // runs, which is where the old constant 6.871 came from. It is not an
+        // overwrite: GD (PlayerObject::updateJump) only calls setYVelocity when
+        // vy is below s*literal, so a UFO already climbing faster than the
+        // target keeps its speed and merely spends the press.
+        if (flap && vy < p.flapTargetVy) vy = p.flapTargetVy;
         const double s = gravityFlipped ? -p.accelSwitchVy : p.accelSwitchVy;
         const double a = (vy <= s) ? p.gravityWeak : p.gravityStrong;
         const double next = vy + a;

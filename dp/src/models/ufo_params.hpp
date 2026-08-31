@@ -9,9 +9,10 @@
 //     vy = max(vy + a, vyMinPlayerFrame)
 //     y += yScale * vy
 //
-// A flap OVERWRITES the velocity; it does not add to it:
+// A flap RAISES the velocity to a target; it neither adds to it nor overwrites
+// it, and it does not slow a UFO that is already climbing faster:
 //
-//     vy = flapVy                                  (independent of vy_in)
+//     if (vy < flapTargetVy) vy = flapTargetVy     (then the same tick's gravity)
 //
 // Holding the button does not repeat the flap: one press = one flap.
 #pragma once
@@ -30,9 +31,15 @@ struct UfoParams {
     // Both contain 1.9165, so a single global constant is used.
     double accelSwitchVy = 1.9165;
 
-    // Velocity immediately after a flap. Measured as an exact constant over a
-    // 13.1-wide range of incoming velocity: the map is vy_out = 0*vy_in + b.
-    double flapVy = 6.871;
+    // What a flap raises vy TO, before the same call's gravity step. The
+    // literal GD holds (PlayerObject::updateJump, base+0x38b900): 7.0 at full
+    // size, 8.0 at mini, times the flight-mode size factor s (1.0 / 0.85).
+    //
+    // The measurement this replaces -- "vy_out = 0*vy_in + b with b = 6.871
+    // over a 13.1-wide range of incoming velocity" -- was taken entirely below
+    // the target, where the map really is constant. Above it there is no flap
+    // at all, which is the case the constant form got wrong.
+    double flapTargetVy = 7.0;
 
     double vyMinPlayerFrame = -6.4;
     double yScale = 0.225;
@@ -45,15 +52,29 @@ struct UfoParams {
         p.gravityWeak = -0.101;   // = -0.086 / 0.85, rounded to 3 dp
         p.gravityStrong = -0.152; // = -0.129 / 0.85, rounded to 3 dp
         p.accelSwitchVy = 1.9165; // NOT scaled, same as Ship
-        // Measured 6.648. Note this is SMALLER than the normal-size flap,
-        // the opposite direction from the Ship mini scaling. Not a 1/0.85
-        // relationship in either direction; treated as an independent value.
-        p.flapVy = 6.648;
+        // 0.85 x 8.0. The measured 6.648 was SMALLER than the normal-size
+        // 6.871 and in neither direction a 1/0.85 relationship, so the two
+        // stood here as independent values; the mechanism is a different
+        // literal (8.0, not 7.0) multiplied by the same size factor that
+        // divides the ship's, and the post-gravity values follow from it
+        // exactly: 7.0 - 0.129 = 6.871 and 6.8 - 0.152 = 6.648, both equal to
+        // the old constants to the last bit.
+        p.flapTargetVy = 6.8;
         p.vyMinPlayerFrame = -7.529;  // measured 3-decimal constant, not -6.4/0.85
         return p;
     }
 
     static UfoParams forSize(bool mini_) { return mini_ ? mini() : normal(); }
+
+    // The velocity a flap leaves behind ONCE THE SAME TICK'S GRAVITY HAS RUN --
+    // 6.871 full, 6.648 mini, the values that were measured. gravityStrong is
+    // the right step because the target is always above accelSwitchVy. For a
+    // caller that has already integrated (the portal re-issue in step.hpp) this
+    // is both the value to write and the threshold to compare against: testing
+    // a post-gravity vy against a post-gravity target gives the same verdict as
+    // GD's own pre-gravity test, since the two differ by the same step in every
+    // case where the answer is in doubt.
+    double flapPostVy() const { return flapTargetVy + gravityStrong; }
 
     // As with the ship, only the x advance depends on m_playerSpeed.
     UfoParams withSpeed(double playerSpeed) const {

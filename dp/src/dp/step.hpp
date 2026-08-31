@@ -7634,9 +7634,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                         // the hover budget belongs to the jump, not to the mode
                         if (c.mode == 5) c.rHover = (uint8_t)kRobotHoverTicks;
                     } else if (c.mode == 3) {   // -> UFO: a flap
-                        c.vy = (float)((c.mini ? gdapprox::UfoParams::mini().flapVy
-                                               : gdapprox::UfoParams::normal().flapVy)
-                                       * sgn);
+                        // The same raise-to-target the flap itself is (see
+                        // UfoModel::stepVy): the re-issue cannot SLOW a UFO
+                        // that leaves the portal climbing faster than the flap
+                        // would have taken it. The tick's gravity has already
+                        // run here, so both sides of the test are post-gravity.
+                        const double fp =
+                            (c.mini ? gdapprox::UfoParams::mini()
+                                    : gdapprox::UfoParams::normal()).flapPostVy();
+                        if ((double)c.vy * sgn < fp) c.vy = (float)(fp * sgn);
                         c.grounded = 0;
                     }
                     // -> ball: NO re-issue. A ball tap only acts while
