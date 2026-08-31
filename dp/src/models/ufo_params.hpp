@@ -6,7 +6,7 @@
 //
 //     s  = gravityFlipped ? -accelSwitchVy : +accelSwitchVy
 //     a  = (vy <= s) ? gravityWeak : gravityStrong
-//     vy = max(vy + a, vyMinPlayerFrame)
+//     vy = clamp(vy + a, vyMinPlayerFrame, vyMaxPlayerFrame)
 //     y += yScale * vy
 //
 // A flap RAISES the velocity to a target; it neither adds to it nor overwrites
@@ -41,6 +41,20 @@ struct UfoParams {
     // at all, which is the case the constant form got wrong.
     double flapTargetVy = 7.0;
 
+    // The rise cap. The UFO shares the ship's band -- GD clamps every flight
+    // mode into (-6.4/f, +8.0/f) with f the flight-mode size factor -- and the
+    // model had the fall side only, so nothing stopped a UFO that an orb, a pad
+    // or a boost had thrown upwards from climbing at that speed forever.
+    // Measured in the game (2026-09-01, lv20 t=16,046): vy injected at 10.0
+    // reads 8.0 one tick later and 7.742 = 8.0 - 2 x 0.129 two ticks after that.
+    //
+    // GD SKIPS THIS CLAMP WHILE THE VELOCITY-LIMIT EXEMPTION (player+0x952) IS
+    // SET -- slope launch, red orb, red pad -- and clears the flag again as soon
+    // as vy is back inside the band. The model's exemption state (State::boost)
+    // is swing-scoped, so this clamp is unconditional exactly as the ship's is;
+    // the injection above was taken with the flag clear, so it measures the
+    // clamp and not its gate.
+    double vyMaxPlayerFrame = 8.0;
     double vyMinPlayerFrame = -6.4;
     double yScale = 0.225;
     double dxPerTick = 1.29825;
@@ -60,7 +74,12 @@ struct UfoParams {
         // exactly: 7.0 - 0.129 = 6.871 and 6.8 - 0.152 = 6.648, both equal to
         // the old constants to the last bit.
         p.flapTargetVy = 6.8;
-        p.vyMinPlayerFrame = -7.529;  // measured 3-decimal constant, not -6.4/0.85
+        // Both caps are the printed 3-decimal constants, not the exact
+        // 8.0/0.85 = 9.411765 and -6.4/0.85 = -7.529412 -- the same pair the
+        // ship's mini carries, and read the same way (the dump prints 9.412 and
+        // -7.529 at six significant digits).
+        p.vyMaxPlayerFrame = 9.412;
+        p.vyMinPlayerFrame = -7.529;
         return p;
     }
 

@@ -31,7 +31,12 @@ public:
         if (flap && vy < p.flapTargetVy) vy = p.flapTargetVy;
         const double s = gravityFlipped ? -p.accelSwitchVy : p.accelSwitchVy;
         const double a = (vy <= s) ? p.gravityWeak : p.gravityStrong;
-        const double next = vy + a;
+        double next = vy + a;
+        // Both ends of GD's band, as the ship has had all along. Without the
+        // rise side a UFO thrown upwards by an orb or a pad kept climbing at a
+        // speed the game does not allow (see vyMaxPlayerFrame for the
+        // measurement and for the exemption this does not model).
+        if (next > p.vyMaxPlayerFrame) next = p.vyMaxPlayerFrame;
         return next < p.vyMinPlayerFrame ? p.vyMinPlayerFrame : next;
     }
 
