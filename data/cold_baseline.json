@@ -40,24 +40,24 @@
   "iters": 8
  },
  "19": {
-  "fp": "it=18 plan=1734/375fa34d att=33 t=21562 x=30206.707 band1=150.0,450.0 fix=28/3539/f646d134 horizon=34415 backoff=6 live=5852128/93ac924e deep=-",
-  "iters": 18
+  "fp": "it=22 plan=1666/ff0f74fd att=40 t=21494 x=30118.387 band1=150.0,450.0 fix=36/4454/2f1d5e69 horizon=34415 backoff=6 live=5397588/3fb5ed99 deep=-",
+  "iters": 22
  },
  "2": {
   "fp": "it=1 plan=1662/a171d70c att=2 t=10425 x=13556.022 band1=90.0,90.0 fix=0/- horizon=27345 backoff=6 live=- deep=-",
   "iters": 1
  },
  "20": {
-  "fp": "it=37 plan=1808/1fb10d11 att=75 t=21488 x=32148.527 band1=120.0,360.0 fix=60/7961/7dfa4b15 horizon=37635 backoff=24 live=26572979/4d12fe59 deep=-",
-  "iters": 37
+  "fp": "it=38 plan=1670/cdde0a52 att=77 t=21459 x=32102.309 band1=90.0,390.0 fix=50/6715/efc8b5b6 horizon=37635 backoff=24 live=26499044/409ec538 deep=-",
+  "iters": 38
  },
  "21": {
-  "fp": "it=30 plan=1834/5bb7318b att=61 t=17832 x=23714.314 band1=90.0,360.0 fix=19/2356/c68f0175 horizon=29445 backoff=6 live=12595955/86416a8c deep=-",
+  "fp": "it=30 plan=1834/6d97c74a att=61 t=17832 x=23714.314 band1=90.0,360.0 fix=19/2356/c68f0175 horizon=29445 backoff=6 live=12595955/86416a8c deep=-",
   "iters": 30
  },
  "22": {
-  "fp": "it=64 plan=1222/ae40c998 att=112 t=19021 x=21689.334 band1=480.0,780.0 fix=98/12068/a34f5afd horizon=26085 backoff=24 live=23048081/8c99b47b deep=-",
-  "iters": 64
+  "fp": "it=62 plan=1694/5235b6c4 att=107 t=19036 x=21689.150 band1=480.0,780.0 fix=112/13843/b346a301 horizon=26085 backoff=96 live=23048081/28acc058 deep=-",
+  "iters": 62
  },
  "3": {
   "fp": "",
