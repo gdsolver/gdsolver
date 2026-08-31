@@ -48,6 +48,9 @@ inline bool  g_silenced = false;     // the "solving / music=mute" stop has been
 inline bool  g_musicPaused = false;  // WE paused it (never fight a pause GD itself made)
 inline bool  g_pausedForSpeed = false; // ...and it was the speed, not a game pause, that did it
 inline float g_pitch = 1.f;          // the pitch currently applied to the music group
+// Whether the group has had to be told again since the last real transition. GD taking the song
+// back is worth one line; re-asserting it every frame afterwards is worth none.
+inline bool  g_reasserted = false;
 
 // A session that is driving the game and must not make a sound.
 //
@@ -88,6 +91,39 @@ inline unsigned songPosMs() { return (unsigned)((double)g_tick * (1000.0 / 240.0
 inline FMOD::ChannelGroup* musicGroup() {
     auto* fe = FMODAudioEngine::sharedEngine();
     return fe ? fe->m_backgroundMusicChannel : nullptr;
+}
+
+// ---- what the group is ACTUALLY holding ----
+//
+// As opposed to what we last asked it for, which is what sync() used to latch on -- and latching
+// on our own last request is how the pause and the pitch both went missing.
+//
+// GD restarts the song whenever it likes, and it does not know we had an opinion about it. The
+// render key's return path is the sharpest case: resuming rendering after a blind stretch runs
+// resetLevel() to rebuild the visibility state (hooks_gamelayer.cpp), GD starts the song again
+// as part of that, and the new song arrives unpaused at pitch 1. The latch then said "already
+// done" and nothing touched it again for the rest of the session.
+//
+// Reported 2026-08-31: Solve, raise the notch with the arrows, F5 to bring the screen back --
+// and the song plays on at 1x. The log has the whole bug in two lines: `hotkey: F5 -> render ON`
+// followed by `audio: music paused (the game is stopped)`, with the music audible anyway.
+//
+// The seek branch in sync() already learned this ("FORCED EVERY FRAME rather than latched on a
+// transition") and for the same reason. This is that fix with the latch kept honest: ask, and
+// write only when it really differs -- so the transition logic, which SEEKS the song on the way
+// back, still runs exactly once on the real transition and not every frame.
+//
+// The out-parameter is seeded with something that is NOT the wanted value, so a query that
+// fails cannot read as "already right".
+inline bool pausedIs(FMOD::ChannelGroup* grp, bool want) {
+    bool cur = !want;
+    grp->getPaused(&cur);
+    return cur == want;
+}
+inline bool pitchIs(FMOD::ChannelGroup* grp, float want) {
+    float cur = want + 1.f;
+    grp->getPitch(&cur);
+    return cur == want;
 }
 
 // ---- the seek's mute ----
@@ -282,6 +318,7 @@ inline void sync() {
     const bool wantPaused = gameStopped || tooFast;
     if (wantPaused != g_musicPaused) {
         g_musicPaused = wantPaused;
+        g_reasserted = false;
         if (wantPaused) {
             grp->setPaused(true);
             // Remember WHY. Only the speed stop lets the game run on without the song, and
@@ -305,11 +342,28 @@ inline void sync() {
             grp->setPaused(false);
             log::info("audio: music resumed");
         }
+    } else if (wantPaused && !pausedIs(grp, true)) {
+        // The song was replaced under a pause this had already latched. Put it back on the group
+        // as it is NOW -- the note at pausedIs has the case that produced it.
+        grp->setPaused(true);
+        if (!g_reasserted) {
+            g_reasserted = true;
+            log::info("audio: the song came back unpaused (GD restarted it) - pause re-asserted");
+        }
     }
-    if (!wantPaused && g_watchSpeed != g_pitch) {
+    // ...and the pitch, checked against the group rather than against our own record of what we
+    // asked for.
+    if (!wantPaused && !pitchIs(grp, g_watchSpeed)) {
+        if (g_watchSpeed != g_pitch) {
+            g_reasserted = false;     // a new intent, not a re-assert
+            log::info("audio: pitch {:g}x (follows the spectating speed)", (double)g_watchSpeed);
+        } else if (!g_reasserted) {
+            g_reasserted = true;
+            log::info("audio: the song came back at pitch 1 (GD restarted it) - {:g}x re-applied",
+                      (double)g_watchSpeed);
+        }
         g_pitch = g_watchSpeed;
         grp->setPitch(g_watchSpeed);
-        log::info("audio: pitch {:g}x (follows the spectating speed)", (double)g_watchSpeed);
     }
     // The song the seek held back (see holdMusic). Started here, at the end, once the game has
     // stopped moving -- and seeked straight to where it stopped, so it comes in on the beat
