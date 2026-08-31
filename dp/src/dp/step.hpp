@@ -2724,13 +2724,55 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 const bool separating =
                     ((double)c.y - o->cy) * (double)c.vy > 0.0
                     && std::fabs(xPrev - o->cx) < o->hw + pInner;
+                // ...or if gravity flipped within the last 0.1 s. GD does not
+                // take the kill arm at all then (collidedWithObjectInternal
+                // :1184), which is the general rule the `separating` guard
+                // above was a special case of: the lv18 blue pad in the OPEN
+                // BUG note flips the player, and every flip source that writes
+                // the stamp -- gravity portal, blue pad, gravity orb, gravity
+                // teleport -- earns the same window. A YELLOW pad does not
+                // flip, so it does not stamp, and GD does kill there; that is
+                // why gating on the impulse could never work.
+                // s.flipT and not c.flipT: this test runs in the collision
+                // pass, before the portal pass that would stamp a flip of this
+                // tick's own -- the same ordering GD has.
+                // ...and the grace only re-seats a player that HAS a face to be
+                // put on: measured, an injection whose centre was inside the
+                // block's own y span (y=258 against cy=255, hh=15) died at a
+                // flip age of 11, while the same overlap with the centre above
+                // the top face lived at 0, 12 and 24. That is the model of the
+                // one condition in the listing's guard that could not be named
+                // (`local_res18._0_1_`), and it is the conservative reading:
+                // where GD's re-seat would be undefined, the kill stands.
+                const bool flipGrace =
+                    s.flipT < kFlipGraceTicks
+                    && std::fabs((double)c.y - o->cy) > o->hh;
                 for (int si = 0; si <= kSubSteps && !dead && !separating; ++si) {
                     const double f = si / (double)kSubSteps;
                     const double sx = xPrev + (x - xPrev) * f;
                     const double sy = (double)s.y + ((double)c.y - (double)s.y) * f;
                     if (std::fabs(sy - o->cy) < o->hh + pInner + kHazMargin
-                        && std::fabs(sx - o->cx) < o->hw + pInner + kHazMargin)
-                        DIE("cube/solid-side", o);
+                        && std::fabs(sx - o->cx) < o->hw + pInner + kHazMargin) {
+                        // DIE does not return -- it records and sets `dead` --
+                        // so the seat below has to be the ELSE of it. Without
+                        // the break it also ran on the dying state and moved
+                        // its y, which is invisible in a solve (a dead state
+                        // goes nowhere) and very visible in quick_regress: the
+                        // last row of lv22's t=20,200 section stopped matching
+                        // GD and the section's tracking read 400 -> 40.
+                        if (!flipGrace) { DIE("cube/solid-side", o); break; }
+                        // GD's other arm: setPosition onto the face, then
+                        // hitGround(obj, 1). Measured on lv18 -- injected 2.5 px
+                        // into the top of the block at (24375,255), the player
+                        // comes out at y=285.000 = face + pHalf with og=1.
+                        const double face = ((double)c.y >= o->cy)
+                                                ? o->cy + o->hh : o->cy - o->hh;
+                        c.y = (float)(face + (((double)c.y >= o->cy) ? pHalf
+                                                                    : -pHalf));
+                        c.vy = 0; CLAMP0O("cube/flipgrace", o);
+                        c.grounded = 1;
+                        break;
+                    }
                 }
                 // TRIED AND REVERTED (2026-07-31): a cube "face snap" here --
                 // when the box overlaps a solid too shallowly to kill and the
@@ -8962,6 +9004,22 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         c.vy = s.pExitVy;
         c.grounded = 0;
     }
+    // GD's flip stamp (player+0x800), as an age. Written by flipGravity, which
+    // D4 measured as firing only when the value REALLY changes -- so "c.flip
+    // differs from s.flip at the end of the tick" is the same event, and it is
+    // one site instead of the nineteen that assign c.flip. Everything that
+    // flips gravity therefore grants the grace: gravity portal, blue pad,
+    // gravity orb, gravity teleport. Yellow and pink pads do not flip, so they
+    // do not stamp it -- which is the discriminating case in C7 and the reason
+    // the old `!impulsedThisTick` guard could not work.
+    // Compared through gdUpOf and not on the raw flip: in a rotated frame the
+    // model writes c.flip as a function of the frame, and gdUpOf is the
+    // function that turns that back into GD's own upsideDown (frame 3 is the
+    // mirror). Diffing the raw bit would stamp a grace on a frame change, which
+    // is not a gravity flip and never reaches flipGravity.
+    c.flipT = (gdUpOf(c) != gdUpOf(s))
+                  ? 0
+                  : (uint8_t)std::min<int>(kFlipGraceTicks, (int)s.flipT + 1);
     // [2026-08-22 r106] **Crush: touching a solid's interior with the inner box
     // is death.** (The full measurement table at kCrushHalf's declaration).
     // The rule that replaces, with physics, lv22's dead end at x=20,130 -- "the
@@ -8975,12 +9033,21 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // (the Obj::oneway note), and non-90-degree rotations have lying bboxes
     // (the Obj::oriented note). Rotated sections (frame != 0) are excluded,
     // unmeasured.
+    // ...UNLESS gravity flipped within the last 0.1 s AND the centre is outside
+    // the object, which is the same guard the side test above carries and the
+    // same measurement (constants.hpp, kFlipGraceTicks). The crush test only
+    // ever fires on a centre that IS inside -- kCrushHalf is smaller than the
+    // object's own half -- so this is written as an assertion of that rather
+    // than as a live branch: if it ever starts sparing crushes, the two tests
+    // have stopped meaning different things.
     if (!dead && !g_noCrush && s.frame == 0) {
         const double cyF = (double)c.y;
         for (const Obj* o : *K.near)
             if (o->type == 0 && !o->slope && !o->oneway && !o->oriented
                 && std::fabs(x - o->cx) < o->hw + kCrushHalf + 1e-6
                 && std::fabs(cyF - o->cy) < o->hh + kCrushHalf + 1e-6) {
+                if (c.flipT < kFlipGraceTicks && std::fabs(cyF - o->cy) > o->hh)
+                    continue;
                 DIE("crush", o);
                 break;
             }

@@ -367,16 +367,18 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--cubeyq")) g_cubeYq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--cubevq")) g_cubeVq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--start")) {
-            // 27 fields (21st=frame, 22nd=rev, 23rd/24th=sprite rotation,
-            // 25th=boost, 26th/27th=the second body's mode and size).
+            // 28 fields (21st=frame, 22nd=rev, 23rd/24th=sprite rotation,
+            // 25th=boost, 26th/27th=the second body's mode and size,
+            // 28th=ticks since the last gravity flip).
             // FORGET TO GROW THE SIZE AND
             // sscanf WRITES PAST THE ARRAY: when rev was added it was left at
             // 21, and it showed up as rev=0/1 not changing the result by a
             // single bit.
-            // -1 in the last two = "the caller did not say", which is not the
-            // same as 0 (a real mode) -- see the note at the dual block.
-            double a[27] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                            0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, -1, -1};
+            // -1 in the last three = "the caller did not say", which is not the
+            // same as 0 (a real mode / a flip on this very tick) -- see the
+            // notes at the dual block and at State::flipT.
+            double a[28] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, -1, -1, -1};
             // 8th field = flip. It used to be absent entirely, so every
             // re-anchor taken while the player was upside down restarted the
             // solve in NORMAL gravity -- the tail was then solved for a world
@@ -478,14 +480,20 @@ inline int cliMain(int argc, char** argv) {
             // did not say, and gets the old behaviour (copy the first body's);
             // see the note where they are applied. 0 is a real mode, so the
             // sentinel cannot be 0 the way the earlier optional fields' is.
+            // 28th = TICKS SINCE GRAVITY LAST FLIPPED (State::flipT), which
+            // decides whether the side/crush kill is still inside GD's 0.1 s
+            // grace. -1 = the caller did not say, read as "no grace"; 0 is a
+            // real value (flipped on the anchor tick), so it cannot be the
+            // sentinel. An anchor taken in the 24 ticks after a blue pad or a
+            // gravity portal without it kills states GD spares.
             std::sscanf(argv[i + 1],
                         "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,"
                         "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,"
-                        "%lf",
+                        "%lf,%lf",
                         &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6], &a[7],
                         &a[8], &a[9], &a[10], &a[11], &a[12], &a[13], &a[14],
                         &a[15], &a[16], &a[17], &a[18], &a[19], &a[20], &a[21],
-                        &a[22], &a[23], &a[24], &a[25], &a[26]);
+                        &a[22], &a[23], &a[24], &a[25], &a[26], &a[27]);
             const uint8_t startRev = (uint8_t)((int)a[21] & 1);
             startFrame = (int)a[20] & 3;
             startSnapUid = (long long)a[18];
@@ -496,6 +504,11 @@ inline int cliMain(int argc, char** argv) {
             init = State{(float)a[2], (float)a[3], (uint8_t)a[4], (uint8_t)a[6],
                          (uint8_t)a[5], (uint8_t)a[7]};
             init.mini = (uint8_t)a[8];
+            // Ticks since the last gravity flip; absent or negative = no grace.
+            init.flipT = (a[27] < 0.0)
+                             ? (uint8_t)kFlipGraceTicks
+                             : (uint8_t)std::min<int>(kFlipGraceTicks,
+                                                      (int)a[27]);
             // 21st field = GD's gameplay rotation (the dump's gframe, 0..3).
             // Re-anchored INSIDE a rotated section, the model had no way to
             // know which way it was running (rotation triggers already passed

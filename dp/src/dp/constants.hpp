@@ -157,6 +157,30 @@ constexpr double kSpiderSearchHalfXMini = 8.7;   // 14.5 * 0.6, UNVERIFIED
 // = 380 exactly. 10 it is; pHalf (5) would give 385 and 15*vsize would give 375.
 constexpr double kWaveClamp = 10.0;
 constexpr double kWaveClampMini = 6.0;
+// The side/crush kill's grace after a gravity flip: GD stamps the flip time in
+// flipGravity (player+0x800) and collidedWithObjectInternal (:1180-1226) takes
+// the kill arm only when `now - stamp >= 0.1` s, otherwise re-seating the
+// player on the face and calling hitGround.
+//
+// MEASURED IN THE GAME, lv18's blue pad at (24375,273) and the two 30x30 blocks
+// under and beside it (2026-09-01, worker 98). The player is injected 2.5 px
+// into a block's top face -- the inner box crosses it, the outer box does not
+// resolve it -- and the only thing varied is how long ago gravity flipped:
+//     no flip at all                         DEATH
+//     flip on the same tick                  LIVES, re-seated to top+15, og=1
+//     flip 12 ticks earlier                  LIVES, og=1
+//     flip 24 ticks earlier                  LIVES
+//     flip 25 ticks earlier                  DEATH
+//     flip 36 ticks earlier                  DEATH
+// so the window is 25 ticks counted from the tick the dump first shows the flip
+// -- 0.1 s x 240 Hz = 24, plus one because GD stamps the time after that tick's
+// row is written. Counted the model's way (flipT = 0 on the tick gdUpOf
+// changes), the grace holds while flipT < 25.
+//
+// SIMPLIFICATION: GD measures TIME and this counts TICKS. They agree everywhere
+// the corpus goes except inside a timewarp zone (id 1935), where the substep
+// density changes; lv22's is the only one.
+constexpr int kFlipGraceTicks = 25;
 constexpr double kWaveHalf = 5.0;
 // ...and the MINI one is NOT 0.600 of it. That carry-over was flagged
 // UNVERIFIED above and this session refuted the same 0.600 twice already (the

@@ -80,6 +80,21 @@ struct State {
     // counting cannot change anything.
     uint8_t slopeT = 0;
     float slopeM;
+    // Ticks since gravity last flipped, saturated at 24 -- the same 0.1 s at
+    // 240 ticks/s as slopeT above, and read the same way: GD stamps the time in
+    // flipGravity (player+0x800) and collidedWithObjectInternal (:1180-1226)
+    // spares the side/crush kill while `now - that < 0.1`, snapping the player
+    // to the face instead. Past 24 nothing can change, so it saturates.
+    // Carried by the anchor (--start field 28); -1 there means "the caller did
+    // not say", which is read as no grace. 0 is a real value (flipped on the
+    // anchor tick itself), so it cannot serve as the sentinel.
+    // 255 and not 24: this is the value every State built WITHOUT saying
+    // anything gets, and the safe answer there is "no grace" (any value at or
+    // above kFlipGraceTicks). 24 was inside the window, so a freshly
+    // constructed state arrived already graced -- measured on lv22, where the
+    // section at t=20,200 seated a cube that GD kills and lost 360 ticks of
+    // tracking. The step's own increment clamps it back down to the cap.
+    uint8_t flipT = 255;
     // GD's flying band, carried PER STATE. It has to be: the band is written
     // when a mode portal actually fires, and firing needs the player's box to
     // touch the portal in y as well as x. lv1 offers two lanes into its last
