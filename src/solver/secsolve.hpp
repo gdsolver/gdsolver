@@ -373,6 +373,26 @@ inline std::vector<DashState> g_dash;
 // grid (brief-018 hole 3), and a search restores once per tick, so the rounding
 // is applied once per step instead of once per section.
 inline std::vector<double> g_vy;
+// Per-node boost accumulator (m_accelerationOrSpeed) and pad-touch flag. The
+// SAME KIND OF HOLE as the dash: the field survives a plain replay because
+// nothing rewinds it, and a search reads whatever the previously stepped node
+// left behind.
+//
+// MEASURED, lv22 window t=5,387, spine against the head run (`robodbg`):
+// the accumulator differs from the FIRST layer -- head 1.2150, spine 1.5000 --
+// and is LATENT for 158 of them, y and vy agreeing to the last digit. It bites
+// at the pad: the pad fires on both sides at t=5,545 (both accel 0, both
+// vy 5.71), and on the next tick the head ramps 0.0225 per tick and holds
+// vy 5.71 for the whole 16-tick boost, while the spine, sitting at 1.5, gets no
+// continuation and decays under gravity (5.710, 5.516, 5.322, ...). 1.5 is the
+// cutoff the field is compared against, so a search restores every node into a
+// state that reads as "this boost is already over".
+//
+// This is why the spine came apart THREE TICKS INTO A SUSTAINED HOLD rather
+// than at its first tick, which no amount of reasoning about button events
+// explained: the first tick of a boost is the same either way.
+inline std::vector<double> g_accel;
+inline std::vector<uint8_t> g_pad;
 // ...and the same thing for the plain checkpoint/restore path (hole 2 of
 // brief-018), which 017's section runs use and which had no dash handling at
 // all. MEASURED without injection: lv22 checkpoint at t=2,112 mid-dash,

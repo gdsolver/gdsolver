@@ -2244,6 +2244,8 @@ class $modify(GJBaseGameLayer) {
         g_nodes.push_back({-1, 0, 0, 0.f, 0.f, 0.f, 0});
         g_dash.assign(1, secsolve::DashState{});  // section head (input unused)
         g_vy.assign(1, m_player1 ? m_player1->m_yVelocity : 0.0);
+        g_accel.assign(1, m_player1 ? m_player1->m_accelerationOrSpeed : 0.0);
+        g_pad.assign(1, m_player1 && m_player1->m_touchedPad ? 1 : 0);
         // The section head IS the spine's first node: the verified solution
         // passed through here, so following its own inputs from this node is
         // the one rollout that must never be pruned (see g_spineOn).
@@ -2547,6 +2549,12 @@ class $modify(GJBaseGameLayer) {
                         // `m_dashRing` is lost). See the note on DashState.
                         if ((size_t)ni < g_dash.size())
                             secRestoreDash(g_dash[(size_t)ni]);
+                        // The boost accumulator is not in the psnap mask either
+                        // (see g_accel). Same field, same reason, both paths.
+                        if (m_player1 && (size_t)ni < g_accel.size()) {
+                            m_player1->m_accelerationOrSpeed = g_accel[(size_t)ni];
+                            m_player1->m_touchedPad = g_pad[(size_t)ni] != 0;
+                        }
                         // Rebuild the candidate list. On the checkpoint path this happens by
                         // itself through the 2 frozen steps, but the psnap path has no
                         // freeze.
@@ -2571,6 +2579,16 @@ class $modify(GJBaseGameLayer) {
                         // a search from the same head dying at depth 233.
                         if ((size_t)ni < g_vy.size() && m_player1)
                             m_player1->m_yVelocity = g_vy[(size_t)ni];
+                        // ...and the boost accumulator and its pad flag, which
+                        // the restore does not carry at all (see g_accel). Put
+                        // back with the same cfg switch off by default? No --
+                        // unconditionally, like the dash: a node whose boost
+                        // budget is a leftover from whichever node was stepped
+                        // last is not that node.
+                        if (m_player1 && (size_t)ni < g_accel.size()) {
+                            m_player1->m_accelerationOrSpeed = g_accel[(size_t)ni];
+                            m_player1->m_touchedPad = g_pad[(size_t)ni] != 0;
+                        }
                         // Idle the frozen ticks with "the input that node was holding"
                         // (physics does not advance so the state is unchanged, but button
                         // continuity is kept)
@@ -2675,6 +2693,8 @@ class $modify(GJBaseGameLayer) {
                         g_dash.emplace_back();
                         secCaptureDash(g_dash.back());
                         g_vy.push_back(p ? p->m_yVelocity : 0.0);
+                        g_accel.push_back(p ? p->m_accelerationOrSpeed : 0.0);
+                        g_pad.push_back(p && p->m_touchedPad ? 1 : 0);
                         g_cps.push_back(nullptr);
                         if (keepSnaps) {
                             snaps.emplace_back(); pulses.emplace_back();
@@ -2742,6 +2762,8 @@ class $modify(GJBaseGameLayer) {
                         g_dash.emplace_back();
                         secCaptureDash(g_dash.back());
                         g_vy.push_back(p ? p->m_yVelocity : 0.0);
+                        g_accel.push_back(p ? p->m_accelerationOrSpeed : 0.0);
+                        g_pad.push_back(p && p->m_touchedPad ? 1 : 0);
                         g_cps.push_back(nullptr);
                         snaps.emplace_back();
                         pulses.emplace_back();
@@ -2767,6 +2789,8 @@ class $modify(GJBaseGameLayer) {
                         g_dash.emplace_back();
                         secCaptureDash(g_dash.back());
                         g_vy.push_back(p ? p->m_yVelocity : 0.0);
+                        g_accel.push_back(p ? p->m_accelerationOrSpeed : 0.0);
+                        g_pad.push_back(p && p->m_touchedPad ? 1 : 0);
                         g_cps.push_back(cp);
                         // For the stacking check. Taken at the same instant as the checkpoint
                         if (g_overlay) {
