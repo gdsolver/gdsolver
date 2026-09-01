@@ -2120,6 +2120,71 @@ TRIG_ROTATE = 1346
 K_CENTER, K_DEGREES, K_TIMES360, K_LOCKROT = 71, 68, 69, 70
 
 
+def build_cpride() -> str:
+    """A floor that RISES while the player stands on it, for checkpoint work.
+
+    brief-018's hole 4 is that obj+0x4d0/0x4d4 -- the position the rotation
+    pass snaps at the head of a tick, and the source of the speed a surface
+    carries its rider at -- is saved into m_vectorSavedObjectStateRef but not
+    written back on a restore. Whether that matters was never measured, and it
+    can only matter where something is being carried, so the rig makes the
+    player a rider for the whole run: the floor itself is the moving group.
+
+    Slow and long (150 px over 20 seconds) so that any tick is mid-carry. The
+    floor starts AT the player's own level and rises from there -- a first cut
+    put it 60 px up, where the player simply ran along GD's own ground
+    underneath it and was never a rider at all (the checkpoint printed y=105).
+    """
+    G = 30
+    parts = [header(start_mode="cube")]
+    x = 0.0
+    while x <= 9000:
+        parts.append(obj(BLOCK, x, GROUND_Y, extra={K_GROUPS: str(G)}))
+        x += GRID
+    parts.append(obj(TRIG_MOVE, 45, 300, extra={
+        K_TARGET: str(G),
+        K_DURATION: "20",
+        K_MOVE_X: "0",
+        K_MOVE_Y: "150",
+        K_EASING: "0",
+        K_EASING_RATE: "2",
+    }))
+    return ";".join(parts) + ";"
+
+
+def build_cpriderot() -> str:
+    """cpride's sibling: the floor is ROTATED, not translated.
+
+    obj+0x4d0/0x4d4 is written by the ROTATION pass (survey E1), so a floor that
+    merely slides does not exercise it -- measured, and a rider on a sliding
+    floor comes back from a restore exact over 599 ticks. This one turns the
+    whole floor slowly about a centre far below, so the surface sweeps upward
+    and carries the rider while the rotation pass is the thing moving it.
+
+    Five degrees about a centre 2,000 px down is roughly 180 px of arc over the
+    twenty seconds -- the same order as the sliding rig, so the two are
+    comparable.
+    """
+    G_ROT, G_CEN = 31, 32
+    parts = [header(start_mode="cube")]
+    x = 0.0
+    while x <= 9000:
+        parts.append(obj(BLOCK, x, GROUND_Y, extra={K_GROUPS: str(G_ROT)}))
+        x += GRID
+    parts.append(obj(BLOCK, 4500, GROUND_Y - 2000, extra={K_GROUPS: str(G_CEN)}))
+    parts.append(obj(TRIG_ROTATE, 45, 300, extra={
+        K_TARGET: str(G_ROT),
+        K_CENTER: str(G_CEN),
+        K_DURATION: "20",
+        K_DEGREES: "5",
+        K_TIMES360: "0",
+        K_LOCKROT: "0",
+        K_EASING: "0",
+        K_EASING_RATE: "2",
+    }))
+    return ";".join(parts) + ";"
+
+
 def build_cprot() -> str:
     """A rotate AND a move in flight on the SAME group, for checkpoint work.
 
@@ -3613,6 +3678,8 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcal_cube_mini": lambda: build_sawcal_mode("cube", True),
             "expease": build_expease,
             "cprot": build_cprot,
+            "cpride": build_cpride,
+            "cpriderot": build_cpriderot,
             "sawcalmv_wave": lambda: build_sawcal_moved("wave"),
             "sawcalmv_ship": lambda: build_sawcal_moved("ship"),
             "sawcalmv_ball": lambda: build_sawcal_moved("ball"),
