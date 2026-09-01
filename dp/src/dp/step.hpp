@@ -2674,7 +2674,34 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     // Ball stays out of this branch: it is on GD's
                     // unconditional list, but putting it there is a separate
                     // change with no measurement of mine behind it.
-                    const bool bonk = (c.armT < kArmTicks)
+                    // [005 GATE WITHDRAWN 2026-09-01] `c.armT < kArmTicks` --
+                    // the measured discriminant -- stood here for one cold run
+                    // and cost lv22 its clear: 201 repair rounds against a
+                    // budget of 186, the search never past x=4,914, with 94 of
+                    // its deaths piled at x=2,900-2,949 where a FULL-SIZE cube
+                    // is mid-jump and neither rule applies. So the wall is not
+                    // where the gate acts: the frontier arriving there is what
+                    // got thinner.
+                    // Why: GD's gate is an OR of four arming sources -- 1859,
+                    // 2866, platformer, and a gravity flip within 0.1 s -- and
+                    // only the first two are modelled. Implementing one arm of
+                    // a measured OR makes the model STRICTER THAN GD, and lv22
+                    // is the most flip-dense level in the corpus, so it paid
+                    // for the missing flip arm. The measurements behind the
+                    // 1859 arm are not in doubt (three injections, both
+                    // directions, reproduced by the model); what is wrong is
+                    // shipping one quarter of a gate.
+                    // The flip arm could not be probed on its own: the case it
+                    // needs is an UPRIGHT player within 25 ticks of a flip
+                    // meeting a ceiling, and a blue pad leaves the player
+                    // flipped -- injecting it back onto the same pad does not
+                    // re-fire it, and the flipped variant (head into a block's
+                    // top from above) shows GD doing neither bonk nor kill but
+                    // passing straight through. That third behaviour is its own
+                    // unmeasured thing, and `!s.flip` above may be part of the
+                    // old proxy rather than of GD.
+                    // 004b re-lands all of it together, behind CVar29.
+                    const bool bonk = (c.mode == 5 || (c.mode == 0 && c.mini))
                                       && acquireBase && !s.flip && !s.fgArm
                                       && yPenC <= xPenC;
                     if (std::fabs(x - o->cx) <= o->hw + pInner

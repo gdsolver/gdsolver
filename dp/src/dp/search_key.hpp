@@ -236,13 +236,17 @@ inline uint64_t keyOf(const State& s) {
            // level without an id-2866 object, so every existing key is
            // bit-identical.
            ^ ((uint64_t)s.fgArm << 63)
-           // ...and the id-1859 ceiling arm is the same kind of world state,
-           // for the same reason: two cubes at the same (y, vy) answer the
-           // ceiling above them with a bonk or with a death depending on it.
-           // Only the ARMED/not bit goes in, not the counter -- the two ticks
-           // it holds behave alike -- and it is 0 in every level without an
-           // id-1859 object, so every existing key stays bit-identical.
-           ^ ((s.armT < kArmTicks) ? 0xFF51AFD7ED558CCDull : 0)
+           // ...and the id-1859 ceiling arm WOULD be the same kind of world
+           // state, for the same reason: two cubes at the same (y, vy) answer
+           // the ceiling above them with a bonk or with a death depending on
+           // it. The bit is out again with the gate it served (see the note at
+           // the bonk gate in step.hpp) -- keying a distinction the physics no
+           // longer makes would only fragment the dedupe. It comes back with
+           // 004b, in this exact form:
+           //     ^ ((s.armT < kArmTicks) ? 0xFF51AFD7ED558CCDull : 0)
+           // Only the ARMED/not bit, never the counter -- the two ticks it
+           // holds behave alike -- and 0 in every level without an id-1859, so
+           // every existing key stays bit-identical.
            // [r52] The frame-change bit goes in the key too (it is set only on
            // the tick after the change, so the partition granularity barely
            // moves)
