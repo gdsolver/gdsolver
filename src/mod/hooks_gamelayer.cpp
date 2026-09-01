@@ -514,6 +514,18 @@ class $modify(GJBaseGameLayer) {
                 // Section-limited GD solver. If the checkpoint exists and it has not run
                 // yet, run it to completion inside this frame (no return to rendering
                 // during the search).
+                // `secsolve=1` without a checkpoint used to do NOTHING and say
+                // nothing -- the level simply completed and the result carried
+                // no sec line at all, which reads as "the search found nothing"
+                // rather than "the search never ran". Same family as a
+                // value-less flag that silently does not apply.
+                if (secsolve::g_on && !g_ckpt && !secsolve::g_warnedNoCkpt
+                    && g_cfg.checkpointAt < 0) {
+                    secsolve::g_warnedNoCkpt = true;
+                    writeResult("secsolve: NOT RUNNING -- secsolve=1 needs a "
+                                "checkpoint (set practiceat= and checkpointat=)"
+                                "; secstart alone does nothing");
+                }
                 if (secsolve::g_on && g_ckpt && !secsolve::g_done
                     && g_tick >= secsolve::g_startTick) {
                     secsolve::g_done = true;

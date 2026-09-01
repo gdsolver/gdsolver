@@ -76,6 +76,8 @@ inline double g_vq = 0.1;            // dedupe vy granularity
 // effectively a single path.
 inline double g_xq = 0.25;
 inline bool g_done = false;          // once per session
+// said once: "secsolve=1 but no checkpoint, so nothing ran"
+inline bool g_warnedNoCkpt = false;
 inline bool g_verify = false;        // cfg `secverify=1`: no search, only check
                                      // restore fidelity
 // cfg `seclog=1`: emit the per-layer breakdown. Whether THE CAP IS BINDING OR

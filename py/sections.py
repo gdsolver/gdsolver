@@ -98,19 +98,25 @@ def from_coldlog(lv: int) -> tuple[list[tuple[int, str]], list[tuple[float, floa
     return ticks, boxes
 
 
-def veto_ticks(lv: int, boxes) -> list[tuple[int, str]]:
+def veto_ticks(lv: int, boxes, track: Path | None = None) -> list[tuple[int, str]]:
     """A veto is recorded in x, and the sections are in ticks. Translate through
-    GD's own trace: the first tick the reference run is inside the box.
+    a trajectory: the first tick the run is inside the box.
 
-    Without gdref for the level there is no honest conversion, so the boxes are
-    reported and dropped rather than guessed at."""
-    ref = LEVEL_DATA / "gdref" / f"lv{lv}.csv"
-    if not boxes or not ref.exists():
+    The trajectory is brief-017 part B's own dump.csv when one is given -- that
+    pass already writes tick, x and y for the whole level, so the conversion
+    does not depend on whether a level happens to have a gdref. gdref is the
+    fallback, and a level with neither has its boxes REPORTED AND DROPPED
+    rather than guessed at: veto is the only source that sees over-kill, so
+    losing it silently would lose exactly the half the section list exists for.
+    """
+    src = track if (track and track.exists()) else \
+        (LEVEL_DATA / "gdref" / f"lv{lv}.csv")
+    if not boxes or not src.exists():
         return []
     import csv
     hits: list[tuple[int, str]] = []
     seen = set()
-    with open(ref, encoding="utf-8-sig") as f:
+    with open(src, encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
             x = float(r["x"])
             for i, (a, b) in enumerate(boxes):
@@ -169,15 +175,19 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--levels", type=int, nargs="+", required=True)
     ap.add_argument("--census", default="", help="fixcensus --json output")
+    ap.add_argument("--track", default="",
+                    help="dump.csv from part B's pass; used to place the veto "
+                         "boxes in time (falls back to gdref)")
     ap.add_argument("--out-dir", default=str(LEVEL_DATA))
     a = ap.parse_args(argv)
     cen = Path(a.census) if a.census else None
+    trk = Path(a.track) if a.track else None
 
     for lv in a.levels:
         pts = from_fixups(lv) + from_census(cen, lv)
         deaths, boxes = from_coldlog(lv)
         pts += deaths
-        vt = veto_ticks(lv, boxes)
+        vt = veto_ticks(lv, boxes, trk)
         pts += vt
         wins = windows(pts)
         per = defaultdict(int)
