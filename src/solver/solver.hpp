@@ -551,13 +551,25 @@ inline void buildPois(GJBaseGameLayer* l) {
               // deg: the Rotate trigger's angle (id 1346). The one thing the
               // dump was missing to close the Rotate+Move composition; without
               // it the rotation has to be inferred from the recording.
+              // t360/lockrot: [2026-09-01, second pass] deg ALONE IS NOT THE
+              // ANGLE. m_rotationDegrees is only the remainder: whole turns
+              // live in m_times360, and a Rotate that turns a group by two full
+              // revolutions dumps deg=0. Measured on lv21 uid14789 -- deg=0,
+              // while its group's uid15367 is recorded turning from +90 to
+              // -629.997, i.e. -720 degrees. Eight of lv21's eighty Rotates are
+              // this shape, and they are ALL THREE of the rotates whose group
+              // also gets moved, so every subject that could test the
+              // composition was uncomputable from the dump. The total is
+              // m_times360 * 360 + m_rotationDegrees.
+              // m_lockObjectRotation says whether each object's own rotation
+              // follows the orbit, which decides its hitbox, not its centre.
               // ord/chan: the 2.2 trigger queue's ordering value and channel
               // (m_ordValue / m_channelValue). The queue's own build order is
               // NOT dumped -- setupLevelStart is not read yet -- so the
               // hypothesis 008/009 start from is "editor order = uid order",
               // and these two columns are what will confirm or refute it.
               // sord/sordd: the spawn ordering pair, same family.
-              "deg,ord,chan,sord,sordd\n";
+              "deg,ord,chan,sord,sordd,t360,lockrot\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -606,7 +618,9 @@ inline void buildPois(GJBaseGameLayer* l) {
                << e->m_gravityValue << "," << e->m_gravityMod << ","
                << e->m_rotationDegrees << "," << e->m_ordValue << ","
                << e->m_channelValue << "," << e->m_spawnOrder << ","
-               << (e->m_spawnOrdered ? 1 : 0) << "\n";
+               << (e->m_spawnOrdered ? 1 : 0) << ","
+               << e->m_times360 << ","
+               << (e->m_lockObjectRotation ? 1 : 0) << "\n";
             ++nTrig;
         }
         log::info("triggers: {} triggers with a target, {} grouped objects",
