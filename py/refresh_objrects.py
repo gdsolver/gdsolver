@@ -32,7 +32,11 @@ DUMPS = ("objrects.txt", "triggers.txt", "objgroups.txt", "obb.txt",
          # The level's own compatibility flags (kA39 and its siblings). One
          # value per level, so it is a file of its own rather than a column;
          # nothing reads it yet -- it is here for the day one of them is not 0.
-         "levelsettings.txt")
+         "levelsettings.txt",
+         # The 2.2 trigger queue's inputs for id 2899/2900. A file of its own
+         # because those objects have no target group and cannot go in
+         # triggers.txt without changing how dp resolves a uid (see solver.hpp).
+         "rotgameplay.txt")
 
 
 def refresh(level: int, worker_id: int, data_dir: Path, workers_root: Path,

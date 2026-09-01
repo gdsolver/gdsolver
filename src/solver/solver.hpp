@@ -594,6 +594,17 @@ inline void buildPois(GJBaseGameLayer* l) {
             // Next: hook `GJBaseGameLayer::flipGravity` (win 0x212b00) and look
             // directly at "who called it" (that settled the rotation sign in one
             // shot).
+            // TRIED AND REVERTED (2026-09-01): letting the rotation-gameplay
+            // pair (2899/2900) through this filter, so that 009 could read
+            // their channel and ordering. They have no target group, so all
+            // thirty of lv22's were being dropped -- but putting them in
+            // triggers.txt is NOT inert. dp's chain walks resolve a uid by
+            // asking whether it is a KNOWN TRIGGER (trig.find) and otherwise
+            // treat it as a moved object, so thirty new keys turned thirty
+            // objects into triggers, one touch chain came out empty, and lv22
+            // went 153 touch triggers to 152 -- quick_regress FAILED (tracked
+            // 16,886 -> 16,666). The family gets its own file below instead,
+            // which leaves this one byte-identical.
             if (!e || e->m_targetGroupID == 0) continue;
             auto tr = obj->getObjectRect();
             tf << obj->m_uniqueID << "," << obj->m_objectID << ","
@@ -625,6 +636,44 @@ inline void buildPois(GJBaseGameLayer* l) {
         }
         log::info("triggers: {} triggers with a target, {} grouped objects",
                   nTrig, nGrp);
+    }
+    // ---- rotgameplay.txt: the 2.2 trigger queue's inputs ---------------------
+    // 2900 (rotate gameplay) and 2899 carry no target group, so triggers.txt
+    // cannot hold them (see the note at that filter -- putting them there
+    // changes how dp's chain walks resolve a uid, and it cost lv22 a touch
+    // trigger). A file of their own, the way levelsettings.txt is.
+    //
+    // What the queue needs (checkSpawnObjects, 0x21a8f0): the ACTIVE CHANNEL is
+    // layer+0x33c and only rotateGameplay writes it, so each 2900 carries the
+    // channel it switches to; each tick the game walks that one channel's array
+    // from a per-channel counter and fires everything the player has passed.
+    // chan is m_channelValue and ord is m_ordValue; the array's own build order
+    // is NOT dumped (setupLevelStart is unread), which is the open question the
+    // model has to answer from uid order or from a measurement.
+    //
+    // spx = m_spawnXPosition, dumped to settle whether the fire point is a
+    // stored value or the object's own position: measured 0.000 on all thirty
+    // of lv22's, while their cx spans 2,143..22,603, so it is the position.
+    {
+        std::ofstream rf(std::string(DATA_DIR) + "/rotgameplay.txt",
+                         std::ios::trunc);
+        rf << "uid,id,cx,cy,chan,ord,sord,sordd,spx,target\n";
+        long long n = 0;
+        for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+            if (!obj || (obj->m_objectID != 2900 && obj->m_objectID != 2899))
+                continue;
+            auto* e = geode::cast::typeinfo_cast<EffectGameObject*>(obj);
+            if (!e) continue;
+            auto tr = obj->getObjectRect();
+            rf << obj->m_uniqueID << "," << obj->m_objectID << ","
+               << (tr.origin.x + tr.size.width * 0.5f) << ","
+               << (tr.origin.y + tr.size.height * 0.5f) << ","
+               << e->m_channelValue << "," << e->m_ordValue << ","
+               << e->m_spawnOrder << "," << (e->m_spawnOrdered ? 1 : 0) << ","
+               << e->m_spawnXPosition << "," << e->m_targetGroupID << "\n";
+            ++n;
+        }
+        if (n) log::info("rotgameplay: {} rotation-gameplay objects", n);
     }
     // ---- levelsettings.txt: the level's own compatibility flags -------------
     // Their own file rather than a column: they are ONE value per level, and
