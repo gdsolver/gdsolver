@@ -999,6 +999,84 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         if (n) std::printf("dynamics: %zu of %zu moving objects are rotated by "
                            "a trigger\n", n, L.dyn.size());
     }
+    // --rotcheck: does the COMPUTED orbit reproduce what GD recorded?
+    //
+    // The corpus-wide form of the harness that measured lv21 uid15367 to
+    // 0.0060 px (see RotSpec). It places nothing -- it only answers, per
+    // object, "if the model computed this orbit instead of replaying the
+    // recording, how far off would it be?", which is the number the switch-on
+    // has to be argued from.
+    //
+    // The centre's own motion is taken from ITS recording rather than
+    // re-derived, so the check isolates the rotation: an object whose centre is
+    // not recorded is reported as unchecked instead of being scored against a
+    // guess. The fire tick likewise comes from the object's own first recorded
+    // motion, because the phase (crossing + 1) is separately measured and is
+    // not what this check is about.
+    if (g_rotCheck && !g_rotSpec.empty()) {
+        std::unordered_map<int, size_t> idx;
+        for (size_t i = 0; i < L.dyn.size(); ++i) idx[L.dyn.objs[i].uid] = i;
+        size_t checked = 0, noCentre = 0, noRec = 0, pass = 0;
+        double worstAll = 0.0;
+        int worstUid = 0;
+        for (const auto& kv : g_rotSpec) {
+            const auto io = idx.find(kv.first);
+            const auto ic = idx.find(kv.second.centreUid);
+            if (io == idx.end() || L.dyn.samples[io->second].size() < 2) {
+                ++noRec;
+                continue;
+            }
+            if (ic == idx.end() || L.dyn.samples[ic->second].empty()) {
+                ++noCentre;
+                continue;
+            }
+            const auto& so = L.dyn.samples[io->second];
+            const auto& sc = L.dyn.samples[ic->second];
+            // centre position by tick, held between recorded rows (the recorder
+            // skips a row when the move since the last one is under its epsilon)
+            auto centreAt = [&](int t) {
+                const DynSample* best = &sc.front();
+                for (const DynSample& s : sc) {
+                    if (s.t > t) break;
+                    best = &s;
+                }
+                return std::pair<double, double>((double)best->cx, (double)best->cy);
+            };
+            // first motion of the object = its fire tick, to within recordLag
+            int t0 = so.front().t;
+            for (size_t k = 1; k < so.size(); ++k)
+                if (std::fabs((double)so[k].cx - (double)so[0].cx) > 1e-4
+                    || std::fabs((double)so[k].cy - (double)so[0].cy) > 1e-4) {
+                    t0 = so[k].t - 1;
+                    break;
+                }
+            const RotSpec& R = kv.second;
+            float x = so.front().cx, y = so.front().cy;
+            double worst = 0.0;
+            size_t si = 0;
+            for (int t = t0 + 1; t <= so.back().t; ++t) {
+                const auto cp = centreAt(t - 1), cn = centreAt(t);
+                const double th0 = -R.total * gdEase(R.ease, R.erate,
+                                                     (double)(t - 1 - t0) / R.durT);
+                const double th1 = -R.total * gdEase(R.ease, R.erate,
+                                                     (double)(t - t0) / R.durT);
+                rotStep(x, y, cp.first, cp.second, cn.first, cn.second,
+                        (th1 - th0) * 3.14159265358979 / 180.0);
+                while (si < so.size() && so[si].t < t) ++si;
+                if (si < so.size() && so[si].t == t) {
+                    const double d = std::hypot((double)x - (double)so[si].cx,
+                                                (double)y - (double)so[si].cy);
+                    worst = std::max(worst, d);
+                }
+            }
+            ++checked;
+            if (worst <= 0.1) ++pass;
+            if (worst > worstAll) { worstAll = worst; worstUid = kv.first; }
+        }
+        std::printf("rotcheck: %zu checked, %zu within 0.1px, worst %.4f px "
+                    "(uid %d); %zu unrecorded, %zu centre not recorded\n",
+                    checked, pass, worstAll, worstUid, noRec, noCentre);
+    }
     return L;
 }
 

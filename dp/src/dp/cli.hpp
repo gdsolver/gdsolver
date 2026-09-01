@@ -106,6 +106,10 @@ inline int cliMain(int argc, char** argv) {
         // --spddbg: one line per speed-portal candidate per tick, plus the
         // window size, plus which of the three gates rejected it.
         if (!std::strcmp(argv[i], "--spddbg")) g_spdDbg = true;
+        // --rotcheck: replay the computed orbit against every recorded rotated
+        // object at load and print the residual. Diagnostic only -- it does not
+        // place anything (see RotSpec).
+        if (!std::strcmp(argv[i], "--rotcheck")) g_rotCheck = true;
     }
     for (int i = 2; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--threads")) g_threads = std::atoi(argv[i + 1]);

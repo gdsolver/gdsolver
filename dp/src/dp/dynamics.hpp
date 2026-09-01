@@ -256,6 +256,65 @@ inline int g_touchFireT[32] = {-1, -1, -1, -1, -1, -1, -1, -1,
 // rotate on the same group (their recorded path missed the move-only formula by
 // 120 px). Filled by loadAutoTriggers, which walks the same chains.
 inline std::unordered_set<int> g_rotated;
+// What a Rotate does to one object, from the dump alone -- the input side of
+// the computed timeline that will replace the recording for these objects.
+//
+// MEASURED 2026-09-01 against grouptrace, lv21 uid15367 (in the turned group,
+// orbiting uid15390, both carried down 150 by the same move) over the full 960
+// ticks of a -720 degree turn:
+//
+//   the model today, best single shift of the recording   1.65-2.18 px
+//   closed form, absolute angle                           0.0142 px
+//   per-tick recurrence in double                         0.0142 px
+//   per-tick recurrence, position stored through float    0.0060 px
+//
+// The first two of those agree EXACTLY, which is what says the composition is
+// not where the last hundredth of a pixel lives: it is rounding. After a full
+// -720 the object should return to its entry point and GD leaves it at
+// (-0.005, +0.013) -- 960 ticks of a float store (the cvtpd2ps in GD's move
+// path). Hence the recurrence below, and hence `float` and not `double` for
+// the carried position.
+//
+// lv22 uid254 (7 degrees, BounceOut, over 120 ticks) reaches 0.0940 px by the
+// same route, and there the float store makes no difference at all -- 120
+// ticks of 7 degrees has nothing to accumulate. Its residual is the shape of
+// gdEase case 9 at rate 2, not the composition: the endpoint is exact
+// (R(-7 deg) on (0,162) predicts dx=+19.75/dy=-1.21, GD gives +19.743/-1.208)
+// and the object's move alone reproduces its cy to 1.208 px, which IS the
+// rotation's y-component. That easing is being re-read from the binary; until
+// it is, 0.0940 px is the expected value for a Bounce-eased rotate and not a
+// defect to chase.
+struct RotSpec {
+    int trigUid = 0;       // the Rotate, for reporting and for its fire tick
+    int centreUid = 0;     // the single object of the centre group
+    double total = 0.0;    // t360*360 + deg -- the WHOLE angle
+    double durT = 0.0;     // ticks
+    int ease = 0;
+    double erate = 2.0;
+    int lockrot = 0;       // does the object's own facing follow the orbit?
+};
+inline std::unordered_map<int, RotSpec> g_rotSpec;   // uid -> how it turns
+// Off by default. The computed timeline is not switched on until the Bounce
+// easing is settled: turning it on would bake that curve into every rotate.
+inline bool g_rotCompute = false;
+// Load-time self-check: replay the computed timeline against every recorded
+// rotated object and report the residual. The corpus-wide version of the
+// harness that measured the two objects above.
+inline bool g_rotCheck = false;
+
+// GD's rotation, one tick of it. `sign` is the mapping from the dump's angle to
+// a y-up rotation matrix, measured as -1 on both subjects (GD's positive turn
+// is clockwise on screen).
+//
+// The position is carried as float on purpose -- see the note above; it is the
+// difference between 0.0142 px and 0.0060 px on a 960-tick turn.
+inline void rotStep(float& x, float& y, double cxPrev, double cyPrev,
+                    double cxNow, double cyNow, double dTheta) {
+    const double c = std::cos(dTheta), s = std::sin(dTheta);
+    const double rx = (double)x - cxPrev, ry = (double)y - cyPrev;
+    x = (float)(cxPrev + c * rx - s * ry + (cxNow - cxPrev));
+    y = (float)(cyPrev + s * rx + c * ry + (cyNow - cyPrev));
+}
 // ON by default; --no-trigclosed restores the recording for A/B. For an
 // autonomously moved object the FORMULA places it, not the recording -- but
 // only where the object passes autoClosed (a per-object check at load).

@@ -93,6 +93,7 @@ inline void resetInvocationState() {
     g_recPhase = 0;
     g_autoTrig.clear();
     g_rotated.clear();
+    g_rotSpec.clear();
     g_trigClosed = true;
     g_trigRaw = false;
     g_dynDbg = -1;

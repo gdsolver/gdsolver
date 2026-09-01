@@ -156,6 +156,22 @@ struct TrigRow {
     double cx, cy, w, h, dur, ox, oy;
     int ease = 0; double erate = 2.0;
     int lockx = 0, locky = 0;
+    // Everything past locky is read only to REACH the angle: the columns are
+    // positional, so a reader that wants field 25 has to consume 18-24 too.
+    double grav = 1.0; int gravmod = 0;
+    // deg is NOT the angle -- it is the remainder of a whole turn. The turns
+    // live in t360, so the total is t360*360 + deg, and lv21's three rotates
+    // whose group is also moved all dump deg=0 with t360=+-2 (measured against
+    // the recording: uid15367 turns +90 -> -629.997). See solver.hpp's dumper.
+    double deg = 0.0;
+    int ord = 0, chan = 0, sord = 0, sordd = 0;
+    int t360 = 0;
+    // Does the object's own facing follow the orbit? Decides its hitbox, not
+    // its centre (lv22 uid254 travels its arc with rot pinned at 0).
+    int lockrot = 0;
+    // False when the dump predates the t360 column, i.e. "the angle in this row
+    // is not trustworthy" -- distinct from an angle that is genuinely zero.
+    bool hasAngle = false;
 };
 inline bool loadTrigRows(const std::string& path,
                          std::unordered_map<int, TrigRow>& trig) {
@@ -167,12 +183,18 @@ inline bool loadTrigRows(const std::string& path,
         TrigRow r{};
         const int n = std::sscanf(
             line.c_str(),
-            "%d,%d,%lf,%lf,%lf,%lf,%d,%d,%d,%d,%lf,%lf,%lf,%d,%lf,%d,%d",
+            "%d,%d,%lf,%lf,%lf,%lf,%d,%d,%d,%d,%lf,%lf,%lf,%d,%lf,%d,%d,"
+            "%lf,%d,%lf,%d,%d,%d,%d,%d,%d",
             &r.uid, &r.id, &r.cx, &r.cy, &r.w, &r.h, &r.target, &r.center,
             &r.touch, &r.spawn, &r.dur, &r.ox, &r.oy, &r.ease, &r.erate,
-            &r.lockx, &r.locky);
+            &r.lockx, &r.locky,
+            &r.grav, &r.gravmod, &r.deg, &r.ord, &r.chan, &r.sord, &r.sordd,
+            &r.t360, &r.lockrot);
         if (n < 13) continue;
         if (n < 15) { r.ease = 0; r.erate = 2.0; }
+        // 26 = through lockrot. Anything shorter predates the column and its
+        // deg (if any) is only part of the angle, so the angle is unusable.
+        r.hasAngle = (n >= 26);
         trig[r.uid] = r;
     }
     return true;
@@ -525,6 +547,7 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
     // worse than the recording as-is" still holds until it is proven on the
     // suite. GDSOLVER_LAB/notes/measure-rotate-1346-2026-08-28.md.
     g_rotated.clear();
+    g_rotSpec.clear();
     for (const auto& kv : trig) {
         const TrigRow& T = kv.second;
         if (T.id != 1346 || T.target == 0) continue;
@@ -532,6 +555,29 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
         rot.uid = T.uid;
         rot.cx = T.cx;
         rot.delay = 1;            // measured, see above
+        // The centre group must hold EXACTLY ONE object for the orbit to have a
+        // pivot at all. Measured: it always does where a rotate carries a group
+        // (lv21 g101={15390}, g104, g110; lv22 g47/g48/g49), and where it does
+        // not the group id is 0 -- a rotate about the object's own position,
+        // which moves nothing and needs no spec.
+        int centre = 0;
+        if (T.center != 0) {
+            const auto cg = byGroup.find(T.center);
+            if (cg != byGroup.end() && cg->second.size() == 1)
+                centre = cg->second.front();
+        }
+        RotSpec spec;
+        spec.trigUid = T.uid;
+        spec.centreUid = centre;
+        spec.total = (double)T.t360 * 360.0 + T.deg;
+        spec.durT = T.dur * 240.0;
+        spec.ease = T.ease;
+        spec.erate = T.erate;
+        spec.lockrot = T.lockrot;
+        // No angle means the dump predates t360, and `deg` alone would be the
+        // remainder of a turn -- silently wrong rather than absent. Refuse the
+        // spec instead, so the recording stays in charge for that object.
+        const bool usable = T.hasAngle && centre != 0 && spec.durT > 0.0;
         const bool autonomous = (!T.touch && !T.spawn);
         std::vector<int> stack{T.target};
         int guard = 0;
@@ -546,6 +592,9 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
                     stack.push_back(t2->second.target);
                 else {
                     g_rotated.insert(uid);
+                    // The pivot is not carried by its own rotation, so a spec
+                    // for it would place it on top of itself.
+                    if (usable && uid != centre) g_rotSpec[uid] = spec;
                     if (autonomous) {
                         TrigCtl c{};
                         c.uid = uid;
@@ -562,6 +611,10 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
         std::printf("autotrig: %zu autonomous moves (first x=%.0f, last x=%.0f),"
                     " %zu uids turned by a rotate\n",
                     out.size(), out.front().cx, out.back().cx, g_rotated.size());
+    if (!g_rotated.empty())
+        std::printf("rotspec: %zu of %zu turned uids have a computable orbit "
+                    "(centre + whole angle)\n", g_rotSpec.size(),
+                    g_rotated.size());
     return out;
 }
 
