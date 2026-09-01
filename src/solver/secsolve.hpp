@@ -106,6 +106,22 @@ inline int g_spineNext = -1;         // ...and the child that continues it
 // derived -- see the note at the lookup.
 inline int g_spineOff = -1;   // MEASURED: -1 tracks all 60 layers to 0.0499 px;
                               // 0 and +1 lose it at depth 10 and 9, +2 at 25 px
+// cfg `secdeadline=<seconds>`: give the search its own clock and let it STOP
+// ITSELF, reporting what it reached. 0 = no deadline (the old behaviour).
+//
+// Why the search needs one when the caller already has a timeout: a caller's
+// timeout kills the session, and a killed session writes no verdict line -- the
+// depth reached, the frontier, the spine's tracking, all of it is lost. Measured
+// on the first night of the 017 queue: 5 of 7 windows hit the 90-minute session
+// timeout and came back NO-VERDICT, so the night's most common outcome carried
+// no information at all beyond "not within 90 minutes".
+//
+// With a deadline the search stops at a layer boundary and reports normally.
+// It also projects: at layer L, "elapsed per layer x the layers still needed"
+// says whether the horizon can be reached at all, and a run that cannot make it
+// is stopped THERE rather than at the deadline. Same information, minutes
+// instead of an hour.
+inline double g_deadlineSec = 0.0;
 inline bool g_verify = false;        // cfg `secverify=1`: no search, only check
                                      // restore fidelity
 // cfg `seclog=1`: emit the per-layer breakdown. Whether THE CAP IS BINDING OR

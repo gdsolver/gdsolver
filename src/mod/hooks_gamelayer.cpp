@@ -2347,6 +2347,9 @@ class $modify(GJBaseGameLayer) {
         double foundX = 0.0;
         int foundDepth = 0;
         int deepest = 0;
+        // Why the search stopped, for the report line: "none" is the ordinary
+        // end (exhausted, or a leaf crossed). See g_deadlineSec.
+        const char* stopWhy = "none";
         // Results of the leaf cross-check (filled by evalLeaf below). Used in the report.
         g_leafVerified = false;
         g_leafDeadAt = -1;
@@ -2525,6 +2528,29 @@ class $modify(GJBaseGameLayer) {
             layMaxX = deadMaxX = 0.0;
             layMinY = 1e9; layMaxY = -1e9; layMinX = 1e9;
             g_depth = depth;
+            // The search's own clock (cfg `secdeadline`). Checked HERE, at the
+            // top of a layer, because this is the one place where `cur` is the
+            // live frontier and `nxt` is empty -- breaking anywhere later would
+            // leave the next layer's checkpoints unreleased.
+            const double elapsedS = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t0).count();
+            if (g_deadlineSec > 0.0 && depth > 1) {
+                if (elapsedS >= g_deadlineSec) { stopWhy = "deadline"; break; }
+                // ...and the projection: at this rate, can the horizon be
+                // reached at all before the deadline? Checked every 20 layers
+                // rather than every layer so that early noise cannot end a
+                // search that is merely warming up.
+                if (depth >= 40 && depth % 20 == 0) {
+                    const double perLayer = elapsedS / (double)(depth - 1);
+                    if (elapsedS + perLayer * (double)(g_horizon - depth + 1)
+                        > g_deadlineSec) {
+                        stopWhy = "projected";
+                        break;
+                    }
+                }
+            }
+            const double layerT0 = elapsedS;
+            const long long layerR0 = restores;
             for (int ni : cur) {
                 if (foundLeaf >= 0) break;
                 // Hand the frame back BETWEEN EXPANSIONS as well, not only between layers. A
@@ -3080,18 +3106,27 @@ class $modify(GJBaseGameLayer) {
                     cntHi = std::max(cntHi, c);
                 }
                 if (cntLo > cntHi) { cntLo = 0; cntHi = 0; }
-                char lb[288];
+                // lms / lrest: what this layer COST, not just what it produced.
+                // Without them "the depth rate varies 17-fold between windows"
+                // cannot be split into "restores got slower" and "there are more
+                // of them per layer", and those two have different fixes.
+                const double layerMs = (std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t0).count()
+                    - layerT0 * 1000.0);
+                char lb[352];
                 snprintf(lb, sizeof(lb),
                          "seclayer: d=%d parents=%zu keep=%zu dead=%d dup=%d "
                          "capped=%d x=%.1f y=%.1f..%.1f deadX=%.1f fp=%016llx "
-                         "xr=%.1f..%.1f axis=%c cnt=%d..%d spine=%d spineY=%.1f",
+                         "xr=%.1f..%.1f axis=%c cnt=%d..%d spine=%d spineY=%.1f "
+                         "lms=%.0f lrest=%lld",
                          depth, cur.size(), nxt.size(), layDead, layDup, layCap,
                          layMaxX, layMinY > 1e8 ? 0.0 : layMinY,
                          layMaxY < -1e8 ? 0.0 : layMaxY, deadMaxX,
                          (unsigned long long)fp,
                          layMinX > 1e8 ? 0.0 : layMinX, layMaxX,
                          capByX ? 'x' : 'y', cntLo, cntHi, g_spineNext,
-                           g_spineNext >= 0 ? (double)g_nodes[(size_t)g_spineNext].y : -1.0);
+                           g_spineNext >= 0 ? (double)g_nodes[(size_t)g_spineNext].y : -1.0,
+                         layerMs, restores - layerR0);
                 writeResult(lb);
             }
             for (int ni : cur) releaseCp(ni);          // the previous layer is no longer needed
@@ -3137,14 +3172,14 @@ class $modify(GJBaseGameLayer) {
         // foundVy, so the match failed, and a solution that passed the cross-check was
         // discarded as "no verdict" and re-solved with the checkpoint (2026-08-08; burned
         // an hour of lv20). When adding long lines, check the buffer too.
-        char b[640];
+        char b[704];
         snprintf(b, sizeof(b),
                  "secsolve: %s prim=%s movSet=%zu depth=%d/%d frontier=%zu restores=%lld "
                  "steps=%lld cps=%lld cpPeak=%lld freeze=%d ms=%.0f "
                  "rephases=%lld maskShrinks=%d ckptTick=%lld inputBase=%lld targetX=%.1f "
                  "foundX=%.1f foundTick=%lld foundY=%.3f foundVy=%.3f "
                  "targetY=%.1f targetYDir=%d targetDepth=%d grace=%d/%d "
-                 "doomedLeaves=%lld killAboveY=%.0f psnapDrift=%.2f",
+                 "doomedLeaves=%lld killAboveY=%.0f psnapDrift=%.2f stop=%s",
                  // A solution that failed the cross-check is never called SOLVED. The
                  // caller looks only at the verdict, so rejecting it here makes it
                  // structurally impossible for a false solution to be grafted.
@@ -3190,7 +3225,7 @@ class $modify(GJBaseGameLayer) {
                                 : (foundLeaf >= 0
                                    ? (double)g_nodes[(size_t)foundLeaf].vy : 0.0),
                  g_targetY, g_targetYDir, g_targetDepth, graceOk, graceDeadAt,
-                 doomedLeaves, killAboveY, maxVerifyDrift);
+                 doomedLeaves, killAboveY, maxVerifyDrift, stopWhy);
         writeResult(b);
         if (foundLeaf >= 0) {
             char vb[280];
