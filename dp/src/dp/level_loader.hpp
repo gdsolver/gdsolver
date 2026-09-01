@@ -230,7 +230,26 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                              && tit->second.aAnchor >= 0;
         const auto it = (gt && o.uid >= 0) ? gt->find(o.uid) : GroupTimeline::const_iterator();
         const bool timed = gt && o.uid >= 0 && it != gt->end() && !it->second.empty();
-        if (!controlled && !autoCtl && !timed) {
+        // A turned object with a computable orbit belongs in dyn even with no
+        // recording of its own -- that is the whole point: 806 of lv21's and
+        // 264 of lv22's have none, and static is the one thing they are not.
+        // Only when its CENTRE is recorded, though: without the centre's motion
+        // the orbit cannot be evaluated, and an object routed here that then
+        // gets no timeline would be worse off than static (dynObj=1 changes the
+        // fixup gating and the collision path). Those wait for stage 2.
+        bool rotComputable = false;
+        if (g_rotCompute && o.uid >= 0) {
+            const auto rs = g_rotSpec.find(o.uid);
+            if (rs != g_rotSpec.end()) {
+                ++g_rotSeen;
+                if (gt) {
+                    const auto ct = gt->find(rs->second.centreUid);
+                    rotComputable = (ct != gt->end() && !ct->second.empty());
+                }
+                if (rotComputable) ++g_rotRouted;
+            }
+        }
+        if (!controlled && !autoCtl && !timed && !rotComputable) {
             switch (bucket) {
                 case Dynamics::NEAR:  L.objs.push_back(o); break;
                 case Dynamics::PORT:  L.portals.push_back(o); break;
@@ -998,6 +1017,36 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         for (uint8_t v : L.dyn.everRot) n += (v != 0);
         if (n) std::printf("dynamics: %zu of %zu moving objects are rotated by "
                            "a trigger\n", n, L.dyn.size());
+    }
+    // Resolve each orbit against the loaded level: which g_autoTrig entry gives
+    // the Rotate its fire tick, where the centre ended up in dyn, and the
+    // entry-relative vector the rotation turns. A spec that cannot be resolved
+    // keeps anchor/centreIdx at -1 and places nothing, so the object stays
+    // exactly as it was.
+    {
+        std::unordered_map<int, size_t> idx;
+        for (size_t i = 0; i < L.dyn.size(); ++i) idx[L.dyn.objs[i].uid] = i;
+        size_t armed = 0;
+        for (auto& kv : g_rotSpec) {
+            RotSpec& R = kv.second;
+            const auto io = idx.find(kv.first), ic = idx.find(R.centreUid);
+            if (io == idx.end() || ic == idx.end()) continue;
+            if (L.dyn.samples[ic->second].empty()) continue;
+            for (size_t a = 0; a < g_autoTrig.size(); ++a)
+                if (g_autoTrig[a].uid == R.trigUid) { R.anchor = (int)a; break; }
+            if (R.anchor < 0) continue;          // touch-fired: stage 2
+            R.centreIdx = (int)ic->second;
+            R.relX = L.dyn.samples[io->second][0].cx
+                   - L.dyn.samples[ic->second][0].cx;
+            R.relY = L.dyn.samples[io->second][0].cy
+                   - L.dyn.samples[ic->second][0].cy;
+            ++armed;
+        }
+        if (g_rotCompute && !g_rotSpec.empty())
+            std::printf("rotplace: %zu of %zu orbits armed (autonomous rotate "
+                        "+ recorded centre); %zu spec'd objects reached the "
+                        "router, %zu were routed into dyn\n",
+                        armed, g_rotSpec.size(), g_rotSeen, g_rotRouted);
     }
     // --rotcheck: does the COMPUTED orbit reproduce what GD recorded?
     //

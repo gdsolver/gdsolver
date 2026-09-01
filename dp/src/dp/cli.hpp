@@ -110,6 +110,9 @@ inline int cliMain(int argc, char** argv) {
         // object at load and print the residual. Diagnostic only -- it does not
         // place anything (see RotSpec).
         if (!std::strcmp(argv[i], "--rotcheck")) g_rotCheck = true;
+        // --no-rotcompute: back to the recording (or to standing still) for
+        // every turned object, for A/B against the computed orbit.
+        if (!std::strcmp(argv[i], "--no-rotcompute")) g_rotCompute = false;
     }
     for (int i = 2; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--threads")) g_threads = std::atoi(argv[i + 1]);

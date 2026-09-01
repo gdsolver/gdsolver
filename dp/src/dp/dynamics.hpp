@@ -292,15 +292,40 @@ struct RotSpec {
     int ease = 0;
     double erate = 2.0;
     int lockrot = 0;       // does the object's own facing follow the orbit?
+    // Resolved at load, once the objects are placed:
+    int anchor = -1;       // g_autoTrig index of the Rotate (-1 = not autonomous)
+    int centreIdx = -1;    // index into dyn of the centre object
+    float relX = 0.f, relY = 0.f;   // entry position MINUS the centre's entry
 };
 inline std::unordered_map<int, RotSpec> g_rotSpec;   // uid -> how it turns
-// Off by default. The computed timeline is not switched on until the Bounce
-// easing is settled: turning it on would bake that curve into every rotate.
+// OFF, and the reason is not the physics -- it is that ADDING a rotation in the
+// placement path double-applies it. Every collidable turned object in the
+// corpus HAS a recording, and a recording is GD's own answer with the orbit
+// already in it; turning it again on top is simply wrong. deathref caught it
+// in one run: lv21_t13304 PASS -> FAIL, the model killed at t=12,980 against
+// GD's 13,416, a rotated hazard swung twice as far as it should.
+//
+// The population makes this decisive rather than a tuning matter. Of lv21's
+// 872 computable orbits, 806 are type 7 -- DECORATION, which the loader never
+// admits and which therefore costs nothing standing still; the collidable ones
+// are 62 hazards + 4 (type 47), all recorded. lv22 is 264 decoration and 9
+// solids, all recorded. So there is no population of "turned objects the model
+// holds still": the whole set is 75 objects that already have GD's answer.
+//
+// What 008 is actually worth is therefore RE-TIMING, not motion: a recording
+// is one run's timeline, and one shift cannot carry a rotate and a move that
+// cross at different x (1.65-2.18 px). Capturing that means REPLACING those
+// objects' samples with rows computed from the definitions, each trigger on
+// its own fire tick -- not adding a rotation to the placement path. That is a
+// different change, and it is the one to make.
 inline bool g_rotCompute = false;
 // Load-time self-check: replay the computed timeline against every recorded
 // rotated object and report the residual. The corpus-wide version of the
 // harness that measured the two objects above.
 inline bool g_rotCheck = false;
+// Load-time counters, so "the orbit did not arm" can be told apart from "the
+// object never reached the router".
+inline size_t g_rotSeen = 0, g_rotRouted = 0;
 
 // GD's rotation, one tick of it. `sign` is the mapping from the dump's angle to
 // a y-up rotation matrix, measured as -1 on both subjects (GD's positive turn
@@ -879,6 +904,75 @@ struct Dynamics {
             // no amount of reasoning about the composition rules substitutes
             // for (the switch-band phantom survived three composition fixes
             // that were all aimed at the wrong mechanism).
+            // ---- the ROTATION, after whatever produced the translation ------
+            // A Rotate carries its group around a centre object, which no
+            // offset describes: 806 of lv21's turned objects and 264 of lv22's
+            // have no recording at all, so until this ran the model held them
+            // PERFECTLY STILL while GD swung them. Applied here, after the
+            // branches above, so it composes with any of them rather than
+            // being duplicated into each.
+            //
+            // The centre is evaluated from its own entry plus its own
+            // controllers rather than read out of objs[centreIdx]: this loop
+            // has no order guarantee, so the centre may not have been placed
+            // yet on this tick.
+            //
+            // Closed form, not the per-tick recurrence. The recurrence with a
+            // float store is 0.0060 px against GD and this is 0.0142 px (see
+            // RotSpec), but the recurrence needs a sequential carry and this
+            // path is idempotent and may be entered with a jumped tick. 0.0142
+            // against the 1.65-2.18 px a re-timed recording leaves is the
+            // trade; the remaining eight thousandths wait for a table.
+            if (g_rotCompute && !g_rotSpec.empty()) {
+                const auto rs = g_rotSpec.find(objs[i].uid);
+                if (rs != g_rotSpec.end() && rs->second.anchor >= 0
+                    && rs->second.centreIdx >= 0) {
+                    const RotSpec& R = rs->second;
+                    const int f = g_autoTrig[(size_t)R.anchor].fireT;
+                    if (f >= 0 && t >= f) {
+                        const size_t ci = (size_t)R.centreIdx;
+                        double ccx, ccy;
+                        if (samples[ci].size() > 1) {
+                            // The centre has a recording of its own, and seek()
+                            // has already placed it for this tick. Use it.
+                            //
+                            // Deriving it analytically instead was WRONG and
+                            // deathref caught it: a centre whose motion is
+                            // recorded rather than trigger-controlled has no
+                            // autoParts, so the analytic form pinned it at its
+                            // entry and the whole orbit hung off the wrong
+                            // point. lv21_t13304 went PASS -> FAIL (died -436)
+                            // -- an over-kill, a rotated hazard swung through
+                            // the player because its centre never moved.
+                            ccx = objs[ci].cx;
+                            ccy = objs[ci].cy;
+                        } else {
+                            ccx = samples[ci][0].cx;
+                            ccy = samples[ci][0].cy;
+                            for (const AutoPart& p : autoParts[ci]) {
+                                const int cf = g_autoTrig[(size_t)p.trig].fireT;
+                                if (cf < 0 || t < cf) continue;
+                                const double e = (p.dur > 0.0)
+                                    ? gdEase(p.ease, p.erate,
+                                             (double)(t - cf) / p.dur)
+                                    : 1.0;
+                                ccx += p.dx * e;
+                                ccy += p.dy * e;
+                            }
+                        }
+                        // sign: GD's positive turn is clockwise on screen, the
+                        // opposite of a y-up matrix. Measured -1 on both
+                        // subjects (lv21 uid15367, lv22 uid254).
+                        const double th = -R.total
+                            * gdEase(R.ease, R.erate, (double)(t - f) / R.durT)
+                            * 3.14159265358979 / 180.0;
+                        const double c = std::cos(th), s = std::sin(th);
+                        const double rx = cx - ccx, ry = cy - ccy;
+                        cx = ccx + c * rx - s * ry;
+                        cy = ccy + s * rx + c * ry;
+                    }
+                }
+            }
             if (g_shiftDbgUid >= 0 && objs[i].uid == g_shiftDbgUid
                 && t % 20 == 0)
                 std::printf("dynpos: uid=%d t=%d cx=%.2f cy=%.2f on=%d\n",
