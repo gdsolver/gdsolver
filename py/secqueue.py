@@ -1,0 +1,343 @@
+"""Walk a level's section windows, cross each one with GD, and write the tables.
+
+    python py/secqueue.py --level 22                 # the whole list, Wine
+    python py/secqueue.py --level 22 --limit 3       # the top 3 by priority
+    python py/secqueue.py --level 22 --venue windows # ...on a Windows worker
+
+The windows come from py/sections.py (fixups, census, deaths, veto boxes). For
+each one the section solver is asked to get from the window's entry tick to the
+window's exit x, using GD itself as the transition function; the input sequence
+it finds is spliced into the plan and replayed on BOTH sides, so the output per
+window is "did GD get through, and where does the model disagree with GD along
+the path it got through by".
+
+WHAT IS AND IS NOT COLD. This is a measurement pass, not a solve: the verified
+solution is replayed to place the entry checkpoint, and it is the spine that
+keeps a window from coming back EXHAUSTED for want of the right dedupe
+representative. Nothing here produces a solution or feeds one to the solver.
+
+THE SPINE IS A CONFIGURATION GATE, NOT A RESULT. A window whose spine stops
+tracking the head run before the exit is reported INVALID-CONFIG and its diff
+table is left out of the aggregate: when the pinned rollout drifts, the search
+is no longer exploring from the state it believes it is, and its divergences say
+more about the harness than about the model. This is the standing invariant of
+brief-017 part C written into the data format, so that a night that quietly
+loses it cannot be read in the morning as a night that measured something.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+_PY = Path(__file__).resolve().parent
+sys.path.insert(0, str(_PY))
+sys.path.insert(0, str(_PY.parent / "mcp"))     # gdmcp.data.diff_trace
+
+import fidelity_diff as FD                                     # noqa: E402
+from gdmcp.data import diff_trace                              # noqa: E402
+from gdtas import plan as P                                    # noqa: E402
+from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT  # noqa: E402
+
+# The gate: how far the spine may drift from the head run and still count.
+SPINE_TOL = 0.05
+# Divergence tolerance for the model-vs-GD table (fidelity_diff's own default).
+DIFF_TOL = 0.5
+
+# notrace=1 by default: a search writes 32 MB of trace and 15 MB of dump per
+# window for a trajectory nobody reads, and the two replays that DO need a dump
+# strip the key (see window_diff and the head run).
+BASE = ["attempts=1", "quitwhendone=1", "blockinput=1", "cbs=0", "cos=1",
+        "fastdt=0.0166667", "fastloops=1", "skiprender=1", "solve=0",
+        "music=mute", "coins=0", "notrace=1"]
+# The replays do not need fastloops=1. That is the SEARCH's requirement -- a
+# checkpoint can only be dropped on a frame boundary, so one tick per call is
+# what makes `checkpointat` land on the tick asked for. A plain replay at
+# fastloops=1 runs the level in real time (9 minutes for lv22); at 1800, which
+# is what fidelity_diff uses, it is under a minute, and over 57 windows with two
+# replays each that is the difference between a night and two.
+REPLAY_BASE = [c if c != "fastloops=1" else "fastloops=1800"
+               for c in BASE if c != "notrace=1"]
+
+
+def log(m: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+def read_dump(path: Path) -> dict[int, tuple[float, float]]:
+    """tick -> (x, y) from a GD dump."""
+    import csv
+    out = {}
+    with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
+        for r in csv.DictReader(f):
+            try:
+                out[int(r["tick"])] = (float(r["x"]), float(r["y"]))
+            except (KeyError, ValueError):
+                continue
+    return out
+
+
+def plan_held(inputs: list[tuple[int, int]], t: int) -> int:
+    """What the plan is holding at absolute tick t."""
+    held = 0
+    for step, down in inputs:
+        if step > t:
+            break
+        held = down
+    return held
+
+
+def spine_gate(lines: list[str], head: dict[int, tuple[float, float]],
+               want_depth: int) -> dict:
+    """Read the `robodbg` lines back and say whether the spine held to the exit.
+
+    The search's own lines are labelled with the tick they correspond to (see
+    the note where they are printed), so this is a straight lookup into the head
+    run's dump -- no alignment to decide here, which is the point of having the
+    mod do the labelling.
+    """
+    worst, worst_t, deepest, seen = 0.0, -1, -1, 0
+    for ln in lines:
+        m = re.search(r"robodbg: t=(\d+) sec=1 d=(-?\d+) y=([-\d.]+)", ln)
+        if not m:
+            continue
+        t, d, y = int(m.group(1)), int(m.group(2)), float(m.group(3))
+        if t not in head:
+            continue
+        seen += 1
+        deepest = max(deepest, d)
+        dy = abs(y - head[t][1])
+        if dy > worst:
+            worst, worst_t = dy, t
+    # want_depth is the reported depth MINUS ONE. The last layer stops at the
+    # first leaf that verifies -- the search breaks out of the node loop there --
+    # so if the crossing node is stepped before the spine's node in that layer,
+    # the spine never takes its own step at the final depth. Measured on the
+    # first window: depth 584, spine samples 1..583, worst |dy| 5e-05. Requiring
+    # 584 called a perfectly tracking spine BROKEN.
+    ok = seen > 0 and worst <= SPINE_TOL and deepest >= want_depth
+    return {"ok": ok, "worst_dy": round(worst, 6), "worst_t": worst_t,
+            "depth": deepest, "samples": seen, "want_depth": want_depth}
+
+
+def splice(inputs: list[tuple[int, int]], base: int,
+           seq: list[int]) -> list[tuple[int, int]]:
+    """chain_secsolve's splice, unchanged: depth i is absolute tick base+i."""
+    kept = [(t, d) for t, d in inputs if t < base]
+    held = kept[-1][1] if kept else 0
+    for i, v in enumerate(seq):
+        if v != held:
+            kept.append((base + i, v))
+            held = v
+    return kept
+
+
+def branch_depth(inputs: list[tuple[int, int]], base: int,
+                 seq: list[int]) -> int:
+    """First point at which the crossing differs from the verified solution.
+
+    The returned index is 0-based over the sequence, which is depth-1: the input
+    at index i is the absolute tick base+i, and the layer at depth d applies the
+    plan's input at base+d-1 (measured, see secspineoff). The two agree, which is
+    the only reason this comparison means anything.
+
+    -1 means the search came back along the solution's own inputs. Anything else
+    is a window where GD got through by a DIFFERENT route, which is where an
+    over-kill in the model would show up: the loop's path is not the only one.
+    """
+    for i, v in enumerate(seq):
+        if v != plan_held(inputs, base + i):
+            return i
+    return -1
+
+
+def run_window(a, win: dict, inputs: list[tuple[int, int]],
+               head: dict[int, tuple[float, float]], session, out_dir: Path) -> dict:
+    t0, t1 = win["t0"], win["t1"]
+    if t1 not in head or t0 not in head:
+        return {"t0": t0, "t1": t1, "verdict": "NO-HEAD"}
+    target = head[t1][0]
+    horizon = t1 - t0 + 40
+    cfg = ["enabled=1", f"level={a.level}"] + BASE + [
+        f"practiceat={max(1, t0 - 100)}", f"checkpointat={t0}",
+        "secsolve=1", "seclog=1", f"secstart={t0}", f"sectarget={target:.3f}",
+        f"sechorizon={horizon}", f"seccap={a.cap}",
+        f"robodbg={t0},{t1}"] + [f"input={t},{d}" for t, d in inputs]
+    t_start = time.time()
+    res = session(cfg, a.timeout)
+    out = {"t0": t0, "t1": t1, "targetX": round(target, 2), "cap": a.cap,
+           "horizon": horizon, "priority": win.get("priority"),
+           "sources": win.get("sources"), "verdict": "NO-VERDICT",
+           "wall_s": round(time.time() - t_start, 1)}
+    seq: list[int] = []
+    for ln in res.lines:
+        m = re.search(r"secsolve: (\w+) .*?depth=(\d+)/.*?ms=(\d+) .*?"
+                      r"inputBase=(-?\d+).*?foundX=([-\d.]+) foundTick=(-?\d+)", ln)
+        if m:
+            out.update(verdict=m.group(1), depth=int(m.group(2)),
+                       ms=int(m.group(3)), base=int(m.group(4)),
+                       foundX=float(m.group(5)), foundTick=int(m.group(6)))
+        m = re.search(r"secsolve_inputs: ([01,]+)", ln)
+        if m:
+            seq = [int(c) for c in m.group(1).split(",") if c]
+    out["spine"] = spine_gate(res.lines, head, max(0, out.get("depth", 0) - 1))
+    if out["verdict"] == "SOLVED" and seq:
+        base = out["base"]
+        out["branchDepth"] = branch_depth(inputs, base, seq)
+        plan_out = out_dir / f"w{t0}.plan.txt"
+        P.write_plan(plan_out, P.format_plan(splice(inputs, base, seq)))
+        out["plan"] = plan_out.name
+        if not out["spine"]["ok"]:
+            out["verdict"] = "INVALID-CONFIG"
+        elif not a.no_diff:
+            out["diff"] = window_diff(a, plan_out, out_dir / f"w{t0}", t0,
+                                      out["foundTick"], session)
+    elif out["verdict"] == "SOLVED":
+        out["verdict"] = "NO-INPUTS"
+    return out
+
+
+def window_diff(a, plan_out: Path, out_base: Path, t0: int, t1: int,
+                session) -> dict:
+    """Model vs GD along the path GD actually got through by, within the window.
+
+    Both sides replay the SAME spliced plan from the head of the level, so
+    nothing is anchored and no start state has to be transplanted -- the anchor
+    is where this kind of measurement usually goes wrong.
+    """
+    dump_dst = Path(str(out_base) + ".dump.csv")
+    # grouptrace=1: record the moving geometry ON THIS RUN. The level's canonical
+    # recording is a DIFFERENT WORLDLINE once the crossing leaves the solution's
+    # route, and a model replay without the right recording sees static geometry
+    # and returns nothing but divergences -- which would read as a rich diff
+    # table and mean nothing at all.
+    cfg = (["enabled=1", f"level={a.level}", "grouptrace=1"] + REPLAY_BASE
+           + P.read_input_lines(plan_out))
+    res = session(cfg, a.timeout)
+    if not FD.copy_held_file(res.data_root / "dump.csv", dump_dst):
+        return {"error": "no dump"}
+    groups = Path(str(plan_out) + ".groups.live.txt")
+    got_groups = False
+    for name in ("grouptrace_last.txt", "grouptrace.txt"):
+        if FD.copy_held_file(res.data_root / name, groups):
+            got_groups = True
+            break
+    if not got_groups:
+        return {"error": "no grouptrace - model would see static geometry"}
+    trace, died, _ = FD.model_replay(a.level, plan_out, out_base,
+                                     Path(a.leveldp), False)
+    d = diff_trace(trace, dump_dst, t0=t0, t1=t1, tol=DIFF_TOL, limit=10 ** 9)
+    rows = d.get("rows") or []
+    # The recording is ~24 MB per window and is only needed for the replay above.
+    groups.unlink(missing_ok=True)
+    return {"modelDied": died, "firstDiv": d.get("first_divergence"),
+            "cols": d.get("cols"), "common": d.get("common"),
+            "rows": len(rows), "table": rows[:40]}
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--level", type=int, required=True)
+    ap.add_argument("--venue", choices=("wine", "windows"), default="wine",
+                    help="Wine is the default: a night-long queue is what that "
+                         "standing ruling exists for")
+    ap.add_argument("--worker", type=int, default=99)
+    ap.add_argument("--cap", type=int, default=100)
+    ap.add_argument("--limit", type=int, default=0, help="0 = every window")
+    ap.add_argument("--windows", default="", help="comma-separated t0 to run")
+    ap.add_argument("--timeout", type=float, default=5400.0)
+    ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
+    ap.add_argument("--out-dir", default="")
+    ap.add_argument("--no-diff", action="store_true",
+                    help="crossings only, skip the model/GD tables")
+    a = ap.parse_args(argv)
+
+    out_dir = Path(a.out_dir) if a.out_dir else LEVEL_DATA / f"secqueue_lv{a.level}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wins = json.loads((LEVEL_DATA / f"sections_lv{a.level}.json").read_text("utf-8"))
+    wins.sort(key=lambda w: -w.get("priority", 0))
+    if a.windows:
+        want = {int(x) for x in a.windows.split(",") if x.strip()}
+        wins = [w for w in wins if w["t0"] in want]
+    if a.limit:
+        wins = wins[:a.limit]
+
+    plan_path = DATA / f"solution_lv{a.level}_dp.txt"
+    inputs = [(t, d) for t, d in P.read_inputs(plan_path)]
+
+    if a.venue == "wine":
+        sys.path.insert(0, str(Path(r"C:\GD-lab\oneoff\py")))
+        import wine_suite as WS
+        WS.deploy()
+        WS.check_deployed()
+
+        def session(cfg, timeout):
+            # Wipe before EVERY session, not once per queue. The dump is copied
+            # out of the data dir after the run, and a session that fails to
+            # write one would otherwise hand back the previous window's -- the
+            # exact shape of "measure the instrument before believing it".
+            WS.wine_wipe(a.worker)
+            return WS.wine_run_session(a.worker, cfg, timeout_s=timeout,
+                                       done_marker="session_end")
+    else:
+        from gdtas.worker import run_session
+
+        def session(cfg, timeout):
+            return run_session(a.worker, cfg, timeout_s=timeout,
+                               workers_root=WORKERS_ROOT)
+
+    # The head run: one plain replay, kept for the whole queue. Every window's
+    # target x and every spine comparison is read out of it, so it is measured
+    # once on the venue the queue runs on rather than assumed from elsewhere.
+    head_dump = out_dir / "head.dump.csv"
+    if not head_dump.exists():
+        log("head run")
+        res = session(["enabled=1", f"level={a.level}"] + REPLAY_BASE
+                      + P.read_input_lines(plan_path), a.timeout)
+        if not FD.copy_held_file(res.data_root / "dump.csv", head_dump):
+            log("FATAL: no head dump")
+            return 2
+    head = read_dump(head_dump)
+    log(f"head: {len(head)} ticks, {len(wins)} windows, venue={a.venue}")
+
+    index = out_dir / "index.jsonl"
+    done = set()
+    if index.exists():
+        for ln in index.read_text("utf-8").splitlines():
+            try:
+                done.add(json.loads(ln)["t0"])
+            except (ValueError, KeyError):
+                continue
+    for i, w in enumerate(wins, 1):
+        if w["t0"] in done:
+            log(f"[{i}/{len(wins)}] t0={w['t0']} already done, skipping")
+            continue
+        log(f"[{i}/{len(wins)}] t0={w['t0']}..{w['t1']} "
+            f"(priority {w.get('priority')})")
+        # One window must not be able to end the night. A crash here is recorded
+        # as this window's verdict and the queue moves on -- the alternative is
+        # waking up to a queue that stopped at 01:00 for a reason no line names.
+        try:
+            rec = run_window(a, w, inputs, head, session, out_dir)
+        except Exception as e:                                  # noqa: BLE001
+            rec = {"t0": w["t0"], "t1": w["t1"], "verdict": "ERROR",
+                   "error": f"{type(e).__name__}: {e}"}
+            log(f"    ERROR {rec['error']}")
+        (out_dir / f"w{w['t0']}.json").write_text(
+            json.dumps(rec, indent=1), encoding="utf-8")
+        with index.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        sp = rec.get("spine", {})
+        log(f"    {rec['verdict']} depth={rec.get('depth')} "
+            f"{rec.get('wall_s')}s spine={'ok' if sp.get('ok') else 'BROKEN'}"
+            f" worst={sp.get('worst_dy')} branch={rec.get('branchDepth')}"
+            f" div={(rec.get('diff') or {}).get('rows')}")
+    log(f"queue done -> {index}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
