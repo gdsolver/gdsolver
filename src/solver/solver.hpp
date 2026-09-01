@@ -657,7 +657,24 @@ inline void buildPois(GJBaseGameLayer* l) {
     {
         std::ofstream rf(std::string(DATA_DIR) + "/rotgameplay.txt",
                          std::ios::trunc);
-        rf << "uid,id,cx,cy,chan,ord,sord,sordd,spx,target\n";
+        // swarm/chanOnly/swch: the flag that gates a channel switch, the
+        // "channel only" flag, and THE CHANNEL A 2900 SWITCHES TO. This
+        // bindings version has neither m_changeChannel nor m_targetChannelID
+        // (only m_channelValue and m_channelChanged), so there is no name to
+        // read them by and they are taken raw at +0x754/+0x755/+0x758.
+        //
+        // Raw offsets out of a decompilation are not trusted on sight here --
+        // one was wrong earlier today (the out-of-bounds latch reads 0x187 in
+        // the decompiler's scaled pointer arithmetic and lives at 0xC38). These
+        // were checked against what the values have to look like, and lv22's
+        // thirty answer for themselves: swarm is 1 on every 2900 and nothing
+        // else, and swch PAIRS UP with chan -- uid1343 sits on channel 0 and
+        // switches to 1, uid1215 sits on channel 1 and switches to 0; 4355->2
+        // against 4467's 2->0; 5809->3 against 5957's 3->0. A belongs-to and a
+        // switches-to, complementary across the level. That is the field the
+        // queue needs and the one the model never had.
+        rf << "uid,id,cx,cy,chan,ord,sord,sordd,spx,target,"
+              "chanChanged,swarm,chanOnly,swch\n";
         long long n = 0;
         for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
             if (!obj || (obj->m_objectID != 2900 && obj->m_objectID != 2899))
@@ -670,7 +687,15 @@ inline void buildPois(GJBaseGameLayer* l) {
                << (tr.origin.y + tr.size.height * 0.5f) << ","
                << e->m_channelValue << "," << e->m_ordValue << ","
                << e->m_spawnOrder << "," << (e->m_spawnOrdered ? 1 : 0) << ","
-               << e->m_spawnXPosition << "," << e->m_targetGroupID << "\n";
+               << e->m_spawnXPosition << "," << e->m_targetGroupID << ","
+               << (e->m_channelChanged ? 1 : 0) << ",";
+            {
+                const char* ob = reinterpret_cast<const char*>(obj);
+                int r758 = 0;
+                std::memcpy(&r758, ob + 0x758, sizeof(int));
+                rf << (int)(unsigned char)ob[0x754] << ","
+                   << (int)(unsigned char)ob[0x755] << "," << r758 << "\n";
+            }
             ++n;
         }
         if (n) log::info("rotgameplay: {} rotation-gameplay objects", n);
