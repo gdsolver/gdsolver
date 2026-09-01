@@ -2113,6 +2113,54 @@ SAWCAL_STATIONS = [(1734, 2000, 0.0), (1735, 3000, 0.0), (1734, 4000, 0.5),
                    (1583, 8000, 0.0)]
 
 
+TRIG_ROTATE = 1346
+# Rotate trigger properties. NOT taken on faith: the rig is dumped and the
+# columns are read back (center/deg/t360 land where they should), so a wrong id
+# shows up as a zero in triggers.txt before any conclusion rests on it.
+K_CENTER, K_DEGREES, K_TIMES360, K_LOCKROT = 71, 68, 69, 70
+
+
+def build_cprot() -> str:
+    """A rotate AND a move in flight on the SAME group, for checkpoint work.
+
+    brief-018's 9b asks whether a mid-flight action survives a checkpoint
+    restore. Two Moves on separate groups already came back exact; the classes
+    still untested are a Rotate and two actions on one group, and this rig is
+    both at once -- which is also the shape lv21 and lv22 are full of.
+
+    Laid out like lv21 uid15367: the object is in the ROTATED group and in the
+    MOVED group, the centre is in the CENTRE group and the same MOVED group, so
+    the whole figure slides while the object goes round it. Eight seconds of
+    travel each, so a checkpoint anywhere in the first 1,900 ticks catches both
+    actions mid-flight.
+    """
+    G_ROT, G_CEN, G_MOVE = 20, 21, 22
+    parts = [header(start_mode="cube")]
+    parts += floor_run(0, 9000, y=GROUND_Y)
+    # the orbiting block (rotated and moved) and its pivot (centre and moved)
+    parts.append(obj(BLOCK, 2000, 420, extra={K_GROUPS: f"{G_ROT}.{G_MOVE}"}))
+    parts.append(obj(BLOCK, 2000, 300, extra={K_GROUPS: f"{G_CEN}.{G_MOVE}"}))
+    parts.append(obj(TRIG_ROTATE, 45, 300, extra={
+        K_TARGET: str(G_ROT),
+        K_CENTER: str(G_CEN),
+        K_DURATION: "8",
+        K_DEGREES: "0",
+        K_TIMES360: "1",
+        K_LOCKROT: "0",
+        K_EASING: "0",
+        K_EASING_RATE: "2",
+    }))
+    parts.append(obj(TRIG_MOVE, 45, 300, extra={
+        K_TARGET: str(G_MOVE),
+        K_DURATION: "8",
+        K_MOVE_X: "0",
+        K_MOVE_Y: "150",
+        K_EASING: "0",
+        K_EASING_RATE: "2",
+    }))
+    return ";".join(parts) + ";"
+
+
 def build_expease() -> str:
     """Where do GD's Exponential easings actually STOP? (brief-015)
 
@@ -3564,6 +3612,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcal_ship_mini": lambda: build_sawcal_mode("ship", True),
             "sawcal_cube_mini": lambda: build_sawcal_mode("cube", True),
             "expease": build_expease,
+            "cprot": build_cprot,
             "sawcalmv_wave": lambda: build_sawcal_moved("wave"),
             "sawcalmv_ship": lambda: build_sawcal_moved("ship"),
             "sawcalmv_ball": lambda: build_sawcal_moved("ball"),
