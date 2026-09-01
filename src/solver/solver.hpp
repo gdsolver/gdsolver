@@ -544,7 +544,20 @@ inline void buildPois(GJBaseGameLayer* l) {
     {
         std::ofstream tf(std::string(DATA_DIR) + "/triggers.txt", std::ios::trunc);
         tf << "uid,id,cx,cy,w,h,target,center,touch,spawn,dur,ox,oy,"
-              "ease,erate,lockx,locky,grav,gravmod\n";
+              "ease,erate,lockx,locky,grav,gravmod,"
+              // [2026-09-01] Appended, never inserted: a reader that stops at
+              // gravmod keeps working, and the model does (nothing reads these
+              // yet -- 008/009 do).
+              // deg: the Rotate trigger's angle (id 1346). The one thing the
+              // dump was missing to close the Rotate+Move composition; without
+              // it the rotation has to be inferred from the recording.
+              // ord/chan: the 2.2 trigger queue's ordering value and channel
+              // (m_ordValue / m_channelValue). The queue's own build order is
+              // NOT dumped -- setupLevelStart is not read yet -- so the
+              // hypothesis 008/009 start from is "editor order = uid order",
+              // and these two columns are what will confirm or refute it.
+              // sord/sordd: the spawn ordering pair, same family.
+              "deg,ord,chan,sord,sordd\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -590,11 +603,39 @@ inline void buildPois(GJBaseGameLayer* l) {
                << (e->m_lockToPlayerY ? 1 : 0) << ","
                // Values of triggers that change the player's gravity (the
                // columns are at the end, so old readers keep working)
-               << e->m_gravityValue << "," << e->m_gravityMod << "\n";
+               << e->m_gravityValue << "," << e->m_gravityMod << ","
+               << e->m_rotationDegrees << "," << e->m_ordValue << ","
+               << e->m_channelValue << "," << e->m_spawnOrder << ","
+               << (e->m_spawnOrdered ? 1 : 0) << "\n";
             ++nTrig;
         }
         log::info("triggers: {} triggers with a target, {} grouped objects",
                   nTrig, nGrp);
+    }
+    // ---- levelsettings.txt: the level's own compatibility flags -------------
+    // Their own file rather than a column: they are ONE value per level, and
+    // objrects is per object. Nothing reads it yet.
+    //
+    // kA39 = m_fixRadiusCollision is the one with a known consequence: it
+    // chooses which of the two saw-collision branches GD takes (survey C1), and
+    // every official level is expected to leave it and its siblings at 0. The
+    // point of writing them down is the day one of them is not -- the same
+    // reason the dump carries an out-of-bounds column nobody reads either.
+    if (auto* ls = l->m_levelSettings) {
+        std::ofstream sf(std::string(DATA_DIR) + "/levelsettings.txt",
+                         std::ios::trunc);
+        sf << "fixRadiusCollision=" << (ls->m_fixRadiusCollision ? 1 : 0)
+           << "\nfixGravityBug=" << (ls->m_fixGravityBug ? 1 : 0)
+           << "\nfixNegativeScale=" << (ls->m_fixNegativeScale ? 1 : 0)
+           << "\nfixRobotJump=" << (ls->m_fixRobotJump ? 1 : 0)
+           << "\nenableImpulseFix=" << (ls->m_enableImpulseFix ? 1 : 0)
+           << "\ndynamicLevelHeight=" << (ls->m_dynamicLevelHeight ? 1 : 0)
+           << "\nplatformerMode=" << (ls->m_platformerMode ? 1 : 0)
+           << "\nreverseGameplay=" << (ls->m_reverseGameplay ? 1 : 0)
+           << "\n";
+        log::info("levelsettings: fixRadiusCollision={} platformer={} "
+                  "reverse={}", (int)ls->m_fixRadiusCollision,
+                  (int)ls->m_platformerMode, (int)ls->m_reverseGameplay);
     }
 }
 

@@ -28,7 +28,11 @@ from gdtas.paths import LEVEL_DATA, WORKERS_ROOT
 from gdtas.worker import Worker, WorkerError
 
 DUMPS = ("objrects.txt", "triggers.txt", "objgroups.txt", "obb.txt",
-         "forceblocks.txt")
+         "forceblocks.txt",
+         # The level's own compatibility flags (kA39 and its siblings). One
+         # value per level, so it is a file of its own rather than a column;
+         # nothing reads it yet -- it is here for the day one of them is not 0.
+         "levelsettings.txt")
 
 
 def refresh(level: int, worker_id: int, data_dir: Path, workers_root: Path,
