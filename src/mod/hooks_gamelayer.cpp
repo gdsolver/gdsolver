@@ -2495,6 +2495,29 @@ class $modify(GJBaseGameLayer) {
         int layDead = 0, layDup = 0, layCap = 0;
         double layMaxX = 0.0, layMinY = 0.0, layMaxY = 0.0, layMinX = 0.0;
         double deadMaxX = 0.0;
+        // What the verified plan holds at this layer -- the spine's own input.
+        //
+        // WHICH tick's plan input a layer should apply is not derived here, it is
+        // swept (`secspineoff`). Reasoning it out from "the dump writes after
+        // ++g_tick" and "the child at depth d is the state after tick ckpt+d+1"
+        // produced two different answers and the first one tried made the
+        // tracking WORSE (depth 10 and 1.30 px became depth 9 and 2.50). The knob
+        // exists so the answer comes from the trajectory instead -- the same
+        // instruction the note at secoff already gives for the verify path.
+        //
+        // Hoisted out of the dedupe so the step itself can be labelled as the
+        // spine's BEFORE it is taken, which is what the per-substep print needs:
+        // deciding afterwards tells you which child was the spine but not which
+        // substep to watch.
+        auto spinePlanHeld = [this](int depth) {
+            const long long tHere = g_ckptTick + depth + g_spineOff;
+            int held = 0;
+            for (const auto& in : g_cfg.inputs) {
+                if (in.step > tHere) break;
+                held = in.down ? 1 : 0;
+            }
+            return held;
+        };
         for (int depth = 1; depth <= g_horizon && foundLeaf < 0; ++depth) {
             nxt.clear();
             seen.clear();
@@ -2633,7 +2656,13 @@ class $modify(GJBaseGameLayer) {
                         this->m_leftSectionIndex += g_winShift;
                         this->m_rightSectionIndex += g_winShift;
                     }
+                    // Label the spine's own substep so `robodbg` prints one line
+                    // per layer instead of one per node (a layer is ~100 wide).
+                    g_stepSpine = g_spineOn && ni == g_spine
+                                  && branch == spinePlanHeld(depth);
+                    g_stepDepth = depth;
                     secStep(branch, dt); ++steps;
+                    g_stepSpine = false;
                     auto* p = m_player1;
                     // Death is seen via the flag set by destroyPlayer. Nothing is actually
                     // killed, so m_isDead is not set (on the checkpoint path it is set as
@@ -2730,26 +2759,13 @@ class $modify(GJBaseGameLayer) {
                     // does at this tick. It is exempt from the dedupe -- see
                     // the note at g_spineOn for why a window the solution
                     // crosses can otherwise come back EXHAUSTED.
-                    bool isSpine = false;
-                    if (g_spineOn && ni == g_spine) {
-                        int planHeld = 0;
-                        // WHICH tick's plan input a layer should apply is not
-                        // derived here, it is swept (`secspineoff`). Reasoning
-                        // it out from "the dump writes after ++g_tick" and
-                        // "the child at depth d is the state after tick
-                        // ckpt+d+1" produced two different answers and the
-                        // first one I tried made the tracking WORSE (depth 10
-                        // and 1.30 px became depth 9 and 2.50). The knob exists
-                        // so the answer comes from the trajectory instead --
-                        // the same instruction the note at secoff already gives
-                        // for the verify path.
-                        const long long tHere = g_ckptTick + depth + g_spineOff;
-                        for (const auto& in : g_cfg.inputs) {
-                            if (in.step > tHere) break;
-                            planHeld = in.down ? 1 : 0;
-                        }
-                        isSpine = (branch == planHeld);
-                    }
+                    // The spine is the verified solution's own continuation: this
+                    // parent is the spine and this branch is what the plan does at
+                    // this tick. Exempt from the dedupe -- see the note at
+                    // g_spineOn for why a window the solution crosses can
+                    // otherwise come back EXHAUSTED.
+                    const bool isSpine =
+                        g_spineOn && ni == g_spine && branch == spinePlanHeld(depth);
                     if (!seen.insert(k).second && !isSpine) { ++layDup; continue; }
                     // No cap discard here. Two children per parent, so the collected count
                     // is naturally bounded by 2*|cur|. Pruning happens once the layer is
@@ -3273,6 +3289,48 @@ class $modify(GJBaseGameLayer) {
         // whatever the freeze does, processCommands does not see it, no ticks
         // are spent on it, and the two-tick gap has another cause.
         ++g_tick;
+        // cfg `robodbg=t0,t1`: one line per substep in a tick range, printed by
+        // BOTH the plain replay and the section search because both come
+        // through here. The robot's charge accumulator is the named suspect for
+        // the spine coming apart three ticks into a sustained hold -- the audit
+        // lists m_accelerationOrSpeed as saved by the checkpoint, but hole 2
+        // taught that saved is not restored, and a search restores every tick.
+        // Printed by NAME rather than by offset: the out-of-bounds latch cost a
+        // run today for being read at the offset a decompilation appeared to
+        // give (0x187, actually 0xC38).
+        // In a search a layer is ~100 nodes wide, so only the spine's own substep
+        // is printed (g_stepSpine, set beside the step). The plain replay has no
+        // spine and prints every tick in the range, which is what it should be
+        // compared against.
+        //
+        // The range is in GAME ticks on both sides, but g_tick does not mean the
+        // same thing inside a search: the restore does not rewind it, so it
+        // counts every step of every node and runs away from the level's own
+        // clock within the first layer. The search line is labelled with the tick
+        // its state corresponds to instead. The mapping was MEASURED by matching
+        // y between the two sides (they agree to the last digit for over a
+        // hundred layers, so it is unambiguous): the spine's state after the step
+        // at depth d is the head's state at g_ckptTick + d. That is the same
+        // alignment the tracking comparison uses -- which is written there as
+        // ckpt+d+1 because it counts from the tick the window ASKED for, and the
+        // checkpoint lands on the tick after it (secstart 5387 -> ckptTick 5388).
+        const bool inSearch = secsolve::g_active;
+        const long long tEff = inSearch ? g_ckptTick + g_stepDepth : g_tick;
+        const bool roboLine = g_cfg.roboDbg0 >= 0 && m_player1
+                              && (inSearch ? g_stepSpine : true);
+        if (roboLine && tEff >= g_cfg.roboDbg0 && tEff <= g_cfg.roboDbg1) {
+            char rb[256];
+            snprintf(rb, sizeof(rb),
+                     "robodbg: t=%lld sec=%d d=%d y=%.4f vy=%.4f accel=%.6f "
+                     "pad=%d ground=%d held=%d",
+                     (long long)tEff, inSearch ? 1 : 0,
+                     inSearch ? g_stepDepth : -1,
+                     m_player1->getPositionY(), m_player1->m_yVelocity,
+                     m_player1->m_accelerationOrSpeed,
+                     m_player1->m_touchedPad ? 1 : 0,
+                     m_player1->m_isOnGround ? 1 : 0, secsolve::g_held);
+            writeResult(rb);
+        }
         // brief-017 part B: keep what this pass does over each snapshot's
         // verification window, so the restored run can be held against the head
         // run without replaying the level a second time.

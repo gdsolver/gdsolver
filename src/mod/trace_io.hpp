@@ -41,6 +41,11 @@ inline double g_ckptVy = 0.0, g_ckptVyRel = 0.0;
 // The restore probe (brief-018 hole 2): how many updates still to report. The
 // substep counter it reads is g_pcCalls, which already exists in config.hpp.
 inline int g_restoreProbe = 0;
+// Set beside the section search's own step, for the whole of that step: is this
+// the spine's substep, and at what depth. Only so that a per-substep print can
+// name one node out of a layer -- nothing reads them to decide anything.
+inline bool g_stepSpine = false;
+inline int g_stepDepth = -1;
 // The plan's cursors as they stood at the checkpoint, so a restore can rewind
 // them with the game (see the note where they are captured).
 inline size_t g_ckptNextInput = 0, g_ckptNextToggle = 0;

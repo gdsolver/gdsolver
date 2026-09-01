@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // Session lifecycle: configuration from the UI, live commands, loadConfig, endSession.
 #include "mod/plan_io.hpp"
 
@@ -435,6 +435,15 @@ inline void loadConfig() {
         else if (key == "vytest") { g_cfg.vyTest = std::atof(val.c_str());
                                     g_cfg.vyTestOn = true; }
         else if (key == "snapverify") cfgNum(key, val, g_cfg.snapVerify);
+        else if (key == "robodbg") {
+            const size_t c = val.find(',');
+            if (c != std::string::npos) {
+                g_cfg.roboDbg0 = cfgNumOr<long long>(key, val.substr(0, c), -1);
+                g_cfg.roboDbg1 = cfgNumOr<long long>(key, val.substr(c + 1), -1);
+            } else {
+                writeResult("cfg: robodbg=" + val + " wants t0,t1 - ignored");
+            }
+        }
         else if (key == "snapat") {
             g_cfg.snapAt.clear();
             std::stringstream ss(val);

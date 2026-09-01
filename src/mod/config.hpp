@@ -215,6 +215,9 @@ struct Config {
     // acceptance that a section's entry is faithful, and it doubles as the
     // regression detector for brief-018's five holes.
     int snapVerify = 0;
+    // cfg `robodbg=t0,t1`: per-substep state over a tick range, from both the
+    // plain replay and the section search (they share processCommands).
+    long long roboDbg0 = -1, roboDbg1 = -1;
     // Feasibility measurement for the section solver (cfg `restoreloop=N`).
     // Restore N times in a row from the checkpoint created by checkpointat and report the cost
     // per restore. This number decides the design: 300 states per layer x 200 layers = 60,000
