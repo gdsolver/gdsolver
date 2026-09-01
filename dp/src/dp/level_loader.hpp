@@ -1048,6 +1048,111 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                         "router, %zu were routed into dyn\n",
                         armed, g_rotSpec.size(), g_rotSeen, g_rotRouted);
     }
+    // ---- stage 1': give the turned objects a COMPUTED orbit in samples[] ----
+    //
+    // Not by adding a rotation to the placement path -- that turns a recorded
+    // object twice, which deathref caught (see g_rotCompute). By decomposing:
+    //
+    //   pos(t) = [ entry_C + R(theta(t - t0)) * rel ]  +  [ C(t) - entry_C ]
+    //              ^^^^^^^^^ into samples[] ^^^^^^^^^      ^^ autoParts ^^
+    //
+    // samples[] then carries the orbit about a STATIONARY centre, whose only
+    // controller is the Rotate -- so the single-shift re-timing that plays it
+    // is the right operation for it, while the translation stays analytic with
+    // every controller on its own fire tick. That is the whole 1.65-2.18 px:
+    // today one shift has to carry a rotate and a move that cross at different
+    // x, and no single shift can.
+    //
+    // The decomposition needs the object and its centre to share their move
+    // controllers. Measured on lv21: all 66 collidable turned objects do (0
+    // differ). An object that does not is refused and keeps its recording.
+    if (g_rotSplit && !g_rotSpec.empty()) {
+        size_t done = 0, refusedFit = 0, refusedNoAuto = 0;
+        double worstFit = 0.0;
+        std::unordered_map<int, size_t> idx;
+        for (size_t i = 0; i < L.dyn.size(); ++i) idx[L.dyn.objs[i].uid] = i;
+        for (const auto& kv : g_rotSpec) {
+            const RotSpec& R = kv.second;
+            if (R.anchor < 0 || R.centreIdx < 0) continue;
+            const auto io = idx.find(kv.first);
+            if (io == idx.end()) continue;
+            const size_t i = io->second, ci = (size_t)R.centreIdx;
+            if (L.dyn.samples[i].size() < 2 || L.dyn.samples[ci].empty()) continue;
+            // the translation has to have somewhere analytic to come from
+            if (L.dyn.autoParts[i].empty()) { ++refusedNoAuto; continue; }
+            const double ex = L.dyn.samples[ci][0].cx, ey = L.dyn.samples[ci][0].cy;
+            // The ROTATE's own fire tick on the recorded timeline, fitted.
+            // trigRecFire is the object's FIRST motion, which for an object
+            // that also moves is whichever trigger fired first -- taking it as
+            // the rotation's origin refused all twenty of lv21's rotate+move
+            // objects on the fit. The rotate has its own crossing, and the
+            // recording is the only place it is written down, so it is read out
+            // of the recording the same way trigRecFire is.
+            const int lo = L.dyn.samples[i][0].t - (int)R.durT - 5;
+            const int hi = L.dyn.samples[i].back().t + 5;
+            int t0 = L.dyn.samples[i][0].t;
+            {
+                double bestE = 1e18;
+                for (int cand = lo; cand <= hi; ++cand) {
+                    size_t ck = 0;
+                    double w = 0.0;
+                    for (const DynSample& s : L.dyn.samples[i]) {
+                        const double th = -R.total
+                            * gdEase(R.ease, R.erate, (double)(s.t - cand) / R.durT)
+                            * 3.14159265358979 / 180.0;
+                        const double c = std::cos(th), sn = std::sin(th);
+                        const double gx = ex + c * R.relX - sn * R.relY;
+                        const double gy = ey + sn * R.relX + c * R.relY;
+                        while (ck + 1 < L.dyn.samples[ci].size()
+                               && L.dyn.samples[ci][ck + 1].t <= s.t) ++ck;
+                        w = std::max(w, std::hypot(
+                            (double)s.cx - (gx + L.dyn.samples[ci][ck].cx - ex),
+                            (double)s.cy - (gy + L.dyn.samples[ci][ck].cy - ey)));
+                        if (w >= bestE) break;
+                    }
+                    if (w < bestE) { bestE = w; t0 = cand; }
+                }
+            }
+            // centre position by tick, held between recorded rows
+            size_t cj = 0;
+            auto centreAt = [&](int t) {
+                while (cj + 1 < L.dyn.samples[ci].size()
+                       && L.dyn.samples[ci][cj + 1].t <= t) ++cj;
+                while (cj > 0 && L.dyn.samples[ci][cj].t > t) --cj;
+                return std::pair<double, double>(L.dyn.samples[ci][cj].cx,
+                                                 L.dyn.samples[ci][cj].cy);
+            };
+            std::vector<DynSample> gen = L.dyn.samples[i];
+            double worst = 0.0;
+            cj = 0;
+            for (DynSample& s : gen) {
+                const double th = -R.total
+                    * gdEase(R.ease, R.erate, (double)(s.t - t0) / R.durT)
+                    * 3.14159265358979 / 180.0;
+                const double c = std::cos(th), sn = std::sin(th);
+                const double ox = (double)R.relX, oy = (double)R.relY;
+                const double gx = ex + c * ox - sn * oy;
+                const double gy = ey + sn * ox + c * oy;
+                // recorded = orbit + the centre's own translation, so the check
+                // is (recorded - centre translation) against the orbit
+                const auto cp = centreAt(s.t);
+                worst = std::max(worst,
+                    std::hypot((double)s.cx - (gx + cp.first - ex),
+                               (double)s.cy - (gy + cp.second - ey)));
+                s.cx = (float)gx;
+                s.cy = (float)gy;
+            }
+            if (worst > 0.1) { ++refusedFit; continue; }
+            worstFit = std::max(worstFit, worst);
+            L.dyn.samples[i] = std::move(gen);
+            ++done;
+        }
+        if (done || refusedFit || refusedNoAuto)
+            std::printf("rotsplit: %zu objects moved onto a computed orbit "
+                        "(worst fit %.4f px), %zu refused on fit, %zu with no "
+                        "analytic translation\n",
+                        done, worstFit, refusedFit, refusedNoAuto);
+    }
     // --rotcheck: does the COMPUTED orbit reproduce what GD recorded?
     //
     // The corpus-wide form of the harness that measured lv21 uid15367 to

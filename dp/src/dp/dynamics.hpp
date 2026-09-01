@@ -326,6 +326,10 @@ inline bool g_rotCheck = false;
 // Load-time counters, so "the orbit did not arm" can be told apart from "the
 // object never reached the router".
 inline size_t g_rotSeen = 0, g_rotRouted = 0;
+// stage 1': put the ORBIT into samples[] and leave the translation analytic.
+// --no-rotsplit for the A/B. See the block in level_loader.hpp for why this is
+// the insertion point and adding a rotation to placement is not.
+inline bool g_rotSplit = true;
 
 // GD's rotation, one tick of it. `sign` is the mapping from the dump's angle to
 // a y-up rotation matrix, measured as -1 on both subjects (GD's positive turn

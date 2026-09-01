@@ -113,6 +113,9 @@ inline int cliMain(int argc, char** argv) {
         // --no-rotcompute: back to the recording (or to standing still) for
         // every turned object, for A/B against the computed orbit.
         if (!std::strcmp(argv[i], "--no-rotcompute")) g_rotCompute = false;
+        // --no-rotsplit: keep the recording for turned objects instead of the
+        // computed orbit (stage 1' A/B).
+        if (!std::strcmp(argv[i], "--no-rotsplit")) g_rotSplit = false;
     }
     for (int i = 2; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--threads")) g_threads = std::atoi(argv[i + 1]);
