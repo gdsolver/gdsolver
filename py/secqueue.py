@@ -27,8 +27,10 @@ loses it cannot be read in the morning as a night that measured something.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -38,6 +40,7 @@ sys.path.insert(0, str(_PY))
 sys.path.insert(0, str(_PY.parent / "mcp"))     # gdmcp.data.diff_trace
 
 import fidelity_diff as FD                                     # noqa: E402
+import quick_regress as QR                                     # noqa: E402
 from gdmcp.data import diff_trace                              # noqa: E402
 from gdtas import plan as P                                    # noqa: E402
 from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT  # noqa: E402
@@ -67,17 +70,22 @@ def log(m: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
-def read_dump(path: Path) -> dict[int, tuple[float, float]]:
-    """tick -> (x, y) from a GD dump."""
-    import csv
-    out = {}
+def read_rows(path: Path) -> dict[int, dict]:
+    """tick -> the whole GD row. The anchor builder wants all of it."""
+    out: dict[int, dict] = {}
     with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
         for r in csv.DictReader(f):
             try:
-                out[int(r["tick"])] = (float(r["x"]), float(r["y"]))
-            except (KeyError, ValueError):
+                out[int(r["tick"])] = r
+            except (KeyError, ValueError, TypeError):
                 continue
     return out
+
+
+def read_dump(path: Path) -> dict[int, tuple[float, float]]:
+    """tick -> (x, y) from a GD dump."""
+    return {t: (float(r["x"]), float(r["y"]))
+            for t, r in read_rows(path).items()}
 
 
 def plan_held(inputs: list[tuple[int, int]], t: int) -> int:
@@ -204,38 +212,151 @@ def window_diff(a, plan_out: Path, out_base: Path, t0: int, t1: int,
                 session) -> dict:
     """Model vs GD along the path GD actually got through by, within the window.
 
-    Both sides replay the SAME spliced plan from the head of the level, so
-    nothing is anchored and no start state has to be transplanted -- the anchor
-    is where this kind of measurement usually goes wrong.
+    THE MODEL IS ANCHORED AT THE WINDOW ENTRY, not run from the head of the
+    level. The first version replayed the spliced plan from t=0 on both sides,
+    on the reasoning that an anchor is where this kind of measurement usually
+    goes wrong. Measured: it produced common=934, rows=0 for BOTH of the night's
+    first two windows -- IDENTICAL STATISTICS FOR DIFFERENT WINDOWS, which is
+    what made it visible. The model dies at t=934 replaying lv22's own verified
+    solution without fixups, thousands of ticks before either window, so "no
+    divergences in 5,387..5,973" meant the model was never there. An empty table
+    for that reason reads exactly like agreement.
+
+    So: the anchor is built from THIS window's own dump (a crossing that leaves
+    the solution's route is a different worldline from gdref, and the columns
+    the anchor needs are all in the dump), with the same field builder,
+    startband, band tracking and rotation anchor that quick_regress's sections
+    use. Reusing that builder rather than writing a second one is deliberate --
+    it carries dual, the rotation frame, the stair snap and the robot hover
+    budget, each of which was added to it because leaving it out silently
+    mismeasured a whole section of a level.
+    """
+    dump_dst, got_groups = gd_window_replay(a, plan_out, out_base, session)
+    if dump_dst is None:
+        return {"error": "no dump"}
+    if not got_groups:
+        return {"error": "no grouptrace - model would see static geometry"}
+    return anchored_diff(a, plan_out, out_base, dump_dst, t0, t1)
+
+
+def gd_window_replay(a, plan_out: Path, out_base: Path,
+                     session) -> tuple[Path | None, bool]:
+    """Replay the crossing in GD, keeping the dump AND the moving geometry.
+
+    grouptrace=1: the recording is made ON THIS RUN. The level's canonical
+    recording is a DIFFERENT WORLDLINE once the crossing leaves the solution's
+    route, and a model replay against the wrong world returns nothing but
+    divergences -- which reads as a rich table and means nothing.
+
+    The recording is KEPT (24 MB a window). Deleting it after the table cost a
+    night: when the table turned out to be measuring nothing, every window had
+    to be replayed again to recompute it. Cheap to keep, expensive to refetch.
     """
     dump_dst = Path(str(out_base) + ".dump.csv")
-    # grouptrace=1: record the moving geometry ON THIS RUN. The level's canonical
-    # recording is a DIFFERENT WORLDLINE once the crossing leaves the solution's
-    # route, and a model replay without the right recording sees static geometry
-    # and returns nothing but divergences -- which would read as a rich diff
-    # table and mean nothing at all.
     cfg = (["enabled=1", f"level={a.level}", "grouptrace=1"] + REPLAY_BASE
            + P.read_input_lines(plan_out))
     res = session(cfg, a.timeout)
     if not FD.copy_held_file(res.data_root / "dump.csv", dump_dst):
-        return {"error": "no dump"}
+        return None, False
     groups = Path(str(plan_out) + ".groups.live.txt")
-    got_groups = False
     for name in ("grouptrace_last.txt", "grouptrace.txt"):
         if FD.copy_held_file(res.data_root / name, groups):
-            got_groups = True
-            break
-    if not got_groups:
-        return {"error": "no grouptrace - model would see static geometry"}
-    trace, died, _ = FD.model_replay(a.level, plan_out, out_base,
-                                     Path(a.leveldp), False)
-    d = diff_trace(trace, dump_dst, t0=t0, t1=t1, tol=DIFF_TOL, limit=10 ** 9)
+            return dump_dst, True
+    return dump_dst, False
+
+
+def anchored_diff(a, plan_out: Path, out_base: Path, dump: Path,
+                  t0: int, t1: int) -> dict:
+    """The model side, started at t0 from GD's own row, and the table.
+
+    Split out from the GD replay so it can be recomputed from files that are
+    already on disk (`--rediff`), without asking GD for the window again.
+    """
+    gd = read_rows(dump)
+    r = gd.get(t0)
+    if not r:
+        return {"error": f"dump has no row at t={t0}"}
+    objrects = LEVEL_DATA / f"objrects_lv{a.level}.txt"
+    args = [str(objrects), "--replay", str(plan_out)]
+    trig = LEVEL_DATA / f"triggers_lv{a.level}.txt"
+    grp = LEVEL_DATA / f"objgroups_lv{a.level}.txt"
+    if trig.exists() and grp.exists():
+        args += ["--triggers", str(trig), "--objgroups", str(grp)]
+    obb = LEVEL_DATA / f"obb_lv{a.level}.txt"
+    if obb.exists():
+        args += ["--obb", str(obb)]
+    args += FD.groups_args(plan_out)
+    args += QR.ctrlwin_args(a.level)
+    args += ["--start", QR.start_fields(t0, r, plan_out, gd.get(t0 - 1), gd),
+             "--out", str(out_base)]
+    if r.get("pmin") and r.get("pmax"):
+        args += ["--startband", f"{r['pmin']},{r['pmax']}"]
+    args += QR.band_track_args(a.level, gd)
+    args += QR.rot_anchor_args(a.level, t0)
+    p = subprocess.run([a.leveldp] + args, stdout=subprocess.PIPE, text=True,
+                       errors="replace")
+    m = re.search(r"REPLAY: model DIED at t=(\d+)", p.stdout)
+    died = int(m.group(1)) if m else -1
+    trace = Path(str(out_base) + ".trace.csv")
+    if not trace.exists():
+        return {"error": "no model trace", "modelDied": died}
+    d = diff_trace(trace, dump, t0=t0, t1=t1, tol=DIFF_TOL, limit=10 ** 9)
     rows = d.get("rows") or []
-    # The recording is ~24 MB per window and is only needed for the replay above.
-    groups.unlink(missing_ok=True)
-    return {"modelDied": died, "firstDiv": d.get("first_divergence"),
-            "cols": d.get("cols"), "common": d.get("common"),
-            "rows": len(rows), "table": rows[:40]}
+    out = {"anchoredAt": t0, "modelDied": died, "common": d.get("common"),
+           "verdictNote": d.get("verdict"),
+           "firstDiv": d.get("first_divergence"), "cols": d.get("cols"),
+           "rows": len(rows), "table": rows[:40]}
+    # An anchored replay that covers none of the window is not agreement. Say so
+    # in the record rather than leaving a zero to be read as one.
+    if not d.get("common"):
+        out["error"] = "model covered no tick of the window"
+    return out
+
+
+def rediff(a, wins: list[dict], out_dir: Path, session=None) -> int:
+    """Recompute the tables for windows already on disk. GD is not asked again.
+
+    A crossing costs 15 to 90 minutes of GD; the model side of the table costs
+    under a second. Keeping the two separable is what made the night's first
+    defect recoverable instead of a night thrown away -- the plan, the dump and
+    the recording of every crossed window are all still there.
+    """
+    done = 0
+    for w in wins:
+        t0 = w["t0"]
+        jf = out_dir / f"w{t0}.json"
+        if not jf.exists():
+            continue
+        rec = json.loads(jf.read_text("utf-8"))
+        if rec.get("verdict") != "SOLVED" or not rec.get("foundTick"):
+            continue
+        plan_out = out_dir / f"w{t0}.plan.txt"
+        dump = out_dir / f"w{t0}.dump.csv"
+        if not plan_out.exists() or not dump.exists():
+            log(f"w{t0}: plan or dump missing, skipping")
+            continue
+        if not FD.groups_args(plan_out):
+            # The recording is what an early version of this deleted. Ask GD for
+            # the replay again -- a minute -- rather than skip the window or,
+            # worse, run the model against static geometry.
+            if session is None:
+                log(f"w{t0}: no recording and no venue to remake it, skipping")
+                continue
+            log(f"w{t0}: recording missing, replaying to remake it")
+            dump, ok = gd_window_replay(a, plan_out, out_dir / f"w{t0}", session)
+            if not ok:
+                log(f"w{t0}: replay produced no recording, skipping")
+                continue
+        rec["diff"] = anchored_diff(a, plan_out, out_dir / f"w{t0}", dump,
+                                    t0, rec["foundTick"])
+        jf.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+        d = rec["diff"]
+        log(f"w{t0}: anchored at {t0} died={d.get('modelDied')} "
+            f"common={d.get('common')} firstDiv={d.get('firstDiv')} "
+            f"rows={d.get('rows')}{' ' + d['error'] if d.get('error') else ''}")
+        done += 1
+    log(f"rediff: {done} windows")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -253,6 +374,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--no-diff", action="store_true",
                     help="crossings only, skip the model/GD tables")
+    ap.add_argument("--rediff", action="store_true",
+                    help="recompute the tables for windows already crossed, "
+                         "from the plan and dump on disk. No GD, no search")
     a = ap.parse_args(argv)
 
     out_dir = Path(a.out_dir) if a.out_dir else LEVEL_DATA / f"secqueue_lv{a.level}"
@@ -288,6 +412,9 @@ def main(argv=None) -> int:
         def session(cfg, timeout):
             return run_session(a.worker, cfg, timeout_s=timeout,
                                workers_root=WORKERS_ROOT)
+
+    if a.rediff:
+        return rediff(a, wins, out_dir, session)
 
     # The head run: one plain replay, kept for the whole queue. Every window's
     # target x and every spine comparison is read out of it, so it is measured
