@@ -453,6 +453,7 @@ inline void loadConfig() {
         else if (key == "seccap") cfgNum(key, val, secsolve::g_cap);
         else if (key == "secverify") secsolve::g_verify = (val == "1");
         else if (key == "secspine") secsolve::g_spineOn = (val == "1");
+        else if (key == "secspineoff") cfgNum(key, val, secsolve::g_spineOff);
         else if (key == "seclog") secsolve::g_log = (val == "1");
         else if (key == "secdt") cfgNum(key, val, secsolve::g_dt);
         else if (key == "secoff") cfgNum(key, val, secsolve::g_off);

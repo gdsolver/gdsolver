@@ -1289,6 +1289,31 @@ class $modify(GJBaseGameLayer) {
         // setting g_held=0 means that, while actually still held, no difference shows up,
         // handleButton is not called, and the wave flies the wrong way. Release explicitly
         // first, then put it into a known state.
+        // resetLevel pushes a button command of its own on EVERY restore --
+        // {button=1, push=<is the UI holding?>, ts=0} -- and a bot's UI holds
+        // nothing, so what it pushes is a RELEASE. It is consumed on the first
+        // real substep after the restore, AFTER anything injected here, so the
+        // hold this function is about to arm is stripped before the physics
+        // reads it, and g_held stays 1 so nothing re-presses.
+        //
+        // In a plain replay that happens once per attempt and is invisible. In
+        // a search that restores ONCE PER TICK it happens every tick, which is
+        // why a section with a sustained hold cannot be crossed: measured, the
+        // spine tracks the head run to 0.05 px for 158 layers and comes apart
+        // three ticks into lv22's 16-tick hold at t=5,544.
+        //
+        // Drained here and nowhere else: the plain replay path keeps GD's own
+        // behaviour, because changing that would change what every recorded
+        // run means.
+        //
+        // IT DOES NOT EXPLAIN THE DRIFT IT WAS AIMED AT. With the drain in, the
+        // spine still tracks to exactly depth 158 and comes apart with the same
+        // 0.126 px -- so either the event is not the one that strips the hold,
+        // or the hold is lost some other way. Kept because the mechanism is
+        // real (the decompilation has resetLevel pushing it unconditionally and
+        // a bot's UI holding nothing), and because draining it cannot make a
+        // section restore less faithful. Not kept as an explanation.
+        pl->m_queuedButtons.clear();
         g_injecting = true;
         this->handleButton(false, 1, true);
         g_injecting = false;
@@ -2688,7 +2713,17 @@ class $modify(GJBaseGameLayer) {
                     bool isSpine = false;
                     if (g_spineOn && ni == g_spine) {
                         int planHeld = 0;
-                        const long long tHere = g_ckptTick + depth;
+                        // WHICH tick's plan input a layer should apply is not
+                        // derived here, it is swept (`secspineoff`). Reasoning
+                        // it out from "the dump writes after ++g_tick" and
+                        // "the child at depth d is the state after tick
+                        // ckpt+d+1" produced two different answers and the
+                        // first one I tried made the tracking WORSE (depth 10
+                        // and 1.30 px became depth 9 and 2.50). The knob exists
+                        // so the answer comes from the trajectory instead --
+                        // the same instruction the note at secoff already gives
+                        // for the verify path.
+                        const long long tHere = g_ckptTick + depth + g_spineOff;
                         for (const auto& in : g_cfg.inputs) {
                             if (in.step > tHere) break;
                             planHeld = in.down ? 1 : 0;

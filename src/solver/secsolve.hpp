@@ -102,6 +102,10 @@ inline bool g_warnedNoCkpt = false;
 inline bool g_spineOn = true;        // cfg `secspine=0` turns it off for A/B
 inline int g_spine = -1;             // node index of the spine at this layer
 inline int g_spineNext = -1;         // ...and the child that continues it
+// cfg `secspineoff`: which tick's plan input a layer applies. SWEPT, not
+// derived -- see the note at the lookup.
+inline int g_spineOff = -1;   // MEASURED: -1 tracks all 60 layers to 0.0499 px;
+                              // 0 and +1 lose it at depth 10 and 9, +2 at 25 px
 inline bool g_verify = false;        // cfg `secverify=1`: no search, only check
                                      // restore fidelity
 // cfg `seclog=1`: emit the per-layer breakdown. Whether THE CAP IS BINDING OR
