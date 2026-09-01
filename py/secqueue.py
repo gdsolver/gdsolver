@@ -265,6 +265,81 @@ def gd_window_replay(a, plan_out: Path, out_base: Path,
     return dump_dst, False
 
 
+def model_args(a, plan_out: Path) -> list[str]:
+    """The level's tables and recordings, the same for every model invocation."""
+    objrects = LEVEL_DATA / f"objrects_lv{a.level}.txt"
+    args = [str(objrects)]
+    trig = LEVEL_DATA / f"triggers_lv{a.level}.txt"
+    grp = LEVEL_DATA / f"objgroups_lv{a.level}.txt"
+    if trig.exists() and grp.exists():
+        args += ["--triggers", str(trig), "--objgroups", str(grp)]
+    obb = LEVEL_DATA / f"obb_lv{a.level}.txt"
+    if obb.exists():
+        args += ["--obb", str(obb)]
+    return args + FD.groups_args(plan_out) + QR.ctrlwin_args(a.level)
+
+
+def reach_probe(a, plan_path: Path, out_base: Path, gd: dict[int, dict],
+                t0: int, t1: int) -> dict:
+    """Can the MODEL'S REACHABILITY get through this window, from GD's own state?
+
+    The diff table cannot answer this and it is worth being blunt about why: a
+    replay measures fidelity ALONG A PATH THAT WAS TAKEN. It can show the model
+    disagreeing about where the player ends up; it can never show a state the
+    model forbids, because a forbidden state simply is not in the replay.
+
+    Here the DP is run forward from the window entry with the window's own
+    length as its horizon. The verified solution demonstrably gets through every
+    one of these windows in GD, so a frontier that dies inside the window is the
+    model refusing a passage that exists -- an over-kill candidate, located by
+    the tick and x where the frontier died.
+
+    Offline: no GD, no worker, seconds per window.
+    """
+    r = gd.get(t0)
+    if not r:
+        return {"error": f"no reference row at t={t0}"}
+    out = Path(str(out_base) + ".reach")
+    args = ([str(a.leveldp)] + model_args(a, plan_path)
+            + ["--out", str(out), "--cap", str(a.reachcap),
+               "--shipyq", "0.25", "--shipvq", "1.0",
+               "--threads", str(a.threads),
+               "--start", QR.start_fields(t0, r, plan_path, gd.get(t0 - 1), gd),
+               "--horizon", str(t1 - t0)])
+    if r.get("pmin") and r.get("pmax"):
+        args += ["--startband", f"{r['pmin']},{r['pmax']}"]
+    args += QR.band_track_args(a.level, gd)
+    args += QR.rot_anchor_args(a.level, t0)
+    t = time.time()
+    p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                       text=True, encoding="utf-8", errors="replace")
+    verdict, deep_t, deep_x = "FAILED", -1, -1.0
+    for ln in (p.stdout or "").splitlines():
+        m = re.match(r"^(PARTIAL|FAILED): frontier died at t=(\d+) x=([\d.\-]+)",
+                     ln)
+        if m:
+            verdict, deep_t, deep_x = m.group(1), int(m.group(2)), float(m.group(3))
+            continue
+        if ln.startswith("SOLVED at") and verdict != "PARTIAL":
+            verdict = "SOLVED"
+    rec = {"verdict": verdict, "diedT": deep_t, "diedX": deep_x,
+           "t0": t0, "t1": t1, "held": deep_t - t0 if deep_t > 0 else None,
+           "cap": a.reachcap, "seconds": round(time.time() - t, 1)}
+    # A frontier that died PAST the window's exit crossed the window. Measured:
+    # 4 of the first sweep's 10 PARTIALs are this -- t0=1,966 died at t=3,056
+    # with an exit at 2,593. Reporting those as "the model cannot cross" would
+    # have put four windows on the over-kill list that the model gets through.
+    if verdict == "PARTIAL" and deep_t >= t1:
+        rec["verdict"] = "CROSSED"
+    # reach_check's own caveat, kept here rather than left for a reader to
+    # remember: in a rotation section the anchor cannot carry 2900's one-shot
+    # state or the phase of autonomous triggers, so a frontier that dies within
+    # a few ticks of the anchor is telling us about the anchor, not the model.
+    if verdict != "SOLVED" and rec["held"] is not None and rec["held"] <= 5:
+        rec["verdict"] = "ANCHOR-WEAK"
+    return rec
+
+
 def anchored_diff(a, plan_out: Path, out_base: Path, dump: Path,
                   t0: int, t1: int) -> dict:
     """The model side, started at t0 from GD's own row, and the table.
@@ -311,6 +386,37 @@ def anchored_diff(a, plan_out: Path, out_base: Path, dump: Path,
     if not d.get("common"):
         out["error"] = "model covered no tick of the window"
     return out
+
+
+def reach_sweep(a, wins: list[dict], out_dir: Path, plan_path: Path) -> int:
+    """Every window, offline: does the model's reachability cross it?
+
+    Anchored on the HEAD run -- the verified solution's own worldline -- because
+    that is the trajectory known to get through every window in GD. A window the
+    model cannot cross from there is the model forbidding a passage that exists.
+    """
+    head = out_dir / "head.dump.csv"
+    if not head.exists():
+        log(f"no {head}: run the queue once (or --venue to make one)")
+        return 2
+    gd = read_rows(head)
+    index = out_dir / "reach.jsonl"
+    if index.exists():
+        index.unlink()
+    tally: dict[str, int] = {}
+    for i, w in enumerate(wins, 1):
+        rec = reach_probe(a, plan_path, out_dir / f"w{w['t0']}", gd,
+                          w["t0"], w["t1"])
+        rec["priority"] = w.get("priority")
+        rec["sources"] = w.get("sources")
+        tally[rec.get("verdict", "?")] = tally.get(rec.get("verdict", "?"), 0) + 1
+        with index.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        log(f"[{i}/{len(wins)}] t0={w['t0']}..{w['t1']} {rec.get('verdict')}"
+            f" held={rec.get('held')} diedX={rec.get('diedX')}"
+            f" {rec.get('seconds')}s")
+    log(f"reach: {tally} -> {index}")
+    return 0
 
 
 def rediff(a, wins: list[dict], out_dir: Path, session=None) -> int:
@@ -377,6 +483,12 @@ def main(argv=None) -> int:
     ap.add_argument("--rediff", action="store_true",
                     help="recompute the tables for windows already crossed, "
                          "from the plan and dump on disk. No GD, no search")
+    ap.add_argument("--reach", action="store_true",
+                    help="ask whether the MODEL can get through each window "
+                         "from GD's own entry state. Offline, every window, "
+                         "no crossing needed")
+    ap.add_argument("--reachcap", type=int, default=2000)
+    ap.add_argument("--threads", type=int, default=8)
     a = ap.parse_args(argv)
 
     out_dir = Path(a.out_dir) if a.out_dir else LEVEL_DATA / f"secqueue_lv{a.level}"
@@ -391,6 +503,10 @@ def main(argv=None) -> int:
 
     plan_path = DATA / f"solution_lv{a.level}_dp.txt"
     inputs = [(t, d) for t, d in P.read_inputs(plan_path)]
+
+    # Offline mode: no venue, no GD, no worker.
+    if a.reach:
+        return reach_sweep(a, wins, out_dir, plan_path)
 
     if a.venue == "wine":
         sys.path.insert(0, str(Path(r"C:\GD-lab\oneoff\py")))
