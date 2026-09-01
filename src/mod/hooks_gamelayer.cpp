@@ -2986,6 +2986,19 @@ class $modify(GJBaseGameLayer) {
         // effect next frame, so within the same frame the old layer's remaining updates
         // still run and would dirty g_tick / the input cursor
         if (static_cast<GJBaseGameLayer*>(PlayLayer::get()) != this) return;
+        // TRIED AND REMOVED (2026-09-01): skipping this counter for the frozen
+        // updates after a checkpoint restore. The decompilation says resetLevel
+        // sets layer+0x32a4 = 2 and getModifiedDelta then hands the next two
+        // updates a dt of 0, which would let a restore spend two ticks without
+        // advancing physics -- and that would explain hole 2's residual exactly
+        // (with the dash restored the run matches for 22 ticks and ends 2 short
+        // of 24, on a CLASSIC ball, where a dash has no duration and ends only
+        // on release).
+        //
+        // It does not happen HERE. Instrumented and measured: skipped=0, and
+        // the first update after the restore already carries dt=0.004167. So
+        // whatever the freeze does, processCommands does not see it, no ticks
+        // are spent on it, and the two-tick gap has another cause.
         ++g_tick;
         // Real positions of moving geometry (cfg `grouptrace=1`). This sits right after
         // ++g_tick so it gets the same tick numbers as dump/trace -- the model matches the
