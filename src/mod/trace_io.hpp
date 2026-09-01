@@ -44,6 +44,17 @@ inline int g_restoreProbe = 0;
 // The plan's cursors as they stood at the checkpoint, so a restore can rewind
 // them with the game (see the note where they are captured).
 inline size_t g_ckptNextInput = 0, g_ckptNextToggle = 0;
+// brief-017 part B: the entry snapshots of one replay pass. Each carries the
+// plan's cursors as well as the checkpoint, because a restore has to rewind
+// those with the game or the restored run is fed a different input stream
+// (brief-018 hole 2 -- that mistake looked like a state hole for a whole day).
+struct EntrySnap {
+    long long tick;
+    CheckpointObject* cp;
+    size_t nextInput, nextToggle;
+};
+inline std::vector<EntrySnap> g_snaps;
+inline size_t g_nextSnap = 0;
 // Whether the button was held at the head of the section. Taken from the real game's
 // bookkeeping (not recounted from the plan's inputs). The section solver used to assume the
 // head is "released", so in a section cut in the middle of a hold the search and the plain

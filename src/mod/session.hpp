@@ -434,6 +434,16 @@ inline void loadConfig() {
         else if (key == "oobtest") g_cfg.oobTest = (val == "1");
         else if (key == "vytest") { g_cfg.vyTest = std::atof(val.c_str());
                                     g_cfg.vyTestOn = true; }
+        else if (key == "snapat") {
+            g_cfg.snapAt.clear();
+            std::stringstream ss(val);
+            std::string tok;
+            while (std::getline(ss, tok, ',')) {
+                if (tok.empty()) continue;
+                g_cfg.snapAt.push_back(std::atoi(tok.c_str()));
+            }
+            std::sort(g_cfg.snapAt.begin(), g_cfg.snapAt.end());
+        }
         // Section solver (src/solver/secsolve.hpp)
         else if (key == "secsolve") secsolve::g_on = (val == "1");
         else if (key == "secstart") cfgNum(key, val, secsolve::g_startTick);

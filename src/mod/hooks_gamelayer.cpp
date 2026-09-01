@@ -375,6 +375,40 @@ class $modify(GJBaseGameLayer) {
                     ev("PRACTICE_on");
                     writeResult("practice_on: tick=" + std::to_string(g_tick));
                 }
+                // brief-017 part B: a checkpoint at EVERY tick in `snapat`,
+                // taken during one replay of a verified solution so that a
+                // section run can start at any window's entry without
+                // replaying the level again.
+                //
+                // markCheckpoint places on its own schedule and can land LATE
+                // (measured: six attempts aimed at three ticks landed 1 to 17
+                // ticks after), so the tick it actually landed on is recorded
+                // beside the tick that was asked for. A section whose entry
+                // moved is still usable -- it just starts where the checkpoint
+                // is, and the consumer needs to know that rather than assume.
+                if (g_nextSnap < g_cfg.snapAt.size()
+                    && g_tick >= g_cfg.snapAt[g_nextSnap]) {
+                    const int asked = g_cfg.snapAt[g_nextSnap];
+                    while (g_nextSnap < g_cfg.snapAt.size()
+                           && g_cfg.snapAt[g_nextSnap] <= g_tick) ++g_nextSnap;
+                    if (auto* cp = pl->markCheckpoint()) {
+                        cp->retain();
+                        g_snaps.push_back({(long long)g_tick, cp,
+                                           g_nextInput, g_nextToggle});
+                        char sb[192];
+                        snprintf(sb, sizeof(sb),
+                                 "snap: asked=%d at=%lld x=%.3f y=%.3f "
+                                 "in=%zu tog=%zu",
+                                 asked, (long long)g_tick,
+                                 m_player1 ? m_player1->getPositionX() : -1.0,
+                                 m_player1 ? m_player1->getPositionY() : -1.0,
+                                 g_nextInput, g_nextToggle);
+                        writeResult(sb);
+                    } else {
+                        writeResult("snap: asked=" + std::to_string(asked)
+                                    + " FAILED (markCheckpoint returned 0)");
+                    }
+                }
                 if (g_cfg.checkpointAt >= 0 && !g_ckpt && g_tick >= g_cfg.checkpointAt) {
                     // vytest writes BEFORE markCheckpoint, or the checkpoint has
                     // already copied the real velocity and the test measures

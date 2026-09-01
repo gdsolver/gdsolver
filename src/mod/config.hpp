@@ -203,6 +203,12 @@ struct Config {
     int practiceAt = -1;     // turn practice mode ON at this tick
     int checkpointAt = -1;   // create a checkpoint at this tick
     int restoreAt = -1;      // restore at this tick (once only)
+    // cfg `snapat=t1,t2,...`: brief-017 part B. Take a checkpoint at EVERY tick
+    // in the list during one replay of a verified solution, so that a section
+    // run can start from any window's entry without replaying the level again.
+    // The trajectory the veto boxes are translated through is not a new output:
+    // dump.csv already carries tick, x and y for the whole pass.
+    std::vector<int> snapAt;
     // Feasibility measurement for the section solver (cfg `restoreloop=N`).
     // Restore N times in a row from the checkpoint created by checkpointat and report the cost
     // per restore. This number decides the design: 300 states per layer x 200 layers = 60,000
