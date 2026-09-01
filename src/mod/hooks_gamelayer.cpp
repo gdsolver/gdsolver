@@ -348,6 +348,12 @@ class $modify(GJBaseGameLayer) {
                     writeResult("practice_on: tick=" + std::to_string(g_tick));
                 }
                 if (g_cfg.checkpointAt >= 0 && !g_ckpt && g_tick >= g_cfg.checkpointAt) {
+                    // vytest writes BEFORE markCheckpoint, or the checkpoint has
+                    // already copied the real velocity and the test measures
+                    // nothing (first attempt: whatever was injected, the restore
+                    // came back with the run's own -4.026 every time).
+                    if (g_cfg.vyTestOn && m_player1)
+                        m_player1->m_yVelocity = g_cfg.vyTest;
                     g_ckpt = pl->markCheckpoint();
                     if (g_ckpt) {
                         g_ckpt->retain();
@@ -381,6 +387,17 @@ class $modify(GJBaseGameLayer) {
                         if (g_cfg.oobTest && m_player1)
                             reinterpret_cast<char*>(m_player1)[kOobLatchOff] = 1;
                         secCaptureDash(secsolve::g_ckptDash);
+                        // vy at full precision (hole 3 of brief-018). The
+                        // restore is read as re-rounding the y velocity to
+                        // "integer part + round(fraction*1000)/1000", which
+                        // would destroy the HALF-grid values that flipGravity's
+                        // x0.5 and a ball tap's x0.6 produce. dump.csv prints
+                        // three decimals and cannot show a 0.0005 difference,
+                        // so the two values are printed here instead and the
+                        // test is one run: what the checkpoint held against
+                        // what the restore left.
+                        g_ckptVy = m_player1 ? m_player1->m_yVelocity : 0.0;
+                        g_ckptVyRel = m_player1 ? m_player1->m_yVelocityRelated : 0.0;
                         g_ckptOobLatch = m_player1
                             ? (unsigned char)reinterpret_cast<const char*>(m_player1)[kOobLatchOff]
                             : 0;
@@ -474,6 +491,18 @@ class $modify(GJBaseGameLayer) {
                     // and its own restore refused to read it back.
                     const int wasDash = m_player1 ? (int)m_player1->m_isDashing : -1;
                     secRestoreDash(secsolve::g_ckptDash);
+                    // ...and the exact y velocity (hole 3). GD's restore puts
+                    // it back on the 0.001 grid -- MEASURED by injecting a value
+                    // before the checkpoint and reading what came back:
+                    //   1.9815    -> 1.982      half away from zero
+                    //   -3.5935   -> -3.594     same, on the negative side
+                    //   2.3164999 -> 2.316      below half, down
+                    //   7.0001    -> 7.000      down
+                    // so the half-grid velocities that flipGravity's x0.5 and a
+                    // ball tap's x0.6 produce do not survive a restore. The
+                    // captured value is written back verbatim.
+                    const double wasVy = m_player1 ? m_player1->m_yVelocity : 0.0;
+                    if (m_player1) m_player1->m_yVelocity = g_ckptVy;
                     const int wasLatch = m_player1
                         ? (int)(unsigned char)reinterpret_cast<const char*>(m_player1)[kOobLatchOff]
                         : -1;
@@ -489,6 +518,14 @@ class $modify(GJBaseGameLayer) {
                         + " oobGDLeft=" + std::to_string(wasLatch)
                         + " dashGDLeft=" + std::to_string(wasDash)
                         + " dashAtCkpt=" + std::to_string((int)secsolve::g_ckptDash.on));
+                    {
+                        char vb[224];
+                        snprintf(vb, sizeof(vb),
+                                 "restorevy: ckpt=%.12f gdLeft=%.12f now=%.12f",
+                                 g_ckptVy, wasVy,
+                                 m_player1 ? m_player1->m_yVelocity : 0.0);
+                        writeResult(vb);
+                    }
                 }
             }
         }

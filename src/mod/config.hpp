@@ -213,6 +213,14 @@ struct Config {
     // tested at all. The latch is only set by a substep that is genuinely out
     // of bounds, and a plain replay cannot reach that -- the band clamps.
     bool oobTest = false;
+    // cfg `vytest=<double>`: write this y velocity just before the checkpoint
+    // is taken, to test whether the restore re-rounds it onto the 0.001 grid.
+    // Injected rather than found, because the checkpoint does not land on the
+    // tick it is asked for (markCheckpoint has its own spacing), and the
+    // half-grid values are single ticks -- six checkpoints aimed at three of
+    // them all landed 1 to 17 ticks late, on grid values.
+    double vyTest = 0.0;
+    bool vyTestOn = false;
     bool coinMode = false;   // enable our own coin-pickup detection (for coin verification
                              // during replay)
     // Music handling. continuous=keep the song playing / mute=silent / normal=untouched

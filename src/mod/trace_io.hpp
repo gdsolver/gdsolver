@@ -34,6 +34,10 @@ inline unsigned char g_ckptOobLatch = 0;
 // So the latch is 0xC38 and the audit's correction was the wrong way round.
 inline constexpr std::size_t kOobLatchOff = 0xC38;
 // (the dash held across a restore lives with its type, in secsolve.hpp)
+// y velocity at the checkpoint, full precision, for hole 3 of brief-018 -- the
+// restore is read as re-rounding it onto the 0.001 grid, which would lose the
+// half-grid values flipGravity (x0.5) and a ball tap (x0.6) make.
+inline double g_ckptVy = 0.0, g_ckptVyRel = 0.0;
 // Whether the button was held at the head of the section. Taken from the real game's
 // bookkeeping (not recounted from the plan's inputs). The section solver used to assume the
 // head is "released", so in a section cut in the middle of a hold the search and the plain
