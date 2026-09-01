@@ -78,6 +78,30 @@ inline double g_xq = 0.25;
 inline bool g_done = false;          // once per session
 // said once: "secsolve=1 but no checkpoint, so nothing ran"
 inline bool g_warnedNoCkpt = false;
+
+// ---- the reference spine (brief-017 part C) --------------------------------
+//
+// One rollout is pinned: the verified solution's own inputs, followed from the
+// section head, exempt from BOTH the dedupe and the cap. Without it a window
+// the solution demonstrably crosses can still come back EXHAUSTED, because
+// dedupe is representative selection and the representative it keeps for the
+// solution's class may be a state that dies.
+//
+// MEASURED on lv22's top window (t0=5,387, 712 ticks): the search dies at depth
+// 233 at cap 100 AND at cap 600 -- the same depth to the tick, with six times
+// the allowance -- while the same snapshot replayed with the solution's own
+// inputs survives 300 ticks bit-identically (snapverify 300/300, worst 0.0).
+// So it is not the cap: at 600 the frontier only ever reached 138, meaning
+// dedupe was the binding constraint, and the class the solution lives in was
+// being merged into one that dies.
+//
+// This does not put a seed into a solve. 017 is a measurement pass -- the
+// campaign rule allows a reference replay as an INSTRUMENT, and what the spine
+// buys is that the window is always crossed, so the diff tables are always
+// complete around the path rather than absent whenever the search loses it.
+inline bool g_spineOn = true;        // cfg `secspine=0` turns it off for A/B
+inline int g_spine = -1;             // node index of the spine at this layer
+inline int g_spineNext = -1;         // ...and the child that continues it
 inline bool g_verify = false;        // cfg `secverify=1`: no search, only check
                                      // restore fidelity
 // cfg `seclog=1`: emit the per-layer breakdown. Whether THE CAP IS BINDING OR
@@ -341,6 +365,10 @@ inline std::vector<Node> g_nodes;
 // Per-node dash state (same index as g_nodes). Held because the checkpoint's
 // RESTORE does not read it back -- see the note above DashState.
 inline std::vector<DashState> g_dash;
+// Per-node exact y velocity. The checkpoint restore re-rounds it onto the 0.001
+// grid (brief-018 hole 3), and a search restores once per tick, so the rounding
+// is applied once per step instead of once per section.
+inline std::vector<double> g_vy;
 // ...and the same thing for the plain checkpoint/restore path (hole 2 of
 // brief-018), which 017's section runs use and which had no dash handling at
 // all. MEASURED without injection: lv22 checkpoint at t=2,112 mid-dash,

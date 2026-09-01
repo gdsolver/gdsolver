@@ -2218,6 +2218,12 @@ class $modify(GJBaseGameLayer) {
         releaseAnchors();
         g_nodes.push_back({-1, 0, 0, 0.f, 0.f, 0.f, 0});
         g_dash.assign(1, secsolve::DashState{});  // section head (input unused)
+        g_vy.assign(1, m_player1 ? m_player1->m_yVelocity : 0.0);
+        // The section head IS the spine's first node: the verified solution
+        // passed through here, so following its own inputs from this node is
+        // the one rollout that must never be pruned (see g_spineOn).
+        g_spine = g_spineOn ? 0 : -1;
+        g_spineNext = -1;
 
         // Frontier nodes hold their own checkpoint. In the version that replayed the
         // prefix every time, step count grew with the square of depth: 767,972 steps /
@@ -2530,6 +2536,16 @@ class $modify(GJBaseGameLayer) {
                         // Dash is not in the checkpoint. Restore it here
                         if ((size_t)ni < g_dash.size())
                             secRestoreDash(g_dash[(size_t)ni]);
+                        // ...and the exact y velocity, which the restore puts
+                        // back on the 0.001 grid (brief-018 hole 3, measured:
+                        // 1.9815 comes back 1.982). One restore loses half a
+                        // thousandth; a search restores ONCE PER TICK, so a
+                        // 233-deep chain rounds 233 times. That is the
+                        // difference between "restore once and run 300 ticks
+                        // bit-identically" -- which this snapshot does -- and
+                        // a search from the same head dying at depth 233.
+                        if ((size_t)ni < g_vy.size() && m_player1)
+                            m_player1->m_yVelocity = g_vy[(size_t)ni];
                         // Idle the frozen ticks with "the input that node was holding"
                         // (physics does not advance so the state is unchanged, but button
                         // continuity is kept)
@@ -2633,6 +2649,7 @@ class $modify(GJBaseGameLayer) {
                                            (uint16_t)secsolve::cntNow(this)});
                         g_dash.emplace_back();
                         secCaptureDash(g_dash.back());
+                        g_vy.push_back(p ? p->m_yVelocity : 0.0);
                         g_cps.push_back(nullptr);
                         if (keepSnaps) {
                             snaps.emplace_back(); pulses.emplace_back();
@@ -2663,7 +2680,22 @@ class $modify(GJBaseGameLayer) {
                                               p->m_isUpsideDown ? 1 : 0, branch,
                                               px, p->m_isDashing ? 1 : 0,
                                               cntHere);
-                    if (!seen.insert(k).second) { ++layDup; continue; }
+                    // The spine is the verified solution's own continuation:
+                    // this parent is the spine and this branch is what the plan
+                    // does at this tick. It is exempt from the dedupe -- see
+                    // the note at g_spineOn for why a window the solution
+                    // crosses can otherwise come back EXHAUSTED.
+                    bool isSpine = false;
+                    if (g_spineOn && ni == g_spine) {
+                        int planHeld = 0;
+                        const long long tHere = g_ckptTick + depth;
+                        for (const auto& in : g_cfg.inputs) {
+                            if (in.step > tHere) break;
+                            planHeld = in.down ? 1 : 0;
+                        }
+                        isSpine = (branch == planHeld);
+                    }
+                    if (!seen.insert(k).second && !isSpine) { ++layDup; continue; }
                     // No cap discard here. Two children per parent, so the collected count
                     // is naturally bounded by 2*|cur|. Pruning happens once the layer is
                     // complete (below).
@@ -2674,6 +2706,7 @@ class $modify(GJBaseGameLayer) {
                                            (uint16_t)cntHere});
                         g_dash.emplace_back();
                         secCaptureDash(g_dash.back());
+                        g_vy.push_back(p ? p->m_yVelocity : 0.0);
                         g_cps.push_back(nullptr);
                         snaps.emplace_back();
                         pulses.emplace_back();
@@ -2698,6 +2731,7 @@ class $modify(GJBaseGameLayer) {
                                            (uint16_t)cntHere});
                         g_dash.emplace_back();
                         secCaptureDash(g_dash.back());
+                        g_vy.push_back(p ? p->m_yVelocity : 0.0);
                         g_cps.push_back(cp);
                         // For the stacking check. Taken at the same instant as the checkpoint
                         if (g_overlay) {
@@ -2710,6 +2744,7 @@ class $modify(GJBaseGameLayer) {
                         }
                     }
                     nxt.push_back((int)g_nodes.size() - 1);
+                    if (isSpine) g_spineNext = nxt.back();
                     cpPeak = std::max(cpPeak, (long long)(cur.size() + nxt.size()));
                 }
             }
@@ -2721,6 +2756,15 @@ class $modify(GJBaseGameLayer) {
             // collapsed to 6px (197.7..202.2), while coarse granularity with no cap hit
             // (cap 400) gave 54px (197.7..251.3) -- the upside-down result that finer is
             // worse. Sort by y and take at even spacing, always keeping both band edges.
+            // Hold the spine out of the pruning entirely and put it back after.
+            // Exempting it inside each branch of the cap would mean touching
+            // both of them and their release paths; lifting it out cannot drop
+            // it by accident, and the layer being cap+1 wide costs nothing.
+            int spineHeld = -1;
+            if (g_spineOn && g_spineNext >= 0) {
+                auto it = std::find(nxt.begin(), nxt.end(), g_spineNext);
+                if (it != nxt.end()) { spineHeld = *it; nxt.erase(it); }
+            }
             bool capByX = false;
             if (nxt.size() > g_cap) {
                 // Do not crush the x families. With two exits of a rotated gameplay
@@ -2835,6 +2879,8 @@ class $modify(GJBaseGameLayer) {
                     if (!kept.count(ni)) { releaseCp(ni); ++layCap; }
                 nxt.swap(keepv);
             }
+            // ...and the spine goes back in, whatever the pruning decided.
+            if (spineHeld >= 0) nxt.push_back(spineHeld);
             // ---- Detect and repair (cfg `secverifyevery`) --------------------
             // Match the frontier nodes by replaying their input sequence from the section
             // checkpoint. psnap's errors only go in the direction of missing deaths, so
@@ -2963,17 +3009,25 @@ class $modify(GJBaseGameLayer) {
                 snprintf(lb, sizeof(lb),
                          "seclayer: d=%d parents=%zu keep=%zu dead=%d dup=%d "
                          "capped=%d x=%.1f y=%.1f..%.1f deadX=%.1f fp=%016llx "
-                         "xr=%.1f..%.1f axis=%c cnt=%d..%d",
+                         "xr=%.1f..%.1f axis=%c cnt=%d..%d spine=%d spineY=%.1f",
                          depth, cur.size(), nxt.size(), layDead, layDup, layCap,
                          layMaxX, layMinY > 1e8 ? 0.0 : layMinY,
                          layMaxY < -1e8 ? 0.0 : layMaxY, deadMaxX,
                          (unsigned long long)fp,
                          layMinX > 1e8 ? 0.0 : layMinX, layMaxX,
-                         capByX ? 'x' : 'y', cntLo, cntHi);
+                         capByX ? 'x' : 'y', cntLo, cntHi, g_spineNext,
+                           g_spineNext >= 0 ? (double)g_nodes[(size_t)g_spineNext].y : -1.0);
                 writeResult(lb);
             }
             for (int ni : cur) releaseCp(ni);          // the previous layer is no longer needed
             if (nxt.empty()) break;
+            // The spine advances with the layer. If this layer produced no
+            // continuation for it -- the plan's own branch died, which on a
+            // verified solution means the section head is not where the plan
+            // was -- it simply stops being pinned and the search carries on
+            // without it, rather than pinning a stale node forever.
+            g_spine = g_spineNext;
+            g_spineNext = -1;
             cur.swap(nxt);
             // ---- hand the frame back (see secsolve::SecTask) ----
             // At the layer boundary and nowhere else: `cur` is the layer just finished, every
