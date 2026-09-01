@@ -135,6 +135,10 @@ def main(argv=None) -> int:
     ap.add_argument("--family", default=None)
     ap.add_argument("--no-waivers", action="store_true",
                     help="ignore the waivers for known outliers and print the raw numbers")
+    ap.add_argument("--json", default="", dest="json_out",
+                    help="write the divergences themselves (with their ticks) "
+                         "to this file -- brief-017's section list needs WHERE "
+                         "they are, which the family baseline does not carry")
     a = ap.parse_args(argv)
     # reject --bless on a restricted run at the door (same reasoning as
     # quick_regress: the baseline file replaces the census of every level
@@ -182,7 +186,7 @@ def main(argv=None) -> int:
 
     return census_report(found, len(jobs), time.time() - t0,
                          top=a.top, bless=a.bless, levels=a.levels,
-                         waivers=not a.no_waivers)
+                         waivers=not a.no_waivers, json_out=a.json_out)
 
 
 def _base_count(v, levels: set[int]) -> int:
@@ -196,7 +200,7 @@ def _base_count(v, levels: set[int]) -> int:
 
 def census_report(found: list[dict], n_segs: int, elapsed: float, *,
                   top: int, bless: bool, levels: list[int],
-                  waivers: bool = True) -> int:
+                  waivers: bool = True, json_out: str = "") -> int:
     """Aggregate, print, compare against the baseline, and bless the families.
     found is the accumulation of eval_trace's return values.
 
@@ -213,6 +217,14 @@ def census_report(found: list[dict], n_segs: int, elapsed: float, *,
     waived: list[tuple[dict, dict]] = []
     if waivers:
         found, waived = census_waivers.split(found)
+    # --json: the divergences themselves, not the family aggregate. The blessed
+    # baseline is {family: {level: count}} and carries no ticks, so brief-017's
+    # section list -- which needs WHERE each divergence is -- cannot be built
+    # from it. This writes what `found` already holds: lv, t, x, cause, in, edy,
+    # edvy, one record per diverging section.
+    if json_out:
+        Path(json_out).write_text(json.dumps(found, indent=1), encoding="utf-8")
+        print(f"json -> {json_out} ({len(found)} divergences)")
 
     fams: dict[tuple, list[dict]] = {}
     for d in found:
