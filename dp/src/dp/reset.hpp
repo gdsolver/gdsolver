@@ -128,6 +128,7 @@ inline void resetInvocationState() {
     g_zoomTrigs.clear();
     g_flipHeadBoxes.clear();
     g_dashStopBoxes.clear();
+    g_armBoxes.clear();
 
     // search_key.hpp
     g_topAhead.clear();

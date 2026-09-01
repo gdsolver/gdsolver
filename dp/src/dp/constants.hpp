@@ -181,6 +181,12 @@ constexpr double kWaveClampMini = 6.0;
 // the corpus goes except inside a timewarp zone (id 1935), where the substep
 // density changes; lv22's is the only one.
 constexpr int kFlipGraceTicks = 25;
+// How long an id-1859 touch keeps the ceiling resolution armed. GD sets its
+// counter (player+0xb7c) to 2 on the touch and decays it once per tick, so the
+// arm covers the touch tick and the one after it. See modifiers.hpp's
+// armBoxTouch for the three measurements that pin the object as the real
+// discriminant.
+constexpr int kArmTicks = 2;
 constexpr double kWaveHalf = 5.0;
 // ...and the MINI one is NOT 0.600 of it. That carry-over was flagged
 // UNVERIFIED above and this session refuted the same 0.600 twice already (the

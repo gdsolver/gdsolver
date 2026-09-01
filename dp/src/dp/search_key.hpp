@@ -236,6 +236,13 @@ inline uint64_t keyOf(const State& s) {
            // level without an id-2866 object, so every existing key is
            // bit-identical.
            ^ ((uint64_t)s.fgArm << 63)
+           // ...and the id-1859 ceiling arm is the same kind of world state,
+           // for the same reason: two cubes at the same (y, vy) answer the
+           // ceiling above them with a bonk or with a death depending on it.
+           // Only the ARMED/not bit goes in, not the counter -- the two ticks
+           // it holds behave alike -- and it is 0 in every level without an
+           // id-1859 object, so every existing key stays bit-identical.
+           ^ ((s.armT < kArmTicks) ? 0xFF51AFD7ED558CCDull : 0)
            // [r52] The frame-change bit goes in the key too (it is set only on
            // the tick after the change, so the partition granularity barely
            // moves)

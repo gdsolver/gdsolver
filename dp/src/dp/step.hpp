@@ -2015,6 +2015,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         if (!c.fgArm && !g_flipHeadBoxes.empty()
             && flipHeadArms(modX, modY, pHalf))
             c.fgArm = 1;
+        // CEILING ARM (id 1859) -- the same start-of-tick position the 2866 arm
+        // and the force field read, and unlike fgArm it DECAYS: GD's counter is
+        // set to 2 by the touch and stepped down every tick.
+        c.armT = (!g_armBoxes.empty() && armBoxTouch(modX, modY, pHalf))
+                     ? 0
+                     : (uint8_t)std::min<int>(kArmTicks, (int)s.armT + 1);
         // Dual anti-collision bounce. Measured on lv16's second dual (mini
         // ball, 11 point probes, findings-lv16-dual.md): a body moving
         // TOWARD its partner that ends the tick within 23 px of it while the
@@ -2652,7 +2658,23 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     // So the rule stands only where it was measured. The next
                     // instrument is the disassembly of the head branch, not
                     // another fitted constant.
-                    const bool bonk = (c.mode == 5 || (c.mode == 0 && c.mini))
+                    // [2026-09-01] ...and the next instrument WAS the
+                    // disassembly, and it says the size was never the point.
+                    // collidedWithObjectInternal :739-750 lets ship, UFO, wave,
+                    // swing and ball into the ceiling resolution
+                    // unconditionally and the classic ground modes -- cube,
+                    // robot, spider, SIZE UNCONSIDERED -- only while an id-1859
+                    // arm is up. Three injections say the same (armBoxTouch):
+                    // a FULL-SIZE cube bonks under lv22's armed ceiling at
+                    // exactly y=2,055.000, the same full-size cube dies under
+                    // lv18's plain one, and a MINI cube dies under lv11's. So
+                    // "robot or mini cube" was a proxy for "an 1859 is here",
+                    // which is also why f3ca55d had to cut the bonk down to
+                    // mini to stop it firing where GD kills.
+                    // Ball stays out of this branch: it is on GD's
+                    // unconditional list, but putting it there is a separate
+                    // change with no measurement of mine behind it.
+                    const bool bonk = (c.armT < kArmTicks)
                                       && acquireBase && !s.flip && !s.fgArm
                                       && yPenC <= xPenC;
                     if (std::fabs(x - o->cx) <= o->hw + pInner

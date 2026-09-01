@@ -95,6 +95,15 @@ struct State {
     // section at t=20,200 seated a cube that GD kills and lost 360 ticks of
     // tracking. The step's own increment clamps it back down to the cap.
     uint8_t flipT = 255;
+    // Ticks since the player last touched an id-1859 ceiling arm, saturating.
+    // GD writes 2 into its counter on the touch and decays it every tick, so
+    // the arm holds for the touch tick and the one after (kArmTicks); while it
+    // holds, a cube / robot / spider answers a ceiling with a bonk instead of
+    // dying on it (modifiers.hpp, armBoxTouch, three measured points).
+    // 255 for the same reason flipT uses it: a State built without saying
+    // anything must come out UNARMED, and the step's increment clamps it back
+    // to the cap. Carried by the anchor as --start field 29 (-1 = not said).
+    uint8_t armT = 255;
     // GD's flying band, carried PER STATE. It has to be: the band is written
     // when a mode portal actually fires, and firing needs the player's box to
     // touch the portal in y as well as x. lv1 offers two lanes into its last

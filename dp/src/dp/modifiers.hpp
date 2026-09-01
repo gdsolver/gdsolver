@@ -353,6 +353,35 @@ inline bool flipHeadArms(double x, double y, double pHalf) {
             return true;
     return false;
 }
+// CEILING ARM (id 1859, GameObjectType 40). Touching one is what puts the
+// classic ground modes -- cube, robot, spider -- into the ceiling RESOLUTION
+// arm instead of the kill: collidedWithObjectInternal :739-750 lets
+// ship/UFO/wave/swing/ball through unconditionally and everything else only
+// with `[0xb7c] > 0`, the counter this object sets. GD writes 2 into it on the
+// touch and decays it every tick, so the window is the touch tick and the one
+// after it (kArmTicks).
+//
+// MEASURED, three points, 2026-09-01 (worker 98):
+//   lv22 (22,365): five 1859 at cy=2,055 under a ceiling whose underside is
+//        2,070. A FULL-SIZE cube injected at y=2,035 rising at vy=20 stops dead
+//        at y=2,055.000 with vy=0 and falls away -- the bonk.
+//   lv18 (24,345): the same full-size cube into a plain ceiling (underside 240,
+//        no modifier objects anywhere near) DIES.
+//   lv11 (4,500):  a MINI cube into a plain continuous ceiling DIES.
+// So the discriminant is neither the size nor the mode: it is this object. The
+// model's old `mode == robot || (cube && mini)` was its proxy, which is why
+// f3ca55d had to limit the bonk to mini to stop it firing where GD kills.
+// The armed-mini case (lv22's switch band, 1859 at (3,195,255)) is covered by
+// the verified solutions that run through it.
+struct ArmBox { double cx, cy, hw, hh; };
+inline std::vector<ArmBox> g_armBoxes;
+inline bool armBoxTouch(double x, double y, double pHalf) {
+    for (const auto& b : g_armBoxes)
+        if (std::fabs(x - b.cx) <= b.hw + pHalf
+            && std::fabs(y - b.cy) <= b.hh + pHalf)
+            return true;
+    return false;
+}
 // DASH STOP (id 1829, GameObjectType 40). Touching one while a dash ring's
 // dash is active ENDS the dash: vy restarts from 0 under ordinary gravity on
 // the next tick. Measured on lv22 (dash from ring 1704 at x=13,333, held

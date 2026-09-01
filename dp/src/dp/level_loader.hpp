@@ -885,6 +885,13 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             std::printf("dashstop: uid %d at (%.0f,%.0f) %.1fx%.1f\n",
                         o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0);
         }
+        // CEILING ARM (id 1859): what lets a cube family player answer a
+        // ceiling with a bonk instead of dying on it (see armBoxTouch).
+        else if (o.id == 1859) {
+            g_armBoxes.push_back({o.cx, o.cy, o.hw, o.hh});
+            std::printf("ceilarm: uid %d at (%.0f,%.0f) %.1fx%.1f\n",
+                        o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0);
+        }
         // FORCE FIELD (id 3645): a circular pusher, not a collider -- see
         // forceFieldAcc at the top. Not stored in L; stepOne reads the global.
         // The radius block above has already scaled o.radius by w/w0.
