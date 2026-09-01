@@ -209,6 +209,12 @@ struct Config {
     // The trajectory the veto boxes are translated through is not a new output:
     // dump.csv already carries tick, x and y for the whole pass.
     std::vector<int> snapAt;
+    // cfg `snapverify=N`: after the last window has gone by, restore each
+    // snapshot and run N ticks, comparing against what this same pass did from
+    // the head. brief-017 part B wants this on every snapshot -- it is the
+    // acceptance that a section's entry is faithful, and it doubles as the
+    // regression detector for brief-018's five holes.
+    int snapVerify = 0;
     // Feasibility measurement for the section solver (cfg `restoreloop=N`).
     // Restore N times in a row from the checkpoint created by checkpointat and report the cost
     // per restore. This number decides the design: 300 states per layer x 200 layers = 60,000

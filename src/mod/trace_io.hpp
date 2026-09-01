@@ -48,13 +48,22 @@ inline size_t g_ckptNextInput = 0, g_ckptNextToggle = 0;
 // plan's cursors as well as the checkpoint, because a restore has to rewind
 // those with the game or the restored run is fed a different input stream
 // (brief-018 hole 2 -- that mistake looked like a state hole for a whole day).
+struct SnapState { long long t; double x, y, vy; };
 struct EntrySnap {
     long long tick;
     CheckpointObject* cp;
     size_t nextInput, nextToggle;
+    // what THIS pass did from the head over the verification window, so the
+    // restored run has something to be compared against without a second pass
+    std::vector<SnapState> head;
 };
 inline std::vector<EntrySnap> g_snaps;
 inline size_t g_nextSnap = 0;
+inline bool g_snapVerified = false;
+// While a snapshot is being verified this points at the buffer the restored
+// run's states go into, so the same per-tick hook serves both passes instead of
+// a second copy of the reader.
+inline std::vector<SnapState>* g_snapProbe = nullptr;
 // Whether the button was held at the head of the section. Taken from the real game's
 // bookkeeping (not recounted from the plan's inputs). The section solver used to assume the
 // head is "released", so in a section cut in the middle of a hold the search and the plain

@@ -394,7 +394,7 @@ class $modify(GJBaseGameLayer) {
                     if (auto* cp = pl->markCheckpoint()) {
                         cp->retain();
                         g_snaps.push_back({(long long)g_tick, cp,
-                                           g_nextInput, g_nextToggle});
+                                           g_nextInput, g_nextToggle, {}});
                         char sb[192];
                         snprintf(sb, sizeof(sb),
                                  "snap: asked=%d at=%lld x=%.3f y=%.3f "
@@ -526,6 +526,73 @@ class $modify(GJBaseGameLayer) {
                         secsolve::g_task = runSectionSolve(pl);
                         secsolve::g_taskLayer = pl;
                     }
+                }
+                // brief-017 part B's acceptance: every snapshot is checked by
+                // restoring it and running the same ticks again. It runs once,
+                // after the last window has gone by -- the pass's own remaining
+                // progress is not meaningful afterwards, since the game has
+                // been rewound to a snapshot and left there.
+                //
+                // The restored run is fed the plan through the normal path, so
+                // the cursors are rewound with the game exactly as a section
+                // run will do it. Anything that does not match here is either
+                // one of brief-018's holes reopening or a new one.
+                // ...once EVERY requested snapshot has been taken. Keying this
+                // on g_snaps.back() alone fired after the first one, because
+                // "the last snapshot so far" is not "the last snapshot there
+                // will be" -- measured: it verified 1/1 and then went on to
+                // take three more.
+                if (g_cfg.snapVerify > 0 && !g_snapVerified && !g_snaps.empty()
+                    && g_nextSnap >= g_cfg.snapAt.size()
+                    && g_tick > g_snaps.back().tick + g_cfg.snapVerify) {
+                    g_snapVerified = true;
+                    int okCount = 0;
+                    for (auto& s : g_snaps) {
+                        std::vector<SnapState> got;
+                        if (pl->m_checkpointArray)
+                            pl->m_checkpointArray->removeAllObjects();
+                        pl->storeCheckpoint(s.cp);
+                        g_restorePending = true;
+                        pl->resetLevel();
+                        g_restorePending = false;
+                        g_nextInput = s.nextInput;
+                        g_nextToggle = s.nextToggle;
+                        g_tick = s.tick;
+                        g_snapProbe = &got;
+                        const long long target = s.tick + g_cfg.snapVerify;
+                        for (int guard = 0; g_tick < target && guard < 4096; ++guard)
+                            GJBaseGameLayer::update((float)(1.0 / 60.0));
+                        g_snapProbe = nullptr;
+                        // compare by tick, so a frozen update or a skipped row
+                        // cannot silently align two different moments
+                        std::unordered_map<long long, const SnapState*> byT;
+                        for (const auto& g : got) byT[g.t] = &g;
+                        double worst = 0.0;
+                        long long firstBad = -1;
+                        size_t n = 0;
+                        for (const auto& h : s.head) {
+                            auto it = byT.find(h.t);
+                            if (it == byT.end()) continue;
+                            ++n;
+                            const double d = std::max(
+                                std::fabs(h.y - it->second->y),
+                                std::fabs(h.vy - it->second->vy));
+                            if (d > worst) worst = d;
+                            if (d > 1e-9 && firstBad < 0) firstBad = h.t;
+                        }
+                        const bool ok = (n == s.head.size() && worst <= 1e-9);
+                        okCount += ok;
+                        char vb[224];
+                        snprintf(vb, sizeof(vb),
+                                 "snapverify: at=%lld compared=%zu/%zu worst=%.9f "
+                                 "firstBad=%lld %s",
+                                 s.tick, n, s.head.size(), worst, firstBad,
+                                 ok ? "OK" : "MISMATCH");
+                        writeResult(vb);
+                    }
+                    writeResult("snapverify: " + std::to_string(okCount) + "/"
+                                + std::to_string(g_snaps.size()) + " snapshots "
+                                "reproduce the head run");
                 }
                 if (g_cfg.restoreAt >= 0 && g_ckpt && !g_restoreDone && g_tick >= g_cfg.restoreAt) {
                     g_restoreDone = true;
@@ -3081,6 +3148,20 @@ class $modify(GJBaseGameLayer) {
         // whatever the freeze does, processCommands does not see it, no ticks
         // are spent on it, and the two-tick gap has another cause.
         ++g_tick;
+        // brief-017 part B: keep what this pass does over each snapshot's
+        // verification window, so the restored run can be held against the head
+        // run without replaying the level a second time.
+        if (g_cfg.snapVerify > 0 && m_player1) {
+            const SnapState now{(long long)g_tick,
+                                m_player1->getPositionX(),
+                                m_player1->getPositionY(),
+                                m_player1->m_yVelocity};
+            if (g_snapProbe) g_snapProbe->push_back(now);
+            else if (!g_snapVerified)
+                for (auto& s : g_snaps)
+                    if (g_tick > s.tick && g_tick <= s.tick + g_cfg.snapVerify)
+                        s.head.push_back(now);
+        }
         // Real positions of moving geometry (cfg `grouptrace=1`). This sits right after
         // ++g_tick so it gets the same tick numbers as dump/trace -- the model matches the
         // two on the same clock

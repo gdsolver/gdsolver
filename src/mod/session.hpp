@@ -434,6 +434,7 @@ inline void loadConfig() {
         else if (key == "oobtest") g_cfg.oobTest = (val == "1");
         else if (key == "vytest") { g_cfg.vyTest = std::atof(val.c_str());
                                     g_cfg.vyTestOn = true; }
+        else if (key == "snapverify") cfgNum(key, val, g_cfg.snapVerify);
         else if (key == "snapat") {
             g_cfg.snapAt.clear();
             std::stringstream ss(val);
