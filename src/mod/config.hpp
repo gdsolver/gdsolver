@@ -208,6 +208,11 @@ struct Config {
     // per restore. This number decides the design: 300 states per layer x 200 layers = 60,000
     // restores, so 1ms each is 60 seconds, 50ms each is 50 minutes and unusable.
     int restoreLoop = 0;
+    // cfg `oobtest=1`: force the out-of-bounds latch (player+0x187) to 1 just
+    // before the checkpoint is taken, so that the save/restore of it can be
+    // tested at all. The latch is only set by a substep that is genuinely out
+    // of bounds, and a plain replay cannot reach that -- the band clamps.
+    bool oobTest = false;
     bool coinMode = false;   // enable our own coin-pickup detection (for coin verification
                              // during replay)
     // Music handling. continuous=keep the song playing / mute=silent / normal=untouched

@@ -6,6 +6,33 @@ namespace p1 {
 
 inline CheckpointObject* g_ckpt = nullptr;
 inline long long g_ckptTick = -1;
+// player+0x187 as it stood when the checkpoint was taken: the out-of-bounds
+// kill's 2-substep latch. GD writes it in three places only (checkCollisions
+// twice, the constructor) and neither resetObject nor loadFromCheckpoint nor
+// PlayerCheckpoint touches it, so a restore leaves whatever the PREVIOUS run
+// left behind. Recorded here so the restore can put back the value a replay
+// from the head would hold (checkpoint-restore-audit-2026-09-01 §4.1).
+inline unsigned char g_ckptOobLatch = 0;
+// ...and WHERE it lives, which is not where the decompilation appears to say.
+//
+// checkCollisions reads `*(char *)(param_2 + 0x187)`, and the audit read that
+// as byte 0x187. It is not: param_2 is an 8-byte-element pointer there, so the
+// arithmetic is scaled and the byte is at 0x187 * 8 = 0xC38 -- which is the
+// offset the earlier survey gave and the audit "corrected" away. The audit's
+// own evidence for the correction was that 0xc38 never appears in the dumps,
+// and it would not: the decompiler prints the scaled form.
+//
+// MEASURED, one run per offset, `oobtest=1` injecting a 1 at the checkpoint and
+// the restore 1,080 ticks later reading what the game left:
+//
+//   byte 0x187   injected 1 -> still 1 at the restore. Nothing cleared it in
+//                1,080 ticks, on a run where the player is never out of
+//                bounds. So checkCollisions is not looking there.
+//   byte 0xC38   injected 1 -> 0 at the restore. Cleared, which is exactly
+//                what :108 does every substep.
+//
+// So the latch is 0xC38 and the audit's correction was the wrong way round.
+inline constexpr std::size_t kOobLatchOff = 0xC38;
 // Whether the button was held at the head of the section. Taken from the real game's
 // bookkeeping (not recounted from the plan's inputs). The section solver used to assume the
 // head is "released", so in a section cut in the middle of a hold the search and the plain

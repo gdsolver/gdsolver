@@ -362,12 +362,34 @@ class $modify(GJBaseGameLayer) {
                         // Also emit x/y: without matching against the post-restore position
                         // we would miss that "the point where the checkpoint was made" and
                         // "the point the restore returns to" differ
-                        char cb[160];
+                        // The out-of-bounds latch as it stood when the
+                        // checkpoint was taken. This is the value a replay from
+                        // the head would hold here, so it is what a restore has
+                        // to put back -- CheckpointObject does not carry it.
+                        //
+                        // `oobtest=1` forces it to 1 first. Without that the
+                        // save/restore path cannot be exercised at all: the
+                        // latch is only set by a substep that is genuinely out
+                        // of bounds, and on a plain replay the band CLAMPS
+                        // rather than letting the player leave it (measured --
+                        // a ship held into the ceiling parks at the band edge
+                        // with the latch still 0, as does a cube with the floor
+                        // removed, because the world floor holds it). The state
+                        // is reachable in the section solver, where a leaf's
+                        // last substep can be out of bounds, and not easily
+                        // anywhere else.
+                        if (g_cfg.oobTest && m_player1)
+                            reinterpret_cast<char*>(m_player1)[kOobLatchOff] = 1;
+                        g_ckptOobLatch = m_player1
+                            ? (unsigned char)reinterpret_cast<const char*>(m_player1)[kOobLatchOff]
+                            : 0;
+                        char cb[192];
                         snprintf(cb, sizeof(cb),
-                                 "checkpoint: tick=%lld x=%.3f y=%.3f",
+                                 "checkpoint: tick=%lld x=%.3f y=%.3f oobLatch=%d",
                                  (long long)g_ckptTick,
                                  m_player1 ? m_player1->getPositionX() : -1.0,
-                                 m_player1 ? m_player1->getPositionY() : -1.0);
+                                 m_player1 ? m_player1->getPositionY() : -1.0,
+                                 (int)g_ckptOobLatch);
                         writeResult(cb);
                     } else {
                         writeResult("checkpoint FAILED at tick=" + std::to_string(g_tick));
@@ -427,8 +449,39 @@ class $modify(GJBaseGameLayer) {
                     pl->resetLevel();
                     g_restorePending = false;
                     ev("RESTORE_done", (double)fromTick, (double)g_ckptTick);
+                    // player+0x187 is the out-of-bounds kill's 2-substep latch:
+                    // checkCollisions reads it, clears it, and re-latches this
+                    // substep's condition, and it kills only when BOTH substeps
+                    // said out-of-bounds. It is written in exactly three places
+                    // (checkCollisions twice, the constructor once) -- NOT in
+                    // resetObject, NOT in loadFromCheckpoint, NOT in
+                    // PlayerCheckpoint. So it survives a restore, and printing
+                    // it either side of one is how that gets seen rather than
+                    // argued (checkpoint-restore-audit-2026-09-01 §4.1).
+                    // PATCH (hole 1 of brief-018): put the latch back. GD's
+                    // restore does not, so without this the value left behind
+                    // by whatever ran before the restore survives into the
+                    // restored run -- and "restore and continue" then differs
+                    // from "replay from the head", which is exactly what §5.3
+                    // forbids.
+                    //
+                    // `wasLatch` is what GD's own restore left, printed beside
+                    // the value being written so one line carries the evidence
+                    // that the patch is doing something rather than agreeing
+                    // with the game by accident.
+                    const int wasLatch = m_player1
+                        ? (int)(unsigned char)reinterpret_cast<const char*>(m_player1)[kOobLatchOff]
+                        : -1;
+                    if (m_player1)
+                        reinterpret_cast<char*>(m_player1)[kOobLatchOff] =
+                            (char)g_ckptOobLatch;
+                    const char* pb1 = m_player1
+                        ? reinterpret_cast<const char*>(m_player1) : nullptr;
                     writeResult("restore: from=" + std::to_string(fromTick)
-                        + " to=" + std::to_string(g_ckptTick) + " tickNow=" + std::to_string(g_tick));
+                        + " to=" + std::to_string(g_ckptTick) + " tickNow=" + std::to_string(g_tick)
+                        + " oobLatch=" + std::to_string(pb1 ? (int)(unsigned char)pb1[kOobLatchOff] : -1)
+                        + " oobAtCkpt=" + std::to_string((int)g_ckptOobLatch)
+                        + " oobGDLeft=" + std::to_string(wasLatch));
                 }
             }
         }

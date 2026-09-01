@@ -431,6 +431,7 @@ inline void loadConfig() {
         else if (key == "checkpointat") cfgNum(key, val, g_cfg.checkpointAt);
         else if (key == "restoreat") cfgNum(key, val, g_cfg.restoreAt);
         else if (key == "restoreloop") cfgNum(key, val, g_cfg.restoreLoop);
+        else if (key == "oobtest") g_cfg.oobTest = (val == "1");
         // Section solver (src/solver/secsolve.hpp)
         else if (key == "secsolve") secsolve::g_on = (val == "1");
         else if (key == "secstart") cfgNum(key, val, secsolve::g_startTick);
