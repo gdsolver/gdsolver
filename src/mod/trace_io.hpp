@@ -33,6 +33,7 @@ inline unsigned char g_ckptOobLatch = 0;
 //
 // So the latch is 0xC38 and the audit's correction was the wrong way round.
 inline constexpr std::size_t kOobLatchOff = 0xC38;
+// (the dash held across a restore lives with its type, in secsolve.hpp)
 // Whether the button was held at the head of the section. Taken from the real game's
 // bookkeeping (not recounted from the plan's inputs). The section solver used to assume the
 // head is "released", so in a section cut in the middle of a hold the search and the plain

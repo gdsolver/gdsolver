@@ -336,9 +336,16 @@ struct Node {
     uint16_t cnt;
 };
 inline std::vector<Node> g_nodes;
-// Per-node dash state (same index as g_nodes). Held because the checkpoint
-// does not save it.
+// Per-node dash state (same index as g_nodes). Held because the checkpoint's
+// RESTORE does not read it back -- see the note above DashState.
 inline std::vector<DashState> g_dash;
+// ...and the same thing for the plain checkpoint/restore path (hole 2 of
+// brief-018), which 017's section runs use and which had no dash handling at
+// all. MEASURED without injection: lv22 checkpoint at t=2,112 mid-dash,
+// restore at t=2,232, and from two ticks on the restored run FALLS (vy 0.324,
+// -0.272, -0.570, ...) while the run from the head holds y=241.7341 at
+// vy=0.000.
+inline DashState g_ckptDash;
 // Per-node checkpoints. Kept alive ONLY FOR THE FRONTIER and released as the
 // layer advances (holding hundreds to thousands returns to the old
 // implementation's OOM). Index is the same as g_nodes.

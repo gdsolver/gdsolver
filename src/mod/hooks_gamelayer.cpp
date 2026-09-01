@@ -380,6 +380,7 @@ class $modify(GJBaseGameLayer) {
                         // anywhere else.
                         if (g_cfg.oobTest && m_player1)
                             reinterpret_cast<char*>(m_player1)[kOobLatchOff] = 1;
+                        secCaptureDash(secsolve::g_ckptDash);
                         g_ckptOobLatch = m_player1
                             ? (unsigned char)reinterpret_cast<const char*>(m_player1)[kOobLatchOff]
                             : 0;
@@ -469,6 +470,10 @@ class $modify(GJBaseGameLayer) {
                     // the value being written so one line carries the evidence
                     // that the patch is doing something rather than agreeing
                     // with the game by accident.
+                    // ...and the dash (hole 2), for the same reason: GD saved it
+                    // and its own restore refused to read it back.
+                    const int wasDash = m_player1 ? (int)m_player1->m_isDashing : -1;
+                    secRestoreDash(secsolve::g_ckptDash);
                     const int wasLatch = m_player1
                         ? (int)(unsigned char)reinterpret_cast<const char*>(m_player1)[kOobLatchOff]
                         : -1;
@@ -481,7 +486,9 @@ class $modify(GJBaseGameLayer) {
                         + " to=" + std::to_string(g_ckptTick) + " tickNow=" + std::to_string(g_tick)
                         + " oobLatch=" + std::to_string(pb1 ? (int)(unsigned char)pb1[kOobLatchOff] : -1)
                         + " oobAtCkpt=" + std::to_string((int)g_ckptOobLatch)
-                        + " oobGDLeft=" + std::to_string(wasLatch));
+                        + " oobGDLeft=" + std::to_string(wasLatch)
+                        + " dashGDLeft=" + std::to_string(wasDash)
+                        + " dashAtCkpt=" + std::to_string((int)secsolve::g_ckptDash.on));
                 }
             }
         }
@@ -987,8 +994,16 @@ class $modify(GJBaseGameLayer) {
     // x=3106.5 while the plain replay gave x=2143.5. y and vy matched exactly at every
     // depth, and the only split was the last 1 tick of the only run of consecutive 1s in
     // the input sequence (`secsolve_split`).
-    // Dash save and restore (see the note on DashState). Neither checkpoint nor psnap
-    // carries it, so hold it per node and write it back after the restore.
+    // Dash save and restore (see the note on DashState). psnap does not carry it,
+    // and the CHECKPOINT DOES -- but its restore never gets there:
+    // PlayerObject::saveToCheckpoint writes the dash fields whenever m_isDashing
+    // is set, and loadFromCheckpoint gates reading them back on
+    // `m_jumpBuffered != 0`, which PlayLayer::loadFromCheckpoint computes from
+    // "is a touch or key held in the UI layer RIGHT NOW". A bot has no held UI
+    // input at the moment of a restore, so the gate is shut and the saved dash
+    // is dropped (checkpoint-restore-audit-2026-09-01 §4.2). Setting the gate
+    // ahead of time does not help either -- loadFromCheckpoint overwrites the
+    // field from the UI before it reads it. So it is written back here.
     void secCaptureDash(secsolve::DashState& d) {
         auto* p = m_player1;
         if (!p) { d = secsolve::DashState{}; return; }
