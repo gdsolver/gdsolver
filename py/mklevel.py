@@ -2113,6 +2113,50 @@ SAWCAL_STATIONS = [(1734, 2000, 0.0), (1735, 3000, 0.0), (1734, 4000, 0.5),
                    (1583, 8000, 0.0)]
 
 
+def build_expease() -> str:
+    """Where do GD's Exponential easings actually STOP? (brief-015)
+
+    Three blocks, one per easing, all given the SAME offset by their own Move
+    trigger, all firing at the same x. Reading the three terminals against each
+    other answers the question without needing the unit of the move offset:
+
+        ExpIn (11)   ends at 0.999 of the offset -- cocos subtracts 0.001 and
+                     the object stays a tenth of a percent short, forever
+        ExpOut (12)  ends exactly, because GD special-cases t==1
+        ExpIO (10)   the insurance row: neither quirk is supposed to be inside
+                     it, so it should follow the model's curve -- which itself
+                     ends at 0.99951, not at 1
+
+    MEASURED (2026-09-01): 299.700 / 300.000 / 299.821 of a 300 offset. The
+    first two are the prediction exactly. The third is NOT a terminal: the
+    recorder stops writing once the move drops under its epsilon, and 299.821
+    is u=0.985 on that curve, so this rig sees ExpIO mid-tail and cannot read
+    its endpoint. It is consistent with the model and contradicts nothing, but
+    an ExpIO endpoint needs a probe that does not depend on the recorder.
+
+    ExpIn is worth measuring here and nowhere else -- it is used ZERO times in
+    all 22 official levels, so a rig is the only place it can be confirmed.
+
+    Two seconds of travel, well inside the run, so every block is parked at its
+    terminal for most of the recording rather than caught mid-curve.
+    """
+    parts = [header(start_mode="cube")]
+    parts += floor_run(0, 9000, y=GROUND_Y)
+    # one block per easing, far apart so grouptrace rows cannot be confused
+    for k, (grp, x) in enumerate(((11, 2000), (12, 3000), (13, 4000))):
+        parts.append(obj(BLOCK, x, 300, extra={K_GROUPS: str(grp)}))
+    for grp, ease in ((11, 11), (12, 12), (13, 10)):
+        parts.append(obj(TRIG_MOVE, 45, 300, extra={
+            K_TARGET: str(grp),
+            K_DURATION: "2",
+            K_MOVE_X: "0",
+            K_MOVE_Y: "300",
+            K_EASING: str(ease),
+            K_EASING_RATE: "2",
+        }))
+    return ";".join(parts) + ";"
+
+
 def build_sawcal_moved(mode: str, mini: bool = False) -> str:
     """sawcal with every saw carried by an autonomous Move trigger.
 
@@ -3519,6 +3563,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcal_wave_mini": lambda: build_sawcal_mode("wave", True),
             "sawcal_ship_mini": lambda: build_sawcal_mode("ship", True),
             "sawcal_cube_mini": lambda: build_sawcal_mode("cube", True),
+            "expease": build_expease,
             "sawcalmv_wave": lambda: build_sawcal_moved("wave"),
             "sawcalmv_ship": lambda: build_sawcal_moved("ship"),
             "sawcalmv_ball": lambda: build_sawcal_moved("ball"),

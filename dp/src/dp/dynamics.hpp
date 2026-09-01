@@ -122,8 +122,22 @@ inline double gdEase(int kind, double rate, double u) {
         case 10: return u < 0.5
                      ? 0.5 * std::pow(2.0, 10.0 * (2.0 * u - 1.0))
                      : 0.5 * (2.0 - std::pow(2.0, -10.0 * (2.0 * u - 1.0)));
-        case 11: return u == 0.0 ? 0.0 : std::pow(2.0, 10.0 * (u - 1.0));
-        case 12: return 1.0 - std::pow(2.0, -10.0 * u);
+        // [2026-09-01] The two Exponential ENDPOINTS, read out of the binary
+        // (getEasedValue, the 0.001f at rodata 3A83126F is real). Both were
+        // wrong, in opposite directions, and both are permanent: an object
+        // whose move ends on one of these curves stops in the wrong place and
+        // stays there, so the hitbox is off for the rest of the level.
+        //
+        // ExpIn: GD subtracts 0.001 and therefore stops at 0.999 -- one tenth
+        // of a percent SHORT of the offset it was given, forever. The model
+        // reached 1.0, i.e. it overshot. cocos has no u==0 guard either (it
+        // returns -0.0000234 there), so the guard goes too: match the binary,
+        // not the tidier curve.
+        case 11: return std::pow(2.0, 10.0 * (u - 1.0)) - 0.001;
+        // ExpOut: GD special-cases t==1 to land exactly. Without it the curve
+        // stops at 1 - 2^-10 = 0.9990234, 0.0977% short. Six moves in lv22 use
+        // this, the largest 51 px, so the model was parking them ~0.05 px low.
+        case 12: return u >= 1.0 ? 1.0 : 1.0 - std::pow(2.0, -10.0 * u);
         case 13: return -0.5 * (std::cos(kPi * u) - 1.0);
         case 14: return 1.0 - std::cos(u * kPi * 0.5);
         case 15: return std::sin(u * kPi * 0.5);
