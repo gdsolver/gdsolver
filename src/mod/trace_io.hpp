@@ -38,6 +38,12 @@ inline constexpr std::size_t kOobLatchOff = 0xC38;
 // restore is read as re-rounding it onto the 0.001 grid, which would lose the
 // half-grid values flipGravity (x0.5) and a ball tap (x0.6) make.
 inline double g_ckptVy = 0.0, g_ckptVyRel = 0.0;
+// The restore probe (brief-018 hole 2): how many updates still to report. The
+// substep counter it reads is g_pcCalls, which already exists in config.hpp.
+inline int g_restoreProbe = 0;
+// The plan's cursors as they stood at the checkpoint, so a restore can rewind
+// them with the game (see the note where they are captured).
+inline size_t g_ckptNextInput = 0, g_ckptNextToggle = 0;
 // Whether the button was held at the head of the section. Taken from the real game's
 // bookkeeping (not recounted from the plan's inputs). The section solver used to assume the
 // head is "released", so in a section cut in the middle of a hold the search and the plain

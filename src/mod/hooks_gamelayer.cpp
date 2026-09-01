@@ -240,6 +240,34 @@ class $modify(GJBaseGameLayer) {
         hookdepth::Guard hg(hookdepth::BGL_UPDATE);
         stallwatch::Mark sm(stallwatch::UPDATE);
         ++g_frame;
+        // The discriminating experiment for hole 2's two-tick gap (brief-018).
+        // resetLevel sets m_resumeTimer unconditionally, and the question is
+        // whether the updates it covers still run substeps. Printing the timer
+        // beside the number of processCommands calls each update actually made
+        // separates the candidates in ONE run:
+        //   2 / 1(+0) / 0(+0) / 0(+1)   the updates are frozen -- ticks are not
+        //                               spent, and the compensation belongs on
+        //                               the side that counts steps itself
+        //   +1 from the first line      they are not frozen, and the two ticks
+        //                               go somewhere else (the input queue
+        //                               release, or a split step)
+        // An earlier attempt to settle this by reading `dt` inside
+        // processCommands proved nothing: that dt is the caller's value and
+        // says nothing about whether the update was frozen.
+        if (g_restoreProbe > 0) {
+            --g_restoreProbe;
+            const long long before = g_pcCalls;
+            const int timerBefore = m_resumeTimer;
+            GJBaseGameLayer::update(dt);
+            char pb[192];
+            snprintf(pb, sizeof(pb),
+                     "restoreprobe: resumeTimer %d->%d  pcCalls=+%lld  "
+                     "tick=%lld dt=%.6f",
+                     timerBefore, m_resumeTimer, g_pcCalls - before,
+                     (long long)g_tick, dt);
+            writeResult(pb);
+            return;
+        }
         // Verification C: fake the frame dt. This dt is the only path by which the physics
         // learns the frame rate.
         if (g_started && g_cfg.framedt > 0) dt = g_cfg.framedt;
@@ -387,6 +415,16 @@ class $modify(GJBaseGameLayer) {
                         if (g_cfg.oobTest && m_player1)
                             reinterpret_cast<char*>(m_player1)[kOobLatchOff] = 1;
                         secCaptureDash(secsolve::g_ckptDash);
+                        // Where the plan's input stream had got to. A restore
+                        // rewinds the game to this tick but g_nextInput is a
+                        // forward-only cursor, so without putting it back the
+                        // restored run is fed the inputs for the tick it was
+                        // AT when the restore happened -- a hundred ticks of
+                        // plan applied to a state that is a hundred ticks
+                        // earlier. That is not a restore, and any fidelity
+                        // measured through it is measuring the mismatch.
+                        g_ckptNextInput = g_nextInput;
+                        g_ckptNextToggle = g_nextToggle;
                         // vy at full precision (hole 3 of brief-018). The
                         // restore is read as re-rounding the y velocity to
                         // "integer part + round(fraction*1000)/1000", which
@@ -503,6 +541,15 @@ class $modify(GJBaseGameLayer) {
                     // captured value is written back verbatim.
                     const double wasVy = m_player1 ? m_player1->m_yVelocity : 0.0;
                     if (m_player1) m_player1->m_yVelocity = g_ckptVy;
+                    g_restoreProbe = 3;    // report the next three updates
+                    // ...and rewind the plan's cursors with it, and the tick
+                    // they are keyed on. Without this the restored run gets a
+                    // different input stream and every comparison against a
+                    // replay from the head measures that instead of the
+                    // restore.
+                    g_nextInput = g_ckptNextInput;
+                    g_nextToggle = g_ckptNextToggle;
+                    g_tick = g_ckptTick;
                     const int wasLatch = m_player1
                         ? (int)(unsigned char)reinterpret_cast<const char*>(m_player1)[kOobLatchOff]
                         : -1;
