@@ -2243,6 +2243,130 @@ def _ka39_rig(mode: str, mini: bool, spin: bool) -> str:
     return ";".join(parts) + ";"
 
 
+# ---- brief-004b: the flip window, with the LAUNCH taken off the flip -------
+# WHY A NEW RIG AT ALL. The probe this replaces could not be built: a blue pad
+# leaves the player upside-down and injecting it back onto the same pad does not
+# re-fire it (GD keeps the contact as spent), so "upright again, and recently
+# flipped" was unreachable. What is needed is an UPRIGHT player whose head
+# reaches a ceiling within 0.1 s of a gravity flip.
+#
+# The trap in the obvious build is that a flip is also a launch: flip, rise,
+# flip back, and the time from the flip to the ceiling is set by a parabola
+# whose constants are exactly what is in question. So this rig SEPARATES THE
+# TWO. The gravity-portal pair is short -- twelve ticks, sixteen pixels, the
+# player barely leaves the floor -- and does nothing but stamp the flip. The
+# launch is a yellow pad further along, and the only thing that differs between
+# stations is HOW FAR ALONG THE FLOOR that pad is.
+#
+# The floor distance converts to ticks exactly (dx is a constant per speed), so
+# the ladder's STEPS are exact even though its offset is not: every station
+# shares the same "pad -> ceiling" flight, so that unknown is a constant added
+# to every rung and cancels out of the comparison between them. The absolute
+# delta is read from GD's own dump, never predicted.
+#
+# Ordered by increasing delay, so a single natural run walks the ladder and, if
+# the window is real, dies at the first rung outside it: the death x names the
+# boundary without any bisection at all.
+FLIP_ARM_ID = 1859          # the ceiling arm (GameObjectType 40, brief-005)
+FLIPWIN_PITCH = 1600.0      # between rungs; nothing of one reaches the next
+# TWO PORTAL BOXES MUST NOT OVERLAP. A gravity portal is 25 wide, so the player
+# (30 wide) is inside both at once for any separation under 55 px, and while it
+# is, each tick ends with whichever of the two GD happened to process last --
+# the flip has no single timestamp to measure from. A first cut put them 16 px
+# apart for exactly the reason that looked attractive (the player barely leaves
+# the floor) and would have measured a refresh, not a flip.
+#
+# Separated enough to be two events, the flip is also a LAUNCH: sixty ticks of
+# inverted gravity lifts the player 389 px, and the yellow portal has to be up
+# there to catch it. That is the trade this rig accepts, and it is the safe
+# side of it -- the portal's box is 75 tall against a placement computed from a
+# constant measured to a thousandth, and a miss announces itself (the player
+# simply never comes back down) instead of quietly shifting a boundary.
+FLIPWIN_FLIP_TICKS = 60
+# Ticks between the unflip and the head reaching the ceiling. The ceiling
+# HEIGHT is what sets this, and the rungs are spaced so the resolution near the
+# 24-25 tick mark is about 7.5 px of ceiling per tick -- far off the apex,
+# where a parabola has no resolution at all.
+FLIPWIN_RUNGS = [10, 16, 20, 22, 24, 26, 28, 32, 40]
+# Gravity per tick at 0.9x, by mode. Only the cube's is measured here
+# (speed.hpp kCubeG, 0.216, twice at two places in lv15); the robot's 0.195
+# appears in a force-block note but not at this speed, and a rig built on a
+# gravity that is out by a percent puts the yellow portal in the wrong place.
+# Add a mode here only with a measurement to hand.
+FLIPWIN_G = {"cube": 0.216}
+
+
+def build_flipwin(mode: str = "cube", mini: bool = False,
+                  armed: bool = False) -> str:
+    """The flip-window ladder. `armed` puts an 1859 under every ceiling.
+
+    The armed pair is the other half of the experiment: the bonk whitelist has
+    an 1859 arm AND a flip-grace arm, and a bonk seen on one rig alone cannot
+    say which of them produced it. Two rigs differing by that object separate
+    them the way the kA39 pair separates the saw branches.
+
+    Rungs run in increasing delay, so one natural pass walks the ladder and --
+    if the window is real -- dies at the first rung outside it. The death x
+    names the boundary with no bisection at all.
+    """
+    if mode not in FLIPWIN_G:
+        raise SystemExit(f"flipwin: no measured gravity for {mode!r} at 0.9x - "
+                         f"measure it before generating this rig "
+                         f"(have: {sorted(FLIPWIN_G)})")
+    dx = 1.29825044                      # 0.9x, speed.hpp kDxF
+    g = FLIPWIN_G[mode]
+    half = 9.0 if mini else 15.0
+    n = FLIPWIN_FLIP_TICKS
+    stand_y = GROUND_TOP + half          # the player's centre on the floor
+    # inverted for n ticks: vy climbs by g each tick, and the rise is the sum
+    rise_flip = g * n * (n - 1) / 2.0
+    vy_unflip = g * n
+    y_unflip = stand_y + rise_flip
+    parts = [header(start_mode=mode, mini=mini)]
+    parts += floor_run(0, FLIPWIN_PITCH * (len(FLIPWIN_RUNGS) + 4), y=GROUND_Y)
+    for i, k in enumerate(FLIPWIN_RUNGS):
+        x0 = 900.0 + FLIPWIN_PITCH * i
+        x_yellow = x0 + n * dx
+        # after the unflip, gravity is down again and vy bleeds off by g a tick
+        rise_after = vy_unflip * k - g * k * (k - 1) / 2.0
+        ceil_bottom = y_unflip + rise_after + half
+        parts.append(obj(GRAV_FLIP, x0, stand_y))
+        # ...on the computed parabola. Blue = id 11 (inverse), yellow = id 10
+        # (normal): written the other way round once, and the symptom was the
+        # player running the whole level along the ceiling
+        parts.append(obj(GRAV_NORM, x_yellow, y_unflip))
+        for b in range(3):
+            parts.append(obj(BLOCK, x_yellow + GRID * b, ceil_bottom + GRID / 2))
+            if armed:
+                # lv22 puts its 1859s 15 px under the ceiling they arm
+                # (cy 2,055 against an underside of 2,070)
+                parts.append(obj(FLIP_ARM_ID, x_yellow + GRID * b,
+                                 ceil_bottom - 15.0))
+        UNITS.append({"rung": i, "delay_ticks": k, "x_blue": x0,
+                      "x_yellow": round(x_yellow, 3),
+                      "y_yellow": round(y_unflip, 3),
+                      "ceil_bottom": round(ceil_bottom, 3), "armed": armed,
+                      "what": "ticks between the UNFLIP and the head reaching "
+                              "this ceiling, if the gravity constant holds. "
+                              "The real delay comes from the dump; these "
+                              "numbers only have to bracket the boundary"})
+    # The THIRD BEHAVIOUR, which is neither a bonk nor a kill: an inverted
+    # player driven head-first into a block's TOP face was measured sinking 7 px
+    # in and carrying on down. It has no home in the model and none in the
+    # disassembly yet. These are bare blocks in open air with a clear column
+    # above, for an injection probe (inverted, descending) -- nothing about the
+    # ladder reaches them.
+    for j, y in enumerate((400.0, 700.0)):
+        x = 900.0 + FLIPWIN_PITCH * (len(FLIPWIN_RUNGS) + j + 1)
+        for k in range(4):
+            parts.append(obj(BLOCK, x + GRID * k, y))
+        UNITS.append({"rung": -1 - j, "x_block": x, "block_cy": y,
+                      "what": "third-behaviour station: inject an INVERTED "
+                              "player above this, descending, and watch "
+                              "whether it passes through the top face"})
+    return ";".join(parts) + ";"
+
+
 def build_cpride() -> str:
     """A floor that RISES while the player stands on it, for checkpoint work.
 
@@ -3824,6 +3948,13 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcal39_spider_mini": lambda: _ka39_rig("spider", True, False),
             "sawrot39_cube": lambda: _ka39_rig("cube", False, True),
             "sawrot39_spider": lambda: _ka39_rig("spider", False, True),
+            # brief-004b. Generate each with and without the 1859s: the pair
+            # is what separates the flip-grace arm from the arming arm.
+            "flipwin_cube": lambda: build_flipwin("cube"),
+            "flipwin_cube_armed": lambda: build_flipwin("cube", armed=True),
+            "flipwin_cube_mini": lambda: build_flipwin("cube", mini=True),
+            "flipwin_cube_mini_armed":
+                lambda: build_flipwin("cube", mini=True, armed=True),
            "forcecal_cube": lambda: build_forcecal_mode("cube"),
            "forcedrop_cube": lambda: build_forcedrop_mode("cube"),
            "platformer": build_platformer,
