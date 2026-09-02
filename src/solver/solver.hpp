@@ -198,7 +198,23 @@ inline void writeObjRects(std::ostream& rf, GJBaseGameLayer* l) {
     //   The full settings (min/max/relative/range/id) are in forceblocks.txt;
     //   only the strength is needed here, and appending one column is the
     //   documented-safe way to reach leveldp.
-          "editvel,vmodx,vmody,ovrvel,force\n";
+    // - touch / spawn: EffectGameObject's m_isTouchTriggered (property 11) and
+    //   m_isSpawnTriggered (62), on every trigger row. THE X-CROSSING QUEUE DOES
+    //   NOT ADMIT THEM: the effective gate GD applies is
+    //   `m_isTrigger && [+0x4e8]==1 && !touch && !spawn` (isSpecialSpawnObject,
+    //   which the model's queue was reading, is a constant false on all 37
+    //   trigger classes). A queue that holds objects GD never enqueues fires
+    //   things that never fire, which is part of why the parked entry-burst
+    //   model came out too wide.
+    // - chan: m_channelValue (170), the rotation channel a trigger switches to.
+    //   Same queue question, and already dumped per-object in rotgameplay.txt --
+    //   here so the ordinary trigger rows carry it too.
+    // - axis: m_moveTargetMode (101), MoveTargetType {Both=0, XOnly=1, YOnly=2}:
+    //   which axis a Static Camera (1914) actually touches.
+    // - exstat: CameraTriggerGameObject::m_exitStatic (110).
+    //   The 1914 rows are already in the dump as geometry; these two are the
+    //   properties that say what they do, and the band's height depends on them.
+          "editvel,vmodx,vmody,ovrvel,force,free,touch,spawn,chan,axis,exstat\n";
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
         if (!obj) continue;
         auto r = obj->getObjectRect();
@@ -317,6 +333,25 @@ inline void writeObjRects(std::ostream& rf, GJBaseGameLayer* l) {
             optp1 = (int)go->m_disableP1Controls;
             optp2 = (int)go->m_disableP2Controls;
         }
+        // The trigger properties the x-crossing queue and the band need. Read
+        // from the typed members like every other column here, not from a raw
+        // property table: an EffectGameObject parses them at load and the
+        // members are what the game itself then reads.
+        int touch = 0, spawn = 0, chan = 0, axis = 0, exstat = 0, freem = 0;
+        if (auto* e = geode::cast::typeinfo_cast<EffectGameObject*>(obj)) {
+            touch = e->m_isTouchTriggered ? 1 : 0;
+            spawn = e->m_isSpawnTriggered ? 1 : 0;
+            chan = e->m_channelValue;
+            axis = (int)e->m_moveTargetMode;
+            // Free Mode, property 111. The name reads as a camera setting and
+            // the field is one -- it frees the camera from the mode's band,
+            // which is exactly why the band stops being written -- and the
+            // bindings' own source carries `// property 111` directly above it,
+            // which is a stronger identification than matching an offset.
+            freem = e->m_cameraIsFreeMode ? 1 : 0;
+        }
+        if (auto* c = geode::cast::typeinfo_cast<CameraTriggerGameObject*>(obj))
+            exstat = c->m_exitStatic ? 1 : 0;
         rf << obj->m_objectID << "," << (int)obj->m_objectType << ","
            << (r.origin.x + r.size.width * 0.5f) << ","
            << (r.origin.y + r.size.height * 0.5f) << ","
@@ -335,6 +370,8 @@ inline void writeObjRects(std::ostream& rf, GJBaseGameLayer* l) {
            << "," << (obj->m_isDisabled ? 1 : 0)
            << "," << editvel << "," << vmodx << "," << vmody << "," << ovrvel
            << "," << forceOf(obj)
+           << "," << freem << "," << touch << "," << spawn << "," << chan
+           << "," << axis << "," << exstat
            << "\n";
     }
 }
