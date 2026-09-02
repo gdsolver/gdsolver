@@ -1888,6 +1888,25 @@ inline bool runLadder(long long dt) {
     return true;
 }
 
+// The fingerprint of a plan, in ONE place. The [fp] line signs the plan GD flew
+// with it and the [resim] line signs the plan the fixup recorder is about to
+// replay; two fingerprints computed by two copies of this arithmetic could drift
+// apart, and then a comparison between them would prove nothing.
+inline std::string planFnv(const std::vector<InputCmd>& p) {
+    uint64_t h = 1469598103934665603ULL;
+    for (const InputCmd& c : p) {
+        const uint64_t v = (uint64_t)c.step * 2u + (uint64_t)(c.down ? 1 : 0);
+        for (int i = 0; i < 8; ++i) {
+            h ^= (uint8_t)(v >> (i * 8));
+            h *= 1099511628211ULL;
+        }
+    }
+    char out[48];
+    snprintf(out, sizeof(out), "%zu/%08x", p.size(),
+             (unsigned)(h & 0xffffffffULL));
+    return out;
+}
+
 // ---- starting a job ----
 // Two jobs: the first solve of the level, and a repair. Both leave the level frozen while the
 // solver thread works and hand the answer back at a frame boundary, which is the only place it
@@ -1942,6 +1961,20 @@ inline void spawn(int kind, long long arg, const char* phase) {
                 // comparison is a divergence. Measured on lv18: it cleared in one round without
                 // fixups and ground out all 41 with them.
                 writeInputsFile(g_planPath, g_plan);
+                // ...and SAY WHICH PLAN THAT IS. The rewind above (g_plan =
+                // g_best, in onDeath below logFingerprint) can have replaced it
+                // since GD flew, in which case the recorder compares the model's
+                // replay of one plan against GD's dump of another and every
+                // record it writes is a difference between two plans. The [fp]
+                // line already signs the flown plan; this signs the replayed one,
+                // so the two can simply be read off against each other instead of
+                // inferred from whether a rewind was logged.
+                {
+                    char fb[128];
+                    snprintf(fb, sizeof(fb), "dpsolve:   [resim] it=%d plan=%s",
+                             g_iter, planFnv(g_plan).c_str());
+                    writeResult(fb);
+                }
                 // Learn first, then search. The recorder reads the trajectory GD just flew, so
                 // it has to run before anything resets the level -- and the ladder's first call
                 // should already have the benefit of it.
@@ -2191,15 +2224,9 @@ inline std::string fileSig(const std::string& path) {
 
 inline void logFingerprint(long long dt, double deathX) {
     if (!g_cfg.dpFingerprint) return;
-    // The plan is in memory, so it is summed the same way over its own edges.
-    uint64_t ph = 1469598103934665603ULL;
-    for (const InputCmd& c : g_plan) {
-        const uint64_t v = (uint64_t)c.step * 2u + (uint64_t)(c.down ? 1 : 0);
-        for (int i = 0; i < 8; ++i) {
-            ph ^= (uint8_t)(v >> (i * 8));
-            ph *= 1099511628211ULL;
-        }
-    }
+    // The plan is in memory, so it is summed the same way over its own edges --
+    // through planFnv, the one copy of that arithmetic (see its note).
+    const std::string ph = planFnv(g_plan);
     // The band the ATTEMPT started in, not the one it died in (see the note above).
     const std::vector<AnchorRow>* savedSrc = anchors::g_src;
     anchors::ladderOn(false);
@@ -2209,9 +2236,9 @@ inline void logFingerprint(long long dt, double deathX) {
     if (r1) snprintf(band, sizeof(band), "%.1f,%.1f", (double)r1->pmin, (double)r1->pmax);
     char b[384];
     snprintf(b, sizeof(b),
-             "dpsolve:   [fp] it=%d plan=%zu/%08x att=%d t=%lld x=%.3f band1=%s "
+             "dpsolve:   [fp] it=%d plan=%s att=%d t=%lld x=%.3f band1=%s "
              "fix=%d/%s horizon=%d backoff=%d live=%s deep=%s",
-             g_iter, g_plan.size(), (unsigned)(ph & 0xffffffffULL), g_attempt,
+             g_iter, ph.c_str(), g_attempt,
              dt, deathX, band, g_fixupCount, fileSig(g_fixupPath).c_str(),
              g_horizonNow, g_curBackoff, fileSig(g_groupsPath).c_str(),
              fileSig(g_groupsDeepPath).c_str());
