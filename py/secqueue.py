@@ -173,7 +173,13 @@ def run_window(a, win: dict, inputs: list[tuple[int, int]],
         f"practiceat={max(1, t0 - 100)}", f"checkpointat={t0}",
         "secsolve=1", "seclog=1", f"secstart={t0}", f"sectarget={target:.3f}",
         f"sechorizon={horizon}", f"seccap={a.cap}",
-        f"robodbg={t0},{t1}"] + [f"input={t},{d}" for t, d in inputs]
+        f"robodbg={t0},{t1}"]
+    # The search's own clock (secdeadline). A caller's timeout kills the session
+    # and the verdict line with it -- last night 5 of 7 windows came back
+    # NO-VERDICT, carrying nothing but "not within 90 minutes".
+    if a.deadline > 0:
+        cfg += [f"secdeadline={a.deadline:.0f}"]
+    cfg += [f"input={t},{d}" for t, d in inputs]
     t_start = time.time()
     res = session(cfg, a.timeout)
     out = {"t0": t0, "t1": t1, "targetX": round(target, 2), "cap": a.cap,
@@ -508,6 +514,9 @@ def main(argv=None) -> int:
     ap.add_argument("--limit", type=int, default=0, help="0 = every window")
     ap.add_argument("--windows", default="", help="comma-separated t0 to run")
     ap.add_argument("--timeout", type=float, default=5400.0)
+    ap.add_argument("--deadline", type=float, default=0.0,
+                    help="seconds the SEARCH gives itself; it stops at a layer "
+                         "boundary and reports (0 = no deadline)")
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--no-diff", action="store_true",
