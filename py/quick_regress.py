@@ -798,6 +798,25 @@ def main(argv=None) -> int:
               "that did not run)")
         return 2
 
+    # SAY WHICH BINARY IS BEING MEASURED, every run, before measuring.
+    #
+    # LEVELDP_EXE is the geode-built exe, and `cmake --build build-dp` does not
+    # touch it. Measuring the wrong one has now cost this project three times:
+    # eleven red levels blessed as green (2026-08-26), and an hour spent on
+    # 2026-09-02 debugging a new dp flag that "printed nothing" because every
+    # python harness was running yesterday's binary. A note in a ledger did not
+    # prevent the third one; a line in the output makes the mistake visible in
+    # the same place as the result.
+    exe = Path(a.leveldp)
+    if exe.exists():
+        st = exe.stat()
+        print(f"leveldp: {exe} "
+              f"({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_mtime))}"
+              f", {st.st_size} B)")
+    else:
+        print(f"leveldp: {exe} DOES NOT EXIST")
+        return 2
+
     REF.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 

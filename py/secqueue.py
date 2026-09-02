@@ -70,6 +70,25 @@ def log(m: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def say_exe(path: str) -> bool:
+    """Name the binary about to be measured, with its mtime. See quick_regress.
+
+    The default is the GEODE-built leveldp, which `cmake --build build-dp` does
+    not touch. That has cost this project three separate misreadings, the last
+    of them an hour spent on a new dp flag that "printed nothing" because the
+    harness was running yesterday's binary.
+    """
+    p = Path(path)
+    if not p.exists():
+        log(f"leveldp: {p} DOES NOT EXIST")
+        return False
+    st = p.stat()
+    log(f"leveldp: {p} "
+        f"({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_mtime))}, "
+        f"{st.st_size} B)")
+    return True
+
+
 def read_rows(path: Path) -> dict[int, dict]:
     """tick -> the whole GD row. The anchor builder wants all of it."""
     out: dict[int, dict] = {}
@@ -273,29 +292,49 @@ def gd_window_replay(a, plan_out: Path, out_base: Path,
 
 def anchor_fields(t0: int, r: dict, plan_path: Path, gd: dict[int, dict],
                   inputs: list[tuple[int, int]]) -> str:
-    """start_fields, with `held` corrected to the input in effect AT t0.
+    """start_fields, with the anchor's INPUT STATE built the way the model's own
+    replay builds it.
 
-    start_fields fills it from held_before(plan, t0) = the last change STRICTLY
-    BEFORE t0, so when the plan changes exactly at t0 the anchor says the button
-    was down while the plan says it went up. A replay does not care -- it reads
-    the plan itself and sees the press edge at t0+1 -- but a SEARCH has only the
-    anchor, and an invisible press edge means a swing never flips.
+    THIS IS brief-019's HARNESS SIDE. The model's --replay does a "pre-anchor
+    edge split" (cli.hpp, `preLevel` / `preRise`): the plan's edges are press
+    ticks, and an input takes effect latOf(mode) ticks later -- 2 for ship and
+    UFO, 1 for everything else -- so the level AT the anchor is computed by
+    EFFECT tick, per mode. start_fields instead fills `held` from
+    held_before(plan, t0), which counts by press tick, and it carries no pending
+    flip at all.
 
-    MEASURED, and it is smaller than it looks: of lv22's window entries only
-    w7190's anchor differs, and correcting it does not move the reach verdict
-    (PARTIAL at t=7319 x=9887.5 either way, because the search explores both
-    flip branches regardless). What it does change is which child continues the
-    REFERENCE, so the watch needs it. Left as a local correction rather than a
-    fix to start_fields: that builder feeds quick_regress's whole baseline, and
-    changing it is a measured change of its own, not a side effect of this.
+    A search has only the anchor, so both omissions land on it:
+
+      - the level by press tick can say the button was down when its effect has
+        not arrived, or vice versa
+      - a SWING tapped on the tick whose effect lands at t0 owes a flip on the
+        NEXT tick. The dump has no column for that pending bit; the model
+        carries it in rHover, which is free in mode 7. Without it, as the
+        replay's own note says, THE MODEL NEVER FLIPS AT ALL.
+
+    Measured, lv22 t=7,190 (swing, GD upsideDown 1 -> 0 at 7,191): with the
+    anchor as start_fields builds it, the search's two children are identical
+    -- the press edge is invisible and no flip branch exists -- while GD and the
+    model's own replay both flip. That is the whole of brief-019's family (A).
+
+    Kept local rather than pushed into start_fields: that builder feeds
+    quick_regress's whole baseline and reach_check's anchors, and changing it is
+    a measured change of its own rather than a side effect of this one.
     """
     f = QR.start_fields(t0, r, plan_path, gd.get(t0 - 1), gd).split(",")
-    held = 0
-    for step, d in inputs:
-        if step > t0:
+    mode = int(f[4])
+    lat = 2 if mode in (1, 3) else 1
+    level, rise = 0, False
+    for press, v in inputs:
+        if press > t0:
             break
-        held = d
-    f[6] = str(held)
+        eff = press + lat
+        if eff <= t0:
+            rise = (eff == t0) and v != 0 and level == 0
+            level = v
+    f[6] = str(level)
+    if mode == 7 and rise:
+        f[15] = "1"      # the swing's pending flip rides rHover
     return ",".join(f)
 
 
@@ -457,6 +496,66 @@ def reach_sweep(a, wins: list[dict], out_dir: Path, plan_path: Path,
     return 0
 
 
+def refwatch_sweep(a, wins: list[dict], out_dir: Path, plan_path: Path,
+                   inputs) -> int:
+    """Every window: which gate drops the reference, if any (brief-019's (3)).
+
+    Two runs per window, both offline: an anchored replay of the solution to
+    make the reference, then the search with --refwatch. What matters most is
+    not the gates but the COUNT OF `cannot-reproduce` -- that is the search and
+    the replay disagreeing about physics rather than about pruning, and the
+    acceptance for brief-019 is that it reaches zero across the whole level.
+    """
+    head = out_dir / "head.dump.csv"
+    if not head.exists():
+        log(f"no {head}")
+        return 2
+    gd = read_rows(head)
+    index = out_dir / "refwatch.jsonl"
+    if index.exists():
+        index.unlink()
+    tally: dict[str, int] = {}
+    for i, w in enumerate(wins, 1):
+        t0, t1 = w["t0"], w["t1"]
+        r = gd.get(t0)
+        if not r:
+            continue
+        anchor = anchor_fields(t0, r, plan_path, gd, inputs)
+        tail = []
+        if r.get("pmin") and r.get("pmax"):
+            tail += ["--startband", f"{r['pmin']},{r['pmax']}"]
+        tail += QR.band_track_args(a.level, gd) + QR.rot_anchor_args(a.level, t0)
+        ref = out_dir / f"ref{t0}"
+        subprocess.run([a.leveldp] + model_args(a, plan_path)
+                       + ["--replay", str(plan_path), "--out", str(ref),
+                          "--start", anchor] + tail,
+                       stdout=subprocess.DEVNULL, text=True)
+        p = subprocess.run([a.leveldp] + model_args(a, plan_path)
+                           + ["--out", str(out_dir / f"rw{t0}"),
+                              "--cap", str(a.reachcap), "--shipyq", "0.25",
+                              "--shipvq", "1.0", "--threads", str(a.threads),
+                              "--start", anchor, "--horizon", str(t1 - t0),
+                              "--refwatch", str(ref) + ".trace.csv"] + tail,
+                           stdout=subprocess.PIPE, text=True, errors="replace")
+        gate, line = "CARRIED", ""
+        for ln in (p.stdout or "").splitlines():
+            m = re.search(r"refwatch: LOST t=(\d+) gate=([a-z-]+)", ln)
+            if m:
+                gate, line = m.group(2), ln.strip()
+                break
+        rec = {"t0": t0, "t1": t1, "gate": gate, "line": line[:300],
+               "priority": w.get("priority")}
+        tally[gate] = tally.get(gate, 0) + 1
+        with index.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        log(f"[{i}/{len(wins)}] t0={t0} {gate}")
+    log(f"refwatch: {tally} -> {index}")
+    bad = tally.get("cannot-reproduce", 0)
+    log(f"brief-019 acceptance (3): cannot-reproduce = {bad}"
+        + ("  PASS" if bad == 0 else "  not yet"))
+    return 0
+
+
 def rediff(a, wins: list[dict], out_dir: Path, session=None) -> int:
     """Recompute the tables for windows already on disk. GD is not asked again.
 
@@ -528,6 +627,9 @@ def main(argv=None) -> int:
                     help="ask whether the MODEL can get through each window "
                          "from GD's own entry state. Offline, every window, "
                          "no crossing needed")
+    ap.add_argument("--refsweep", action="store_true",
+                    help="every window: which gate drops the reference "
+                         "(brief-019 acceptance 3). Offline")
     ap.add_argument("--reachcap", type=int, default=2000)
     ap.add_argument("--threads", type=int, default=8)
     a = ap.parse_args(argv)
@@ -545,7 +647,12 @@ def main(argv=None) -> int:
     plan_path = DATA / f"solution_lv{a.level}_dp.txt"
     inputs = [(t, d) for t, d in P.read_inputs(plan_path)]
 
-    # Offline mode: no venue, no GD, no worker.
+    if not say_exe(a.leveldp):
+        return 2
+
+    # Offline modes: no venue, no GD, no worker.
+    if a.refsweep:
+        return refwatch_sweep(a, wins, out_dir, plan_path, inputs)
     if a.reach:
         return reach_sweep(a, wins, out_dir, plan_path, inputs)
 

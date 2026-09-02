@@ -23,6 +23,7 @@
 // useful -- the reach probe and the anchored diff build one per window.
 #include <map>
 
+#include "dp/frames.hpp"
 #include "dp/state.hpp"
 
 namespace dp {
@@ -30,6 +31,19 @@ namespace dp {
 struct RefRow {
     double y = 0.0, vy = 0.0, x = 0.0;
     int mode = -1;
+    // The reference's OWN record of the input level that stepped this tick, and
+    // of the gravity it was in. `act` is what makes the choice of child a
+    // reading rather than an inference: on a swing's press tick the two children
+    // are identical in y, vy and mode, so nothing observable distinguishes them
+    // and any rule based on the trajectory alone would be guessing.
+    int act = -1;
+    int flip = -1;
+    // The TURNED FRAME. In a rotation section y is measured in the frame's own
+    // axes, so comparing a state in one frame with a reference in another is
+    // comparing two different quantities -- measured, it produces differences of
+    // thousands of px and it accounted for most of the first sweep's
+    // `cannot-reproduce` count.
+    int frame = -1;
     bool have = false;
 };
 
@@ -89,7 +103,8 @@ inline bool loadRefTrace(const char* path) {
         return -1;
     };
     const int cT = col("tick"), cX = col("x"), cY = col("y"),
-              cV = col("vy"), cM = col("mode");
+              cV = col("vy"), cM = col("mode"), cA = col("act"),
+              cF = col("flip"), cFr = col("frame");
     if (cT < 0 || cY < 0 || cV < 0) return false;
     while (std::getline(f, line)) {
         std::vector<std::string> v;
@@ -103,6 +118,9 @@ inline bool loadRefTrace(const char* path) {
         r.vy = std::atof(v[(size_t)cV].c_str());
         r.x = cX >= 0 && (int)v.size() > cX ? std::atof(v[(size_t)cX].c_str()) : 0.0;
         r.mode = cM >= 0 && (int)v.size() > cM ? std::atoi(v[(size_t)cM].c_str()) : -1;
+        r.act = cA >= 0 && (int)v.size() > cA ? std::atoi(v[(size_t)cA].c_str()) : -1;
+        r.flip = cF >= 0 && (int)v.size() > cF ? std::atoi(v[(size_t)cF].c_str()) : -1;
+        r.frame = cFr >= 0 && (int)v.size() > cFr ? std::atoi(v[(size_t)cFr].c_str()) : -1;
         g_refRows[std::atoll(v[(size_t)cT].c_str())] = r;
     }
     return !g_refRows.empty();
@@ -111,11 +129,36 @@ inline bool loadRefTrace(const char* path) {
 // Is this state the reference row? Mode is compared when the trace carries it:
 // two states can share y and vy across a mode change, and calling that a match
 // would report the reference as alive in a frontier it has left.
+// THE TRACE IS IN WORLD COORDINATES AND THE STATE IS NOT. The replay writes
+// wX/wY (see where it composes a row) and `vy * -1 in frame 3`, because GD's
+// dump reports the player's velocity in the current gameplay frame. Comparing
+// the raw fields is comparing two different quantities: measured, it made 15 of
+// this sweep's 26 `cannot-reproduce` cases, with dy in the thousands of px and
+// both sides reporting the SAME frame -- the giveaway that the mismatch was in
+// the units, not the physics.
+//
+// (The one place this is still not exact is a dash-ring tick, where the trace
+// deliberately emits GD's vy while the state keeps 0. That is a handful of ticks
+// per level and it is visible as a vy-only mismatch.)
+inline void refWorldOf(const State& s, double& wy, double& wvy) {
+    wy = (double)s.y;
+    wvy = (double)s.vy;
+    if (s.frame & 3) {
+        double wx = 0.0;
+        fromFrame((int)s.frame, (double)s.xAbs, (double)s.y, wx, wy);
+        if (s.frame == 3) wvy = -wvy;
+    }
+}
+
 inline bool refMatches(const State& s, const RefRow& r) {
     if (!r.have) return false;
     if (r.mode >= 0 && (int)s.mode != r.mode) return false;
-    return std::fabs((double)s.y - r.y) <= g_refEps
-        && std::fabs((double)s.vy - r.vy) <= g_refEps;
+    if (r.flip >= 0 && (int)s.flip != r.flip) return false;
+    if (r.frame >= 0 && (int)s.frame != r.frame) return false;
+    double wy = 0.0, wvy = 0.0;
+    refWorldOf(s, wy, wvy);
+    return std::fabs(wy - r.y) <= g_refEps
+        && std::fabs(wvy - r.vy) <= g_refEps;
 }
 
 inline int refFind(const std::vector<State>& v, const RefRow& r) {
@@ -128,10 +171,19 @@ inline int refFind(const std::vector<State>& v, const RefRow& r) {
 // rather than the trace: matched by value, because it IS the state that was
 // pushed (no tolerance needed, and a tolerance here would silently adopt a
 // neighbour when the real one was dropped).
+//
+// rHover AND held ARE PART OF THE IDENTITY, not decoration. On a swing's press
+// tick the two children are IDENTICAL in y, vy and mode -- the tap only sets a
+// pending bit and the flip lands next tick -- so a match on the visible fields
+// alone adopts whichever comes first and the watch carries the wrong one. That
+// is not hypothetical: it is what made the watch report `cannot-reproduce` two
+// ticks after a flip that the search had in fact modelled correctly.
 inline int refFindExact(const std::vector<State>& v, const State& s) {
     for (size_t i = 0; i < v.size(); ++i)
         if (v[i].y == s.y && v[i].vy == s.vy && v[i].mode == s.mode
-            && v[i].grounded == s.grounded && v[i].flip == s.flip)
+            && v[i].grounded == s.grounded && v[i].flip == s.flip
+            && v[i].rHover == s.rHover && v[i].held == s.held
+            && v[i].mini == s.mini && v[i].dual == s.dual)
             return (int)i;
     return -1;
 }

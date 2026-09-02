@@ -2668,10 +2668,18 @@ inline int cliMain(int argc, char** argv) {
             // Which child IS the reference's next state: the one that matches
             // the trace. Both are examined, so a dead one can still be named.
             int want = -1;
-            for (int a = 0; a < 2 && it != g_refRows.end(); ++a)
-                if (g_refKidFate[a] >= 1 && refMatches(g_refKidState[a],
-                                                       it->second))
-                    want = a;
+            if (it != g_refRows.end() && it->second.act >= 0
+                && it->second.act < 2 && g_refKidFate[it->second.act] >= 1) {
+                // The reference recorded which input stepped this tick. Read it
+                // rather than infer it: on a swing's press tick the two children
+                // are identical in everything the trace shows.
+                want = it->second.act;
+            } else {
+                for (int a = 0; a < 2 && it != g_refRows.end(); ++a)
+                    if (g_refKidFate[a] >= 1 && refMatches(g_refKidState[a],
+                                                           it->second))
+                        want = a;
+            }
             if (g_refParent < 0) {
                 gate = "parent-gone";
             } else if (it == g_refRows.end()) {
@@ -2690,6 +2698,21 @@ inline int cliMain(int argc, char** argv) {
                          g_refKidFate[0],
                          (double)g_refKidState[1].y, (double)g_refKidState[1].vy,
                          g_refKidFate[1]);
+            } else if (g_refKidFate[want] == 2
+                       && !refMatches(g_refKidState[want], it->second)) {
+                // The reference says this input stepped the tick, and the search
+                // stepping the same state with the same input produced something
+                // else. That is a transition difference, not a pruning decision
+                // (brief-019).
+                gate = "cannot-reproduce";
+                snprintf(detail, sizeof(detail),
+                         " act=%d ref y=%.4f vy=%.4f flip=%d fr=%d | kid y=%.4f "
+                         "vy=%.4f flip=%d fr=%d", want, it->second.y,
+                         it->second.vy, it->second.flip, it->second.frame,
+                         (double)g_refKidState[want].y,
+                         (double)g_refKidState[want].vy,
+                         (int)g_refKidState[want].flip,
+                         (int)g_refKidState[want].frame);
             } else if (g_refKidFate[want] == 1) {
                 gate = "kill";
                 snprintf(detail, sizeof(detail), " rule=%s action=%d",
