@@ -2189,6 +2189,24 @@ inline void logFingerprint(long long dt, double deathX) {
              g_horizonNow, g_curBackoff, fileSig(g_groupsPath).c_str(),
              fileSig(g_groupsDeepPath).c_str());
     writeResult(b);
+    // KEEP THE PLAN THAT DIED. dp_plan.txt is removed and rewritten by the next
+    // solve, so by the time anyone asks "what did the model think it was doing
+    // when GD died there", the plan is already gone -- and the only artefacts
+    // left (the fixup resim's trace, the ledger) belong to OTHER plans, which is
+    // how a fidelity family gets invented out of a comparison whose two sides
+    // never ran the same inputs (2026-09-02: three families, all withdrawn).
+    // One copy per frontier report, named by the iteration and the death tick so
+    // it lines up with the [fp] line above. ~15 KB each, in a data dir the
+    // launcher empties before every cold run.
+    {
+        std::error_code cec;
+        char pp[512];
+        snprintf(pp, sizeof(pp), "%s/dp_died_it%d_t%lld.txt", DATA_DIR,
+                 g_iter, dt);
+        std::filesystem::copy_file(g_planPath, pp,
+                                   std::filesystem::copy_options::overwrite_existing,
+                                   cec);
+    }
 }
 
 // Stop, and say where it got to rather than why the machinery stopped.
