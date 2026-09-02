@@ -966,13 +966,36 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         else if (o.id == 1914 && g_staticCamCol) {
             const int axis = f[colAxis].empty() ? 0
                                                 : std::atoi(f[colAxis].c_str());
-            const bool queued =
-                !(g_trigGateCol
-                  && (f[colTouch] == "1" || f[colSpawn] == "1"))
-                && !(colChan >= 0 && !f[colChan].empty()
-                     && std::atoi(f[colChan].c_str()) != 0);
+            const uint8_t ex = (uint8_t)(f[colExStat] == "1" ? 1 : 0);
+            // Touch- and spawn-triggered rows are not on the crossing queue at
+            // all, so they never fire on an x crossing whatever else is true.
+            bool queued = !(g_trigGateCol
+                            && (f[colTouch] == "1" || f[colSpawn] == "1"));
+            // The CHANNEL gate goes on the EXIT rows only, and the reason is
+            // the direction each mistake errs in -- which for a Static Camera
+            // is the OPPOSITE of the zoom trigger above.
+            //
+            // Firing an `on` row opens branch A, where the numerator is
+            // 322 - (322 - H) * p and therefore lies in [H, 322]: it can never
+            // come out BELOW the H that branch B would have used. So firing
+            // one the game did not can only leave the band the same or taller
+            // -- the loose direction, which the repair loop sees by replaying.
+            // NOT firing one the game did fires leaves the band shorter, and
+            // an over-kill of that kind is invisible to the loop
+            // (gd-overkill-is-invisible-to-the-loop). An `exit` row is the
+            // mirror: firing it returns the level to branch B, the shorter and
+            // therefore the unseen side, so the gate stays there.
+            //
+            // This is chosen on the direction of the error and NOT on evidence
+            // that GD fires a channelled trigger: lv22's own run does not
+            // settle it (the band does drop out of branch A around x=20,115
+            // with nothing in the model to explain it -- logged as a separate
+            // hole). If evidence later says GD never fires them, this is one
+            // line to put back.
+            if (ex && colChan >= 0 && !f[colChan].empty()
+                && std::atoi(f[colChan].c_str()) != 0)
+                queued = false;
             if (axis != 1 && queued) {
-                const uint8_t ex = (uint8_t)(f[colExStat] == "1" ? 1 : 0);
                 g_staticCams.push_back({o.cx, ex});
                 std::printf("staticcam: uid %d at x=%.0f axis=%d %s\n",
                             o.uid, o.cx, axis, ex ? "EXIT" : "on");
