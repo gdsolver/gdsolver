@@ -58,6 +58,11 @@ struct EntrySnap {
     long long tick;
     CheckpointObject* cp;
     size_t nextInput, nextToggle;
+    // Whether the button was held when the snapshot was taken, read from the
+    // game's own bookkeeping the same way g_headHeld is. A restore does not put
+    // it back -- resetLevel pushes a release of its own -- so without this the
+    // restored run replays a section cut mid-hold as if the button were up.
+    int held;
     // what THIS pass did from the head over the verification window, so the
     // restored run has something to be compared against without a second pass
     std::vector<SnapState> head;

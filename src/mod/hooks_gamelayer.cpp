@@ -393,8 +393,15 @@ class $modify(GJBaseGameLayer) {
                            && g_cfg.snapAt[g_nextSnap] <= g_tick) ++g_nextSnap;
                     if (auto* cp = pl->markCheckpoint()) {
                         cp->retain();
+                        int snapHeld = 0;
+                        if (m_player1) {
+                            auto hb = m_player1->m_holdingButtons.find(1);
+                            snapHeld = (hb != m_player1->m_holdingButtons.end()
+                                        && hb->second) ? 1 : 0;
+                        }
                         g_snaps.push_back({(long long)g_tick, cp,
-                                           g_nextInput, g_nextToggle, {}});
+                                           g_nextInput, g_nextToggle,
+                                           snapHeld, {}});
                         char sb[192];
                         snprintf(sb, sizeof(sb),
                                  "snap: asked=%d at=%lld x=%.3f y=%.3f "
@@ -567,6 +574,26 @@ class $modify(GJBaseGameLayer) {
                         g_restorePending = true;
                         pl->resetLevel();
                         g_restorePending = false;
+                        // The same two things the section restore does, for the
+                        // same measured reason. resetLevel pushes a button
+                        // command of its own on every restore -- {button=1,
+                        // push=<is the UI holding?>} -- and a bot's UI holds
+                        // nothing, so what it pushes is a RELEASE, consumed on
+                        // the first substep after the restore. And nothing puts
+                        // the hold back, so a snapshot taken mid-hold replays
+                        // with the button up.
+                        //
+                        // Measured before this (gd-7d): snapshots whose entry
+                        // was HELD reproduce 29 of 33 times as MISMATCH, while
+                        // held=0 entries mismatch 37 of 154. The prediction this
+                        // change is accepted against is that the held=1 column
+                        // goes to about zero and the held=0 column does not move.
+                        pl->m_queuedButtons.clear();
+                        if (s.held) {
+                            g_injecting = true;
+                            this->handleButton(true, 1, true);
+                            g_injecting = false;
+                        }
                         g_nextInput = s.nextInput;
                         g_nextToggle = s.nextToggle;
                         g_tick = s.tick;
@@ -596,10 +623,10 @@ class $modify(GJBaseGameLayer) {
                         okCount += ok;
                         char vb[224];
                         snprintf(vb, sizeof(vb),
-                                 "snapverify: at=%lld compared=%zu/%zu worst=%.9f "
-                                 "firstBad=%lld %s",
-                                 s.tick, n, s.head.size(), worst, firstBad,
-                                 ok ? "OK" : "MISMATCH");
+                                 "snapverify: at=%lld held=%d compared=%zu/%zu "
+                                 "worst=%.9f firstBad=%lld %s",
+                                 s.tick, s.held, n, s.head.size(), worst,
+                                 firstBad, ok ? "OK" : "MISMATCH");
                         writeResult(vb);
                     }
                     writeResult("snapverify: " + std::to_string(okCount) + "/"
