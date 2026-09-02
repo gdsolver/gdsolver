@@ -127,6 +127,12 @@ inline void resetInvocationState() {
     g_forceFields.clear();
     g_timeWarps.clear();
     g_zoomTrigs.clear();
+    // bands.hpp: the objrects header's own answer to "does this dump carry the
+    // Free Mode / touch / spawn columns". Per level, so it has to be cleared
+    // with everything else -- a stale `true` would let the next level in the
+    // same process use the band's own height with no gate behind it.
+    g_freeModeCol = false;
+    g_trigGateCol = false;
     g_flipHeadBoxes.clear();
     g_dashStopBoxes.clear();
     g_armBoxes.clear();

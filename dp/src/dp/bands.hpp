@@ -172,6 +172,36 @@ inline bool g_rotPort = false;
 // --rotperp 30 it restores that function exactly, which is how the 84% cold run
 // of 08-24 is reproduced on a current build.
 inline bool g_rotLast = false;
+// [2026-09-02] THE BAND'S HEIGHT IS THE ONE THE PORTAL WROTE, and a Free Mode
+// portal writes nothing. Read out of the exe and checked against GD's own
+// 21,140-tick dump of lv22 (notes: band-numerator-writers, 2026-09-02):
+//
+//   updateDualGround:
+//     if (!freeMode && (H != 270 || spider || dual)) animateInDualGroundNew(H)
+//     else                                           retract the band
+//
+// The second half of that gate is already here -- bandHeightFor returns 0 for
+// cube and robot, which is the same statement -- so the only missing piece is
+// Free Mode. Reproduced against GD's ground-sprite column for ALL 17 of lv22's
+// mode changes (2 animate-in, 15 retract); the note's own 11/11 is this same
+// check with the cube/robot rows left out.
+//
+// WHY THE TWO HALVES CANNOT LAND SEPARATELY. The obvious half of the fix --
+// "use the band's own height instead of the 270 constant in the zoom rewrite"
+// -- makes the model WORSE on its own. lv22's ball portal at x=7,635 carries
+// Free Mode, so GD never writes the ball's 240 and the band keeps the 270 that
+// the spider at x=975 put there. The model, which applies every portal, has
+// 240 stored, and 240/0.9091 = 264 against GD's 270/0.9091 = 297: 33 px of
+// headroom taken away, on a section that is right today only because the 270
+// constant happened to agree. So both halves hang off this one flag, and a
+// dump that predates the column keeps the old behaviour exactly.
+// (Set from the objrects HEADER, by name -- see loadLevelFrom.)
+inline bool g_freeModeCol = false;
+// The same for the trigger queue's admission gate: PlayLayer::addObject only
+// enqueues a trigger when it is neither touch- nor spawn-triggered, so those
+// never fire on an x crossing. Two of lv22's twenty zoom triggers are in that
+// state and the model was firing both. `touch`/`spawn` columns, again by name.
+inline bool g_trigGateCol = false;
 struct FlyBand { double floorY = 0.0, ceilY = 1e9; };
 inline FlyBand bandFor(double cy, double H) {
     FlyBand b;
