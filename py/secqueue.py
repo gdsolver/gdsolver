@@ -213,6 +213,13 @@ def run_window(a, win: dict, inputs: list[tuple[int, int]],
             out.update(verdict=m.group(1), depth=int(m.group(2)),
                        ms=int(m.group(3)), base=int(m.group(4)),
                        foundX=float(m.group(5)), foundTick=int(m.group(6)))
+            # WHY it stopped, carried alongside WHAT it concluded. EXHAUSTED
+            # says both "no continuation exists" and "the budget ran out"
+            # (secdeadline's own clock, `stop=deadline` or `stop=projected`),
+            # and a night of budget stops reads as a night of impassable
+            # windows unless the record keeps them apart.
+            ms = re.search(r"stop=(\w+)", ln)
+            out["stop"] = ms.group(1) if ms else "none"
         m = re.search(r"secsolve_inputs: ([01,]+)", ln)
         if m:
             seq = [int(c) for c in m.group(1).split(",") if c]
@@ -722,7 +729,9 @@ def main(argv=None) -> int:
         with index.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, separators=(",", ":")) + "\n")
         sp = rec.get("spine", {})
-        log(f"    {rec['verdict']} depth={rec.get('depth')} "
+        log(f"    {rec['verdict']}"
+            f"{'' if rec.get('stop', 'none') == 'none' else '/' + rec['stop']}"
+            f" depth={rec.get('depth')} "
             f"{rec.get('wall_s')}s spine={'ok' if sp.get('ok') else 'BROKEN'}"
             f" worst={sp.get('worst_dy')} branch={rec.get('branchDepth')}"
             f" div={(rec.get('diff') or {}).get('rows')}")
