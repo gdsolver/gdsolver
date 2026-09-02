@@ -722,6 +722,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // partner at cx=4,615 is crossed during t=3,335 and t=3,336 is normal
     // again).
     const double tScale = timeWarpAt((double)s.xAbs);
+    // THE BAND ANIMATION ages by one tick here, wherever this state is. It is
+    // a tween in TIME, and the first thing a version mapped through x got
+    // wrong was lv22's rotated shaft, where the run crosses x=15,765 three
+    // times and fires the portal there once (it passes the other two at a
+    // height that misses the box). Nothing outside the g_staticCamCol gate
+    // touches it, so a dump without those columns leaves it at 0 for ever.
+    if (g_staticCamCol) c.bandAnim = bandAnimStep(s.bandAnim);
     // [2026-08-21 r44] The free-integration y from **before** the ride overwrites
     // y. Written just before the slope block, read on the portal side (a different
     // scope).
@@ -760,6 +767,18 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     c.xAbs = advanceX(s.xAbs,
                       (float)(useDx * tScale * (s.rev ? -1.0 : 1.0)));
     const double x = (double)c.xAbs, xPrev = (double)s.xAbs;
+    // STATIC CAMERA crossings. Unlike a portal these carry no box test at all
+    // -- the x-crossing queue fires on the player's x passing the trigger's
+    // own x -- so the test is the span this tick covered, taken both ways
+    // because lv22 runs backwards through its rotated section.
+    if (g_staticCamCol && !g_staticCams.empty()) {
+        const double lo = std::min(xPrev, x), hi = std::max(xPrev, x);
+        for (const StaticCam& sc : g_staticCams) {
+            if (sc.cx <= lo || sc.cx > hi) continue;
+            if (sc.exit_) c.bandBranch &= (uint8_t)~1;   // Exit Static
+            else          c.bandBranch = (uint8_t)((c.bandBranch | 1) & ~2);
+        }
+    }
     // The start-of-tick point in WORLD coordinates, for the modifier boxes.
     //
     // `frameLevel` turns the colliders, portals, pads, orbs, speeds, slopes and the
@@ -3320,11 +3339,24 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // the model applies portals GD ignores and the stored height
                 // is not GD's -- see g_freeModeCol for the ball case that
                 // proves the two cannot be separated.
-                const double numer =
+                double numer =
                     (g_freeModeCol && (double)s.bandCeil > (double)s.bandFloor
                      && (double)s.bandCeil < 1e8)
                         ? (double)s.bandCeil - (double)s.bandFloor
                         : kBandBase;
+                // ...and in BRANCH A the band is not that height at all: it
+                // is the two ground sprites, which carry the animation, so it
+                // runs between the mode's H and the screen itself.
+                //   numer = 322 - (322 - H) * p
+                // Measured against GD's own sprite column over lv22's 21,140
+                // ticks: with p from bandAnim this is exact through the wave
+                // section (322.00 against 322.00), where the height alone is
+                // 22 short -- 36.7 px of ceiling once the 0.6 zoom is applied.
+                // Branch A is `staticY && !fromMode`; every level without a
+                // Static Camera stays in branch B and keeps the line above.
+                if ((c.bandBranch & 3) == 1)
+                    numer = kBandRetracted
+                          - (kBandRetracted - numer) * bandProgress(c.bandAnim);
                 // The calibration below exists only to absorb the wrong
                 // constant (it measures the band GD was asked for at the
                 // anchor and folds the ratio in), so with the real numerator
@@ -7181,7 +7213,27 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // band at all (updateDualGround's gate -- see g_freeModeCol).
                 // Seven of lv22's seventeen mode portals are, and GD's ground
                 // sprites confirm all seventeen.
+                // A MODE portal that does not animate the band in still
+                // retracts it -- updateDualGround's else branch runs the same
+                // tween the other way -- and that is the whole of the wave
+                // section's 322: the band there is not 300, it is out of the
+                // way. Gravity and size portals never reach updateDualGround
+                // at all, hence isMode.
+                if (g_staticCamCol && isMode
+                    && (H <= 0.0 || (g_freeModeCol && p->freeMode))) {
+                    c.bandAnim = bandAnimStart(false);
+                    // the else branch drops the static camera only when the
+                    // band was the MODE's, so it cannot pull a level out of
+                    // branch A
+                    if (c.bandBranch & 2) c.bandBranch &= (uint8_t)~1;
+                }
                 if (H > 0.0 && !(g_freeModeCol && p->freeMode)) {
+                    if (g_staticCamCol) {
+                        // animateInDualGroundNew: it takes staticY for itself
+                        // when nobody else holds it, and claims the band
+                        c.bandAnim = bandAnimStart(true);
+                        c.bandBranch |= 3;
+                    }
                     if (!inDual) c.bandRefY = (float)p->cy;
                     const FlyBand nb = bandFor(refY, H);
                     c.bandFloor = (float)nb.floorY;

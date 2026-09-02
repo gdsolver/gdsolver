@@ -165,6 +165,27 @@ inline uint64_t keyOf(const State& s) {
            // clamped by different ceilings and floors, so they are not
            // interchangeable (lv1's two lanes into its last ship section).
            ^ ((uint64_t)(uint32_t)(int32_t)std::lround(s.bandFloor) << 46)
+           // ...and in BRANCH A the band's HEIGHT is animating rather than
+           // fixed, so two states at the same y and vy that reached this tick
+           // at different points of the tween are clamped by different
+           // ceilings -- the same argument as the floor above, and the spread
+           // is large (322 against the mode's 270 or 300, before the zoom
+           // divides it). What goes in is the resulting numerator in whole
+           // pixels, which is the quantity the ceiling is built from and is
+           // computable from the state alone.
+           // Gated on branch A, so every key outside it stays bit-identical:
+           // all of lv1-21, every dump without the Static Camera columns, and
+           // lv22 itself wherever the mode holds the band.
+           // WHAT THIS COSTS IS NOT MEASURED. A new key dimension fragments
+           // the arena, and the only instrument for that is a cold run.
+           ^ (((s.bandBranch & 3) == 1)
+                  ? ((uint64_t)(uint32_t)(int32_t)std::lround(
+                        kBandRetracted
+                        - (kBandRetracted - ((double)s.bandCeil
+                                             - (double)s.bandFloor))
+                          * bandProgress(s.bandAnim))
+                     * 0x9E3779B97F4A7C15ull)
+                  : 0)
            // TRIED AND REVERTED (2026-08-03): adding `s.action` here, because the
            // cube's jump is an EDGE (`groundedNow && input && !s.action`) and two
            // grounded states differing only in `action` are not interchangeable.

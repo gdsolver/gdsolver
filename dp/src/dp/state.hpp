@@ -114,6 +114,49 @@ struct State {
     // cleared to stuck at x=24,253.
     float bandFloor = 0.f;
     float bandCeil = 1e9f;
+    // [2026-09-02] WHEN the band was last written, and which way it is
+    // animating. GD's band height is not the portal's H on its own: the ground
+    // sprites tween over 0.5 s into the band and 0.4 s back out of it, and
+    // while a Static Camera has the band (branch A of getMin/MaxPortalY) the
+    // height GD reports is
+    //     322 - (322 - H) * p        322 = winSize.height + 2
+    // with p that tween's progress. Measured against GD's own sprite column on
+    // lv22's 21,140 ticks: 119 ticks in and 95 out, ease-in-out at rate 2 and
+    // 1.5, no lag from the portal's tick -- every one of those ticks within
+    // 0.02 of GD, worst 0.0086.
+    // Per STATE and not per level, for the same reason the band itself is: the
+    // portal that writes it is one this worldline had to overlap. lv22 has a
+    // ship portal its own verified run passes the x of three times and only
+    // fires once, at a different height each time.
+    // Carried as ONE BYTE, the way ceilT and slopeT are, rather than as the
+    // event's tick: an absolute tick needs four bytes and four of padding
+    // beside them, and sizeof(State) went 248 -> 256 for it -- 3% on every
+    // node of every level, including the levels this never touches.
+    //   bit 7      the target: 1 = animating in, 0 = retracting
+    //   bits 0-6   ticks elapsed since the event, saturating at 127 = settled
+    // The one thing this cannot represent is a tween INTERRUPTED part way,
+    // which GD starts from wherever p had got to; here it restarts from the
+    // endpoint. lv22's run never does it (its two animate-ins both start from
+    // a fully retracted band and its two retracts from a fully raised one), so
+    // there is nothing measured to model -- but a level that flips the band
+    // twice inside half a second would be off by however far the first tween
+    // had come, and this is where to look.
+    uint8_t bandAnim = 0;
+    // ...and WHOSE band it is, which is what getMin/MaxPortalY branches on:
+    // branch A (the ground sprites, and therefore the animation above) needs
+    // `0x23c != 0 && 0x2a0 == 0` -- a static camera holding it AND the mode
+    // not having claimed it back.
+    //   bit 0   staticY   (0x23c: a Static Camera with a Y axis has it)
+    //   bit 1   fromMode  (0x2a0: an animate-in has claimed it)
+    // Both are carried per state rather than derived from x. The 1914 that
+    // sets staticY does fire at a level-determined x, but the portal that
+    // takes the band back is one this worldline had to overlap, and the two
+    // interleave: an animate-in leaves staticY set and only a 1914 clears
+    // fromMode again.
+    // 0 = neither, which is what resetLevelVariables leaves and what every
+    // level without a Static Camera keeps for its whole run -- so branch B,
+    // bit for bit as before.
+    uint8_t bandBranch = 0;
     // The y the band is derived FROM. Normally the cy of the portal that last
     // wrote the band, but inside a dual it is pinned to the DUAL portal's cy:
     // animateInDualGroundNew reads its y from the dual ground layer (this+0x408),

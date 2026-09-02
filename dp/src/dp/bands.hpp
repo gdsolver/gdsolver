@@ -202,6 +202,49 @@ inline bool g_freeModeCol = false;
 // never fire on an x crossing. Two of lv22's twenty zoom triggers are in that
 // state and the model was firing both. `touch`/`spawn` columns, again by name.
 inline bool g_trigGateCol = false;
+// STATIC CAMERA (id 1914). It is what opens branch A of getMin/MaxPortalY,
+// where the band stops being "the portal's H about a centre" and becomes the
+// two ground SPRITES read back through the zoom -- and those carry the band
+// animation, so the height there is 322 - (322 - H) * p rather than H.
+// updateStaticCameraPos writes staticY (0x23c) and clears bandFromMode
+// (0x2a0); property 110 (Exit Static) takes it back off. Property 101 is the
+// axis: 0 both / 1 X only / 2 Y only, and only the two that include Y touch
+// this band at all.
+// Unlike a portal this fires on the player's x crossing alone -- no overlap,
+// no height -- so it is a LEVEL property, resolved from x like every other
+// autonomous trigger (see the ZoomTrig block, and the same reasoning in
+// dynamics.hpp's autotrigger note).
+// The columns (`axis`, `exstat`) are not in any dump yet; without them this
+// list is empty and every level keeps branch B, which is the behaviour on
+// record.
+struct StaticCam { double cx; uint8_t exit_; };
+inline std::vector<StaticCam> g_staticCams;   // sorted by cx at load
+inline bool g_staticCamCol = false;
+// The band animation, packed into State::bandAnim: bit 7 = target (1 = in),
+// bits 0-6 = ticks elapsed, 127 = settled. Measured on lv22's 21,140 ticks
+// against GD's own sprite column: 119 ticks in on ease-in-out rate 2, 95 out
+// on rate 1.5, starting on the portal's own tick.
+constexpr int kBandAnimIn = 119, kBandAnimOut = 95;
+constexpr double kBandRetracted = 322.0;   // winSize.height + 2
+inline uint8_t bandAnimStart(bool animateIn) {
+    return (uint8_t)(animateIn ? 0x80 : 0x00);
+}
+inline uint8_t bandAnimStep(uint8_t a) {
+    const int e = a & 0x7f;
+    return (uint8_t)((a & 0x80) | (e >= 127 ? 127 : e + 1));
+}
+inline double bandProgress(uint8_t a) {
+    const bool in = (a & 0x80) != 0;
+    const int e = a & 0x7f;
+    if (e >= (in ? kBandAnimIn : kBandAnimOut)) return in ? 1.0 : 0.0;
+    // ease-in-out, the exponent GD's tween carries
+    const double u = (double)e / (in ? kBandAnimIn : kBandAnimOut);
+    const double rate = in ? 2.0 : 1.5;
+    const double t = 2.0 * u;
+    const double e01 = t < 1.0 ? 0.5 * std::pow(t, rate)
+                               : 1.0 - 0.5 * std::pow(2.0 - t, rate);
+    return in ? e01 : 1.0 - e01;
+}
 struct FlyBand { double floorY = 0.0, ceilY = 1e9; };
 inline FlyBand bandFor(double cy, double H) {
     FlyBand b;
