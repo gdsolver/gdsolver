@@ -366,6 +366,10 @@ inline bool g_argsLogged = false;  // the `solver args:` line has been printed f
 inline int g_iter = 0;
 inline std::vector<InputCmd> g_plan;      // the plan currently installed
 inline std::vector<InputCmd> g_best;      // the deepest plan GD has verified
+// The plan of the attempt that just died, taken before the rewind can replace
+// it. What the fixup recorder must replay: the model has to run the SAME inputs
+// the game ran, or the difference it measures is between two plans.
+inline std::vector<InputCmd> g_flownPlan;
 inline long long g_bestDeath = -1;        // ...and how far it got
 inline int g_curBackoff = kBackOff;
 inline bool g_lastTailSolved = false;     // the tail spliced last time reached the end
@@ -1960,7 +1964,13 @@ inline void spawn(int kind, long long arg, const char* phase) {
                 // the model is running one plan and GD ran another, and EVERY tick of the
                 // comparison is a divergence. Measured on lv18: it cleared in one round without
                 // fixups and ground out all 41 with them.
-                writeInputsFile(g_planPath, g_plan);
+                // **The plan GD flew**, not whatever is installed now: the rewind
+                // in onDeath (`g_plan = g_best`) runs between the death and this
+                // job, and the resim below replays this file against GD's dump of
+                // the attempt that died. g_flownPlan is empty only before the
+                // first death, where g_plan is the same thing anyway.
+                writeInputsFile(g_planPath,
+                                g_flownPlan.empty() ? g_plan : g_flownPlan);
                 // ...and SAY WHICH PLAN THAT IS. The rewind above (g_plan =
                 // g_best, in onDeath below logFingerprint) can have replaced it
                 // since GD flew, in which case the recorder compares the model's
@@ -1972,7 +1982,9 @@ inline void spawn(int kind, long long arg, const char* phase) {
                 {
                     char fb[128];
                     snprintf(fb, sizeof(fb), "dpsolve:   [resim] it=%d plan=%s",
-                             g_iter, planFnv(g_plan).c_str());
+                             g_iter,
+                             planFnv(g_flownPlan.empty() ? g_plan
+                                                         : g_flownPlan).c_str());
                     writeResult(fb);
                 }
                 // Learn first, then search. The recorder reads the trajectory GD just flew, so
@@ -2155,6 +2167,7 @@ inline void start(GJBaseGameLayer* l) {
     g_iter = 0;
     g_plan.clear();
     g_best.clear();
+    g_flownPlan.clear();
     g_bestDeath = -1;
     g_lastDeath = -1;
     g_deathRuns.clear();
@@ -2562,6 +2575,16 @@ inline void onDeath(long long dt, float deathX) {
     snprintf(b, sizeof(b), "dpsolve: iter %d: death t=%lld x=%.1f (best t=%lld)",
              g_iter, dt, (double)deathX, g_bestDeath);
     writeResult(b);
+    // THE PLAN GD JUST FLEW, kept before anything can replace it. The rewind
+    // below sets `g_plan = g_best`, and the fixup recorder's resim reads the file
+    // written AFTER that -- so without this the model side of every fixup a
+    // rewound iteration records is a different plan from the GD side, and the
+    // record is a difference between two plans rather than between the model and
+    // the game. Measured on the lv22 run of 2026-09-02: 35 of 73 iterations
+    // rewound, and 80 of the 126 fixups were recorded in them.
+    // Taken here rather than inside logFingerprint because that one returns early
+    // when fingerprinting is off, and this is not a diagnostic.
+    g_flownPlan = g_plan;
     logFingerprint(dt, deathX);
     // Another death in the same tick bucket; enough of them are veto credit
     // on their own (the note at g_deathRuns).
