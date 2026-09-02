@@ -21,6 +21,7 @@
 // The reference is a leveldp .trace.csv: the model's own replay of the solution
 // from the same anchor the search starts at. It already exists wherever this is
 // useful -- the reach probe and the anchored diff build one per window.
+#include <cstring>
 #include <map>
 
 #include "dp/frames.hpp"
@@ -178,13 +179,26 @@ inline int refFind(const std::vector<State>& v, const RefRow& r) {
 // alone adopts whichever comes first and the watch carries the wrong one. That
 // is not hypothetical: it is what made the watch report `cannot-reproduce` two
 // ticks after a flip that the search had in fact modelled correctly.
+// THE WHOLE STRUCT, minus the search's own bookkeeping. Listing fields by hand
+// was wrong three times in a row -- first rHover (the swing's pending flip),
+// then boost (a pad pinning vy), and each time the watch adopted a twin that
+// was identical in everything it happened to compare and one gravity step apart
+// on the tick after. The child was pushed into the layer verbatim, so an exact
+// comparison is available and there is no reason to choose which fields matter:
+// anything added to State later is part of the identity automatically.
+//
+// `parent` and `action` are excluded because the layer overwrites them after the
+// push; they say where the state came from, not what it is.
+inline bool refSameState(const State& a, const State& b) {
+    State x = a, y = b;
+    x.parent = y.parent = 0;
+    x.action = y.action = 0;
+    return std::memcmp(&x, &y, sizeof(State)) == 0;
+}
+
 inline int refFindExact(const std::vector<State>& v, const State& s) {
     for (size_t i = 0; i < v.size(); ++i)
-        if (v[i].y == s.y && v[i].vy == s.vy && v[i].mode == s.mode
-            && v[i].grounded == s.grounded && v[i].flip == s.flip
-            && v[i].rHover == s.rHover && v[i].held == s.held
-            && v[i].mini == s.mini && v[i].dual == s.dual)
-            return (int)i;
+        if (refSameState(v[i], s)) return (int)i;
     return -1;
 }
 
