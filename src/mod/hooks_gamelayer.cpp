@@ -3,6 +3,46 @@
 
 using namespace p1;
 
+// Time spent INSIDE the restore, summed across the search. `lms` on the seclayer
+// line is the whole layer's elapsed time, so `lms/lrest` is "layer time per
+// restore" and NOT the restore's cost -- reading it as the latter is what made
+// the 3x ramp look like a restore problem. The bench says the restore itself is
+// flat under every quantity it can vary (live checkpoints to 40,000 and 3.3 GB,
+// cold objects cycled, array length, cumulative count: 4.3-5.1 ms throughout),
+// so this counter is what settles whether the growth is inside the restore at all.
+static double g_secRestMs = 0.0;
+
+// The process's working set, for putting the cost curve and the resident curve on
+// the same axis. Resolved dynamically so nothing has to link psapi: measured from
+// outside, 60,000 restores leave ~250 MB behind (~4 KB each), and the per-restore
+// cost tracks that growth -- but "tracks" has to be shown on one series, not
+// inferred from two runs.
+// Returns {current working set, peak working set} in MB. BOTH, because the first
+// version of this printed one number and it was the PEAK -- which is monotone by
+// definition, so correlating a cost against it proves nothing. Caught by putting
+// the mod's reading next to an external one (10,599 vs 737 MB) rather than by
+// reading the struct again.
+static void procMemMB(size_t& cur, size_t& peak) {
+    using Fn = int(__stdcall*)(void*, void*, unsigned long);
+    static Fn fn = (Fn)GetProcAddress(GetModuleHandleA("kernel32.dll"),
+                                      "K32GetProcessMemoryInfo");
+    struct PMC { unsigned long cb; unsigned long pf; size_t a[8]; } pmc{};
+    pmc.cb = sizeof(pmc);
+    cur = peak = 0;
+    if (fn && fn(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        peak = pmc.a[1] / (1024 * 1024);   // measured: this slot is the PEAK
+        cur = pmc.a[2] / (1024 * 1024);    // ...so the one after it is current
+    }
+}
+
+struct SecRestTimer {
+    std::chrono::steady_clock::time_point t0{std::chrono::steady_clock::now()};
+    ~SecRestTimer() {
+        g_secRestMs += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count();
+    }
+};
+
 // ---- Tracing: frame / step structure ----
 class $modify(GJBaseGameLayer) {
     // The EXACT rect the spider's target search queries (cfg `hitboxtrace=1`,
@@ -507,25 +547,66 @@ class $modify(GJBaseGameLayer) {
                     // quantity held constant by construction. `restoreloopkeep=1` lets
                     // it grow the way the section search grows it (one checkpoint per
                     // kept node), and the series says what the mean cannot.
+                    // **Hold N live CheckpointObjects first, then time.** The
+                    // search keeps one per node it retains, so hundreds are alive
+                    // at once, while this bench used to have exactly ONE -- and
+                    // the bench is flat where the search ramps (2026-09-02: 120x
+                    // in restores, array 1->50, depth +9%/4000 ticks, all flat;
+                    // the same window's search ramps 1.59x by layer 352). Live
+                    // count is the quantity that was never varied.
+                    // Made BEFORE the timing loop and never restored from, so
+                    // this varies how many are alive and nothing else -- mixing
+                    // creation into the loop would put the cost of making them
+                    // back into the number being measured.
+                    static std::vector<CheckpointObject*> s_held;
+                    if (g_cfg.restoreLoopHold > 0) {
+                        const auto ht0 = std::chrono::steady_clock::now();
+                        for (int i = 0; i < g_cfg.restoreLoopHold; ++i)
+                            if (auto* hc = pl->markCheckpoint()) {
+                                hc->retain();
+                                s_held.push_back(hc);
+                            }
+                        char hb2[160];
+                        snprintf(hb2, sizeof(hb2),
+                                 "restoreloop_hold: live=%zu madeMs=%.0f",
+                                 s_held.size(),
+                                 std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - ht0).count());
+                        writeResult(hb2);
+                    }
                     const int bucket = 50;
-                    auto bt0 = rt0;
+                    auto bt0 = std::chrono::steady_clock::now();
                     for (int i = 0; i < g_cfg.restoreLoop; ++i) {
                         if (!g_cfg.restoreLoopKeep && pl->m_checkpointArray)
                             pl->m_checkpointArray->removeAllObjects();
-                        pl->storeCheckpoint(g_ckpt);
+                        // **Restore from a COLD object, the way the search does.**
+                        // secRestoreFrom is this same three-line sequence, so the
+                        // path is right; what differs is that the search hands it
+                        // a different node's checkpoint every time while this loop
+                        // kept re-reading one hot object. With `restoreloopcycle=1`
+                        // it walks the held ones instead, so each restore reads
+                        // ~70 KB that has not been touched in N iterations.
+                        CheckpointObject* src = g_ckpt;
+                        if (g_cfg.restoreLoopCycle && !s_held.empty())
+                            src = s_held[(size_t)i % s_held.size()];
+                        pl->storeCheckpoint(src);
                         g_restorePending = true;
                         pl->resetLevel();
                         g_restorePending = false;
                         if ((i + 1) % bucket == 0) {
                             const auto bt1 = std::chrono::steady_clock::now();
+                            size_t wsCur = 0, wsPeak = 0;
+                            procMemMB(wsCur, wsPeak);
                             char sb[160];
                             snprintf(sb, sizeof(sb),
-                                     "restoreloop_series: i=%d perMs=%.4f arr=%d",
+                                     "restoreloop_series: i=%d perMs=%.4f arr=%d "
+                                     "wsMB=%zu peakMB=%zu",
                                      i + 1,
                                      std::chrono::duration<double, std::milli>(
                                          bt1 - bt0).count() / bucket,
                                      pl->m_checkpointArray
-                                         ? (int)pl->m_checkpointArray->count() : -1);
+                                         ? (int)pl->m_checkpointArray->count() : -1,
+                                     wsCur, wsPeak);
                             writeResult(sb);
                             bt0 = bt1;
                         }
@@ -1330,6 +1411,7 @@ class $modify(GJBaseGameLayer) {
     // holding must pass 1. Leaving it 0 means "release and press again", i.e. searching a
     // different input sequence from the plain replay.
     void secRestoreFrom(PlayLayer* pl, CheckpointObject* cp, int heldAfter = 0) {
+    const SecRestTimer restTimer;
         if (pl->m_checkpointArray) pl->m_checkpointArray->removeAllObjects();
         pl->storeCheckpoint(cp);
         g_restorePending = true;
@@ -2601,6 +2683,7 @@ class $modify(GJBaseGameLayer) {
             }
             const double layerT0 = elapsedS;
             const long long layerR0 = restores;
+            const double layerRestMs0 = g_secRestMs;
             for (int ni : cur) {
                 if (foundLeaf >= 0) break;
                 // Hand the frame back BETWEEN EXPANSIONS as well, not only between layers. A
@@ -3168,7 +3251,7 @@ class $modify(GJBaseGameLayer) {
                          "seclayer: d=%d parents=%zu keep=%zu dead=%d dup=%d "
                          "capped=%d x=%.1f y=%.1f..%.1f deadX=%.1f fp=%016llx "
                          "xr=%.1f..%.1f axis=%c cnt=%d..%d spine=%d spineY=%.1f "
-                         "lms=%.0f lrest=%lld",
+                         "lms=%.0f lrest=%lld lrestms=%.0f nodes=%zu dedup=%zu",
                          depth, cur.size(), nxt.size(), layDead, layDup, layCap,
                          layMaxX, layMinY > 1e8 ? 0.0 : layMinY,
                          layMaxY < -1e8 ? 0.0 : layMaxY, deadMaxX,
@@ -3176,7 +3259,8 @@ class $modify(GJBaseGameLayer) {
                          layMinX > 1e8 ? 0.0 : layMinX, layMaxX,
                          capByX ? 'x' : 'y', cntLo, cntHi, g_spineNext,
                            g_spineNext >= 0 ? (double)g_nodes[(size_t)g_spineNext].y : -1.0,
-                         layerMs, restores - layerR0);
+                         layerMs, restores - layerR0,
+                         g_secRestMs - layerRestMs0, g_nodes.size(), seen.size());
                 writeResult(lb);
             }
             for (int ni : cur) releaseCp(ni);          // the previous layer is no longer needed

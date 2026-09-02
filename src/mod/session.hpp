@@ -430,8 +430,16 @@ inline void loadConfig() {
         else if (key == "practiceat") cfgNum(key, val, g_cfg.practiceAt);
         else if (key == "checkpointat") cfgNum(key, val, g_cfg.checkpointAt);
         else if (key == "restoreat") cfgNum(key, val, g_cfg.restoreAt);
-        else if (key == "restoreloop") cfgNum(key, val, g_cfg.restoreLoop);
-        else if (key == "restoreloopkeep") g_cfg.restoreLoopKeep = (val == "1");
+        // The restore bench's four keys share one branch of the chain. MSVC's
+        // nesting limit for an else-if chain is 128 and this parser is at it:
+        // adding a fifth key as its own `else if` fails the build outright
+        // (C1061, 2026-09-02). Any further key here goes inside this block.
+        else if (key.rfind("restoreloop", 0) == 0) {
+            if (key == "restoreloopkeep") g_cfg.restoreLoopKeep = (val == "1");
+            else if (key == "restoreloophold") cfgNum(key, val, g_cfg.restoreLoopHold);
+            else if (key == "restoreloopcycle") g_cfg.restoreLoopCycle = (val == "1");
+            else if (key == "restoreloop") cfgNum(key, val, g_cfg.restoreLoop);
+        }
         else if (key == "oobtest") g_cfg.oobTest = (val == "1");
         else if (key == "vytest") { g_cfg.vyTest = std::atof(val.c_str());
                                     g_cfg.vyTestOn = true; }

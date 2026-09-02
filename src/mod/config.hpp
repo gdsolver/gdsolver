@@ -229,6 +229,17 @@ struct Config {
     // blind to any cost that scales with it -- which is exactly the quantity the
     // 2026-09-02 sweep had left unmeasured (restores flat, depth +9%).
     bool restoreLoopKeep = false;
+    // cfg `restoreloophold=N`: keep N extra CheckpointObjects ALIVE (retained,
+    // never restored from) while the loop is timed, so the only thing that
+    // varies between runs is how many live copies of the game state exist. The
+    // search holds one per retained node; this bench held exactly one, which is
+    // why it is flat where the search ramps.
+    int restoreLoopHold = 0;
+    // cfg `restoreloopcycle=1`: restore from the HELD checkpoints in turn rather
+    // than from the same one every time, so each restore reads an object that has
+    // not been touched for N iterations -- which is the one thing the search does
+    // that this bench did not.
+    bool restoreLoopCycle = false;
     // cfg `oobtest=1`: force the out-of-bounds latch (player+0x187) to 1 just
     // before the checkpoint is taken, so that the save/restore of it can be
     // tested at all. The latch is only set by a substep that is genuinely out
