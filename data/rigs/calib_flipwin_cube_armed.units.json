@@ -1,0 +1,104 @@
+[
+ {
+  "rung": 0,
+  "delay_ticks": 10,
+  "x_blue": 900.0,
+  "x_yellow": 977.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 622.2,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 1,
+  "delay_ticks": 16,
+  "x_blue": 2500.0,
+  "x_yellow": 2577.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 683.76,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 2,
+  "delay_ticks": 20,
+  "x_blue": 4100.0,
+  "x_yellow": 4177.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 720.48,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 3,
+  "delay_ticks": 22,
+  "x_blue": 5700.0,
+  "x_yellow": 5777.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 737.544,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 4,
+  "delay_ticks": 24,
+  "x_blue": 7300.0,
+  "x_yellow": 7377.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 753.744,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 5,
+  "delay_ticks": 26,
+  "x_blue": 8900.0,
+  "x_yellow": 8977.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 769.08,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 6,
+  "delay_ticks": 28,
+  "x_blue": 10500.0,
+  "x_yellow": 10577.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 783.552,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 7,
+  "delay_ticks": 32,
+  "x_blue": 12100.0,
+  "x_yellow": 12177.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 809.904,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": 8,
+  "delay_ticks": 40,
+  "x_blue": 13700.0,
+  "x_yellow": 13777.895,
+  "y_yellow": 487.32,
+  "ceil_bottom": 852.24,
+  "armed": true,
+  "what": "ticks between the UNFLIP and the head reaching this ceiling, if the gravity constant holds. The real delay comes from the dump; these numbers only have to bracket the boundary"
+ },
+ {
+  "rung": -1,
+  "x_block": 16900.0,
+  "block_cy": 400.0,
+  "what": "third-behaviour station: inject an INVERTED player above this, descending, and watch whether it passes through the top face"
+ },
+ {
+  "rung": -2,
+  "x_block": 18500.0,
+  "block_cy": 700.0,
+  "what": "third-behaviour station: inject an INVERTED player above this, descending, and watch whether it passes through the top face"
+ }
+]

@@ -133,6 +133,8 @@ inline void resetInvocationState() {
     // same process use the band's own height with no gate behind it.
     g_freeModeCol = false;
     g_trigGateCol = false;
+    g_staticCamCol = false;
+    g_staticCams.clear();
     g_flipHeadBoxes.clear();
     g_dashStopBoxes.clear();
     g_armBoxes.clear();

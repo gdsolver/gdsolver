@@ -78,6 +78,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     g_dashStopBoxes.clear();
     g_timeWarps.clear();
     g_zoomTrigs.clear();
+    g_staticCams.clear();
     std::string line;
     // header: id,type,cx,cy,w,h,groups,uid,radius,rot[,sy0,sy1,shz]
     std::getline(in, line);
@@ -90,6 +91,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     // dump whose column order differs reads as "column absent" and keeps the
     // old behaviour instead of silently reading a neighbour.
     int colFree = -1, colTouch = -1, colSpawn = -1, colChan = -1;
+    int colAxis = -1, colExStat = -1;
     {
         std::stringstream hs(line);
         std::string name;
@@ -101,10 +103,13 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             else if (name == "touch") colTouch = i;
             else if (name == "spawn") colSpawn = i;
             else if (name == "chan") colChan = i;
+            else if (name == "axis") colAxis = i;
+            else if (name == "exstat") colExStat = i;
         }
     }
     g_freeModeCol = (colFree >= 0);
     g_trigGateCol = (colTouch >= 0 && colSpawn >= 0);
+    g_staticCamCol = (colAxis >= 0 && colExStat >= 0);
     // uid -> which triggers move it, and where to. Built once so the
     // routing below can ask in O(1). Touch and autonomous controls share the
     // map; an object under both keeps the touch mask (per-state truth beats
@@ -954,6 +959,25 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                             f[23].empty() ? 0.0 : std::atof(f[23].c_str()));
             }
         }
+        // STATIC CAMERA (id 1914): the one thing that opens branch A of
+        // getMin/MaxPortalY. Only the axes that include Y matter here
+        // (property 101: 0 both / 1 X only / 2 Y only), and property 110 turns
+        // it back off. Same admission gate as any other x-crossing trigger.
+        else if (o.id == 1914 && g_staticCamCol) {
+            const int axis = f[colAxis].empty() ? 0
+                                                : std::atoi(f[colAxis].c_str());
+            const bool queued =
+                !(g_trigGateCol
+                  && (f[colTouch] == "1" || f[colSpawn] == "1"))
+                && !(colChan >= 0 && !f[colChan].empty()
+                     && std::atoi(f[colChan].c_str()) != 0);
+            if (axis != 1 && queued) {
+                const uint8_t ex = (uint8_t)(f[colExStat] == "1" ? 1 : 0);
+                g_staticCams.push_back({o.cx, ex});
+                std::printf("staticcam: uid %d at x=%.0f axis=%d %s\n",
+                            o.uid, o.cx, axis, ex ? "EXIT" : "on");
+            }
+        }
         // TIME WARP (id 1935): the `tw` column carries m_timeWarpTimeMod.
         else if (o.id == 1935) {
             const double tw = f[21].empty() ? 0.0 : std::atof(f[21].c_str());
@@ -1084,6 +1108,8 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     std::sort(L.slopes.begin(), L.slopes.end(), byX);
     std::sort(g_timeWarps.begin(), g_timeWarps.end(),
               [](const TimeWarp& a, const TimeWarp& b) { return a.cx < b.cx; });
+    std::sort(g_staticCams.begin(), g_staticCams.end(),
+              [](const StaticCam& a, const StaticCam& b) { return a.cx < b.cx; });
     std::sort(g_zoomTrigs.begin(), g_zoomTrigs.end(),
               [](const ZoomTrig& a, const ZoomTrig& b) { return a.cx < b.cx; });
     // Which moving objects does a trigger ROTATE? Read off the recording rather
