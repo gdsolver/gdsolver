@@ -789,6 +789,18 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // treatment, for the same reason -- they are authored in world coordinates.
     double modX = xPrev, modY = (double)s.y;
     if (s.frame & 3) fromFrame((int)s.frame, xPrev, (double)s.y, modX, modY);
+    // DART SLIDE ARM (id 1755) -- the same start-of-tick position every modifier
+    // box reads, and the same decay as the ceiling arm. What it enables is in
+    // the wave arm (slideBoxTouch's note).
+    //
+    // ARMED HERE, ABOVE THE MODE BRANCHES, because GD's counter is player state
+    // and does not belong to a mode. It sat next to the ceiling arm first, which
+    // is inside the GROUND arm -- so a wave never reached it, c.slideT stayed at
+    // its "never armed" 255, and the seat below could not fire at all.
+    c.slideT = (!g_slideBoxes.empty()
+                && slideBoxTouch(modX, modY, playerHalf(s.mode, s.mini != 0)))
+                   ? 0
+                   : (uint8_t)std::min<int>(kArmTicks, (int)s.slideT + 1);
     // ...and the sign that family converts with. The strengths were fitted against
     // GD's dump, whose "up" in frame 3 is the MIRROR of the model's internal one --
     // the same statement gdUpOf makes about lip and the trace writer makes about
@@ -1147,8 +1159,33 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             CLAMP0("wave/floor");
         }
         if (c.y > g_yBound) DIE("wave/out-of-play", nullptr);
+        // A WAVE STANDS ON A SOLID ONLY WHILE THE DART SLIDE ARM HOLDS, and the
+        // arm comes from touching an id 1755 box on this tick or the one before
+        // (slideBoxTouch, where the sweep that measured it is written up).
+        //
+        // Armed, contact with the top face puts the player at top + wave half --
+        // a PUSH-OUT, not a landing: the sweep lifted players injected 1 to 6 px
+        // INTO the block back to the same line, with no depth, horizontal or
+        // phase condition. Unarmed, the face does nothing, which is why lv17's
+        // wave passes 0.47 px through a block's seat line and flies on.
+        //
+        // Without this the model falls through the face GD stands it on and dies
+        // to the crush test a tick later (lv22 t=20,133, brief-021).
+        //
+        // Full size only: the sweep has zero mini samples and no 0.6 is invented
+        // here. Top face only, for the same reason. Collected in the loop and
+        // applied after it, because the sweep below reads its path from c.y.
+        double waveSeat = -1e18;
+        const bool slideArmed = c.slideT < kArmTicks;
         for (const Obj* o : *K.near) {
             if (dead) break;
+            if (slideArmed && !c.mini && o->type == 0 && !o->slope
+                && !o->oriented) {
+                const double top = o->cy + o->hh;
+                if (std::fabs(x - o->cx) <= o->hw + wHalf
+                    && (double)c.y >= o->cy && (double)c.y <= top + wHalf)
+                    waveSeat = std::max(waveSeat, top + wHalf);
+            }
             for (int si = 0; si <= kSubSteps && !dead; ++si) {
                 const double f = si / (double)kSubSteps;
                 const double sx = xPrev + (x - xPrev) * f;
@@ -1210,6 +1247,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     DIE("wave/hazard", o);
                 }
             }
+        }
+        // ...and the push-out, once every object has had its say (see waveSeat).
+        if (!dead && waveSeat > -1e17) {
+            c.y = (float)waveSeat;
+            c.vy = 0;
+            c.grounded = 1;
+            CLAMP0("wave/slide");
         }
         // ...and RAMPS, which live in their own array and so were invisible to
         // the loop above. A plain ramp lifts a cube or a ball out (see the

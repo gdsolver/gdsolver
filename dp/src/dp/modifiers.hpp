@@ -382,6 +382,39 @@ inline bool armBoxTouch(double x, double y, double pHalf) {
             return true;
     return false;
 }
+// DART SLIDE ARM (id 1755, GameObjectType 40 -- m_stateDartSlide in the counter
+// list above). This is what lets a WAVE stand on a solid instead of ignoring it.
+//
+// MEASURED by an entry sweep (2026-09-02, wave-seat-entry-sweep note), after
+// three geometric readings of the same landing were each refuted by the corpus:
+//   - a wave is armed if it touched a 1755 box on this tick or the one before
+//   - while armed, ANY contact with a solid's top (d >= 0, no depth threshold,
+//     no horizontal threshold, no phase condition) puts it at top + wave half.
+//     It is a PUSH-OUT, not a landing: a player injected 1 to 6 px INTO the
+//     block is lifted back out to the same line
+//   - unarmed, the same face does nothing at all
+//
+// That is why no geometry worked. 1755 exists on lv21 and lv22 only -- lv17 has
+// ZERO -- so lv17's wave passing 0.47 px through a block's seat line and flying
+// on is correct behaviour, and every rule that made it stop was wrong for the
+// same reason.
+//
+// The box is the SCALED one: the dumps carry w,h = 120x120 for these (w0,h0 =
+// 30x30), and the raw size does not reach the player on the arming tick.
+//
+// NOT MEASURED, and so not implemented: mini (zero samples in the sweep -- no
+// 0.6 scaling is invented here), faces other than the top, and how the 27-tick
+// slide is maintained (consistent with re-arming every tick inside the box, but
+// the sweep only pins the arm's own lifetime).
+struct SlideBox { double cx, cy, hw, hh; };
+inline std::vector<SlideBox> g_slideBoxes;
+inline bool slideBoxTouch(double x, double y, double pHalf) {
+    for (const auto& b : g_slideBoxes)
+        if (std::fabs(x - b.cx) <= b.hw + pHalf
+            && std::fabs(y - b.cy) <= b.hh + pHalf)
+            return true;
+    return false;
+}
 // DASH STOP (id 1829, GameObjectType 40). Touching one while a dash ring's
 // dash is active ENDS the dash: vy restarts from 0 under ordinary gravity on
 // the next tick. Measured on lv22 (dash from ring 1704 at x=13,333, held

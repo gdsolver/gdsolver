@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "dp/fixup.hpp"
 #include "dp/clearance.hpp"
 
@@ -136,6 +136,7 @@ inline void resetInvocationState() {
     g_flipHeadBoxes.clear();
     g_dashStopBoxes.clear();
     g_armBoxes.clear();
+    g_slideBoxes.clear();
 
     // search_key.hpp
     g_topAhead.clear();

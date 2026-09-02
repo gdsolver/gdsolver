@@ -984,6 +984,15 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             std::printf("ceilarm: uid %d at (%.0f,%.0f) %.1fx%.1f\n",
                         o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0);
         }
+        // DART SLIDE ARM (id 1755): what lets a WAVE stand on a solid at all
+        // (see slideBoxTouch). The box is the scaled one, which the dump
+        // already carries in w,h -- the raw 30x30 does not reach the player on
+        // the arming tick.
+        else if (o.id == 1755) {
+            g_slideBoxes.push_back({o.cx, o.cy, o.hw, o.hh});
+            std::printf("dartslide: uid %d at (%.0f,%.0f) %.1fx%.1f\n",
+                        o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0);
+        }
         // FORCE FIELD (id 3645): a circular pusher, not a collider -- see
         // forceFieldAcc at the top. Not stored in L; stepOne reads the global.
         // The radius block above has already scaled o.radius by w/w0.

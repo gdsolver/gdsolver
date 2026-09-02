@@ -104,6 +104,12 @@ struct State {
     // anything must come out UNARMED, and the step's increment clamps it back
     // to the cap. Carried by the anchor as --start field 29 (-1 = not said).
     uint8_t armT = 255;
+    // ...and the same shape for the DART SLIDE arm (id 1755): while it holds, a
+    // WAVE is pushed out of a solid's top instead of passing through it
+    // (modifiers.hpp, slideBoxTouch). 255 = never armed, for the same reason
+    // armT uses it. NOT carried by --start yet: an anchor taken inside the arm's
+    // 2-tick window would need it, and nothing has measured one.
+    uint8_t slideT = 255;
     // GD's flying band, carried PER STATE. It has to be: the band is written
     // when a mode portal actually fires, and firing needs the player's box to
     // touch the portal in y as well as x. lv1 offers two lanes into its last
