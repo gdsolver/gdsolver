@@ -1842,6 +1842,18 @@ inline bool runLadder(long long dt) {
         tail = std::move(cand);
         chosenT = t0;
         chosenBackoff = bo;
+        // KEEP THE TAIL, next to the splice that is about to consume it. Once it
+        // is merged into the plan its own ticks are gone, and the next question
+        // about a doomed plan -- whether the tail solver's anchor->global tick
+        // mapping is off by one -- cannot be asked from the spliced plan alone.
+        // Named by the iteration and the anchor so it pairs with the dp_died_*
+        // file the death writes.
+        {
+            char tp[512];
+            snprintf(tp, sizeof(tp), "%s/dp_tail_it%d_a%lld.txt", DATA_DIR,
+                     g_iter, (long long)t0);
+            writeInputsFile(tp, tail);
+        }
         solvedTail = (o.verdict == dpbridge::OutcomeSolved);
         // The forced (portal) rung's tail gets a follow grace -- see the branch at the
         // rewind decision. Set on the choice, not the splice, so only this rung grants it.
@@ -2040,6 +2052,21 @@ inline void start(GJBaseGameLayer* l) {
     g_groupsPath = std::string(DATA_DIR) + "/dp_groups.txt";
     g_groupsDeepPath = std::string(DATA_DIR) + "/dp_groups_deep.txt";
     g_groupsBootPath = std::string(DATA_DIR) + "/dp_groups_boot.txt";
+    // ...and so are the per-iteration plan and tail files this run is about to
+    // write. They are named by ITERATION, so a shorter run leaves a previous
+    // run's higher numbers in place and a reader globbing `dp_died_it5_t*`
+    // silently gets whichever came first -- which is how the check of this very
+    // instrument first came back MISMATCH on a fix that was working
+    // (2026-09-02). The launcher empties the data dir for a cold run, but a
+    // session started any other way does not, so the writer clears its own.
+    {
+        std::error_code ec;
+        for (const auto& e : std::filesystem::directory_iterator(DATA_DIR, ec)) {
+            const std::string n = e.path().filename().string();
+            if (n.rfind("dp_died_it", 0) == 0 || n.rfind("dp_tail_it", 0) == 0)
+                std::filesystem::remove(e.path(), ec);
+        }
+    }
     {
         std::error_code ec;
         std::filesystem::remove(g_fixupPath, ec);
@@ -2189,23 +2216,22 @@ inline void logFingerprint(long long dt, double deathX) {
              g_horizonNow, g_curBackoff, fileSig(g_groupsPath).c_str(),
              fileSig(g_groupsDeepPath).c_str());
     writeResult(b);
-    // KEEP THE PLAN THAT DIED. dp_plan.txt is removed and rewritten by the next
-    // solve, so by the time anyone asks "what did the model think it was doing
-    // when GD died there", the plan is already gone -- and the only artefacts
-    // left (the fixup resim's trace, the ledger) belong to OTHER plans, which is
-    // how a fidelity family gets invented out of a comparison whose two sides
-    // never ran the same inputs (2026-09-02: three families, all withdrawn).
-    // One copy per frontier report, named by the iteration and the death tick so
+    // KEEP THE PLAN THAT DIED -- **from memory, not from the file**. `g_plan` at
+    // this point is the plan GD just replayed; the rewind that can replace it
+    // (`g_plan = g_best`) is further down this same function, and the file only
+    // catches up in the NEXT spawn(JobLadder). Copying dp_plan.txt here therefore
+    // saved the PREVIOUS iteration's plan under this iteration's name, and a
+    // reader comparing it against this attempt's dump compares two different
+    // plans -- which on 2026-09-02 produced four withdrawn "model defects" in one
+    // day, this instrument's own first version included.
+    // One file per frontier report, named by the iteration and the death tick so
     // it lines up with the [fp] line above. ~15 KB each, in a data dir the
     // launcher empties before every cold run.
     {
-        std::error_code cec;
         char pp[512];
         snprintf(pp, sizeof(pp), "%s/dp_died_it%d_t%lld.txt", DATA_DIR,
                  g_iter, dt);
-        std::filesystem::copy_file(g_planPath, pp,
-                                   std::filesystem::copy_options::overwrite_existing,
-                                   cec);
+        writeInputsFile(pp, g_plan);
     }
 }
 
