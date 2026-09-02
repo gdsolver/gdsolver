@@ -431,6 +431,7 @@ inline void loadConfig() {
         else if (key == "checkpointat") cfgNum(key, val, g_cfg.checkpointAt);
         else if (key == "restoreat") cfgNum(key, val, g_cfg.restoreAt);
         else if (key == "restoreloop") cfgNum(key, val, g_cfg.restoreLoop);
+        else if (key == "restoreloopkeep") g_cfg.restoreLoopKeep = (val == "1");
         else if (key == "oobtest") g_cfg.oobTest = (val == "1");
         else if (key == "vytest") { g_cfg.vyTest = std::atof(val.c_str());
                                     g_cfg.vyTestOn = true; }

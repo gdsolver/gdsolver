@@ -223,6 +223,12 @@ struct Config {
     // per restore. This number decides the design: 300 states per layer x 200 layers = 60,000
     // restores, so 1ms each is 60 seconds, 50ms each is 50 minutes and unusable.
     int restoreLoop = 0;
+    // cfg `restoreloopkeep=1`: do NOT clear m_checkpointArray between the loop's
+    // restores, so it grows one checkpoint per iteration the way the section
+    // search grows it. Without this the bench holds the array at length 1 and is
+    // blind to any cost that scales with it -- which is exactly the quantity the
+    // 2026-09-02 sweep had left unmeasured (restores flat, depth +9%).
+    bool restoreLoopKeep = false;
     // cfg `oobtest=1`: force the out-of-bounds latch (player+0x187) to 1 just
     // before the checkpoint is taken, so that the save/restore of it can be
     // tested at all. The latch is only set by a substep that is genuinely out

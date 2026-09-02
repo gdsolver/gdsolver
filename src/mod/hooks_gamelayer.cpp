@@ -499,13 +499,36 @@ class $modify(GJBaseGameLayer) {
                 if (g_cfg.restoreLoop > 0 && g_ckpt && !g_restoreLoopDone) {
                     g_restoreLoopDone = true;
                     const auto rt0 = std::chrono::steady_clock::now();
+                    // **The array is the third quantity, and the average hides it.**
+                    // This loop used to clear m_checkpointArray every iteration, which
+                    // pins its length at 1 -- so the bench could not see a cost that
+                    // grows with the array however long it ran, and 2026-09-02's sweep
+                    // (restores flat over 120x, depth +9%) was measuring with that
+                    // quantity held constant by construction. `restoreloopkeep=1` lets
+                    // it grow the way the section search grows it (one checkpoint per
+                    // kept node), and the series says what the mean cannot.
+                    const int bucket = 50;
+                    auto bt0 = rt0;
                     for (int i = 0; i < g_cfg.restoreLoop; ++i) {
-                        if (pl->m_checkpointArray)
+                        if (!g_cfg.restoreLoopKeep && pl->m_checkpointArray)
                             pl->m_checkpointArray->removeAllObjects();
                         pl->storeCheckpoint(g_ckpt);
                         g_restorePending = true;
                         pl->resetLevel();
                         g_restorePending = false;
+                        if ((i + 1) % bucket == 0) {
+                            const auto bt1 = std::chrono::steady_clock::now();
+                            char sb[160];
+                            snprintf(sb, sizeof(sb),
+                                     "restoreloop_series: i=%d perMs=%.4f arr=%d",
+                                     i + 1,
+                                     std::chrono::duration<double, std::milli>(
+                                         bt1 - bt0).count() / bucket,
+                                     pl->m_checkpointArray
+                                         ? (int)pl->m_checkpointArray->count() : -1);
+                            writeResult(sb);
+                            bt0 = bt1;
+                        }
                     }
                     const double ms = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - rt0).count();
