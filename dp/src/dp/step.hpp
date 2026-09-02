@@ -1786,6 +1786,29 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // GD does NOT jump. One press activates one thing; the re-jump needs
         // the press back. `ringHold` is exactly "this press has fired a ring"
         // and is cleared on release, so it is the gate.
+        // TRIED AND REVERTED (2026-09-02): `(input || (s.mode == 0 && s.action))`
+        // here, so that a press ending exactly on the LANDING tick still jumps on
+        // the next one -- GD's buffer outliving the release by a tick.
+        // The evidence for the rule is real and still stands: on GD-authored
+        // section crossings (the verified solutions cannot witness it, having been
+        // authored by a solver with this very gate) 111 cube landings, 19 of them
+        // jumps, and the seven whose press ended at or before the landing tick
+        // separate perfectly on the plan's value at t-1 -- 3 distinct events jump,
+        // 4 do not, no counter-example in lv1-22. It even fixed the one case where
+        // the model had been caught missing it with both sides on the SAME plan
+        // (w6077: t=6367 lands bit-identically, and with the change t=6368 comes
+        // out at y=230.058 vy=12.341, GD's numbers to the digit).
+        // WHAT KILLED IT: `groundedNow` is any grounded tick, not a landing.
+        // lv22 t=20,234 presses while the cube has been sitting still (y=2,235.000,
+        // vy=0, onGround=1, gframe=0) for twenty ticks; GD does not jump on the
+        // press tick OR after it, and the branch above does not fire either -- but
+        // the released tick t=20,236 has s.action=1, so the reverted form did.
+        // Three of lv22's sections lost tracking (worst t=20,200: 400 -> 36 ticks).
+        // Re-try needs the missing half: either "the previous tick was a LANDING",
+        // which is a state bit nobody has yet, or "this press has not already been
+        // spent", which is what ringHold does for rings and nothing does for
+        // whatever consumed the press at 20,234. Narrowing it by hand here would be
+        // fitting, not measuring. Written up in brief-022.
         } else if (groundedNow && input && !gravPortalThisTick
                    && (!s.action
                        || ((s.mode == 0 || s.mode == 5) && !s.ringHold))) {
