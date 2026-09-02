@@ -99,6 +99,13 @@ UNITS: list[dict] = []
 # (tick, 0|1) here and it is written to the .plan.txt (the rig and the plan must
 # be generated together or the windows drift apart).
 PLAN: list[tuple[int, int]] = []
+# --ka39: write kA39,1 into the header. THE ONE SANCTIONED EXCEPTION to the
+# "stop at kA11" rule below: lv22 is the only official level with kA39=1
+# (fixRadiusCollision), and its circle-hazard branch (branch A + rotated-OBB
+# skip) can only be measured on a rig that sets the same flag. Off by default,
+# so every existing rig is byte-identical; a rig generated with it must record
+# WHICH flag world it measured (the sawcal history is all kA39=0).
+KA39 = False
 
 
 def obj(oid: int, x: float, y: float, rot: float = 0.0,
@@ -133,13 +140,17 @@ def header(start_mode: str = "cube", mini: bool = False, speed: int = 0,
     """
     m = {"cube": 0, "ship": 1, "ball": 2, "ufo": 3, "wave": 4, "robot": 5,
          "spider": 6, "swing": 7}[start_mode]
-    return (f"kS38,1_40_2_125_3_255_11_255_12_255_13_255_4_-1_6_1000_7_1_15_1"
-            f"_18_0_8_1|1_0_2_102_3_255_11_255_12_255_13_255_4_-1_6_1001_7_1"
-            f"_15_1_18_0_8_1"
-            f",kA13,0,kA15,0,kA16,0,kA14,,kA6,1,kA7,1,kA17,0,kA18,0"
-            f",kA2,{m},kA3,{1 if mini else 0},kA4,{speed}"
-            f",kA8,{1 if dual else 0},kA10,0,kA9,0,kA11,0")
-# [2026-08-20] DO NOT WRITE kA22-kA45. THE RIG HEADER MUST STOP AT kA11: an
+    h = (f"kS38,1_40_2_125_3_255_11_255_12_255_13_255_4_-1_6_1000_7_1_15_1"
+         f"_18_0_8_1|1_0_2_102_3_255_11_255_12_255_13_255_4_-1_6_1001_7_1"
+         f"_15_1_18_0_8_1"
+         f",kA13,0,kA15,0,kA16,0,kA14,,kA6,1,kA7,1,kA17,0,kA18,0"
+         f",kA2,{m},kA3,{1 if mini else 0},kA4,{speed}"
+         f",kA8,{1 if dual else 0},kA10,0,kA9,0,kA11,0")
+    if KA39:
+        h += ",kA39,1"
+    return h
+# [2026-08-20] DO NOT WRITE kA22-kA45 (sole exception: the opt-in --ka39, see
+# the KA39 note above). THE RIG HEADER MUST STOP AT kA11: an
 # official level's header (expanded from Resources/levels/7.txt) ends at kA11
 # and has not a single key from kA22 on. The kA31..kA45 (mostly 1) that only the
 # rig spelled out are the 2.2 compatibility flags, and THEY WERE CHANGING THE
@@ -3770,7 +3781,14 @@ def main() -> int:
                     help="the dump.csv of slopeland pass1. The pad arc is "
                          "measured from it to place the slopes; without it the "
                          "rig has pads only")
+    ap.add_argument("--ka39", action="store_true",
+                    help="write kA39,1 (fixRadiusCollision) into the header -- "
+                         "the lv22 flag world. Record it with the rig's "
+                         "measurements: sawcal history is all kA39=0")
     a = ap.parse_args()
+    if a.ka39:
+        global KA39
+        KA39 = True
     if a.xmap:
         load_xmap(Path(a.xmap))
         print(f"xmap: {len(XMAP)} ticks (ends at x={XMAP[-1][1]:.0f})")
