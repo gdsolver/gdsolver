@@ -1,0 +1,44 @@
+[
+ {
+  "x": 2000,
+  "id": 1583,
+  "scale": 0.0,
+  "rot": 0,
+  "why": "r=4. SMALLER THAN EVERY MODE'S HALF, which is what makes the two branches differ in kind rather than in degree: B's corner disc cannot reach past the rect at all (its axis boundary is the flat edge h) while A's is a circle at h+4. This is the lv22 uid710 configuration -- the spider dome measured at 17.5 = 13.5 + 4"
+ },
+ {
+  "x": 3000,
+  "id": 1583,
+  "scale": 0.0,
+  "rot": 90,
+  "why": "the same blade turned 90 degrees. id 1583 is 31x23, so w/w0 stops being the scale and becomes the SWAP ratio 0.742: the model recovers a radius of 2.968 where GD's is still 4.00. The axis boundary tells them apart, 1.03 px. 31x23 is also not a multiple of 30, so this one station also separates the two pivot conventions -- getRealPosition against the rect centre -- which is the other thing brief-013 asks a rig to settle"
+ },
+ {
+  "x": 4000,
+  "id": 918,
+  "scale": 0.0,
+  "rot": 0,
+  "why": "r=24, larger than every mode's half, so B's corner arcs DO reach and the branches straddle: A is wider on the axis and narrower on the diagonal. One station carrying both signs is what stops a single boundary from being read as agreement"
+ },
+ {
+  "x": 5000,
+  "id": 918,
+  "scale": 0.0,
+  "rot": -61,
+  "why": "the same circle turned by something that is not a multiple of 90. This is the OBB arm's static subject: kA39 is also said to skip the turned box's SAT and let the circle be the final word, and a 90-degree turn cannot show that because the box is still axis-aligned"
+ },
+ {
+  "x": 6000,
+  "id": 1734,
+  "scale": 0.0,
+  "rot": 0,
+  "why": "r=32, the widest. This is where A and B come CLOSEST on the axis (47.0 against 43.3 for a cube), so a rig that cannot separate them here is under-resolved and its agreement elsewhere means less"
+ },
+ {
+  "x": 7000,
+  "id": 1734,
+  "scale": 0.5,
+  "rot": 0,
+  "why": "the same wheel at half scale, R=16. Whether the effective radius still follows the scale in the A world, which branch A's own formula (max(scaleX,scaleY) * m_objectRadius) says it should"
+ }
+]

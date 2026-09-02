@@ -99,6 +99,13 @@ UNITS: list[dict] = []
 # (tick, 0|1) here and it is written to the .plan.txt (the rig and the plan must
 # be generated together or the windows drift apart).
 PLAN: list[tuple[int, int]] = []
+# --ka39: write kA39,1 into the header. THE ONE SANCTIONED EXCEPTION to the
+# "stop at kA11" rule below: lv22 is the only official level with kA39=1
+# (fixRadiusCollision), and its circle-hazard branch (branch A + rotated-OBB
+# skip) can only be measured on a rig that sets the same flag. Off by default,
+# so every existing rig is byte-identical; a rig generated with it must record
+# WHICH flag world it measured (the sawcal history is all kA39=0).
+KA39 = False
 
 
 def obj(oid: int, x: float, y: float, rot: float = 0.0,
@@ -133,13 +140,17 @@ def header(start_mode: str = "cube", mini: bool = False, speed: int = 0,
     """
     m = {"cube": 0, "ship": 1, "ball": 2, "ufo": 3, "wave": 4, "robot": 5,
          "spider": 6, "swing": 7}[start_mode]
-    return (f"kS38,1_40_2_125_3_255_11_255_12_255_13_255_4_-1_6_1000_7_1_15_1"
-            f"_18_0_8_1|1_0_2_102_3_255_11_255_12_255_13_255_4_-1_6_1001_7_1"
-            f"_15_1_18_0_8_1"
-            f",kA13,0,kA15,0,kA16,0,kA14,,kA6,1,kA7,1,kA17,0,kA18,0"
-            f",kA2,{m},kA3,{1 if mini else 0},kA4,{speed}"
-            f",kA8,{1 if dual else 0},kA10,0,kA9,0,kA11,0")
-# [2026-08-20] DO NOT WRITE kA22-kA45. THE RIG HEADER MUST STOP AT kA11: an
+    h = (f"kS38,1_40_2_125_3_255_11_255_12_255_13_255_4_-1_6_1000_7_1_15_1"
+         f"_18_0_8_1|1_0_2_102_3_255_11_255_12_255_13_255_4_-1_6_1001_7_1"
+         f"_15_1_18_0_8_1"
+         f",kA13,0,kA15,0,kA16,0,kA14,,kA6,1,kA7,1,kA17,0,kA18,0"
+         f",kA2,{m},kA3,{1 if mini else 0},kA4,{speed}"
+         f",kA8,{1 if dual else 0},kA10,0,kA9,0,kA11,0")
+    if KA39:
+        h += ",kA39,1"
+    return h
+# [2026-08-20] DO NOT WRITE kA22-kA45 (sole exception: the opt-in --ka39, see
+# the KA39 note above). THE RIG HEADER MUST STOP AT kA11: an
 # official level's header (expanded from Resources/levels/7.txt) ends at kA11
 # and has not a single key from kA22 on. The kA31..kA45 (mostly 1) that only the
 # rig spelled out are the 2.2 compatibility flags, and THEY WERE CHANGING THE
@@ -2120,6 +2131,118 @@ TRIG_ROTATE = 1346
 K_CENTER, K_DEGREES, K_TIMES360, K_LOCKROT = 71, 68, 69, 70
 
 
+# ---- brief-013: the same saws in the OTHER flag world (2026-09-02) ---------
+# WHY. hazardHit sends a circle hazard down branch B (the player's rect plus
+# corner discs) wherever sawRectHalfB has a measurement, and down branch A
+# (circle against circle) only where it has none. ALL of that measurement --
+# the 2026-08-26 sweep, eight modes by five stations, and the 2026-08-28 rebuild
+# with the saws group-moved -- was taken in ONE flag world. Every rig mklevel
+# has ever emitted stops its header at kA11, so kA39 was 0 in all of it.
+#
+# The disassembly says the branch is picked by `[[layer+0xdb0]+0x1cf]`
+# (0x211df0 @0x211e15), read off the LAYER and so not a property of either
+# object -- and LevelSettingsObject +0x1cf is kA39, which lv22 is the only
+# official level to set. That makes "static saws take branch B" possibly
+# "kA39=0 saws take branch B", and lv22's own reading (a spider dome at
+# 13.5 + 4, which branch B cannot produce at r < h) the other half of the same
+# statement rather than a contradiction of it.
+#
+# So these rigs are one experiment: THE SAME GEOMETRY GENERATED TWICE, with and
+# without --ka39, so the only difference between the two runs is one header key.
+# The kA39=0 arm is the control, and it is not decoration -- it has to reproduce
+# the numbers already on record (object.hpp's note: rect half 5.0 wave / 13.5
+# spider / 15.0 everything else, radius scaling exactly). If the control arm
+# does not land there, something other than the flag has moved and neither arm
+# means anything.
+#
+# Stations are 1000 px apart in open air at y=300, the sawcal convention, so
+# nothing is within 900 px of the probe.
+KA39_STATIONS = [
+    # (id, x, scale, rot, why this station exists)
+    (1583, 2000, 0.0, 0,
+     "r=4. SMALLER THAN EVERY MODE'S HALF, which is what makes the two "
+     "branches differ in kind rather than in degree: B's corner disc cannot "
+     "reach past the rect at all (its axis boundary is the flat edge h) while "
+     "A's is a circle at h+4. This is the lv22 uid710 configuration -- the "
+     "spider dome measured at 17.5 = 13.5 + 4"),
+    (1583, 3000, 0.0, 90,
+     "the same blade turned 90 degrees. id 1583 is 31x23, so w/w0 stops being "
+     "the scale and becomes the SWAP ratio 0.742: the model recovers a radius "
+     "of 2.968 where GD's is still 4.00. The axis boundary tells them apart, "
+     "1.03 px. 31x23 is also not a multiple of 30, so this one station also "
+     "separates the two pivot conventions -- getRealPosition against the rect "
+     "centre -- which is the other thing brief-013 asks a rig to settle"),
+    (918, 4000, 0.0, 0,
+     "r=24, larger than every mode's half, so B's corner arcs DO reach and the "
+     "branches straddle: A is wider on the axis and narrower on the diagonal. "
+     "One station carrying both signs is what stops a single boundary from "
+     "being read as agreement"),
+    (918, 5000, 0.0, -61,
+     "the same circle turned by something that is not a multiple of 90. This "
+     "is the OBB arm's static subject: kA39 is also said to skip the turned "
+     "box's SAT and let the circle be the final word, and a 90-degree turn "
+     "cannot show that because the box is still axis-aligned"),
+    (1734, 6000, 0.0, 0,
+     "r=32, the widest. This is where A and B come CLOSEST on the axis (47.0 "
+     "against 43.3 for a cube), so a rig that cannot separate them here is "
+     "under-resolved and its agreement elsewhere means less"),
+    (1734, 7000, 0.5, 0,
+     "the same wheel at half scale, R=16. Whether the effective radius still "
+     "follows the scale in the A world, which branch A's own formula "
+     "(max(scaleX,scaleY) * m_objectRadius) says it should"),
+]
+
+
+def _ka39_rig(mode: str, mini: bool, spin: bool) -> str:
+    """The kA39 station set, optionally with the saws spun by a Rotate trigger.
+
+    The floor, the wall at x=230 and the 1000 px spacing are sawcal's, so the
+    control arm is comparable with what is already on record. The wall is what
+    stops the no-input attempt from completing the level: a completed session
+    stops polling cmd.txt and the probe hangs (the gd-probe trap).
+    """
+    parts = [header(start_mode=mode, mini=mini)]
+    parts += floor_run(0, 9000, y=GROUND_Y)
+    for k in range(12):
+        parts.append(obj(BLOCK, 230, 105 + GRID * k))
+    grp = {K_GROUPS: str(SAW_GROUP)} if spin else None
+    for oid, x, scale, rot, why in KA39_STATIONS:
+        UNITS.append({"x": x, "id": oid, "scale": scale, "rot": rot,
+                      "why": why})
+        parts.append(obj(oid, x, 300, rot=rot, scale=scale, extra=grp))
+    if spin:
+        # ONE Rotate, one centre, every station in the turned group. The centre
+        # sits 45 px under the FIRST station, so each saw runs a small orbit
+        # (bounded by 90 px, staying in its own clean air) while its own facing
+        # goes all the way round -- times360=1 -- and therefore passes through
+        # 45 degrees, the angle at which a turned box and its bounding circle
+        # differ most.
+        #
+        # The centre marker is a BLOCK, as in cpriderot. Its top face is at
+        # y=270 and the probe sweeps the outline from above (y around 320), so
+        # it is never in the swept column -- CHECK THAT with `column` before
+        # bisecting anything, exactly as hitbox_sweep's own note says.
+        #
+        # UNVERIFIED, and the rig is how it gets verified: that a Rotate turns
+        # a circle hazard's own angle at all, and that the trigger's property
+        # ids are what this file assumes. Load it and read the MOD's trigger
+        # dump back (target / centre / deg / t360) before any conclusion rests
+        # on it -- the same round trip build_sawcal_moved documents.
+        cen_x, cen_y = KA39_STATIONS[0][1], 300 - 45
+        parts.append(obj(BLOCK, cen_x, cen_y, extra={K_GROUPS: str(SAW_GROUP + 1)}))
+        parts.append(obj(TRIG_ROTATE, 45, 300, extra={
+            K_TARGET: str(SAW_GROUP),
+            K_CENTER: str(SAW_GROUP + 1),
+            K_DURATION: "30",
+            K_DEGREES: "0",
+            K_TIMES360: "1",
+            K_LOCKROT: "0",
+            K_EASING: "0",
+            K_EASING_RATE: "2",
+        }))
+    return ";".join(parts) + ";"
+
+
 def build_cpride() -> str:
     """A floor that RISES while the player stands on it, for checkpoint work.
 
@@ -3690,6 +3813,17 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcalmv_spider": lambda: build_sawcal_moved("spider"),
             "sawcalmv_ship_mini": lambda: build_sawcal_moved("ship", True),
             "sawcalmv_cube_mini": lambda: build_sawcal_moved("cube", True),
+            # brief-013. Generate each of these TWICE, with and without
+            # --ka39; the pair is the experiment and one arm alone says
+            # nothing (see the KA39_STATIONS note).
+            "sawcal39_cube": lambda: _ka39_rig("cube", False, False),
+            "sawcal39_spider": lambda: _ka39_rig("spider", False, False),
+            "sawcal39_wave": lambda: _ka39_rig("wave", False, False),
+            "sawcal39_ball": lambda: _ka39_rig("ball", False, False),
+            "sawcal39_cube_mini": lambda: _ka39_rig("cube", True, False),
+            "sawcal39_spider_mini": lambda: _ka39_rig("spider", True, False),
+            "sawrot39_cube": lambda: _ka39_rig("cube", False, True),
+            "sawrot39_spider": lambda: _ka39_rig("spider", False, True),
            "forcecal_cube": lambda: build_forcecal_mode("cube"),
            "forcedrop_cube": lambda: build_forcedrop_mode("cube"),
            "platformer": build_platformer,
@@ -3770,7 +3904,14 @@ def main() -> int:
                     help="the dump.csv of slopeland pass1. The pad arc is "
                          "measured from it to place the slopes; without it the "
                          "rig has pads only")
+    ap.add_argument("--ka39", action="store_true",
+                    help="write kA39,1 (fixRadiusCollision) into the header -- "
+                         "the lv22 flag world. Record it with the rig's "
+                         "measurements: sawcal history is all kA39=0")
     a = ap.parse_args()
+    if a.ka39:
+        global KA39
+        KA39 = True
     if a.xmap:
         load_xmap(Path(a.xmap))
         print(f"xmap: {len(XMAP)} ticks (ends at x={XMAP[-1][1]:.0f})")

@@ -3309,12 +3309,32 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // even holding). The coefficient is calibrated **once only** from
                 // the height of the band GD was asked for at the anchor
                 // (--startband). The zoom's relative changes still apply as is.
-                if (g_bandK <= 0.0 && g_startBandCeil < 1e8
+                // ...and the numerator is the height the PORTAL wrote, not a
+                // constant. GD's is `[+0x2ec]`, set by animateInDualGroundNew
+                // out of getGroundHeightForMode -- 300 for ship/UFO/wave/swing,
+                // 240 for ball, 270 otherwise -- which is exactly what
+                // bandCeil - bandFloor already holds. The old 270 was right
+                // only where that height happened to be 270, and on lv22's
+                // ship section (H = 300, zoom 0.6) it was 50 px short of GD's
+                // 500. This needs the Free Mode gate to be correct: without it
+                // the model applies portals GD ignores and the stored height
+                // is not GD's -- see g_freeModeCol for the ball case that
+                // proves the two cannot be separated.
+                const double numer =
+                    (g_freeModeCol && (double)s.bandCeil > (double)s.bandFloor
+                     && (double)s.bandCeil < 1e8)
+                        ? (double)s.bandCeil - (double)s.bandFloor
+                        : kBandBase;
+                // The calibration below exists only to absorb the wrong
+                // constant (it measures the band GD was asked for at the
+                // anchor and folds the ratio in), so with the real numerator
+                // in hand it would correct a correct number twice.
+                if (!g_freeModeCol && g_bandK <= 0.0 && g_startBandCeil < 1e8
                     && g_startBandCeil > g_startBandFloor)
                     g_bandK = (g_startBandCeil - g_startBandFloor) * cs
                               / kBandBase;
                 const double k = (g_bandK > 0.0) ? g_bandK : 1.0;
-                bandCeilNow = (double)s.bandFloor + kBandBase * k / cs;
+                bandCeilNow = (double)s.bandFloor + numer * k / cs;
             }
         }
         const double yMax = bandCeilNow - pHalf;
@@ -7109,6 +7129,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // for the whole dual section. Leaving one (24) does not touch
                 // the band: measured on lv16, after the merge at x=15,103 GD
                 // still reports [330,630], the ship-in-dual band.
+                // A Free Mode DUAL portal is left alone deliberately: this
+                // branch also pins bandRefY for the rest of the dual section,
+                // so skipping it would hand the later in-dual writes a stale
+                // reference y. No level in lv1-22 has one (lv22 owns every
+                // Free Mode portal there is and none of them is a dual), so
+                // there is nothing measured to model here.
                 if (wantDual) {
                     c.bandRefY = (float)p->cy;
                     const FlyBand nb = bandFor(p->cy, bandHeightDual(c.mode));
@@ -7151,7 +7177,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 const double H = inDual ? bandHeightDual(wantMode)
                                         : bandHeightFor(p->type);
                 const double refY = inDual ? (double)c.bandRefY : p->cy;
-                if (H > 0.0) {
+                // ...unless the portal is a FREE MODE one, which writes no
+                // band at all (updateDualGround's gate -- see g_freeModeCol).
+                // Seven of lv22's seventeen mode portals are, and GD's ground
+                // sprites confirm all seventeen.
+                if (H > 0.0 && !(g_freeModeCol && p->freeMode)) {
                     if (!inDual) c.bandRefY = (float)p->cy;
                     const FlyBand nb = bandFor(refY, H);
                     c.bandFloor = (float)nb.floorY;

@@ -81,6 +81,30 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     std::string line;
     // header: id,type,cx,cy,w,h,groups,uid,radius,rot[,sy0,sy1,shz]
     std::getline(in, line);
+    // ...and these three are located BY NAME rather than by position. Every
+    // other column here is positional, which is this parser's idiom, but those
+    // arrive with a MOD change that lands on its own schedule -- and the one
+    // failure mode this file already records (mvdir/gnddir dead from the day
+    // they were written, because the field bound was not raised with them) is
+    // exactly what a position guessed in advance produces. Read by name, a
+    // dump whose column order differs reads as "column absent" and keeps the
+    // old behaviour instead of silently reading a neighbour.
+    int colFree = -1, colTouch = -1, colSpawn = -1, colChan = -1;
+    {
+        std::stringstream hs(line);
+        std::string name;
+        for (int i = 0; std::getline(hs, name, ','); ++i) {
+            while (!name.empty()
+                   && (name.back() == '\r' || name.back() == '\n'))
+                name.pop_back();
+            if (name == "free") colFree = i;
+            else if (name == "touch") colTouch = i;
+            else if (name == "spawn") colSpawn = i;
+            else if (name == "chan") colChan = i;
+        }
+    }
+    g_freeModeCol = (colFree >= 0);
+    g_trigGateCol = (colTouch >= 0 && colSpawn >= 0);
     // uid -> which triggers move it, and where to. Built once so the
     // routing below can ask in O(1). Touch and autonomous controls share the
     // map; an object under both keeps the touch mask (per-state truth beats
@@ -496,7 +520,11 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         //           velocity change. 2026-08-19. dis itself is still unread by
         //           leveldp)
         // 41 -> 42 (force: ForceBlockGameObject::m_force. 2026-08-30)
-        std::string f[42];
+        // 42 -> 45 (free / touch / spawn -- a mode portal's Free Mode and a
+        //           trigger's touch/spawn admission, 2026-09-02). Those three
+        //           are found by name above, so the bound here only has to be
+        //           big enough to REACH them; the headroom is deliberate.
+        std::string f[48];
         // 41, not 28. The bound was left at 26 when mvdir/gnddir were added
         // (2026-08-15), so f[26]/f[27] were never filled and BOTH of them read
         // as "column absent" -- the whole id-2900 direction change was dead
@@ -506,7 +534,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // WHEN A COLUMN IS ADDED, RAISE THIS BOUND TOO. Forgetting it throws no
         // exception and only ever shows up as "that rule was dead from the
         // start".
-        for (int i = 0; i < 42 && std::getline(ss, f[i], ','); ++i) {}
+        for (int i = 0; i < 48 && std::getline(ss, f[i], ','); ++i) {}
         if (f[5].empty()) continue;
         const int type = std::atoi(f[1].c_str());
         Obj o{std::atof(f[2].c_str()), std::atof(f[3].c_str()),
@@ -552,6 +580,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         }
         o.rot = f[9].empty() ? 0.0 : std::atof(f[9].c_str());
         o.flipY = (uint8_t)(f[31] == "1" ? 1 : 0);
+        o.freeMode = (uint8_t)((colFree >= 0 && f[colFree] == "1") ? 1 : 0);
         // Recover the real box from the bound when the object is turned by
         // something other than a multiple of 90 (see Obj::oriented). Multiples
         // of 90 are left alone: there the bound IS the shape, so nothing that
@@ -746,8 +775,17 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // missed did not, nearest miss 3.96 px. What it does is not a mode
         // change though; see Obj::tpY and the teleport block in stepOne.
                  || type == 28
-                 || type == 23 || type == 24)
+                 || type == 23 || type == 24) {
+            // Say which portals will not write the band, and say it with the
+            // portal's own numbers next to it -- a silent gate is how a rule
+            // ends up "dead from the day it was written".
+            if (o.freeMode && bandHeightFor(o.type) > 0.0)
+                std::printf("freemode: portal uid %d id %d at (%.0f,%.0f) "
+                            "carries Free Mode - band stays as it was "
+                            "(would have written H=%.0f)\n",
+                            o.uid, o.id, o.cx, o.cy, bandHeightFor(o.type));
             emit(Dynamics::PORT, o);   // 16 = ball
+        }
         // 9 = pink pad, 12 = pink orb (lv12 onward)
         // 34 = RED pad (see kPadRed). Only lv22 has one, so adding it cannot
         // move a level that already clears.
@@ -868,7 +906,42 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // CAMERA ZOOM (id 1913): the invisible ceiling is 270 / zoom.
         else if (o.id == 1913) {
             const double zm = f[22].empty() ? 0.0 : std::atof(f[22].c_str());
-            if (zm > 0.0) {
+            // ...but only if GD would ever fire it on an x crossing. Exactly
+            // two of lv22's twenty never do, and they are the whole reason the
+            // model's camera scale read 1.0 where GD held 0.6 through the ship
+            // and wave sections:
+            //
+            //   x=16,065  spawn-triggered (property 62). PlayLayer::addObject
+            //             admits a trigger to the crossing queue only when it
+            //             is neither touch- nor spawn-triggered; the third arm
+            //             (isSpecialSpawnObject) is `xor al,al; ret` in all 37
+            //             trigger vtables, so nothing rescues one.
+            //   x=21,795  rotate channel 15 (property 170). It IS admitted,
+            //             but the queue is bucketed by channel and it is only
+            //             consumed while that channel is up.
+            //
+            // The channel one is an approximation and it is worth being exact
+            // about which way it errs. Whether a channel is raised is a fact
+            // about the route, not about the level, and this model has no
+            // channel state at all -- so the only two representable answers
+            // are "always" and "never". Every measurement in hand says never
+            // (GD's camscale holds 0.6 across the whole section in the 21,140
+            // tick reference run). The two errors are also not symmetric: not
+            // firing leaves the band TALLER than GD's would be, which lets the
+            // model plan through a ceiling GD enforces -- and the repair loop
+            // catches exactly that, by replaying and re-anchoring. Firing it
+            // leaves the band SHORTER, which hides routes GD allows, and an
+            // over-kill of that kind is invisible to the loop.
+            const char* dropped = nullptr;
+            if (g_trigGateCol && (f[colTouch] == "1" || f[colSpawn] == "1"))
+                dropped = "touch/spawn-triggered";
+            else if (colChan >= 0 && !f[colChan].empty()
+                     && std::atoi(f[colChan].c_str()) != 0)
+                dropped = "on a rotate channel";
+            if (dropped)
+                std::printf("zoom: uid %d at x=%.0f is %s - never fires on an "
+                            "x crossing, IGNORED\n", o.uid, o.cx, dropped);
+            if (zm > 0.0 && !dropped) {
                 g_zoomTrigs.push_back({o.cx, zm,
                                        (f[23].empty() ? 0.0
                                           : std::atof(f[23].c_str())) * 240.0,

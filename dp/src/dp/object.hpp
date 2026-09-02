@@ -109,6 +109,12 @@ struct Obj {
     // objFacingDown(). objrects' 31st column (flipy). Falls back to 0 in an old
     // export that lacks the column.
     uint8_t flipY = 0;
+    // FREE MODE (a mode portal's level-string property 111, objrects' `free`
+    // column). A portal that carries it does NOT rewrite the flying band:
+    // playerWillSwitchMode copies it into the layer and updateDualGround then
+    // skips animateInDualGroundNew entirely. See g_freeModeCol in bands.hpp for
+    // why reading it is coupled to using the band's own height.
+    uint8_t freeMode = 0;
 };
 
 // A verbatim port of GameObject::isFacingDown() (2.2081 win 0x1a1910). GD turns
