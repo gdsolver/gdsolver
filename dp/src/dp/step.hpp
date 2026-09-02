@@ -2505,7 +2505,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     landFaceBest = face;
                     c.y = (float)(face + gsign * pHalf);
                 }
-                c.vy = 0; CLAMP0("fly/land");
+                // The ORDINARY landing on a solid's face, in every mode -- not a
+                // flight one. It carried the label `fly/land` (which belongs to
+                // the flight branch further down) and the object-less CLAMP0, so
+                // the census saw `clamp:fly/land` with uid -1 and could not say
+                // WHAT the player had landed on. Both halves are the instrument,
+                // not the physics: the label and the uid are what `cause_of`
+                // signs a family with.
+                c.vy = 0; CLAMP0O("solid/land", o);
                 c.grounded = 1;
                 // GD runs buttons AFTER the collision pass, so a ball that
                 // LANDS on the press tick flips on that very tick. The input
