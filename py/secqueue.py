@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import subprocess
@@ -68,6 +69,28 @@ REPLAY_BASE = [c if c != "fastloops=1" else "fastloops=1800"
 
 def log(m: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+def say_container_mod(WS) -> None:
+    """Name the mod the container will launch, without touching it.
+
+    wine_suite.check_deployed() exits when the container's mod is not
+    byte-identical to the local build, which is the right default for a run that
+    deployed one -- but a run that deliberately did not deploy must still say
+    what it is about to measure. A run whose log does not name its binary is not
+    a measurement.
+    """
+    dst = WS.WINE_WORKER / "geode" / "mods" / WS.BUILD_MOD.name
+    if not dst.exists():
+        log(f"mod in container: {dst} IS MISSING -- pass --deploy")
+        return
+    b = dst.read_bytes()
+    sha = hashlib.sha256(b).hexdigest()[:16]
+    same = WS.BUILD_MOD.exists() and b == WS.BUILD_MOD.read_bytes()
+    log(f"mod in container: {dst} ({len(b)} B, sha {sha}) "
+        + ("== the local build" if same
+           else f"!! DIFFERS from {WS.BUILD_MOD} -- measuring the container's, "
+                "not the build tree's"))
 
 
 def say_exe(path: str) -> bool:
@@ -612,6 +635,10 @@ def rediff(a, wins: list[dict], out_dir: Path, session=None) -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--level", type=int, required=True)
+    ap.add_argument("--deploy", action="store_true",
+                    help="replace the container's mod with the local build "
+                         "before running. OFF by default: a night queue may be "
+                         "running under it (2026-09-02 cost 13 windows)")
     ap.add_argument("--venue", choices=("wine", "windows"), default="wine",
                     help="Wine is the default: a night-long queue is what that "
                          "standing ruling exists for")
@@ -666,8 +693,23 @@ def main(argv=None) -> int:
     if a.venue == "wine":
         sys.path.insert(0, str(Path(r"C:\GD-lab\oneoff\py")))
         import wine_suite as WS
-        WS.deploy()
-        WS.check_deployed()
+        if a.deploy:
+            WS.deploy()
+            WS.check_deployed()
+        else:
+            # DO NOT REWRITE THE CONTAINER'S MOD BY DEFAULT. This used to deploy
+            # on every start, which is silent, sounds harmless and is not: on
+            # 2026-09-02 a `--rediff` run -- an offline re-diff, no game intended
+            # -- replaced the mod under a night queue that had been running for
+            # four hours, and 13 of its 38 completed windows were measured with a
+            # different solver than the first 25 (the mod embeds dp). secnight
+            # already deploys once itself and launches its windows through
+            # secqueue_nodeploy.py for exactly this reason; this makes the plain
+            # entry point agree with it.
+            # The check still SAYS what is being measured, loudly, and a mismatch
+            # is a line rather than an exit: a session explaining a measurement
+            # has to run the binary that made it, and the build tree moves.
+            say_container_mod(WS)
 
         def session(cfg, timeout):
             # Wipe before EVERY session, not once per queue. The dump is copied
