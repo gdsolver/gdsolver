@@ -265,6 +265,34 @@ def gd_window_replay(a, plan_out: Path, out_base: Path,
     return dump_dst, False
 
 
+def anchor_fields(t0: int, r: dict, plan_path: Path, gd: dict[int, dict],
+                  inputs: list[tuple[int, int]]) -> str:
+    """start_fields, with `held` corrected to the input in effect AT t0.
+
+    start_fields fills it from held_before(plan, t0) = the last change STRICTLY
+    BEFORE t0, so when the plan changes exactly at t0 the anchor says the button
+    was down while the plan says it went up. A replay does not care -- it reads
+    the plan itself and sees the press edge at t0+1 -- but a SEARCH has only the
+    anchor, and an invisible press edge means a swing never flips.
+
+    MEASURED, and it is smaller than it looks: of lv22's window entries only
+    w7190's anchor differs, and correcting it does not move the reach verdict
+    (PARTIAL at t=7319 x=9887.5 either way, because the search explores both
+    flip branches regardless). What it does change is which child continues the
+    REFERENCE, so the watch needs it. Left as a local correction rather than a
+    fix to start_fields: that builder feeds quick_regress's whole baseline, and
+    changing it is a measured change of its own, not a side effect of this.
+    """
+    f = QR.start_fields(t0, r, plan_path, gd.get(t0 - 1), gd).split(",")
+    held = 0
+    for step, d in inputs:
+        if step > t0:
+            break
+        held = d
+    f[6] = str(held)
+    return ",".join(f)
+
+
 def model_args(a, plan_out: Path) -> list[str]:
     """The level's tables and recordings, the same for every model invocation."""
     objrects = LEVEL_DATA / f"objrects_lv{a.level}.txt"
@@ -280,7 +308,7 @@ def model_args(a, plan_out: Path) -> list[str]:
 
 
 def reach_probe(a, plan_path: Path, out_base: Path, gd: dict[int, dict],
-                t0: int, t1: int) -> dict:
+                t0: int, t1: int, inputs=None) -> dict:
     """Can the MODEL'S REACHABILITY get through this window, from GD's own state?
 
     The diff table cannot answer this and it is worth being blunt about why: a
@@ -304,7 +332,10 @@ def reach_probe(a, plan_path: Path, out_base: Path, gd: dict[int, dict],
             + ["--out", str(out), "--cap", str(a.reachcap),
                "--shipyq", "0.25", "--shipvq", "1.0",
                "--threads", str(a.threads),
-               "--start", QR.start_fields(t0, r, plan_path, gd.get(t0 - 1), gd),
+               "--start", (anchor_fields(t0, r, plan_path, gd, inputs)
+                           if inputs is not None
+                           else QR.start_fields(t0, r, plan_path,
+                                                gd.get(t0 - 1), gd)),
                "--horizon", str(t1 - t0)])
     if r.get("pmin") and r.get("pmax"):
         args += ["--startband", f"{r['pmin']},{r['pmax']}"]
@@ -388,7 +419,8 @@ def anchored_diff(a, plan_out: Path, out_base: Path, dump: Path,
     return out
 
 
-def reach_sweep(a, wins: list[dict], out_dir: Path, plan_path: Path) -> int:
+def reach_sweep(a, wins: list[dict], out_dir: Path, plan_path: Path,
+                inputs) -> int:
     """Every window, offline: does the model's reachability cross it?
 
     Anchored on the HEAD run -- the verified solution's own worldline -- because
@@ -406,7 +438,7 @@ def reach_sweep(a, wins: list[dict], out_dir: Path, plan_path: Path) -> int:
     tally: dict[str, int] = {}
     for i, w in enumerate(wins, 1):
         rec = reach_probe(a, plan_path, out_dir / f"w{w['t0']}", gd,
-                          w["t0"], w["t1"])
+                          w["t0"], w["t1"], inputs)
         rec["priority"] = w.get("priority")
         rec["sources"] = w.get("sources")
         tally[rec.get("verdict", "?")] = tally.get(rec.get("verdict", "?"), 0) + 1
@@ -506,7 +538,7 @@ def main(argv=None) -> int:
 
     # Offline mode: no venue, no GD, no worker.
     if a.reach:
-        return reach_sweep(a, wins, out_dir, plan_path)
+        return reach_sweep(a, wins, out_dir, plan_path, inputs)
 
     if a.venue == "wine":
         sys.path.insert(0, str(Path(r"C:\GD-lab\oneoff\py")))

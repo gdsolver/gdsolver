@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // leveldp -- exact-representative layered reachability solver (cube + ship).
 //
 // First target: lv1 (Stereo Madness): cube -> ship -> cube -> ship, no pads,
@@ -30,6 +30,7 @@
 // order and with the same code. leveldp.exe is now a three-line main() around this.
 #include "dp/reset.hpp"
 #include "dp/clearance.hpp"
+#include "dp/refwatch.hpp"
 
 namespace dp {
 
@@ -83,6 +84,18 @@ inline int cliMain(int argc, char** argv) {
         // Instrumentation only (dp/clearance.hpp). Reads the children after they
         // are stepped and keyed; never feeds anything back into the search.
         if (!std::strcmp(argv[i], "--clearprobe")) g_clearProbe = true;
+        // --refwatch <trace.csv>: follow that trajectory through the search and
+        // name the gate that drops it (refwatch.hpp).
+        if (!std::strcmp(argv[i], "--refwatch") && i + 1 < argc) {
+            if (!loadRefTrace(argv[i + 1]))
+                std::printf("refwatch: cannot read %s\n", argv[i + 1]);
+            else {
+                g_refWatch = true;
+                std::printf("refwatch: %zu reference rows\n", g_refRows.size());
+            }
+        }
+        if (!std::strcmp(argv[i], "--refeps") && i + 1 < argc)
+            g_refEps = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--no-miniwave")) g_noMiniWave = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
@@ -1987,6 +2000,37 @@ inline int cliMain(int argc, char** argv) {
     struct ProgressGuard { ~ProgressGuard() { g_progress.end(); } } progressGuard;
     for (long long t = t0 + 1; t <= tEnd && !solved; ++t) {
         nxt.clear();
+        // ---- reference watch, part 1: where is it now (--refwatch) ---------
+        // Locate the reference's PARENT in the frontier before the layer runs.
+        // On the first layer it is looked up in `cur` directly; afterwards the
+        // previous layer's check has already confirmed it is there.
+        if (g_refWatch && g_refLostAt < 0) {
+            if (t == t0 + 1) {
+                // The trace's first row is t0+1: the state AT the anchor tick
+                // is the anchor itself, which is what the frontier was seeded
+                // with, so there is nothing to match. After this layer the
+                // watch follows the state it is carrying, not the trace.
+                g_refParent = cur.empty() ? -1 : 0;
+            }
+            if (g_refParent < 0 && t == t0 + 1) {
+                // The anchor itself is not in the frontier. That is a fault in
+                // the harness (wrong trace, wrong anchor tick), not a finding
+                // about the model, and it must not read as one.
+                std::printf("refwatch: the reference is not in the FIRST "
+                            "frontier (t=%lld) -- wrong trace or wrong anchor, "
+                            "not a search result\n", t - 1);
+                g_refWatch = false;
+            }
+            if (t == t0 + 1)
+                std::printf("refwatch: armed rows=%zu t0=%lld parent=%d "
+                            "frontier=%zu\n",
+                            g_refRows.size(), t0, g_refParent, cur.size());
+            for (int a = 0; a < 2; ++a) {
+                g_refKidFate[a] = -1;
+                g_refKidWhy[a] = "";
+                g_refKidKey[a] = 0;
+            }
+        }
 
         // Resolve autonomous fires from the frontier's leading edge. `cur`
         // holds states AT tick t-1, so the first layer whose lead x reaches
@@ -2273,7 +2317,7 @@ inline int cliMain(int argc, char** argv) {
             // child instead of dragging the whole Child through the cache
             kidKeys[i] = kid.key;
             kidFlag[i] = dead ? 1 : 2;
-            if (dbgHere) { kid.why = g_deadWhy; kid.obj = g_deadObj; }
+            if (dbgHere || g_refWatch) { kid.why = g_deadWhy; kid.obj = g_deadObj; }
         };
         // --dbg stays serial: it prints per child, in order, and the reason
         // globals are per thread.
@@ -2281,6 +2325,27 @@ inline int cliMain(int argc, char** argv) {
             pool->parallelFor(kids.size(), stepKid);
         else
             for (size_t i = 0; i < kids.size(); ++i) stepKid(i);
+
+        // ---- reference watch, part 2: what happened to its child ------------
+        // Every child has been stepped and keyed, and nothing has been merged
+        // or capped yet, so this is where the reference's own continuation can
+        // still be told apart from the ones that replaced it. Read-only, in the
+        // same position and for the same reason as the clearance probe below.
+        //
+        // The parent may be stepped in more than one group when a level has
+        // several live frames (gidx filters on dx and trig only), so an ALIVE
+        // fate wins over a dead one rather than the last one written.
+        if (g_refWatch && g_refParent >= 0) {
+            for (size_t i = 0; i < kids.size(); ++i) {
+                if ((int)gidx[i >> 1] != g_refParent) continue;
+                const int a = (int)(i & 1);
+                if (g_refKidFate[a] == 2) continue;   // already alive somewhere
+                g_refKidFate[a] = (int)kidFlag[i];
+                g_refKidWhy[a] = kids[i].why ? kids[i].why : "";
+                g_refKidKey[a] = kidKeys[i];
+                g_refKidState[a] = kids[i].s;
+            }
+        }
 
         // ---- clearance probe (instrumentation, --clearprobe) ----------------
         // Every child has been stepped and keyed by now, and this only READS
@@ -2588,6 +2653,97 @@ inline int cliMain(int argc, char** argv) {
         // Max-min fair instead: a small class keeps everything it has, and the
         // big ones split what is left. Kept states stay in their original order
         // so the layer is otherwise unchanged.
+        // ---- reference watch, part 3: is it still there, and if not, why ----
+        // Checked twice, on purpose: once here, with the layer complete and the
+        // cap not yet applied, and once after the cap. Only the pair can tell
+        // "the cap evicted it" from "it never got into the layer", and those
+        // two have nothing to do with each other.
+        bool refPreCap = false;
+        State refCarried{};     // the tracked state, captured BEFORE the cap
+        if (g_refWatch && g_refLostAt < 0) {
+            const char* gate = nullptr;
+            char detail[256];
+            detail[0] = '\0';
+            const auto it = g_refRows.find(t);
+            // Which child IS the reference's next state: the one that matches
+            // the trace. Both are examined, so a dead one can still be named.
+            int want = -1;
+            for (int a = 0; a < 2 && it != g_refRows.end(); ++a)
+                if (g_refKidFate[a] >= 1 && refMatches(g_refKidState[a],
+                                                       it->second))
+                    want = a;
+            if (g_refParent < 0) {
+                gate = "parent-gone";
+            } else if (it == g_refRows.end()) {
+                gate = "trace-ended";
+            } else if (want < 0) {
+                // Neither child is the reference's next state. The search's
+                // carrier and the replay have parted company -- a difference in
+                // stepping or in context, not a pruning decision, and it must
+                // not be reported as one.
+                gate = "cannot-reproduce";
+                snprintf(detail, sizeof(detail),
+                         " ref y=%.4f vy=%.4f | kid0 y=%.4f vy=%.4f f=%d"
+                         " | kid1 y=%.4f vy=%.4f f=%d",
+                         it->second.y, it->second.vy,
+                         (double)g_refKidState[0].y, (double)g_refKidState[0].vy,
+                         g_refKidFate[0],
+                         (double)g_refKidState[1].y, (double)g_refKidState[1].vy,
+                         g_refKidFate[1]);
+            } else if (g_refKidFate[want] == 1) {
+                gate = "kill";
+                snprintf(detail, sizeof(detail), " rule=%s action=%d",
+                         *g_refKidWhy[want] ? g_refKidWhy[want] : "(unnamed)",
+                         want);
+            } else {
+                const int idx = refFindExact(nxt, g_refKidState[want]);
+                if (idx >= 0) {
+                    g_refParent = idx;      // carried, untouched
+                    refPreCap = true;
+                } else {
+                    // Merged away. The watch stops here rather than adopting the
+                    // survivor and carrying on: past a merge the carrier is no
+                    // longer on the reference's trajectory, so the next layer's
+                    // children cannot be matched against the trace and every
+                    // line after it would be about a different path.
+                    //
+                    // What IS recorded is how far the kept state is, because
+                    // that is the whole question about a merge: 0.19 px/tick of
+                    // vy is a state the cell may fairly stand in for, and a
+                    // larger gap is a passage being represented by something
+                    // that cannot make it.
+                    gate = "dedupe";
+                    const int alt = refNearestInCell(nxt, g_refKidKey[want],
+                                                     g_refKidState[want], keyOf);
+                    int n = 0;
+                    for (const State& s : nxt)
+                        if (keyOf(s) == g_refKidKey[want]) ++n;
+                    if (alt < 0) {
+                        snprintf(detail, sizeof(detail), " cell-gone");
+                    } else {
+                        g_refDriftY = std::fabs((double)nxt[(size_t)alt].y
+                                                - (double)g_refKidState[want].y);
+                        g_refDriftVy = std::fabs((double)nxt[(size_t)alt].vy
+                                                 - (double)g_refKidState[want].vy);
+                        snprintf(detail, sizeof(detail),
+                                 " cell=%d action=%d ref y=%.4f vy=%.4f "
+                                 "kept y=%.4f vy=%.4f", n, want,
+                                 (double)g_refKidState[want].y,
+                                 (double)g_refKidState[want].vy,
+                                 (double)nxt[(size_t)alt].y,
+                                 (double)nxt[(size_t)alt].vy);
+                    }
+                }
+            }
+            if (refPreCap) refCarried = nxt[(size_t)g_refParent];
+            if (gate) {
+                std::printf("refwatch: LOST t=%lld gate=%s%s "
+                            "dy=%.3f dvy=%.3f alive=%zu\n",
+                            t, gate, detail, g_refDriftY,
+                            g_refDriftVy, nxt.size());
+                g_refLostAt = t;
+            }
+        }
         maxAlive = std::max(maxAlive, nxt.size());
         if (nxt.size() > g_aliveCap) {
             ++capHits;
@@ -2636,6 +2792,19 @@ inline int cliMain(int argc, char** argv) {
             kept.reserve(keepIdx.size());
             for (uint32_t i : keepIdx) kept.push_back(nxt[i]);
             nxt.swap(kept);
+            // ...and the second half of the pair: it was in the layer before
+            // the cap and is not in it now.
+            if (g_refWatch && g_refLostAt < 0 && refPreCap) {
+                const int idx = refFindExact(nxt, refCarried);
+                if (idx < 0) {
+                    std::printf("refwatch: LOST t=%lld gate=cap alive=%zu "
+                                "cap=%zu\n",
+                                t, nxt.size(), (size_t)g_aliveCap);
+                    g_refLostAt = t;
+                } else {
+                    g_refParent = idx;    // the cap reordered the layer
+                }
+            }
         }
         // How many complete routes the final pick is choosing between, and how
         // far back they are actually different (--clearprobe only; reads the
@@ -2864,6 +3033,14 @@ inline int cliMain(int argc, char** argv) {
     if (!g_fixups.empty())
         std::printf("fixups: %lld transitions overridden this call\n",
                     g_fixupHits);
+    // The reference watch's verdict. Printed whether or not it was lost: a run
+    // that carried the reference all the way is the negative control, and it has
+    // to be as visible as a loss or the instrument only ever speaks when it has
+    // something to blame.
+    if (g_refWatch)
+        std::printf("refwatch: %s\n",
+                    g_refLostAt < 0 ? "CARRIED to the end"
+                                    : "lost (see the line above)");
     // The frontier died before the cut. That is still useful to the driver: the
     // deepest surviving branch is the best guess at how to get near the wall,
     // and replaying it in GD is how the wall gets localized at all. Emit it
