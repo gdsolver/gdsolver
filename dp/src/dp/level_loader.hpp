@@ -603,8 +603,40 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // model already uses.
         // Unscaled objects are untouched, which is every saw in lv11-19.
         if (o.radius > 0.0) {
-            const double wUn = f[15].empty() ? 0.0 : std::atof(f[15].c_str());
-            if (wUn > 1.0) o.radius *= (std::atof(f[4].c_str()) / wUn);
+            // GD scales a circle by `sx == 1 && sy == 1 ? r : max(sx, sy) * r`
+            // -- playerCircleCollision 0x211df0, the same expression on both
+            // sides of the kA39 branch. The dump gives the BOUND, and a
+            // quarter turn swaps its width and height, so the unscaled pair
+            // has to be swapped with it before dividing. `w / w0` alone makes
+            // every turned blade too small: lv22's uid710 (rot -90, bound
+            // 23x31 over an unscaled 31x23) came out at 2.968 where GD keeps
+            // the dumped 4, and the 2026-08-26 in-situ dome is the
+            // measurement that says 4 -- 17.5 = 13.5 + 4 against the spider.
+            // 45 objects in the corpus are that case (lv16 1, lv21 44 by
+            // count, lv22 3 by count); 11 more are genuinely scaled, where
+            // max(sx, sy) differs from w/w0 on the disassembly's word alone.
+            // A rotation that is NOT a multiple of 90 keeps the old form: the
+            // bound of a diagonally turned object is bigger than its shape, so
+            // neither expression is its scale, and this is not the change that
+            // settles it.
+            const double w0 = f[15].empty() ? 0.0 : std::atof(f[15].c_str());
+            const double h0 = f[16].empty() ? 0.0 : std::atof(f[16].c_str());
+            const double rotHere = f[9].empty() ? 0.0 : std::atof(f[9].c_str());
+            const long q = std::lround(rotHere / 90.0);
+            const bool quarter = std::fabs(rotHere - 90.0 * (double)q) < 0.01;
+            if (!quarter) {
+                if (w0 > 1.0) o.radius *= (std::atof(f[4].c_str()) / w0);
+            } else {
+                const bool turned = (((q % 4) + 4) % 4) & 1;
+                const double uw = turned ? h0 : w0;
+                const double uh = turned ? w0 : h0;
+                const double sx = uw > 1.0
+                                      ? std::atof(f[4].c_str()) / uw : 1.0;
+                const double sy = uh > 1.0
+                                      ? std::atof(f[5].c_str()) / uh : 1.0;
+                if (sx != 1.0 || sy != 1.0)
+                    o.radius *= (sx > sy ? sx : sy);
+            }
             o.hw = o.hh = o.radius;
         }
         o.rot = f[9].empty() ? 0.0 : std::atof(f[9].c_str());
