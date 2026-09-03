@@ -1663,19 +1663,36 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // The model jumped anyway and left with 5.710 = 11.42/2, i.e. 6 px
         // above GD within a tick; the plan then walked into the spike at
         // (27,333,609) that GD's flat trajectory passes under.
-        // Cube only -- the ball's tap on a portal tick has not been measured.
+        // [2026-09-03] ...and **the BALL's tap is eaten by the same thing**.
+        // The line above used to read "cube only -- the ball's tap on a portal
+        // tick has not been measured"; it is measured now, both in the game and
+        // in the binary, and there is nothing cube-shaped about it.
+        //   binary: `flipGravity` writes `m_isOnGround = 0` (0x39a3cd), and the
+        //     ONLY thing gating a ball's tap is `m_isOnGround` -- `pushButton`
+        //     0x397f40 reads `(m_isBall || ...) && m_isOnGround` and nothing
+        //     else. No buffer, no second flag.
+        //   game: lv22's it27 plan, the tap moved one tick either side of the
+        //     type-4 portal uid13833 at t=6,291 (worker 98, 2026-09-03):
+        //       tap at 6,290 (portal a tick later)  -3.4260, then the ladder
+        //       tap at 6,291 (the tick that fired)  **+0.0645 = old g / 2**
+        //       tap at 6,292 (portal a tick before) +0.0645 then -0.0650
+        //     i.e. on the firing tick the press produces NO impulse at all, and
+        //     one tick later it still produces none because the flip has taken
+        //     the support away. The model tapped first and let the portal halve
+        //     the tap, which is how -3.4260 reached the state as -1.7130.
+        // The corpus never exercises it -- of 161 gravity-portal firings and 140
+        // ball taps in the verified solutions, ZERO share a tick -- so this is
+        // measured out of the game, not fitted to a replay.
         bool gravPortalThisTick = false;
-        if (!isBall) {
-            for (const Obj* p : *K.ports) {
-                if (p->type != 3 && p->type != 4) continue;
-                const uint8_t wantFlip = (p->type == 3) ? 1 : 0;
-                if (s.flip == wantFlip) continue;   // no change -> does not fire
-                if (p->oriented && !orientedHit(*p, x, (double)s.y, pHalf)) continue;
-                if (std::fabs(x - p->cx) <= p->hw + pHalf
-                    && std::fabs((double)s.y - p->cy) < p->hh + pHalf) {
-                    gravPortalThisTick = true;
-                    break;
-                }
+        for (const Obj* p : *K.ports) {
+            if (p->type != 3 && p->type != 4) continue;
+            const uint8_t wantFlip = (p->type == 3) ? 1 : 0;
+            if (s.flip == wantFlip) continue;   // no change -> does not fire
+            if (p->oriented && !orientedHit(*p, x, (double)s.y, pHalf)) continue;
+            if (std::fabs(x - p->cx) <= p->hw + pHalf
+                && std::fabs((double)s.y - p->cy) < p->hh + pHalf) {
+                gravPortalThisTick = true;
+                break;
             }
         }
         if (groundedNow && input && !s.action && !gravPortalThisTick
