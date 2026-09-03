@@ -685,6 +685,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // continuation from the tick the window lifts (GD measurement: on lv22, holding
     // from t=14,100 onward makes the ship climb from the lift at t=14,225).
     if (!g_ctrlWin.empty() && ctrlOffAt(K.t)) input = 0;
+    // ...and the buffer mirrors the button AFTER that gate, which is the whole
+    // point of having it: GD's pushButton returns before touching m_jumpBuffered
+    // when the controls are off, so the mirror must be taken from the input that
+    // actually reached the physics rather than from the raw plan value in
+    // `action`. Consumers below clear it where GD clears it (the ball's tap, a
+    // ring that spends the press).
+    c.jumpBuf = (uint8_t)(input ? 1 : 0);
     c.pFlap = 0;   // 1-tick lifetime (see the note on State::pFlap)
     c.pBallOff = 0;   // same (State::pBallOff)
     c.pExitVy = 0.f;  // same (State::pExitVy, r93)
@@ -1786,9 +1793,27 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // GD does NOT jump. One press activates one thing; the re-jump needs
         // the press back. `ringHold` is exactly "this press has fired a ring"
         // and is cleared on release, so it is the gate.
-        // TRIED AND REVERTED (2026-09-02): `(input || (s.mode == 0 && s.action))`
-        // here, so that a press ending exactly on the LANDING tick still jumps on
-        // the next one -- GD's buffer outliving the release by a tick.
+        // [2026-09-03] THE RULE IS BACK, reading the BUFFER instead of `action`.
+        // The disassembly (notes/updatejump-gate-2026-09-03.md) settles both the
+        // rule and the refutation that killed the first attempt:
+        //   * the cube's gate in updateJump is `m_jumpBuffered && m_isOnGround &&
+        //     !spider && !dashing` -- no latch, no accumulator. m_jumpBuffered is
+        //     a LEVEL, set by pushButton and cleared by releaseButton
+        //   * GD reads that level TWICE in a tick: the rising edge at the head of
+        //     the frame (pushButton -> updateJump(dt=0), y frozen) and the held
+        //     level in the physics (update -> updateJump(dt), y moves). The second
+        //     is one tick older than the model's `input` -- so the gate is
+        //     `input || <the previous tick's level>`, which is what the first
+        //     attempt got right
+        //   * lv22 t=20,234 is not physics: it sits inside a no-control window
+        //     (ctrlOff 20,131..20,506) where pushButton returns immediately, so
+        //     GD has no press there at all. The model zeroes `input` in that
+        //     window but keeps `action` raw, so reading `action` walked straight
+        //     through it. Reading `jumpBuf` -- mirrored from the gated input --
+        //     does not.
+        // 240 landing jumps across the five reference dumps are all rising-edge
+        // (`input && !s.action`), so none of them moves.
+        // TRIED AND REVERTED (2026-09-02): the same gate reading `s.action`.
         // The evidence for the rule is real and still stands: on GD-authored
         // section crossings (the verified solutions cannot witness it, having been
         // authored by a solver with this very gate) 111 cube landings, 19 of them
@@ -1809,7 +1834,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // spent", which is what ringHold does for rings and nothing does for
         // whatever consumed the press at 20,234. Narrowing it by hand here would be
         // fitting, not measuring. Written up in brief-022.
-        } else if (groundedNow && input && !gravPortalThisTick
+        // CUBE ONLY for the buffered half. The robot's gate in the binary is
+        // `m_jumpBuffered && m_stateRingJump`, and m_stateRingJump is set only by
+        // pushButton and cleared by every jump -- read straight, that says a robot
+        // cannot re-jump on a held button, which contradicts the lv22 t=15,878
+        // measurement the model already carries. That disagreement is measured
+        // with the game, not guessed at here.
+        } else if (groundedNow && (input || (s.mode == 0 && s.jumpBuf))
+                   && !gravPortalThisTick
                    && (!s.action
                        || ((s.mode == 0 || s.mode == 5) && !s.ringHold))) {
             // TRIED AND REVERTED (2026-08-26): delaying the grounded BALL's
@@ -8624,6 +8656,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 if (ob->type != 13) releasePin();
                 c.usedOrb = ob;
                 c.ringHold = 1;
+                // A ring that takes the press SPENDS it: in GD the ring path of
+                // pushButton runs `ringJump(); m_jumpBuffered = 0; return;` and
+                // never calls updateJump. Without this the mirrored buffer would
+                // still be set on the next tick and the grounded branch could jump
+                // off a press the ring has already used.
+                c.jumpBuf = 0;
                 used = ob;
                 stillTouching = true;
             }
@@ -9241,6 +9279,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 break;
             }
     }
+    // The BALL's tap spends the press too: GD's ball arm of updateJump ends with
+    // `flipGravity, vy *= 0.6, m_jumpBuffered = 0`. Cleared once here rather than
+    // at each of the four tap sites, which is the same thing -- ballFlippedThisTick
+    // is exactly "the ball tapped on this tick".
+    if (ballFlippedThisTick) c.jumpBuf = 0;
     c.frameChg = (gravHoldOver || c.frame != s.frame) ? 1 : 0;
     return c;
 }

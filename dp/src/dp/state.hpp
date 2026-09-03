@@ -387,6 +387,19 @@ struct State {
     // future input identically. Keying on it would split every cell by history
     // and multiply the frontier for nothing.
     uint16_t tight = 0;
+    // GD's m_jumpBuffered (PlayerObject+0x985), mirrored. Set by pushButton,
+    // cleared by releaseButton, by the ball's tap and by a ring that consumes the
+    // press -- and NOT set at all while controls are off, because pushButton
+    // returns immediately there. `action` cannot stand in for it: the caller
+    // writes `action` from the RAW plan value, deliberately (a hand held across a
+    // no-control window continues from the tick the window lifts), so a rule that
+    // reads `action` fires inside the window where GD has no press at all -- which
+    // is what made the first cube re-jump rule look refuted on lv22 t=20,236.
+    // **At the END of the struct on purpose**: cli.hpp:528 builds an anchor with a
+    // POSITIONAL `State{...}`, so a field inserted anywhere earlier shifts every
+    // member after it and every anchored replay dies on its first tick (measured,
+    // 2026-09-03: all 22 levels went "400 -> 1 ticks" until this moved down here).
+    uint8_t jumpBuf = 0;
 };
 
 // arena entry for witness reconstruction, packed: bit31 = action, rest parent
