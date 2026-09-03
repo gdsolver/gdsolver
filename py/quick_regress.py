@@ -516,8 +516,8 @@ def seg_jobs(level: int, a) -> tuple[dict, list]:
     return out, jobs
 
 
-def run_seg(job: dict, a) -> tuple[int, int, int]:
-    """Run one section and return (level, t0, THE NUMBER OF TICKS IT HELD OUT).
+def run_seg(job: dict, a) -> tuple[int, int, int, int]:
+    """Run one section and return (level, t0, TICKS IT HELD OUT, exit code).
 
     What is measured is not "the number of diverging ticks" but "THE NUMBER OF
     TICKS UNTIL THE FIRST DIVERGENCE". The former saturates at the window
@@ -525,15 +525,33 @@ def run_seg(job: dict, a) -> tuple[int, int, int]:
     400/400 and cannot get any worse = zero detection power). The latter does
     not saturate, and it is exactly the thing we want to know: how far the
     model can keep up with GD.
+
+    THE EXIT CODE IS PART OF THE ANSWER. This used to discard it along with
+    both output streams, and then the two outcomes were indistinguishable:
+    a solver that died without writing a trace reads as `error` -> the FULL
+    window, i.e. a perfect section, and one that died PART WAY THROUGH leaves a
+    truncated trace whose end reads as an early divergence. That second shape is
+    exactly what a non-reproducing lv22 FAIL looked like twice (400 -> 166 at
+    t=14,600, PASS at the same commit on the re-run, 2026-09-02 and 09-03) --
+    and with the code thrown away there was no way to tell a real regression
+    from a harness failure. A crash is now its own verdict.
     """
-    subprocess.run([a.leveldp] + job["args"], stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL)
+    # stderr is kept, not discarded: the point of noticing a crash is being able
+    # to say what crashed, and the next occurrence is the only chance to read it.
+    # stdout stays on DEVNULL -- a section prints a lot and none of it is needed.
+    p = subprocess.run([a.leveldp] + job["args"], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.PIPE)
+    err = ""
+    if p.returncode:
+        err = (p.stderr or b"").decode("utf-8", "replace").strip()
+        err = " | ".join(err.splitlines()[-3:])[-300:]
     d = diff_trace(job["trace"], REF / f"lv{job['level']}.csv", t0=job["t0"],
                    t1=job["t1"], tol=a.tol, limit=10 ** 9)
     span = job["t1"] - job["t0"]
     if "error" in d or not d["rows"]:
-        return job["level"], job["t0"], span
-    return job["level"], job["t0"], int(d["rows"][0][0]) - job["t0"]
+        return job["level"], job["t0"], span, (p.returncode, err)
+    return (job["level"], job["t0"], int(d["rows"][0][0]) - job["t0"],
+            (p.returncode, err))
 
 
 def seg_check(level: int, a) -> dict:
@@ -668,10 +686,20 @@ def verdict(now: list[dict], base: dict, whole: bool,
     for r in now:
         if r["status"] not in ("OK",):
             continue
+        lv = r["level"]
+        # A section whose solver crashed is a HARNESS failure, and it is named
+        # as one. It must not be silently absorbed into the comparison: a
+        # truncated trace reads as an early divergence, so a crash arrives
+        # wearing the costume of a physics regression (see run_seg).
+        if r.get("exe_fail"):
+            f = r["exe_fail"]
+            bad.append(f"lv{lv}: leveldp did not exit 0 in {len(f)} sections "
+                       f"(first t={f[0][0]}, code {f[0][1]}) -- HARNESS, not "
+                       f"the model; re-run before reading any other line"
+                       + (f"\n    stderr: {f[0][2]}" if f[0][2] else ""))
         b = base.get(str(r["level"]))
         if not b:
             continue
-        lv = r["level"]
         if not whole:
             # compare section by section. leveldp is deterministic, so with the
             # same input and the same anchor BIT-IDENTICAL is the expectation --
@@ -730,14 +758,23 @@ def run_segments(a, extra=None):
         res = run_seg(j, a)
         return res, (extra(j) if extra else None)
 
+    crashed: dict[int, list] = {lv: [] for lv in by_lv}
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
-        for (lv, seg_t0, hold), e in ex.map(one, jobs):
+        for (lv, seg_t0, hold, (rc, err)), e in ex.map(one, jobs):
             holds[lv].append((hold, seg_t0))
+            if rc:
+                crashed[lv].append((seg_t0, rc, err))
             if e:
                 extras.extend(e)
     for lv, hs in holds.items():
         if not hs:
             continue
+        # A section whose solver did not exit 0 is not a measurement, and the
+        # numbers it produced are worse than useless -- a truncated trace reads
+        # as an early divergence. Report it as its own thing rather than letting
+        # report() weigh it against the baseline.
+        if crashed[lv]:
+            by_lv[lv]["exe_fail"] = sorted(crashed[lv])
         hs.sort()
         by_lv[lv]["hold_sum"] = sum(h for h, _ in hs)
         by_lv[lv]["hold_min"] = hs[0][0]
