@@ -606,7 +606,31 @@ inline void buildPois(GJBaseGameLayer* l) {
               // hypothesis 008/009 start from is "editor order = uid order",
               // and these two columns are what will confirm or refute it.
               // sord/sordd: the spawn ordering pair, same family.
-              "deg,ord,chan,sord,sordd,t360,lockrot\n";
+              "deg,ord,chan,sord,sordd,t360,lockrot,"
+              // [2026-09-04] Appended, never inserted, same rule as above: a
+              // reader that stops at lockrot keeps working and every existing
+              // dump stays valid.
+              // sdelay: THE SPAWN TRIGGER'S DELAY (m_spawnTriggerDelay, key
+              // 63). The `dur` column is m_duration, which a Spawn does not
+              // use -- lv22's 141 spawns all read dur=0.5 because that is the
+              // constructor's default, and the delay that actually schedules
+              // the chain was not dumped at all. GD fires the chain
+              // ceil(delay * 240) ticks later (0 = the same tick).
+              // mvtgt/mvaxis/tmodctr/dirsnap/dirdist/dynmode: MOVE-TO. A Move
+              // with m_useMoveTarget does not apply ox,oy at all -- it samples
+              // getRealPosition(B) - getRealPosition(A) once, at the tick it
+              // fires, so its offset depends on where the groups were by then.
+              // lv22's uid18093 is one, and its displacement subtracts the
+              // group's own accumulated travel (its source marker uid18094 is
+              // itself a member of the group it moves). No static column can
+              // express that; these say when to compute it.
+              // silent: m_isSilent, which suppresses the trigger's effect.
+              // What is still MISSING is the Stop trigger's mode (stop /
+              // pause / resume). It is not a named member in the bindings --
+              // the disassembly finds the flag on the COMMAND (cmd+0x72), not
+              // on the trigger -- so lv22's twelve Stops are dumped without
+              // saying which of the three they are.
+              "sdelay,mvtgt,mvaxis,tmodctr,dirsnap,dirdist,dynmode,silent\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -668,7 +692,15 @@ inline void buildPois(GJBaseGameLayer* l) {
                << e->m_channelValue << "," << e->m_spawnOrder << ","
                << (e->m_spawnOrdered ? 1 : 0) << ","
                << e->m_times360 << ","
-               << (e->m_lockObjectRotation ? 1 : 0) << "\n";
+               << (e->m_lockObjectRotation ? 1 : 0) << ","
+               << e->m_spawnTriggerDelay << ","
+               << (e->m_useMoveTarget ? 1 : 0) << ","
+               << (int)e->m_moveTargetMode << ","
+               << e->m_targetModCenterID << ","
+               << (e->m_isDirectionFollowSnap360 ? 1 : 0) << ","
+               << e->m_directionModeDistance << ","
+               << (e->m_isDynamicMode ? 1 : 0) << ","
+               << (e->m_isSilent ? 1 : 0) << "\n";
             ++nTrig;
         }
         log::info("triggers: {} triggers with a target, {} grouped objects",
