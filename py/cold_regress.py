@@ -152,7 +152,8 @@ def one(level: int, wid: int, budget: float, extra: list[str],
     except Exception as e:                      # noqa: BLE001  a worker that will not start
         return {"lv": level, "cleared": False, "why": f"ERROR {e}",
                 "iters": 0, "deepest_t": -1, "deepest_x": -1.0, "fx": 0,
-                "record": "?", "wall": time.time() - t0, "fp": ""}
+                "record": "?", "wall": time.time() - t0, "fp": "",
+                "timeout": False, "died_plan": "", "data": ""}
     txt = "\n".join(r.lines)
     # The whole session log, next to the results. A stuck level has to be read
     # out of the ladder's own lines, and there is nowhere else they survive.
@@ -164,6 +165,18 @@ def one(level: int, wid: int, budget: float, extra: list[str],
     out = read_result(txt, getattr(r, "timed_out", False))
     out["lv"] = level
     out["wall"] = time.time() - t0
+    # wipe() runs at the START of a run, so the loser's working files are still
+    # there when this returns. Naming the directory is the whole handover: the
+    # next day's A/B and fixcensus start from it.
+    from gdtas.paths import WORKERS_ROOT
+    d = WORKERS_ROOT / f"worker-{wid}" / "session" / "data"
+    out["data"] = str(d)
+    try:
+        died = sorted(d.glob("dp_died_it*_t*.txt"),
+                      key=lambda f: f.stat().st_mtime)
+        out["died_plan"] = died[-1].name if died else ""
+    except OSError:
+        pass
     return out
 
 
@@ -278,6 +291,15 @@ def read_result(txt: str, timed_out: bool = False) -> dict:
     else:
         record = "no-audit (killed before session end)"
     return {"cleared": saved, "why": why, "iters": len(iters),
+            # A level stopped by the clock is not the same finding as one the
+            # search gave up on: the first says "too slow to be worth waiting
+            # for today", the second says "the model cannot get through". They
+            # were both `stuck` and read as one number.
+            "timeout": bool(timed_out) and not saved,
+            # Filled in by one() from the data dir: the loop WRITES the died
+            # plans but never names them in the log, so reading them out of the
+            # text would have been a field that is empty forever.
+            "died_plan": "",
             "deepest_t": max((d[0] for d in deaths), default=-1),
             "deepest_x": max((d[1] for d in deaths), default=-1.0),
             "fx": len(re.findall(r"\[fixup\] t=\d+ x=", txt)),
@@ -292,6 +314,7 @@ def report(results: list[dict], base: dict, a) -> int:
     results.sort(key=lambda r: r["lv"])
     print("\n=== cold regression ===")
     bad: list[str] = []
+    timeouts: list[int] = []
     for r in results:
         b = base.get(str(r["lv"]), {})
         mark = ""
@@ -302,10 +325,28 @@ def report(results: list[dict], base: dict, a) -> int:
             if r["iters"] > iter_cap(r["lv"], base):
                 bad.append(f"lv{r['lv']}: {r['iters']} iterations against a cap of "
                            f"{iter_cap(r['lv'], base)}")
-        print(f"lv{r['lv']:<3} {'CLEARED' if r['cleared'] else r['why']:<40}"
-              f"iters={r['iters']:<4}{mark}")
+        kind = "CLEARED" if r["cleared"] else \
+            ("TIMEOUT" if r.get("timeout") else r["why"])
+        print(f"lv{r['lv']:<3} {kind:<40}iters={r['iters']:<4}{mark}")
+        if r.get("timeout"):
+            # A level over its clock is a signal, not a mystery, and everything
+            # the morning needs is already on disk. Print where, and the three
+            # values that pick the next experiment (user's ruling 2026-09-03:
+            # drop it early and go and fix it, rather than waiting it out).
+            timeouts.append(r["lv"])
+            print(f"    over its {r.get('wallcap', 0):.0f}s cap after "
+                  f"{r['wall']:.0f}s: deepest x={r['deepest_x']:.0f} "
+                  f"t={r['deepest_t']}, {r['fx']} fixups"
+                  + (f", last died plan {r['died_plan']}"
+                     if r["died_plan"] else ""))
+            if r["fp"]:
+                print(f"    last [fp] {r['fp'][:110]}")
+            if r.get("data"):
+                print(f"    working files kept: {r['data']}")
         if not r["cleared"]:
-            bad.append(f"lv{r['lv']}: {r['why']}")
+            bad.append(f"lv{r['lv']}: "
+                       + (f"TIMEOUT after {r['wall']:.0f}s" if r.get("timeout")
+                          else r["why"]))
         if r["record"].startswith("no-audit"):
             # No verdict either way -- say so, and do not add a second failure to
             # a run that is already failing for the reason it was killed.
@@ -336,6 +377,10 @@ def report(results: list[dict], base: dict, a) -> int:
                                 encoding="utf-8")
             print(f"blessed {len(out)} levels -> {BASELINE}")
 
+    if timeouts:
+        print(f"\nover the per-level cap: {len(timeouts)} "
+              f"({', '.join('lv' + str(l) for l in timeouts)}) -- each one's "
+              f"working files are named above")
     if bad:
         print("\nFAIL:")
         for b in bad:
@@ -350,8 +395,27 @@ def main(argv=None) -> int:
     ap.add_argument("--levels", nargs="+", type=int,
                     default=list(range(1, 23)))
     ap.add_argument("--pool", nargs="+", type=int, default=[90, 91, 92, 93])
-    ap.add_argument("--budget", type=float, default=3600.0,
-                    help="wall-clock seconds per level")
+    # THE PER-LEVEL CLOCK. A level that solves but takes an hour is a red
+    # signal, not a result worth waiting for: the user's ruling of 2026-09-03
+    # is to drop it early, keep what it had, and go and find out why. The cap
+    # is about twice the release build's own time -- 20 minutes on Windows,
+    # and Wine is roughly half as fast again, so --wine scales it by 1.5.
+    # Left at None the two arrangements resolve it differently, because they
+    # mean different things by "budget": in parallel it IS the per-level clock,
+    # while --one-session multiplies it by the level count into one cap for the
+    # whole game (there is no per-level deadline inside a suite -- the only one
+    # is the mod's own dpMaxIters). Passing --budget explicitly overrides both,
+    # so nothing that named a number changes.
+    # If a per-level deadline is ever wanted inside a suite too, the shape is
+    # to hand this same number to the mod as a level deadline rather than to
+    # add a second clock out here.
+    ap.add_argument("--budget", type=float, default=None,
+                    help="wall-clock seconds per level (default 1200, or 1800 "
+                         "with --wine; in --one-session, seconds per level "
+                         "summed into one cap for the whole game, default 3600)")
+    ap.add_argument("--wine", action="store_true",
+                    help="the workers are the Wine container's -- scale the "
+                         "per-level cap by 1.5")
     ap.add_argument("--cfg", nargs="*", default=[],
                     help="extra autorun.cfg keys, e.g. dpfingerprint=0")
     ap.add_argument("--one-session", action="store_true",
@@ -380,11 +444,14 @@ def main(argv=None) -> int:
     if a.bless and not a.one_session:
         print("--bless runs --one-session (the numbers have to come from an "
               "arrangement in which the mod cleans up between levels)")
+    # A suite has no per-level clock to set, so its default stays where it was;
+    # the parallel arrangement takes the 20-minute cap (x1.5 under Wine).
+    per_level = a.budget if a.budget else (1800.0 if a.wine else 1200.0)
     if one_session_mode:
         wid = a.pool[0]
         # --budget is per level; a suite spends it end to end. It is a cap, not a
         # schedule -- the run ends when the mod says `suite: done`.
-        budget = a.budget * len(a.levels)
+        budget = (a.budget if a.budget else 3600.0) * len(a.levels)
         print(f"  worker {wid}: {','.join(str(l) for l in a.levels)} "
               f"in ONE game (cap {budget / 3600:.1f} h)")
         results = one_session(a.levels, wid, budget, list(a.cfg), DATA, a.mod)
@@ -396,6 +463,9 @@ def main(argv=None) -> int:
         return report(results, base, a)
 
     buckets = assign(a.levels, a.pool)
+    print(f"  per-level cap {per_level:.0f}s"
+          + (" (Wine)" if a.wine else "")
+          + ("" if a.budget else " -- the default; --budget overrides"))
     for w in a.pool:
         if buckets[w]:
             mins = sum(COST.get(l, 1.0) for l in buckets[w])
@@ -417,8 +487,9 @@ def main(argv=None) -> int:
             time.sleep(k * 12.0)
         for lv in buckets[w]:
             cap = iter_cap(lv, base)
-            res = one(lv, w, a.budget, list(a.cfg), DATA, a.mod)
+            res = one(lv, w, per_level, list(a.cfg), DATA, a.mod)
             res["cap"] = cap
+            res["wallcap"] = per_level
             with lock:
                 print(f"lv{lv:<3} {res['why']:<40} iters={res['iters']:<4}"
                       f"deepest t={res['deepest_t']:<6} x={res['deepest_x']:<9.0f}"
