@@ -3,6 +3,10 @@
     python py/secqueue.py --level 22                 # the whole list, Wine
     python py/secqueue.py --level 22 --limit 3       # the top 3 by priority
     python py/secqueue.py --level 22 --venue windows # ...on a Windows worker
+    python py/secqueue.py --level 22 --deploy        # ...after refreshing the mod
+
+The mod the venue launches is NOT touched unless --deploy is passed; every run
+names the binary it is about to measure in its first lines either way.
 
 The windows come from py/sections.py (fixups, census, deaths, veto boxes). For
 each one the section solver is asked to get from the window's entry tick to the
