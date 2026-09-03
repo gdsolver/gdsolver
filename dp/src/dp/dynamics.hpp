@@ -396,44 +396,6 @@ inline int g_dynDbg = -1;
 // so the size of the re-anchoring family is a number rather than an impression.
 // Diagnostic only: prints and changes nothing.
 inline bool g_shiftStat = false;
-// --dynphase <0|1>: which recorded row the collision test is shown.
-//
-// 0 keeps what the model has always done. 1 is GD's own pairing, read off
-// GJBaseGameLayer::update (win 2.2081): the order there is
-//     0x238090 processCommands  ->  0x238388 processMoveActionsStep
-//                               ->  0x23846e checkCollisions
-// and the mod's recorder writes its row inside the processCommands hook, i.e.
-// BEFORE that update's move step. So the row written as T holds the objects as
-// they were before update T-1's move, while the collision pass of that update
-// tested against the positions the recorder writes as row T+1. The player is
-// written at the same instant and IS the post-integration, pre-collision
-// position the portal test uses -- so GD's pair is (player row T, object row
-// T+1) and the model's is (player row T, object row T).
-//
-// A FLAG AND NOT A FIX, until it is measured: this moves every moving object in
-// every level by a tick, and the model's rules were calibrated against the old
-// pairing. --rotport is the precedent -- individually closer to GD, 41% -> 15%
-// on lv22's cold run. Both arms come out of the same binary so the A/B is a
-// difference and not two builds.
-//
-// It shifts only the ROW LOOKED UP. The per-object re-timing (`tt = t - shift`)
-// is left exactly as it is: that is a different family (37 of 2,094 objects,
-// see --shiftstat) whose ±1 has its own measurement behind it.
-// What 1 buys and what it costs, both measured on 2026-09-03:
-//   * lv22's spider portal uid 434 stops firing at t=777, where GD does not fire
-//     either, and the it27 died plan goes from 820 model ticks to 7,318 -- the
-//     whole plan, to GD's own death at 7,313.
-//   * lv19's section at t=20,600 REGRESSES: a ball riding a descending surface
-//     is reproduced to the last digit for eleven ticks at phase 0, while phase 1
-//     drops its support on the first tick and falls for five.
-// The pairing itself has two independent derivations (this one from the update
-// order, and the portal-contact study's from processRotationActions sitting
-// inside the move step), so the ride is the thing to explain, not the pairing --
-// the ride rules were calibrated against the old pairing and phase 1 exposes it.
-inline int g_dynPhase = 0;
-// ...and whether --dynphase was given explicitly (the environment variable is
-// only consulted when it was not).
-inline bool g_dynPhaseSaid = false;
 struct Dynamics {
     // Stable storage: `snapObj` / `usedOrb` / `usedPad` hold raw Obj* across
     // ticks, so these must never reallocate after load. The rects are MUTATED
@@ -748,12 +710,6 @@ struct Dynamics {
                         }
                         tt -= delay;
                     }
-                    // ...and last, the row the collision test is entitled to see
-                    // (--dynphase). Applied AFTER the re-timing so the two stay
-                    // separable: `shift` is still this object's own re-anchoring
-                    // and --shiftstat still counts it, while the phase is the
-                    // one convention that applies to every object.
-                    tt += g_dynPhase;
                     // --shiftdbg <uid>: print this uid's re-timing once. An
                     // instrument for the suspicion that the descent phase of
                     // the t=2776 spike (uid18118) is off from live by tens of
@@ -1164,6 +1120,30 @@ struct Dynamics {
     // Put every object where it was at tick t. Cursors move forward with the
     // layer loop, so this is O(1) amortised; a backwards jump (--start, or the
     // witness resim starting over) rewinds and re-scans, which happens once.
+    //
+    // ROW t IS THE RIGHT ROW, and this is the note that stops the next person
+    // re-deriving otherwise. GJBaseGameLayer::update runs processCommands
+    // (0x238090) -> processMoveActionsStep (0x238388) -> checkCollisions
+    // (0x23846e), and the mod's recorder writes its row inside the FIRST of
+    // those, so the row written as T holds the objects from before that update's
+    // move. It is tempting to conclude that a collision therefore saw row T+1.
+    // It did not: the player state that collision produces does not appear in
+    // the dump until row T+2 either, so the two offsets cancel and the pairing
+    // is (player row T, object row T).
+    //
+    // Measured twice on 2026-09-03, both against the pairing being anything else
+    // (a --dynphase flag that shifted the row by one was built, run and reverted):
+    //   * lv19 t=20,601. A ball rides a surface descending 0.062 px/tick
+    //     (uid 14011, cy 210.178, h 15): row t gives 210.178 + 7.5 + 15 =
+    //     232.678, which is GD's dump to the last digit, for eleven ticks. The
+    //     shifted row drops the support on the first tick and falls for five.
+    //   * lv22 uid 434's firing edge at t=777, swept in GD at 0.05 px (the
+    //     earlier 0.5 px sweep could not tell the two apart, which is how the
+    //     shifted row briefly looked better):
+    //         dy=0     GD (35.502, 35.552)   row t: 35.541 INSIDE   row t+1: 35.859
+    //         dy=43.09 GD (32.052, 32.102)   row t: 32.130 (0.028)  row t+1: 31.616 (0.44)
+    // The 0.028 px that is left at dy=43.09 is a residual of the portal
+    // predicate, not of the row: see the two-gate contact shape.
     void seek(int t) {
         if (objs.empty() || t == lastT) return;
         const bool back = (t < lastT);
@@ -1178,14 +1158,11 @@ struct Dynamics {
         const bool step1 = !back && (t == lastT + 1);
         lastStep1 = step1;
         lastT = t;
-        // The row the COLLISION test is entitled to see (--dynphase). `lastT` and
-        // the cursors keep running on the caller's tick, so only the row moves.
-        const int tr = t + g_dynPhase;
         for (size_t i = 0; i < objs.size(); ++i) {
             const auto& sm = samples[i];
             if (sm.empty()) continue;
             size_t c = back ? 0 : cur[i];
-            while (c + 1 < sm.size() && sm[c + 1].t <= tr) ++c;
+            while (c + 1 < sm.size() && sm[c + 1].t <= t) ++c;
             cur[i] = c;
             const DynSample& s = sm[c];
             // per-tick y motion of the SURFACE itself (see Obj::dcy).

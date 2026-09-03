@@ -233,18 +233,6 @@ inline int cliMain(int argc, char** argv) {
             }
         }
         if (!std::strcmp(argv[i], "--dyndbg")) g_dynDbg = std::atoi(argv[i + 1]);
-        // --dynphase <0|1>: which recorded row the collision test sees. See the
-        // flag's declaration in dynamics.hpp -- 1 is GD's own pairing, 0 is what
-        // the model has always done, and which one to keep is a measurement.
-        // Also readable as the environment variable GDSOLVER_DYNPHASE, because
-        // the acceptance harnesses (quick_regress, fidelity_diff, deathref, the
-        // cold run) build leveldp's argument list themselves and have no
-        // passthrough: without this the A/B could only be run on hand-typed
-        // commands, which is not the same measurement. The flag wins over the
-        // variable, and the value in force is printed once so a run can never be
-        // read without knowing which arm it is.
-        if (!std::strcmp(argv[i], "--dynphase"))
-            g_dynPhaseSaid = true, g_dynPhase = std::atoi(argv[i + 1]) ? 1 : 0;
         if (!std::strcmp(argv[i], "--triggers")) trigPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--objgroups")) grpPath = argv[i + 1];
         // --obb <file>: GD's own corners for the turned objects (see loadObb).
@@ -689,17 +677,6 @@ inline int cliMain(int argc, char** argv) {
             }
         }
     }
-    // GDSOLVER_DYNPHASE: the --dynphase A/B, reachable from the harnesses that
-    // build this argument list themselves. Consulted only when the flag was not
-    // given, and the value in force is printed either way -- an arm nobody can
-    // name is not a measurement.
-    if (!g_dynPhaseSaid) {
-        if (const char* e = std::getenv("GDSOLVER_DYNPHASE"))
-            g_dynPhase = std::atoi(e) ? 1 : 0;
-    }
-    if (g_dynPhase)
-        std::printf("dynphase: %d (%s)\n", g_dynPhase,
-                    g_dynPhaseSaid ? "--dynphase" : "GDSOLVER_DYNPHASE");
     // seed the per-state float accumulator with the anchor's absolute x. The
     // rounding depends on the magnitude, so this cannot be deferred (see advanceX)
     init.xAbs = (float)x0;
