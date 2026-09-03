@@ -110,6 +110,21 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     g_freeModeCol = (colFree >= 0);
     g_trigGateCol = (colTouch >= 0 && colSpawn >= 0);
     g_staticCamCol = (colAxis >= 0 && colExStat >= 0);
+    // AN ABSENT COLUMN TURNS A FEATURE OFF; IT MUST NOT DO SO IN SILENCE.
+    // Reading by name means an old dump keeps working, which is the point --
+    // but it also means a dump written before a column existed disables
+    // whatever depends on it, and nothing says so. Measured 2026-09-04: the
+    // stored objrects dumps were six columns behind the mod (free, touch,
+    // spawn, chan, axis, exstat), so the corpus had been running with both of
+    // these gates off, and the only way anyone found out was diffing a
+    // re-dump. Nothing was riding on them -- quick_regress was identical
+    // across all 22 once refreshed -- but the next omission may not be free.
+    if (!g_freeModeCol || !g_trigGateCol || !g_staticCamCol)
+        std::printf("objrects: dump predates a column this build reads --"
+                    "%s%s%s (re-dump to enable them)\n",
+                    g_freeModeCol ? "" : " free",
+                    g_trigGateCol ? "" : " touch/spawn",
+                    g_staticCamCol ? "" : " axis/exstat");
     // uid -> which triggers move it, and where to. Built once so the
     // routing below can ask in O(1). Touch and autonomous controls share the
     // map; an object under both keeps the touch mask (per-state truth beats
