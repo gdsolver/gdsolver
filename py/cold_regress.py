@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 import threading
 import time
@@ -177,6 +178,38 @@ def one(level: int, wid: int, budget: float, extra: list[str],
         out["died_plan"] = died[-1].name if died else ""
     except OSError:
         pass
+    # A LEVEL THAT LOST ITS CLOCK HAS TO KEEP ITS EVIDENCE SOMEWHERE THE NEXT
+    # RUN CANNOT REACH. Naming the worker's data dir is not keeping it: wipe()
+    # empties that dir at the START of the next run on the same worker, and on
+    # 2026-09-04 the next run came four minutes later and destroyed the died
+    # plan and the dump an investigation was already using. Copy what is needed
+    # to rebuild the window -- the plan, the dump the anchor comes from, the
+    # moving-geometry recording the model read, and the log.
+    if out.get("timeout"):
+        keep = out_dir / f"timeout_lv{level}_{time.strftime('%m%d_%H%M%S')}"
+        saved, skipped = [], []
+        try:
+            keep.mkdir(parents=True, exist_ok=True)
+            names = [out["died_plan"]] if out.get("died_plan") else []
+            names += ["dump.csv", "result.txt", "dp_groups.txt",
+                      "dp_plan.txt", "dp_fixups.txt"]
+            for n in names:
+                src = d / n
+                if not (n and src.exists()):
+                    continue
+                # The dump of a long level runs to hundreds of MB; past this it
+                # is cheaper to re-record than to copy, and saying so beats a
+                # silent omission.
+                if src.stat().st_size > 512 * 1024 * 1024:
+                    skipped.append(f"{n} ({src.stat().st_size / 1e6:.0f} MB)")
+                    continue
+                shutil.copy2(src, keep / n)
+                saved.append(n)
+            out["kept"] = str(keep)
+            out["kept_files"] = saved
+            out["kept_skipped"] = skipped
+        except OSError as e:                        # noqa: BLE001
+            out["kept"] = f"(could not save: {e})"
     return out
 
 
@@ -341,8 +374,15 @@ def report(results: list[dict], base: dict, a) -> int:
                      if r["died_plan"] else ""))
             if r["fp"]:
                 print(f"    last [fp] {r['fp'][:110]}")
+            if r.get("kept"):
+                print(f"    copied to {r['kept']}: "
+                      f"{', '.join(r.get('kept_files') or []) or 'nothing'}"
+                      + (f" (too big to copy: "
+                         f"{', '.join(r['kept_skipped'])})"
+                         if r.get("kept_skipped") else ""))
             if r.get("data"):
-                print(f"    working files kept: {r['data']}")
+                print(f"    (the worker's own dir {r['data']} is emptied by "
+                      f"the next run on that worker)")
         if not r["cleared"]:
             bad.append(f"lv{r['lv']}: "
                        + (f"TIMEOUT after {r['wall']:.0f}s" if r.get("timeout")
