@@ -668,6 +668,10 @@ def main(argv=None) -> int:
     ap.add_argument("--refsweep", action="store_true",
                     help="every window: which gate drops the reference "
                          "(brief-019 acceptance 3). Offline")
+    ap.add_argument("--tee-results", action="store_true",
+                    help="keep each session's result.txt under <out-dir>/"
+                         "sessions/. The per-layer telemetry lives only there "
+                         "and the next window overwrites it")
     ap.add_argument("--reachcap", type=int, default=2000)
     ap.add_argument("--threads", type=int, default=8)
     a = ap.parse_args(argv)
@@ -729,6 +733,28 @@ def main(argv=None) -> int:
         def session(cfg, timeout):
             return run_session(a.worker, cfg, timeout_s=timeout,
                                workers_root=WORKERS_ROOT)
+
+    if a.tee_results:
+        # Keep every session's result.txt, next to the tables it produced.
+        # The per-layer telemetry a search prints (`seclayer:`, the restore
+        # bench's `restoreloop_series:`) exists ONLY in result.txt, and the
+        # queue's next session overwrites it in the worker's data dir -- so a
+        # diagnostic run that does not copy it out has, by the time it is read,
+        # the numbers of the LAST window and no way to know that. The cfg is
+        # written into the head of each file for the same reason: a series whose
+        # configuration is not beside it cannot be compared to another one.
+        inner, tee_n = session, [0]
+        tee_dir = out_dir / "sessions"
+        tee_dir.mkdir(parents=True, exist_ok=True)
+
+        def session(cfg, timeout):                             # noqa: F811
+            res = inner(cfg, timeout)
+            tee_n[0] += 1
+            p = tee_dir / f"session{tee_n[0]:02d}_{time.strftime('%H%M%S')}.txt"
+            p.write_text("# cfg:\n" + "\n".join(cfg) + "\n\n"
+                         + "\n".join(res.lines) + "\n", encoding="utf-8")
+            log(f"    tee -> {p.name} ({len(res.lines)} lines)")
+            return res
 
     if a.rediff:
         return rediff(a, wins, out_dir, session)
