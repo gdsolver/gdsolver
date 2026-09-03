@@ -63,18 +63,28 @@ def wait_complete(w: Worker, timeout_s: float) -> bool:
     return False
 
 
-def regen_live(level: int, data: Path, worker_id: int, timeout_s: float) -> str:
-    u"""Replay the plan in GD as it is and re-record `.groups.live.txt`."""
-    plan = data / f"solution_lv{level}_dp.txt"
+def regen_live(level: int, data: Path, worker_id: int, timeout_s: float,
+               plan_path: Path | None = None) -> str:
+    u"""Replay the plan in GD as it is and re-record `.groups.live.txt`.
+
+    `plan_path` records for a plan that is NOT the level's solution -- a
+    `dp_died_*.txt` out of a cold run, say. The live recording is the moving
+    geometry along the path the player actually took, so it belongs to that plan
+    and to no other: fidelity_diff looks for `<plan>.groups*.txt` beside the plan
+    it was given, and without one it reports NO-GROUPS and measures nothing.
+    Borrowing the solution's recording would not be a shortcut, it would be a
+    different world (see the base recording, which IS plan-independent).
+    """
+    plan = Path(plan_path) if plan_path else data / f"solution_lv{level}_dp.txt"
     if not plan.exists():
-        return f"lv{level}: no solution ({plan})"
+        return f"lv{level}: no plan ({plan})"
     objrects = data / f"objrects_lv{level}.txt"
     if not has_grouped_colliders(objrects):
         return f"lv{level}: no moving geometry (no live recording needed)"
     inputs = P.read_inputs(plan)
     if not inputs:
         return f"lv{level}: the plan is empty"
-    dst = data / f"solution_lv{level}_dp.txt.groups.live.txt"
+    dst = plan.with_name(plan.name + ".groups.live.txt")
     w = Worker(worker_id, WORKERS_ROOT)
     try:
         w.open(level, {"grouptrace": "1"})
@@ -144,6 +154,12 @@ def main(argv=None) -> int:
     ap.add_argument("--live", action="store_true",
                     help="re-record the live replay (.groups.live.txt) rather "
                          "than the bootstrap")
+    ap.add_argument("--plan", default="",
+                    help="record for THIS plan file instead of the level's "
+                         "solution (implies --live; one level only). The "
+                         "recording is written beside it as "
+                         "<plan>.groups.live.txt, which is where fidelity_diff "
+                         "looks")
     a = ap.parse_args(argv)
 
     data = Path(a.data_dir)
@@ -155,6 +171,12 @@ def main(argv=None) -> int:
     if not levels:
         ap.error("name some levels or pass --all")
 
+    if a.plan:
+        if len(levels) != 1:
+            ap.error("--plan takes exactly one level")
+        print(regen_live(levels[0], data, a.worker_id, a.timeout,
+                         Path(a.plan)), flush=True)
+        return 0
     fn = regen_live if a.live else regen
     for lv in levels:
         print(fn(lv, data, a.worker_id, a.timeout), flush=True)
