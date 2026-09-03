@@ -97,6 +97,8 @@ inline void resetInvocationState() {
     g_trigClosed = true;
     g_trigRaw = false;
     g_dynDbg = -1;
+    g_shiftStat = false;
+    g_dynPhase = 0;
 
     // fixup.hpp -- --fixups appends, so without this the file is loaded once per call and the
     // records of every earlier call are still in the list
