@@ -676,6 +676,53 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
     return nf;
 }
 
+// ---- the gravity portal's suppressions, shared by both readers -------------
+//
+// "Does a gravity portal fire on this tick" has TWO readers. The portal pass
+// near the end of stepOne is the one that acts on it; the ground arm, thousands
+// of lines earlier, has to ask the same question before it settles the footing
+// and the button, because flipGravity takes both away (m_isOnGround = 0 at
+// 0x39a3cd, the last-touched uids at 0x39a2aa/b5/c0) and both of those are
+// decided up there. Two readers of one rule drift, and this pair did: the early
+// one was the bare geometry, so it answered "fires" on ticks the pass then
+// declined. That was harmless while it only withheld a jump and stopped being
+// harmless when it also withdrew a ball's support, so the gates live here,
+// where neither reader can have one the other lacks.
+//
+// What CANNOT be shared is the position: the early reader runs before the tick
+// is integrated, so it tests the start-of-tick y where the pass tests `yFree`.
+// In that one respect it stays an over-approximation, deliberately.
+
+// Was the player inside this portal's box at the PREVIOUS tick's position? Two
+// of the pass's rules ask exactly this and used to spell it out separately --
+// which is how one of them came to ask the BOUND while the firing test asked
+// the ORIENTED box (lv16 t=8,014: p1's gravity portal was then skipped on every
+// tick of the section and the fixup recorder wrote 30 records with dvy off by
+// two full cube gravity steps). One expression, three callers.
+inline bool portalWasInsideAtPrev(const Obj& p, double xPrev, double yPrev,
+                                  double half, double pRot) {
+    return std::fabs(xPrev - p.cx) <= p.hw + half
+           && std::fabs(yPrev - p.cy) - (p.hh + half) < 0.0
+           && (!p.oriented || orientedHit(p, xPrev, yPrev, half, pRot));
+}
+
+// [2026-08-21 r52] A portal SITTING ON THE ROTATION TRIGGER THAT PUT US IN THIS
+// FRAME does not fire again: GD fires on ENTRY and the player is already deep
+// inside these when the frame turns (lv22: 36 px into uid4360's 52.5 at
+// t=4,665), so GD has them in its touched list. Scoped to the trigger that owns
+// the CURRENT frame -- matching any trigger also ate the robot portal uid4607,
+// 10 px from uid4467, and cost the mode switch GD makes at t=5,108.
+inline bool portalOnFrameRotTrigger(const Obj& p, int frame) {
+    if (frame == 0 || g_rotTrig.empty()) return false;
+    double wpx, wpy;
+    fromFrame(frame, p.cx, p.cy, wpx, wpy);
+    for (const RotTrig& r : g_rotTrig)
+        if (r.frame == frame && std::fabs(r.cx - wpx) <= 60.0
+            && std::fabs(r.cy - wpy) <= 60.0)
+            return true;
+    return false;
+}
+
 inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     State c = s;
     // The no-control window (id 2899 / GameOptionsTrigger; history at the
@@ -1662,21 +1709,61 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         //
         // IT SITS HERE, above `cubeContact` and `pinnedOnBlock`, because
         // flipGravity does more than eat the button and everything else it
-        // takes away is decided in the lines below. `s.y` and `pHalf` are the
-        // tick-start values the whole ground arm reads, so moving the block up
-        // does not change what it answers.
+        // takes away is decided in the lines below. `s.y` and the contact half
+        // are the tick-start values the whole ground arm reads, so moving the
+        // block up does not change what it answers.
+        // The pass's own numbers, recomputed here rather than guessed at: its
+        // contact half at pass entry (`pHalfPortal`) and its player rotation
+        // (`pRotHere`). Both are start-of-tick values by construction -- the
+        // pass's `pHalfLive` only leaves `pHalfPortal` once a mode or size
+        // portal has fired inside the pass, which is long after this point, and
+        // `s.rot` is the previous tick's rotation in both places.
+        const double pHalfE = (c.mode == 4 && c.mini) ? kWaveContactHalfMini
+                                                      : pHalf;
+        double pRotE = (double)s.rot;
+        if (s.mode == 0)
+            pRotE += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
         bool gravPortalThisTick = false;
+        const Obj* gravPortalP = nullptr;
         for (const Obj* p : *K.ports) {
             if (p->type != 3 && p->type != 4) continue;
             const uint8_t wantFlip = (p->type == 3) ? 1 : 0;
-            if (s.flip == wantFlip) continue;   // no change -> does not fire
-            if (p->oriented && !orientedHit(*p, x, (double)s.y, pHalf)) continue;
-            if (std::fabs(x - p->cx) <= p->hw + pHalf
-                && std::fabs((double)s.y - p->cy) < p->hh + pHalf) {
+            // The pass's `changes`, and it states GD's upsideDown rather than
+            // the model's frame-local flip. This used to read `s.flip`, which
+            // is the SAME MISTAKE the pass's second gate was fixed for on lv22
+            // t=5,110: inside frame 3 the two statements are opposites, so the
+            // early reader answered the exact reverse of the pass there.
+            // `gdUpOf(s)` and not `gdUpOf(c)` because nothing has flipped yet
+            // -- which is also what the pass reconstructs when the ball's tap
+            // has flipped by the time it runs (`ballFlippedThisTick`).
+            if (gdUpOf(s) == wantFlip) continue;
+            if (portalOnFrameRotTrigger(*p, (int)c.frame)) continue;
+            // r52 (a portal being sat in when the frame turned) and the dual's
+            // entry-tick rule, which ask the same question of the same box.
+            // The pass's r52 gate also tests `s.frame == c.frame`; that is not
+            // repeated because nothing inside stepOne changes the frame
+            // (applyRotation runs after it), so it is always true here.
+            if ((s.frameChg || c.dual)
+                && portalWasInsideAtPrev(*p, xPrev, (double)s.y, pHalfE, pRotE))
+                continue;
+            if (p->oriented
+                && !orientedHit(*p, x, (double)s.y, pHalfE, pRotE)) continue;
+            if (std::fabs(x - p->cx) <= p->hw + pHalfE
+                && std::fabs((double)s.y - p->cy) < p->hh + pHalfE) {
                 gravPortalThisTick = true;
+                gravPortalP = p;
                 break;
             }
         }
+        // --slopedbg: THE EXPOSURE. One line per tick the predicate answers
+        // "fires", in every mode -- the ball gate below prints only its own.
+        if (g_slopeDbg && gravPortalThisTick)
+            std::printf("gravpred t=%lld uid=%d type=%d mode=%d frame=%d "
+                        "flip=%d dual=%d sup=%d ride=%d in=%d\n",
+                        (long long)K.t, gravPortalP->uid,
+                        (int)gravPortalP->type, (int)c.mode, (int)c.frame,
+                        (int)s.flip, (int)c.dual, groundedNow ? 1 : 0,
+                        rideOn ? 1 : 0, input ? 1 : 0);
         // [2026-09-03] **flipGravity takes the BALL's footing away, not just its
         // button.** Three writes in the same function, all of them before the
         // solids are resolved (checkCollisions is two passes -- portals fire in
@@ -1714,21 +1801,30 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // they never reach this arm; their 12 grounded firings are green as
         // they stand.
         //
-        // KNOWN BOUNDARY -- the predicate above is the cube's, and it is an
-        // OVER-APPROXIMATION of the main portal loop: it does not carry that
-        // loop's suppressions (the r52 "already inside it when the frame
-        // turned" gate, the rotation-trigger gate), so it can answer "fires"
-        // on a tick the loop then declines. That was harmless while it only
-        // withheld a jump; it now also withdraws support, so the exposure was
-        // counted rather than assumed. Over the 22 verified solutions the
-        // predicate is true on **8 ticks**, and on exactly **one** of them is
-        // the player supported or riding: lv16 t=4,237, the anchor above,
-        // which comes out bit-identical. The other 7 are airborne, where
-        // clearing a flag nobody holds is a no-op. (In lv22's rotated corridor
-        // it does over-answer for stretches -- t=6,307.. on the it27 plan, all
-        // airborne -- so if a grounded ball ever turns up in one of those,
-        // this is the line to tighten, and tightening it means giving the two
-        // gates a home both readers can share.)
+        // WHAT THE PREDICATE ABOVE IS: the portal pass's own decision, minus
+        // the one part of it that cannot be had yet. The pass tests `yFree`,
+        // which this tick has not produced, so the early reader tests the
+        // start-of-tick y and remains an over-approximation in exactly that
+        // respect. Everything else is the SAME CODE both readers call --
+        // `changes` read through gdUpOf, portalOnFrameRotTrigger, and
+        // portalWasInsideAtPrev for r52 and for the dual's entry-tick rule.
+        // Until 2026-09-03 it was the bare geometry, so the exposure of the
+        // difference was counted on both sides of the sharing (--slopedbg's
+        // `gravpred`, one line per tick the predicate answers "fires"):
+        //   the 22 verified solutions -- 52 ticks, 5 of them supported or
+        //     riding, and the sharing moves NONE of them: every one is frame 0,
+        //     dual 0, with no frame change in flight, so no gate can bite.
+        //     8 of the 52 are balls (the only mode this branch acts on) and one
+        //     of those is supported -- lv16 t=4,237, the anchor above.
+        //   lv22's it27 plan, where the over-answering was found -- the ball
+        //     predicate was true on 31 ticks and is now true on 1: t=6,291, the
+        //     tick GD really fires uid13833 on (sup=1 ride=1). The 30 that went
+        //     are t=6,307.. inside that same portal after the frame turned. The
+        //     pass had held it over (r52), which keeps `frameChg` raised, and
+        //     the early reader now reads the same hold instead of re-answering
+        //     "fires" for the length of the corridor. All 30 were airborne, so
+        //     that replay is byte-identical across the change: the hole was
+        //     closed before it cost anything.
         if (gravPortalThisTick && isBall) {
             if (g_slopeDbg)
                 std::printf("gravflip t=%lld x=%.2f y=%.3f flip=%d sup=%d "
@@ -7052,23 +7148,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         if (p->oriented
             && !orientedHit(*p, x, (double)c.y, pHalfP, pRotHere))
             continue;
-        // A portal SITTING ON THE ROTATION TRIGGER THAT PUT US IN THIS FRAME
-        // does not fire again: GD fires on ENTRY and the player is already deep
-        // inside these when the frame turns (lv22: 36 px into uid4360's 52.5 at
-        // t=4,665), so GD has them in its touched list. `r.frame == c.frame`
-        // keeps this to the trigger that owns the current frame -- matching ANY
-        // trigger also ate the robot portal uid4607, 10 px from uid4467, and
-        // cost the mode switch GD makes at t=5,108.
-        if (c.frame != 0 && !g_rotTrig.empty()) {
-            double wpx, wpy;
-            fromFrame((int)c.frame, p->cx, p->cy, wpx, wpy);
-            bool onRot = false;
-            for (const RotTrig& r : g_rotTrig)
-                if (r.frame == (int)c.frame
-                    && std::fabs(r.cx - wpx) <= 60.0
-                    && std::fabs(r.cy - wpy) <= 60.0) { onRot = true; break; }
-            if (onRot) continue;
-        }
+        // A portal sitting on the rotation trigger that put us in this frame
+        // does not fire again (the measurements are at the function, which the
+        // ground arm's pre-evaluation calls too).
+        if (portalOnFrameRotTrigger(*p, (int)c.frame)) continue;
         // Would this portal change anything at all? An inert one is a no-op and
         // dodging it means nothing (see the halving note below).
         // A teleport's REAL target: the linked exit half (tpEy) for the 2902
@@ -7179,15 +7262,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // some situations). The test is the same geometry as the firing, at the
         // previous tick's position.
         if ((p->type == 3 || p->type == 4) && s.frameChg
-            && s.frame == c.frame) {
-            const double gapYPrev =
-                std::fabs((double)s.y - p->cy) - (p->hh + pHalfP);
-            const bool wasInside =
-                std::fabs(xPrev - p->cx) <= p->hw + pHalfP
-                && gapYPrev < 0.0
-                && (!p->oriented
-                    || orientedHit(*p, xPrev, (double)s.y, pHalfP, pRotHere));
-            if (wasInside) { gravHoldOver = true; continue; }
+            && s.frame == c.frame
+            && portalWasInsideAtPrev(*p, xPrev, (double)s.y, pHalfP,
+                                     pRotHere)) {
+            gravHoldOver = true;
+            continue;
         }
         // ---- TELEPORT portal (type 28) --------------------------------------
         // Below the y test, not above it: lv20 stacks two teleports at the SAME
@@ -7527,12 +7606,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // p1's portal is then skipped on every later tick too, so the model runs the rest of
             // the section at the wrong gravity: the fixup recorder wrote 30 consecutive p2
             // records with dvy off by 0.430 = exactly two cube gravity steps.
-            // The same pairing is already written correctly 300 lines above (`wasInside`).
+            // Which is why it is portalWasInsideAtPrev: r52's gate 300 lines
+            // above and the ground arm's pre-evaluation ask the same question
+            // through the same expression, and none of the three can drift.
             const bool wasInBoxPrev =
-                std::fabs(xPrev - p->cx) <= p->hw + pHalfP
-                && std::fabs((double)s.y - p->cy) < p->hh + pHalfP
-                && (!p->oriented
-                    || orientedHit(*p, xPrev, (double)s.y, pHalfP, pRotHere));
+                portalWasInsideAtPrev(*p, xPrev, (double)s.y, pHalfP, pRotHere);
             const bool dualBothGrav =
                 isGrav && c.dual && !wasInBoxPrev
                 && std::fabs((double)c.y2 - p->cy) < p->hh + pHalfP;
