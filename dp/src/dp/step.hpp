@@ -1629,29 +1629,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             }
             groundedNow = sup;
         }
-        cubeContact = groundedNow;
-        // the ceiling pin is re-earned every tick (see "cube/ceilstop")
-        c.ceilPin = 0;
-        // A player standing on a BLOCK carries that tick's gravity step in y.
-        // GD's tick is update(gravity + move) -> collisions -> buttons, and only
-        // the ordinary jump puts the player back on the surface; anything else
-        // that launches it leaves the moved y in place. Measured over the 19
-        // verified replays (scratchpad/pad16.py, impulse.py -- HANDOFF update 30):
-        //   plain jump (11.180 etc.)          y unchanged   832 + 151 + 56 + 45
-        //   pad / orb while on a BLOCK        y moves       9 of 9
-        //   pad / orb while on the GROUND     y unchanged   12 of 12
-        // The yellow pad's 21 firings split 9/12 on exactly that line with no
-        // exception, which is why the ground test below is the discriminator
-        // and not the pad's value or the mode.
-        //
-        // It matters because the offset does not decay: the model drew its whole
-        // arc 0.0486 px high and LANDED A TICK LATE. lv19 t=290 is that landing,
-        // and everything after it (2,818 divergent ticks) hangs off it.
-        pinnedOnBlock =
-            groundedNow && (s.flip || (double)s.y > (kGroundY + pHalf) + 0.5);
-        prePinY = (float)((double)s.y + kYScale * qVy(gAcc) * gsign);
-        double vpNew = vp;
-        bool ballFlipped = false;
         // A gravity portal firing on this tick EATS the cube's jump. GD flips
         // first (flipGravity clears m_isOnGround) and only then handles the
         // button, so the press finds nothing to jump off.
@@ -1683,6 +1660,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // The corpus never exercises it -- of 161 gravity-portal firings and 140
         // ball taps in the verified solutions, ZERO share a tick -- so this is
         // measured out of the game, not fitted to a replay.
+        //
+        // IT SITS HERE, above `cubeContact` and `pinnedOnBlock`, because
+        // flipGravity does more than eat the button and everything else it
+        // takes away is decided in the lines below. `s.y` and `pHalf` are the
+        // tick-start values the whole ground arm reads, so moving the block up
+        // does not change what it answers.
         bool gravPortalThisTick = false;
         for (const Obj* p : *K.ports) {
             if (p->type != 3 && p->type != 4) continue;
@@ -1695,6 +1678,93 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 break;
             }
         }
+        // [2026-09-03] **flipGravity takes the BALL's footing away, not just its
+        // button.** Three writes in the same function, all of them before the
+        // solids are resolved (checkCollisions is two passes -- portals fire in
+        // place during the bucket sweep, solids are pushed to a list and
+        // resolved afterwards, disasm 0x2137f0 / 0x214960 / 0x214687):
+        //   0x39a3cd  m_isOnGround = 0
+        //   0x39a2aa/b5/c0  the last-touched-object uids := -1, which is the
+        //                   link a rider is carried by
+        // So on the firing tick the ball is NOT standing on anything: it takes
+        // the update phase's ordinary gravity step in the OLD direction, the
+        // portal halves that, and only then do the solids get a say -- and
+        // their say is an actual rectangle overlap, not a support tolerance.
+        // Both outcomes are measured on the SAME portal, frame and block, with
+        // nothing but the contact differing (worker 98, 2026-09-03):
+        //   lv22 t=6,291   the block recedes 0.182 px/tick, the ball falls the
+        //                  0.029 px one tick of gravity buys, the gap opens to
+        //                  0.153 px -> no overlap -> GD keeps **+0.0645 = g/2**
+        //   the same tick with the ball injected 0.20 / 0.50 px into the block
+        //                  -> overlap -> GD reports **0.0000**, then -0.129/tick
+        //   lv16 t=4,237   the same shape on a STATIC block (so the contact is
+        //                  never broken) -> GD reports **0.0000** -- and it is
+        //                  the corpus row this has to leave alone
+        // Handing the ball to the airborne branch produces all three: the free
+        // step is +0.129 in the old direction (which the portal halves to
+        // GD's +0.0645), and where the surface is still there the landing loop
+        // catches the foot and zeroes vy exactly as it does for a fall.
+        //
+        // BALL ONLY, and that is GD's own split rather than caution: the
+        // head-side vertical resolution is SKIPPED for cube/robot/spider and
+        // TAKEN for ball/ship/ufo/wave/swing (the mode gate at 0x39289d). A
+        // cube run through this branch would land on the block it was pinned to
+        // and come out 0.000 where GD measures g/2 -- which is what the pair of
+        // rules at the portal (vAtPortal's reconstruction and the y half step)
+        // already encode for it. The flying modes take GD's resolution too, but
+        // they never reach this arm; their 12 grounded firings are green as
+        // they stand.
+        //
+        // KNOWN BOUNDARY -- the predicate above is the cube's, and it is an
+        // OVER-APPROXIMATION of the main portal loop: it does not carry that
+        // loop's suppressions (the r52 "already inside it when the frame
+        // turned" gate, the rotation-trigger gate), so it can answer "fires"
+        // on a tick the loop then declines. That was harmless while it only
+        // withheld a jump; it now also withdraws support, so the exposure was
+        // counted rather than assumed. Over the 22 verified solutions the
+        // predicate is true on **8 ticks**, and on exactly **one** of them is
+        // the player supported or riding: lv16 t=4,237, the anchor above,
+        // which comes out bit-identical. The other 7 are airborne, where
+        // clearing a flag nobody holds is a no-op. (In lv22's rotated corridor
+        // it does over-answer for stretches -- t=6,307.. on the it27 plan, all
+        // airborne -- so if a grounded ball ever turns up in one of those,
+        // this is the line to tighten, and tightening it means giving the two
+        // gates a home both readers can share.)
+        if (gravPortalThisTick && isBall) {
+            if (g_slopeDbg)
+                std::printf("gravflip t=%lld x=%.2f y=%.3f flip=%d sup=%d "
+                            "ride=%d in=%d act=%d\n",
+                            (long long)K.t, x, (double)s.y, (int)s.flip,
+                            groundedNow ? 1 : 0, rideOn ? 1 : 0, input ? 1 : 0,
+                            (int)s.action);
+            groundedNow = false;
+            rideOn = false;
+        }
+        cubeContact = groundedNow;
+        // the ceiling pin is re-earned every tick (see "cube/ceilstop")
+        c.ceilPin = 0;
+        // A player standing on a BLOCK carries that tick's gravity step in y.
+        // GD's tick is update(gravity + move) -> collisions -> buttons, and only
+        // the ordinary jump puts the player back on the surface; anything else
+        // that launches it leaves the moved y in place. Measured over the 19
+        // verified replays (scratchpad/pad16.py, impulse.py -- HANDOFF update 30):
+        //   plain jump (11.180 etc.)          y unchanged   832 + 151 + 56 + 45
+        //   pad / orb while on a BLOCK        y moves       9 of 9
+        //   pad / orb while on the GROUND     y unchanged   12 of 12
+        // The yellow pad's 21 firings split 9/12 on exactly that line with no
+        // exception, which is why the ground test below is the discriminator
+        // and not the pad's value or the mode.
+        //
+        // It matters because the offset does not decay: the model drew its whole
+        // arc 0.0486 px high and LANDED A TICK LATE. lv19 t=290 is that landing,
+        // and everything after it (2,818 divergent ticks) hangs off it.
+        pinnedOnBlock =
+            groundedNow && (s.flip || (double)s.y > (kGroundY + pHalf) + 0.5);
+        prePinY = (float)((double)s.y + kYScale * qVy(gAcc) * gsign);
+        double vpNew = vp;
+        bool ballFlipped = false;
+        // (`gravPortalThisTick` is decided ABOVE the support scan -- the whole
+        // note, and the reason it has to sit there, is at its declaration.)
         if (groundedNow && input && !s.action && !gravPortalThisTick
             && isSpider) {
             // SPIDER: teleport to the surface on the other side and flip.
@@ -9202,9 +9272,26 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // ball, og 1->0, ud 0->1) is a tap, and GD emits **+3.426** (the ball's tap
     // value) on that tick, +3.555 the next -- the normal ladder. No -1.000.
     // Without the gate, lv22's tracking shrinks 18,948->18,904.
+    // --slopedbg: SAY WHEN IT ARMS. D9 is the one rule in this family with no
+    // counterpart in the binary -- every writer of `this+0x9a0` was enumerated
+    // on 2026-09-03 and not one of them writes a fixed +-1.0 (the nearest,
+    // postCollision 0x38da69, writes the RECORDED slope velocity on leaving a
+    // ramp, and its gate is "was on a slope, is not now", not a gravity flip).
+    // Its own positive witness (lv22 t=6,307, an older worldline) cannot be
+    // re-run, and today's in-situ arms at t=6,291 -- the same level, frame,
+    // portal and mode -- have GD writing +0.0645 then -0.0650 with no -1.000
+    // anywhere. So the rule is under suspicion but NOT removed here: removing
+    // it needs the game, and this print is what lets the corpus be counted
+    // without it.
     if (c.mode == 2 && c.frame != 0 && s.grounded && !c.grounded
-        && c.flip != s.flip && !impulsedThisTick)
+        && c.flip != s.flip && !impulsedThisTick) {
+        if (g_slopeDbg)
+            std::printf("balloff t=%lld x=%.2f y=%.3f frame=%d flip=%d->%d "
+                        "vy=%.4f\n",
+                        (long long)K.t, (double)c.xAbs, (double)c.y,
+                        (int)c.frame, (int)s.flip, (int)c.flip, (double)c.vy);
         c.pBallOff = 1;
+    }
     // [2026-08-21 r52] Carry "the tick the rotation frame changed" one tick
     // forward. Used only by the next tick's gravity-portal gate (the note at the
     // declaration).
