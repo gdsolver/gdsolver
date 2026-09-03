@@ -7241,8 +7241,42 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                         (int)c.flip, (int)c.frame, pRotHere,
                         p->oriented ? 1 : 0);
         if (gapY >= 0.0) {
-            if (changes && gapY < g_portalDodgeMin)
-                DIE("portal/hairline-dodge", p);
+            if (changes && gapY < g_portalDodgeMin) {
+                // A portal you are still CLOSING ON is not one you dodged.
+                // [2026-09-03] The guard was asked on every tick of the
+                // approach, so the last tick before a crossing -- where the gap
+                // is small precisely because the player is about to enter --
+                // read as a sub-pixel dodge. It killed two plans GD flies:
+                //   lv12 t=12,358 uid2752 (id 11, 75x25) gap 0.084, falling
+                //     2.42 px/tick. GD and the model both fire on the NEXT tick
+                //     (12,359: up 0->1, vy -10.770 -> -5.493, y digit-identical
+                //     either side). The guard was killing lv12's own VERIFIED
+                //     solution 7,600 ticks from the end, and quick_regress
+                //     cannot see it -- it replays 400-tick anchored sections,
+                //     never the whole plan.
+                //   lv22 t=6,921 uid6100 (id 1933, 33.5x85) gap 0.069, rising
+                //     0.58 px/tick. The model enters at 6,922; GD enters at
+                //     6,921, and that one tick is a SEPARATE defect in the
+                //     firing predicate, not this guard's business.
+                // Neither is a dodge: the distance to the portal's centre is
+                // shrinking. The witness the guard was built for is not
+                // (findings.md 2026-08-03: lv18's RegularSize portal at
+                // x=20,386, missed by 0.01 px by a mini ship pinned against a
+                // ceiling at y=321.000) -- a pinned or departing plan holds its
+                // gap or grows it, and stays killed.
+                // Census before/after over lv1-22 (gapy_census.py): the fatal
+                // band held exactly one decision with `changes`, and it was
+                // this false kill.
+                const bool stillClosing =
+                    // a frame change puts the two y's in different frames, so
+                    // the guard abstains rather than kill on a number it cannot
+                    // compare
+                    s.frame != c.frame
+                    || std::fabs(yPort - p->cy)
+                           < std::fabs((double)s.y - p->cy);
+                if (!stillClosing)
+                    DIE("portal/hairline-dodge", p);
+            }
             continue;
         }
         // [2026-08-21 r52] **A gravity portal right after a rotation-frame
