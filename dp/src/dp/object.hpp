@@ -328,11 +328,20 @@ inline bool hazardHit(const Obj* o, double px, double py, double half,
         // lab: flags-levelsettings-branches-2026-09-01.md 3.1
         if (hRect >= 0.0 && !g_fixRadiusCollision) {
             // GD branch B, exact. The rig puts the true boundary at the
-            // dumped radius itself (+-0.01), so the only addend is the flat
-            // float-drift allowance -- NOT the caller's per-mode sawAdd,
-            // whose values (robot +0.10 / ball -0.05) were fitted to the old
-            // nearest-point reading and do not transfer to this shape.
-            const double r = o->radius + margin + kSawMargin;
+            // dumped radius itself (+-0.01), so the addend is the per-mode one
+            // measured for the nearest-point form -- which is what this is.
+            // It used to be a flat kSawMargin here, on the grounds that
+            // sawMarginFor's values "were fitted to the old nearest-point
+            // reading and do not transfer to this shape". They do: `ex*ex +
+            // ey*ey < r*r` IS the distance from the circle's centre to the
+            // player's rect, the same quantity those sweeps measured.
+            // The flat +0.05 was killing balls inside their own measured
+            // tolerance (GD survives a graze at r - 0.05, lv12 t=16,797):
+            //   lv11 t=11,176  corner 21.6425 against 21.650   0.007 px
+            //   lv15 t=14,360  corner 32.3054 against 32.350   0.045 px
+            // both of them refaudit over-kills -- the model killing a player
+            // GD flies past with no divergence anywhere before it.
+            const double r = o->radius + margin + sawMarginFor((uint8_t)mode);
             const double ex = std::fabs(dx) - hRect, ey = std::fabs(dy) - hRect;
             if (ex < 0.0 && ey < 0.0) return true;      // centre inside rect
             return ex * ex + ey * ey < r * r;           // nearest corner
