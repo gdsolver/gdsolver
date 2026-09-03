@@ -262,11 +262,26 @@ def read_result(txt: str, timed_out: bool = False) -> dict:
         elif timed_out:
             why = "stuck: out of wall time"
     rec = re.search(r"^level record changed: (.*)$", txt, re.M)
+    # The audit line is written when the SESSION closes. A run the harness killed
+    # at its wall-clock budget never gets there, and reporting that absence as a
+    # leak is a false alarm on the one gate that must stay believable: on
+    # 2026-09-03 a budget-killed lv22 smoke printed `RECORD GATE LEAKED (?)` while
+    # the worker's save file had not been written since 2026-08-29. So the two
+    # cases are named differently -- a session that ENDED and still wrote no audit
+    # line is a real anomaly and keeps failing the run; one that was killed has no
+    # verdict at all, in either direction.
+    ended = bool(re.search(r"^(session_end|suite: done)", txt, re.M))
+    if rec:
+        record = rec.group(1)
+    elif ended:
+        record = "MISSING (session ended without the audit line)"
+    else:
+        record = "no-audit (killed before session end)"
     return {"cleared": saved, "why": why, "iters": len(iters),
             "deepest_t": max((d[0] for d in deaths), default=-1),
             "deepest_x": max((d[1] for d in deaths), default=-1.0),
             "fx": len(re.findall(r"\[fixup\] t=\d+ x=", txt)),
-            "record": rec.group(1) if rec else "?",
+            "record": record,
             # The last [fp] is the state the run ended in -- the cheapest single
             # value to diff two runs by (see logFingerprint in repair.hpp).
             "fp": fps[-1] if fps else ""}
@@ -291,7 +306,12 @@ def report(results: list[dict], base: dict, a) -> int:
               f"iters={r['iters']:<4}{mark}")
         if not r["cleared"]:
             bad.append(f"lv{r['lv']}: {r['why']}")
-        if r["record"] != "none" and not r["record"].startswith("none"):
+        if r["record"].startswith("no-audit"):
+            # No verdict either way -- say so, and do not add a second failure to
+            # a run that is already failing for the reason it was killed.
+            print(f"lv{r['lv']:<3} record gate: {r['record']} -- this run says "
+                  f"nothing about the gate")
+        elif r["record"] != "none" and not r["record"].startswith("none"):
             bad.append(f"lv{r['lv']}: RECORD GATE LEAKED ({r['record']})")
 
     # Count the result lines. A worker that hung or crashed reports nothing at
