@@ -7240,7 +7240,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                         gapY, (double)c.y, p->cy, p->hh, pHalfP,
                         (int)c.flip, (int)c.frame, pRotHere,
                         p->oriented ? 1 : 0);
-        if (gapY >= 0.0) {
+        // GD's four comparisons in the AABB gate are all CLOSED (`comiss/ja`,
+        // no epsilon), so edges that touch exactly do overlap and the portal
+        // fires. The model had the open form and skipped that case.
+        // [2026-09-03, from the disassembly of collisionCheckObjects 0x214960]
+        if (gapY > 0.0) {
             if (changes && gapY < g_portalDodgeMin) {
                 // A portal you are still CLOSING ON is not one you dodged.
                 // [2026-09-03] The guard was asked on every tick of the
