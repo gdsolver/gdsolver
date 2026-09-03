@@ -7625,6 +7625,21 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 : (flyEnds == 2)   ? 0.25
                 : (flyEnds == 1)   ? kGravPortalScale
                                    : 1.0;
+            // --slopedbg: WHO halved the velocity. The portal loop prints
+            // `portfire` when a portal is taken and `portgate` with the
+            // `changes` verdict, but neither says whether the halving actually
+            // ran or what it ran on -- and at lv22 t=6,291 a ball tap's -3.4260
+            // reaches the state as -1.7130 with the only portal on that tick
+            // reporting changes=0. One of those two readings is wrong and the
+            // line says which.
+            if (g_slopeDbg)
+                std::printf("porthalve t=%lld uid=%d type=%d halves=%d "
+                            "isGrav=%d flyEnds=%d scale=%.4f vAt=%.4f "
+                            "vy=%.4f -> %.4f\n",
+                            (long long)K.t, p->uid, (int)p->type,
+                            halves ? 1 : 0, isGrav ? 1 : 0, flyEnds,
+                            portalScale, vAtPortal, (double)c.vy,
+                            halves ? vAtPortal * portalScale : (double)c.vy);
             if (halves) c.vy = (float)(vAtPortal * portalScale);
             if (isGrav) {
                 // r101: both bodies in the same box = flipGravity twice -> up
