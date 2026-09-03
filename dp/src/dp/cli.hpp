@@ -81,6 +81,11 @@ inline int cliMain(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--touch-from-anchor")) g_touchFromAnchor = true;
         if (!std::strcmp(argv[i], "--memstat")) g_memStat = true;
+        // --shiftstat: one line per moving object saying which recorded row the
+        // model reads for it (dynamics.hpp). Single-threaded paths only -- the
+        // "said it already" flag it keeps is not synchronised, so use it on
+        // --replay, not on a threaded search.
+        if (!std::strcmp(argv[i], "--shiftstat")) g_shiftStat = true;
         // Instrumentation only (dp/clearance.hpp). Reads the children after they
         // are stepped and keyed; never feeds anything back into the search.
         if (!std::strcmp(argv[i], "--clearprobe")) g_clearProbe = true;

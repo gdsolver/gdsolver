@@ -386,6 +386,16 @@ inline bool g_trigRaw = false;
 // --dyndbg <uid>: dump one moving object's placement inputs at load (see the
 // print near the fireT resolution).
 inline int g_dynDbg = -1;
+// --shiftstat: one `shiftstat:` line per moving object, the first time it is
+// placed, saying which recorded row the model ends up reading for it.
+//
+// The re-timing (`tt = t - shift`) is PER OBJECT, so "the model is N rows behind
+// GD" has no single N -- which is exactly what stopped a blanket phase fix on
+// 2026-09-03 (uid 434 came out at shift=1, but shift=0 objects are a row nearer).
+// This counts the distribution over the objects a collision actually consumes,
+// so the size of the re-anchoring family is a number rather than an impression.
+// Diagnostic only: prints and changes nothing.
+inline bool g_shiftStat = false;
 struct Dynamics {
     // Stable storage: `snapObj` / `usedOrb` / `usedPad` hold raw Obj* across
     // ticks, so these must never reallocate after load. The rects are MUTATED
@@ -399,6 +409,10 @@ struct Dynamics {
     // the measurement (lv22's spider portal uid 1156). Parallel to objs; empty
     // in an old Dynamics, which reads as "never", i.e. the previous behaviour.
     std::vector<uint8_t> everRot;
+    // --shiftstat only: whether this object has already printed its line.
+    // Sized lazily so an old Dynamics (or a run without the flag) carries
+    // nothing.
+    std::vector<uint8_t> shiftSaid;
     std::vector<size_t> cur;                      // per-object cursor
     // which window each one belongs in, mirroring the static split
     enum Bucket : uint8_t { NEAR, PORT, PAD, ORB, SPEED, SLOPE };
@@ -548,6 +562,10 @@ struct Dynamics {
             // recFire minus the recorder's threshold lag.
             bool fired; int anchor, recAnchor; float fdx, fdy;
             double fdur; int lat, fease; double ferate;
+            // The re-timing this object ends up with, for --shiftstat. 0 means
+            // the re-timing branch was not taken at all, which is the same thing
+            // as "reads the recording on its own clock".
+            int shiftUsed = 0;
             if (m) {
                 fired = (mask & m) != 0;
                 anchor = fireHi; recAnchor = trigRecFire[i];
@@ -649,6 +667,7 @@ struct Dynamics {
                     && fireHi > recAnchor + 8;
                 if (trigRecFire[i] >= 0 && !(g_trigClosed && autoClosed[i])) {
                     const int shift = (anchor >= 0) ? (anchor - recAnchor) : 0;
+                    shiftUsed = shift;
                     int tt = t - shift;
                     // NOT frozen forever: an eternal freeze let ANY grazed box
                     // hold the whole descent open and the anchored solve
@@ -1059,6 +1078,34 @@ struct Dynamics {
                             "cy=%.3f hw=%.1f hh=%.1f on=%d\n",
                             t, objs[i].uid, (int)fired, (unsigned)m, cx, cy,
                             hw, hh, (int)onv);
+            // --shiftstat: `shiftstat:` once per object the first time it is
+            // placed (this is the DENOMINATOR -- the objects a collision
+            // consumes; decoration never reaches Dynamics at all), and
+            // `shiftnz:` the first time its re-timing is non-zero.
+            //
+            // TWO LINES ON PURPOSE. The first placement happens long before the
+            // controlling trigger fires, and until it does `anchor` is -1 and
+            // the shift reads 0 -- sampling only there says "every object is at
+            // shift 0", which is how the first version of this counter reported
+            // 2,094 of 2,094 while --shiftdbg had already shown uid 434 at
+            // shift=1. An object that never prints a `shiftnz:` line is the
+            // real shift-0 case.
+            if (g_shiftStat) {
+                if (shiftSaid.size() != objs.size())
+                    shiftSaid.assign(objs.size(), 0);
+                if (!(shiftSaid[i] & 1)) {
+                    shiftSaid[i] |= 1;
+                    std::printf("shiftstat: uid=%d bucket=%d t=%d\n",
+                                objs[i].uid, (int)bucket[i], t);
+                }
+                if (shiftUsed != 0 && !(shiftSaid[i] & 2)) {
+                    shiftSaid[i] |= 2;
+                    std::printf("shiftnz: uid=%d bucket=%d shift=%d t=%d "
+                                "anchor=%d recAnchor=%d\n",
+                                objs[i].uid, (int)bucket[i], shiftUsed, t,
+                                anchor, recAnchor);
+                }
+            }
             turnedBox(objs[i], bucket[i], (double)rotv,
                       i < everRot.size() && everRot[i] != 0);
             // a moving SLOPE carries its surface line (same rule as seek())
