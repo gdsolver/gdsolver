@@ -70,6 +70,13 @@ constexpr double kCubeInner = 5.0;  // side/ceiling kill box
 // the hold, i.e. a fresh press. Holding through a landing does NOT re-jump.
 // The model's cube already tests the rising edge (`input && !s.action`), so
 // that comes for free.
+// CONFIRMED WITH THE GAME (2026-09-03), after step.hpp had spent two weeks
+// asserting the opposite on the strength of a citation that no longer resolves:
+// on calib_holdjump_robot (flat ground, one press at t=30, never released) the
+// robot jumps at t=31 and is still standing on the floor at t=600, while the
+// cube on the identical rig bounces five times in the same window. The gate is
+// +0x986 next to m_jumpBuffered (updateJump 0x38ba3c..0x38ba51), cleared by the
+// arm that jumps (0x38c728) and restored only by releaseButton (0x398260).
 constexpr double kRobotGScale = 0.9;
 constexpr double kRobotJumpScale = 0.5;
 constexpr int kRobotHoverTicks = 67;

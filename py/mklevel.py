@@ -2013,6 +2013,45 @@ def build_empty() -> str:
     return header() + ";"
 
 
+def build_holdjump(mode: str, mini: bool = False, speed: int = 0) -> str:
+    """Hold the button from tick 0 and see what the mode does about it.
+
+    Header only: GD's own ground (world y=90) is solid across the whole level,
+    so this is a flat run with nothing on it and the mode chosen at the start
+    rather than by a portal -- no portal tick, no size change, nothing else that
+    could account for a jump.
+
+    The question it exists for (brief-022): the CUBE re-jumps on a button that is
+    merely HELD, and the model now mirrors GD's m_jumpBuffered to say so. For the
+    ROBOT the disassembly says it cannot -- updateJump's robot arm needs
+    [player+0x986] as well as m_jumpBuffered (0x38ba3c..0x38ba51) and clears
+    0x986 in the arm that jumps (0x38c728) -- while the model carries a
+    measurement claiming it does. The corpus cannot decide it: across all 22
+    verified plans there are 81 robot landings and NOT ONE of them has the button
+    held through (4 are rising edges, 77 have no press), so the answer has to be
+    asked of the game.
+
+    Read it off the trace: one jump and then a run along the floor means the
+    press is spent; a repeating bounce means the held level is enough.
+
+    The floor is laid at y=75 so its TOP FACE IS GD's OWN GROUND (world 90) --
+    the flat90 form, which runs to the end, and not the buried y=15 form that
+    kills the player at the spawn (see the Y_OFFSET note). It is here only for
+    length: a header-only level ends at x=919, which is 3 seconds and not enough
+    room for a second landing to be waited for.
+
+    The spike at the far end is what keeps the rig USABLE FROM THE MCP. A flat
+    level is completed by the very first attempt, and a session whose level was
+    completed stops polling cmd.txt (`g_started && !g_sessionOver`) -- the first
+    two builds of this rig came back as "the rerun never landed (session already
+    over?)" for exactly that reason. Dying is fine; finishing is not.
+    """
+    objs = floor_run(0, 12000, y=75.0)
+    objs.append(obj(SPIKE, 11400, GROUND_TOP + 15.0))
+    return (header(start_mode=mode, mini=mini, speed=speed) + ";"
+            + ";".join(objs) + ";")
+
+
 def build_flat() -> str:
     """For triage: a flat floor and nothing else."""
     return header() + ";" + ";".join(floor_run(0, 6000, y=GRID / 2)) + ";"
@@ -4009,6 +4048,10 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
     "rampjump": build_rampjump,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
+            "holdjump_cube": lambda: build_holdjump("cube"),
+            "holdjump_robot": lambda: build_holdjump("robot"),
+            "holdjump_ball": lambda: build_holdjump("ball"),
+            "holdjump_spider": lambda: build_holdjump("spider"),
             "empty": build_empty, "flat": build_flat,
             "minhdr": build_minhdr, "flat90": build_flat90,
             "flatfar": build_flatfar, "orbs": build_orbs,

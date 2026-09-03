@@ -1780,13 +1780,28 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // (GD jumps off the ceiling lane on a hold started 4 ticks earlier,
         // model sat still) -- and why every plan that holds through a landing
         // came back as a divergence the driver had to paper over.
-        // The cube -- and the ROBOT too (the 2026-08-17 measurement overrides the
-        // reading of the disassembly). The note at kRobotGScale read it as
-        // "m_jumpBuffered is also needed = fresh press", but lv22 t=15,878: a robot
-        // with the button held (the edge 30+ ticks earlier) lands, and on the next
-        // tick GD re-jumps with vy=+5.615 (= this speed's jump 11.23 x 0.5). The
-        // reading "buffered stays set while held" reconciles both. ball / spider /
-        // UFO remain edge-triggered, unmeasured.
+        // THE CUBE, AND NOT THE ROBOT. That was the other way round here until
+        // 2026-09-03, on the strength of "lv22 t=15,878: a robot with the button
+        // held lands and GD re-jumps with vy=+5.615". That citation cannot be
+        // checked any more -- t=15,878 is SHIP in today's gdref, because the
+        // solution has been re-solved since -- and the corpus cannot decide it
+        // either: across all 22 verified plans there are 81 robot landings and
+        // not one has the button held through it (4 rising edges, 77 with no
+        // press at all). So it was asked of the game, on a rig built for it
+        // (data/rigs/calib_holdjump_{robot,cube}.lvl -- header-only flat ground,
+        // one press at t=30, never released):
+        //   robot  jumps once at t=31 (vy=5.59), lands at t=195, and is STILL
+        //          sitting on the floor at t=600. No second jump.
+        //   cube   bounces continuously -- five jumps in 600 ticks, vy back to
+        //          +8..+11 every time. The same rig, so the negative above is
+        //          not the rig failing to see one.
+        // The disassembly says exactly that: updateJump takes m_jumpBuffered
+        // (player+0x985) straight for everything else, but for the robot
+        // (+0x9bd) it needs +0x986 as well (0x38ba3c..0x38ba51), and the arm that
+        // jumps clears +0x986 (0x38c728). Only releaseButton puts it back
+        // (`mov word ptr [rbx+0x985], 0` at 0x398260 clears both, and pushButton
+        // writes the pair). ball / spider / UFO stay edge-triggered and
+        // unmeasured -- this rig cannot answer for them (no ceiling to land on).
         // ...and NOT when this same press already spent itself on a ring:
         // lv22 t=10,352 presses, the spider orb fires at 10,353, the player is
         // grounded at 10,354 with the button still down through 10,356 -- and
@@ -1834,12 +1849,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // spent", which is what ringHold does for rings and nothing does for
         // whatever consumed the press at 20,234. Narrowing it by hand here would be
         // fitting, not measuring. Written up in brief-022.
-        // CUBE ONLY for the buffered half. The robot's gate in the binary is
-        // `m_jumpBuffered && m_stateRingJump`, and m_stateRingJump is set only by
-        // pushButton and cleared by every jump -- read straight, that says a robot
-        // cannot re-jump on a held button, which contradicts the lv22 t=15,878
-        // measurement the model already carries. That disagreement is measured
-        // with the game, not guessed at here.
+        // CUBE ONLY for the buffered half, and now for a measured reason rather
+        // than a cautious one: on calib_holdjump_robot the robot jumps once and
+        // stays on the floor for the next 400 ticks with the button still down,
+        // while the cube on the identical rig bounces five times. The binary
+        // agrees -- the robot's arm needs +0x986 on top of m_jumpBuffered and
+        // clears it when it jumps. See the block above for the whole reading.
         } else if (groundedNow && (input || (s.mode == 0 && s.jumpBuf))
                    && !gravPortalThisTick
                    && (!s.action
