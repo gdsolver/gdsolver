@@ -615,6 +615,30 @@ struct Dynamics {
                 fdur = autoDur[i]; lat = 0;
                 fease = autoEase[i]; ferate = autoErate[i];
             }
+            // --shiftstat, third line: the object's re-timing INPUTS, once, at
+            // the tick its controller first counts as fired. This is where the
+            // shift is actually decided, and it is the only place that can say
+            // WHY -- the touch branch above sets anchor = recAnchor outright, so
+            // a touch-controlled object with a recording is 0 by construction and
+            // every non-zero shift comes from the autonomous branch, where the
+            // model's own computed fireT is held against the recording's first
+            // motion (trigRecFire - recLag).
+            if (g_shiftStat && fired) {
+                if (shiftSaid.size() != objs.size())
+                    shiftSaid.assign(objs.size(), 0);
+                if (!(shiftSaid[i] & 4)) {
+                    shiftSaid[i] |= 4;
+                    std::printf("shiftres: uid=%d bucket=%d branch=%s anchor=%d "
+                                "recFire=%d recLag=%d shift=%d ease=%d "
+                                "rate=%.3f dur=%.3f dx=%.3f dy=%.3f t=%d\n",
+                                objs[i].uid, (int)bucket[i],
+                                m ? "touch" : "auto", anchor, trigRecFire[i],
+                                (i < recLag.size() ? recLag[i] : -1),
+                                (anchor >= 0 ? anchor - recAnchor : 0),
+                                fease, ferate, fdur, (double)fdx, (double)fdy,
+                                t);
+                }
+            }
             if (fired) {
                 // [2026-08-26] A touch the STATE plans that the RECORDING never
                 // made. With a recording present the branch below replays it

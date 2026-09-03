@@ -433,11 +433,35 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                                            (double)q.cy - (double)sm[0].cy);
                         break;
                     }
+                // CLOSEST n, not the first one that reaches `moved`. The
+                // threshold form loses to the recording's own precision: cx is
+                // written with three decimals, so `moved` carries up to 5e-4 of
+                // rounding while the epsilon allowed 1e-6, and one rounded digit
+                // pushes the answer a whole tick out.
+                //
+                // uid 434 (lv22's spider portal, autoD=(-15,0), dur 120, ease 1
+                // at rate 2) is the case that showed it. Its recorded
+                // displacement at the first row is 0.019; the curve gives
+                // 0.01875 at n=3 and 0.03333 at n=4, so the threshold rejected
+                // the right answer by 0.00025 px -- a quarter of the recording's
+                // own last digit -- and returned 4. The comment above this block
+                // already said the true lag was 3.
+                // Confirmed against the WHOLE ramp rather than its first row:
+                // fitting the analytic curve to all 118 recorded samples, the
+                // start at recFire-3 matches to 0.0003 px worst while every
+                // neighbouring tick is out by 0.248 px or more. That start is
+                // t=754, which is also the tick the model's own trigger says it
+                // fired -- so the object's shift becomes 0 and it stops reading
+                // the recording a tick in the past.
+                int bestN = lag;
+                double bestErr = 1e18;
                 for (int n = 1; n <= lag; ++n) {
                     const double e = gdEase(tit->second.anease,
                                             tit->second.anerate, (double)n / dur);
-                    if (full * e >= moved - 1e-6) { lag = n; break; }
+                    const double err = std::fabs(full * e - moved);
+                    if (err < bestErr) { bestErr = err; bestN = n; }
                 }
+                lag = bestN;
             }
         }
         L.dyn.recLag.push_back(lag);
