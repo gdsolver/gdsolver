@@ -300,7 +300,16 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                     // x=28,783..29,001 hangs off that chain. Replays of all 21
                     // are bit-identical, but the SEARCH is not proven, so the
                     // default stays as it was until a regression says otherwise.
-                    if (g_touchFromAnchor && !t2->second.spawn) continue;
+                    // A row only fires from a chain if it is SPAWN-fired. This
+                    // filter was here already but opt-in behind
+                    // --touch-from-anchor, so by default the walk followed
+                    // autonomous Moves as well -- and lv19's group 96 is what
+                    // that costs: the touch chain absorbed uid14066's -75 (an
+                    // x-crossing Move) on top of uid13925's +36 and reported
+                    // the NET, -39, over uid14066's duration. GD does neither:
+                    // it raises the group 36 and then drops it 75, which the
+                    // recording shows to the decimal (174.5 -> 210.5 -> 135.5).
+                    if (!t2->second.spawn) continue;
                     // Duration belongs to the hop that actually MOVES something.
                     // The spawn trigger in front of lv19's door carries 0.5 s of
                     // its own, and adding that would stretch the "still opening"
@@ -449,6 +458,15 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
                 const auto t2 = trig.find(uid);
                 if (t2 != trig.end()) {
                     if (t2->second.target == 0) continue;
+                    // Same rule as the touch walk, which this one lacked
+                    // entirely: every trigger sitting in a group was followed
+                    // whatever fires it. lv19's uid13827 is an id-1049 TOGGLE
+                    // whose target group 101 contains the Move uid14066, so the
+                    // walk entered it and carried uid14066's -75 into group 96
+                    // a second time -- ady -150 against a -75 trigger, and the
+                    // anchor taken from the Toggle at cx=28,305 instead of the
+                    // Move at 28,862, 557 px early.
+                    if (!t2->second.spawn) continue;
                     const bool moves = (t2->second.ox != 0.0 || t2->second.oy != 0.0);
                     const double d2 = t2->second.dur * 240.0;
                     const bool longer = moves && d2 >= it.dur;

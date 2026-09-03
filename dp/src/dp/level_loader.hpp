@@ -209,8 +209,13 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                                        c.ease, c.erate});
             }
         // Second pass for the anchor's own move: the anchor is only known once
-        // every controller has been seen, and one trigger can reach the same
-        // object down two chains (so this accumulates rather than assigns).
+        // every controller has been seen. This accumulates because a group can
+        // legitimately be moved by more than one controller -- what it must NOT
+        // absorb is the same controller twice, which is what an untyped walk
+        // produced (a Toggle's target group was followed as though it spawned
+        // the triggers inside it, so lv19's uid14066 arrived down two chains
+        // and its -75 was counted as -150). The edges are typed at the walk
+        // now; this stays a sum for the real multi-controller case.
         for (auto& kv : trigOf) {
             TrigOf& e = kv.second;
             if (e.aAnchor < 0) continue;
@@ -272,6 +277,21 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                                 && !noopTouch;
         const bool autoCtl = (tit != trigOf.end()) && !controlled
                              && tit->second.aAnchor >= 0;
+        // --dyndbg: what the trigger walk decided for this object. The walk is
+        // the one place where a wrong edge turns into a wrong offset, a wrong
+        // duration and a wrong anchor at once, and reading those back out of a
+        // trajectory is guesswork -- lv19's group 96 took a reconstruction in
+        // Python that could not reproduce the loader's own answer before this
+        // line existed. Anyone touching the walk should diff this across the
+        // corpus before and after.
+        if (g_dynDbg && tit != trigOf.end())
+            std::printf("ctl: uid=%d mask=%u dx=%.2f dy=%.2f dur=%.3f "
+                        "aAnchor=%d adx=%.2f ady=%.2f adur=%.3f "
+                        "autoMoves=%d noopTouch=%d controlled=%d autoCtl=%d\n",
+                        o.uid, tit->second.mask, tit->second.dx, tit->second.dy,
+                        tit->second.dur, tit->second.aAnchor, tit->second.adx,
+                        tit->second.ady, tit->second.adur, autoMoves ? 1 : 0,
+                        noopTouch ? 1 : 0, controlled ? 1 : 0, autoCtl ? 1 : 0);
         const auto it = (gt && o.uid >= 0) ? gt->find(o.uid) : GroupTimeline::const_iterator();
         const bool timed = gt && o.uid >= 0 && it != gt->end() && !it->second.empty();
         // A turned object with a computable orbit belongs in dyn even with no
