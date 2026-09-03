@@ -226,9 +226,11 @@ inline uint64_t keyOf(const State& s) {
            // The flap buffered on the portal's tick (State::pFlap). Same (y,vy)
            // but different behaviour next tick, so it goes in the key.
            ^ (s.pFlap ? 0x9E3779B97F4A7C15ull : 0)
-           // [D9] Leaving a surface in a rotated frame (State::pBallOff). Same
-           // (y,vy), but whether -1.000 is written next tick differs.
-           ^ (s.pBallOff ? 0xC2B2AE3D27D4EB4Full : 0)
+           // [D9, REMOVED 2026-09-03] `pBallOff` had a term here for the same
+           // reason pFlap does. The rule it keyed is gone (see State), and
+           // dropping the term is bit-identical for every state that ever
+           // existed: it contributed only when the flag was set, and the flag
+           // was never set anywhere in the 22 verified solutions.
            // [r102] one-shot skip of the terminal clamp (State::pNoTerm)
            ^ (s.pNoTerm ? 0x94D049BB133111EBull : 0)
            // [2026-08-25] GD's velocity-limit exemption (State::boost). Same

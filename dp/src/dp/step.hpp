@@ -693,7 +693,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // ring that spends the press).
     c.jumpBuf = (uint8_t)(input ? 1 : 0);
     c.pFlap = 0;   // 1-tick lifetime (see the note on State::pFlap)
-    c.pBallOff = 0;   // same (State::pBallOff)
     c.pExitVy = 0.f;  // same (State::pExitVy, r93)
     c.pNoTerm = 0;    // same (State::pNoTerm, r102)
     // The velocity-limit exemption is swing-scoped for now (State::boost):
@@ -1846,7 +1845,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // for a 3-tick ride, exactly. The sign is **the pre-warp orientation**
             // (an uphill launch is + when upright) -- not the orientation after the
             // warp flipped it.
-            // A pending carried for 1 tick (same shape as pBallOff; also in the key).
+            // A pending carried for 1 tick (same shape as pFlap; also in the key).
             if (s.onSlope && (double)s.slopeM != 0.0) {
                 const double mTravW =
                     (double)s.slopeM
@@ -2230,18 +2229,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             }
         }
         if (!ballFlipped) c.vy = (float)(vpNew * gsign);
-        // [2026-08-19 D9] **In a rotated frame, vy := -/+1.000 on the tick after
-        // leaving the face**. The point is to write it **after** the position
-        // update (above) -- GD's world x moves only 0.040 on this tick (0.225 if
-        // it followed the ladder), and from the next tick on it sits on the
-        // regular ladder at 1.129x0.225 = 0.254.
-        // The measured pair (both ball, leaving the face by gravity flip; lv22's
-        // flip source is gravity portal uid13833 type=4 -- slopedbg's portfire
-        // names it):
-        //   lv16 t=4,237 (gf=0): next tick -0.129, then -0.258/-0.387 ...
-        //   lv22 t=6,307 (gf=1): next tick **-1.000**, then -1.129/-1.258 ...
-        // The discriminator is gf (rotation frame). No sample on the gf=3 side yet.
-        if (s.pBallOff && c.mode == 2) c.vy = (float)(-1.0 * gsign);
+        // [2026-08-19 D9, REMOVED 2026-09-03] `if (s.pBallOff && c.mode == 2)
+        // c.vy = -1.000 * gsign;` used to sit here -- the tick after a ball left
+        // its face through a gravity flip in a rotated frame. The game has no
+        // such write (see State's note where the field was), so the ball now
+        // simply keeps the ordinary ladder the lines above produced: at lv22
+        // t=6,292-4 that is -0.0650 / -0.1940 / -0.3230, which is what GD
+        // reports.
         // FLIP-ON-HEAD-HIT arming (id 2866). Same START-of-tick position the
         // force field uses -- measured on lv22: GD's counter goes positive on
         // the tick whose PRE-move x first overlaps the box (t=2,707, pre-move
@@ -9263,35 +9257,26 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             c.dx = dxForSpeedId(sp->id);
         }
     }
-    // [2026-08-19 D9] The leave-face mark. In a rotated frame, when **the ball
-    // loses grounding on the same tick as a gravity flip**, -1.000 is written
-    // into the next tick's vy (applied in the `s.pBallOff` branch). The point is
-    // to check **at the end of the tick** -- the flip's source is a gravity
-    // portal, and the portal pass runs after the physics.
-    // **Flips from taps/orbs/pads are excluded.** Measured lv22 t=6,140 (gf=1,
-    // ball, og 1->0, ud 0->1) is a tap, and GD emits **+3.426** (the ball's tap
-    // value) on that tick, +3.555 the next -- the normal ladder. No -1.000.
-    // Without the gate, lv22's tracking shrinks 18,948->18,904.
-    // --slopedbg: SAY WHEN IT ARMS. D9 is the one rule in this family with no
-    // counterpart in the binary -- every writer of `this+0x9a0` was enumerated
-    // on 2026-09-03 and not one of them writes a fixed +-1.0 (the nearest,
-    // postCollision 0x38da69, writes the RECORDED slope velocity on leaving a
-    // ramp, and its gate is "was on a slope, is not now", not a gravity flip).
-    // Its own positive witness (lv22 t=6,307, an older worldline) cannot be
-    // re-run, and today's in-situ arms at t=6,291 -- the same level, frame,
-    // portal and mode -- have GD writing +0.0645 then -0.0650 with no -1.000
-    // anywhere. So the rule is under suspicion but NOT removed here: removing
-    // it needs the game, and this print is what lets the corpus be counted
-    // without it.
-    if (c.mode == 2 && c.frame != 0 && s.grounded && !c.grounded
-        && c.flip != s.flip && !impulsedThisTick) {
-        if (g_slopeDbg)
-            std::printf("balloff t=%lld x=%.2f y=%.3f frame=%d flip=%d->%d "
-                        "vy=%.4f\n",
-                        (long long)K.t, (double)c.xAbs, (double)c.y,
-                        (int)c.frame, (int)s.flip, (int)c.flip, (double)c.vy);
-        c.pBallOff = 1;
-    }
+    // [2026-08-19 D9, REMOVED 2026-09-03] The leave-face mark used to arm here:
+    // `c.mode == 2 && c.frame != 0 && s.grounded && !c.grounded && c.flip !=
+    // s.flip && !impulsedThisTick` set `c.pBallOff`, and the next tick wrote
+    // vy := -1.000. Four independent reasons to take it out, none of them a
+    // preference:
+    //   binary  -- every writer of `this+0x9a0` was enumerated on 2026-09-03
+    //     (the 42 setYVelocity xrefs included) and not one writes a fixed
+    //     +-1.0. The nearest, postCollision 0x38da69, writes the RECORDED slope
+    //     velocity on leaving a ramp, gated on "was on a slope, is not now" --
+    //     not on a gravity flip.
+    //   positive witness -- lv22 t=6,307 belonged to a worldline that has been
+    //     re-solved away; the verified solution is in free fall there.
+    //   negative witness -- lv16 t=4,237 (GD 0.0000, then -0.129/tick) has to
+    //     keep matching, and does: it is Section A of the ball/portal table.
+    //   in situ -- five arms at the exact configuration this fired in (lv22,
+    //     rotated frame, the ball leaving the receding block through gravity
+    //     portal uid13833) have GD writing plain gravity at 6,292 (-0.0650) and
+    //     -1.000 nowhere.
+    // Cost of keeping it: zero firings across the 22 verified solutions, so its
+    // removal is bit-identical on the corpus and shows only where it was wrong.
     // [2026-08-21 r52] Carry "the tick the rotation frame changed" one tick
     // forward. Used only by the next tick's gravity-portal gate (the note at the
     // declaration).

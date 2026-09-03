@@ -199,11 +199,16 @@ struct State {
     // 1-tick lifetime. The anchor (--start) does not carry it -- a documented
     // hole only when a section head lands on the 1 tick right after the portal.
     uint8_t pFlap = 0;
-    // [2026-08-19 D9] Marks the tick on which, in a rotated frame, the ball left
-    // its surface through a gravity flip. On the next tick GD alone writes
-    // vy := -1.000 (measured where pBallOff is applied). Same 1-tick lifetime
-    // and not-carried-by-the-anchor hole as pFlap.
-    uint8_t pBallOff = 0;
+    // [2026-08-19 D9, REMOVED 2026-09-03] `pBallOff` used to mark the tick on
+    // which a ball left its surface through a gravity flip in a rotated frame,
+    // so that the next tick could write vy := -1.000. There is no such write in
+    // the game: every writer of PlayerObject's m_yVelocity was enumerated (the
+    // 42 setYVelocity xrefs included) and not one of them writes a fixed +-1.0.
+    // Its positive witness (lv22 t=6,307) belonged to a worldline that has been
+    // re-solved away, its negative witness (lv16 t=4,237) is Section A of the
+    // ball/portal table, five in-situ arms at the identical configuration have
+    // GD writing plain gravity instead, and the rule fired ZERO times across the
+    // 22 verified solutions. Do not reintroduce it without a live measurement.
     // [2026-08-22 r102] Marks hitting a black orb (drop ring) WHILE RISING AT
     // vp >= 2.0. Skips the next tick's terminal clamp exactly once (the
     // calibration-rig dropair sweep is in kRingDrop's note). Same 1-tick
@@ -234,7 +239,7 @@ struct State {
     uint8_t boost = 0;
     // [2026-08-21 r93] Marks the tick on which a warp interrupted a ride = THE
     // RAMP'S SLOPE-EXIT LAUNCH VALUE TO EMIT ON THE NEXT TICK (0 = none). Same
-    // 1-tick lifetime as pFlap / pBallOff, not carried by the anchor. It holds
+    // 1-tick lifetime as pFlap, not carried by the anchor. It holds
     // a value because by the next tick the ride's information (slopeT) is
     // already gone.
     float pExitVy = 0.f;
