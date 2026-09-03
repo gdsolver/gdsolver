@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "dp/frames.hpp"
 
 namespace dp {
@@ -484,6 +484,16 @@ struct Dynamics {
     // 0.002 px (py/trigger_curve_fit.py's sibling check).
     struct AutoPart { int trig; float dx, dy; double dur; int ease; double erate; };
     std::vector<std::vector<AutoPart>> autoParts;
+    // Was this object's recording REPLACED by the computed orbit (g_rotSplit)?
+    // The split stores `entry_C + R(theta)*rel` and drops `C(t) - entry_C`
+    // -- level_loader's own words, "recorded = orbit + the centre's own
+    // translation", with the translation subtracted out at the fit check. The
+    // only path that ever added it back sits behind g_rotCompute, which is
+    // false and which no flag can set, so for these objects the translation
+    // was silently lost. They share their move controllers with their centre
+    // (the split refuses them otherwise), so their own autoParts IS that
+    // translation; this marks them so the recording arm can add it.
+    std::vector<uint8_t> rotSplit;
     // The TOUCH chains kept per box (trig = the box's State::trig bit), where
     // trigDx/trigDy above are their sum. The sum is enough for a door -- one
     // box, one move -- and undecidable for the switch band, where YELLOW boxes
@@ -875,6 +885,35 @@ struct Dynamics {
                             cy += p.dy;
                         }
                     }
+                    // The other half of the g_rotSplit decomposition. The
+                    // samples carry `entry_C + R(theta)*rel` -- the orbit about
+                    // a STATIONARY centre -- and the loader subtracted the
+                    // centre's own translation out to get there ("recorded =
+                    // orbit + the centre's own translation", at the fit check).
+                    // Nothing added it back: the one path that would is behind
+                    // g_rotCompute, which is false and which no flag sets, so
+                    // every split object has been running without its
+                    // translation since 7c6daa1. The split refuses any object
+                    // that does not share its move controllers with its centre,
+                    // so this object's own autoParts IS `C(t) - entry_C`, each
+                    // controller on its own crossing.
+                    if (i < rotSplit.size() && rotSplit[i]) {
+                        for (const AutoPart& p : autoParts[i]) {
+                            const int f = g_autoTrig[(size_t)p.trig].fireT;
+                            if (f < 0 || t < f) continue;
+                            const double e = (p.dur > 0.0)
+                                ? gdEase(p.ease, p.erate, (double)(t - f) / p.dur)
+                                : 1.0;
+                            cx += p.dx * e;
+                            cy += p.dy * e;
+                        }
+                    }
+                    if (g_dynDbg == objs[i].uid && (t % 40 == 0))
+                        std::printf("armdbg t=%d uid=%d arm=recording split=%d "
+                                    "parts=%zu cx=%.3f cy=%.3f\n",
+                                    t, objs[i].uid,
+                                    (int)(i < rotSplit.size() ? rotSplit[i] : 0),
+                                    autoParts[i].size(), cx, cy);
                 } else {
                     // The closed form. Either there is no recording at all (the
                     // door nobody has opened yet) or --trigclosed is on and this
@@ -958,6 +997,25 @@ struct Dynamics {
                             cy += p.dy * e;
                         }
                     }
+                    // DIAGNOSTIC (not for landing): which branch served this
+                    // object, and what its parts were clocked by.
+                    if (g_dynDbg == objs[i].uid && (t % 40 == 0))
+                        std::printf("armdbg t=%d uid=%d branch=%s m=%u "
+                                    "parts=%zu recAutoObj=%d anchor=%d "
+                                    "cy=%.3f\n", t, objs[i].uid,
+                                    recAutoObj ? "recAuto"
+                                        : (m || autoParts[i].empty())
+                                            ? "collapsed" : "superpos",
+                                    (unsigned)m, autoParts[i].size(),
+                                    (int)recAutoObj, anchor, cy);
+                    if (g_dynDbg == objs[i].uid && t == 11720)
+                        for (const AutoPart& p : autoParts[i])
+                            std::printf("armdbg   part trig=%d uid=%d cx=%.1f "
+                                        "fireT=%d d=(%.2f,%.2f) dur=%.1f\n",
+                                        p.trig, g_autoTrig[(size_t)p.trig].uid,
+                                        g_autoTrig[(size_t)p.trig].cx,
+                                        g_autoTrig[(size_t)p.trig].fireT,
+                                        p.dx, p.dy, p.dur);
                 }
             }
             // --shiftdbg <uid> also samples the object's EVALUATED position
@@ -1375,3 +1433,5 @@ struct Dynamics {
 };
 
 }  // namespace dp
+
+

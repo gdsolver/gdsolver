@@ -399,6 +399,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                                           : std::vector<Dynamics::AutoPart>{});
         L.dyn.touchParts.push_back(controlled ? tit->second.tparts
                                               : std::vector<Dynamics::AutoPart>{});
+        L.dyn.rotSplit.push_back(0);   // set by the g_rotSplit stage below
         // When did this object first move in the recording? That tick is what
         // the replayed trajectory is re-timed against (see applyTriggers).
         int recFire = -1;
@@ -1367,6 +1368,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             if (worst > 0.1) { ++refusedFit; continue; }
             worstFit = std::max(worstFit, worst);
             L.dyn.samples[i] = std::move(gen);
+            if (i < L.dyn.rotSplit.size()) L.dyn.rotSplit[i] = 1;
             ++done;
         }
         if (done || refusedFit || refusedNoAuto)
