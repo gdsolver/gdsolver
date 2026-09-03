@@ -1918,6 +1918,21 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     ballFlipFor(useDx) * (c.mini ? kMiniImpulse : 1.0)
                     + bBonus;
                 c.vy = (float)(-bTap * (c.flip ? -1.0 : 1.0));
+                // --slopedbg: the tap's own inputs. Without them "the model
+                // wrote -1.713" cannot be told from "some other branch wrote
+                // -1.713", and the value does not factor by inspection: at
+                // lv22 t=6,291 it needs ballFlipFor to come out at 1.713 on a
+                // full-size ball, where 3.354 x a ring scale should be near
+                // 3.4. Print the terms rather than infer them.
+                if (g_slopeDbg)
+                    std::printf("balltap t=%lld frame=%d flip=%d->%d mini=%d "
+                                "dx=%.4f base=%.4f bonus=%.4f bTap=%.4f "
+                                "vy=%.4f uphill=%d slopeM=%.3f\n",
+                                (long long)K.t, (int)c.frame, (int)s.flip,
+                                (int)c.flip, (int)c.mini, (double)useDx,
+                                ballFlipFor(useDx), bBonus, bTap,
+                                (double)c.vy, bUphill ? 1 : 0,
+                                (double)s.slopeM);
                 ballFlipped = true;
                 ballFlippedThisTick = true;
             } else {
