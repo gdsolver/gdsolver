@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "dp/slopes.hpp"
 
 namespace dp {
@@ -3848,15 +3848,45 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // which is worth remembering: neither can reach a moving-surface
             // contact, so on this family they have no detection power at all.
             const double shipLandTol = s.onSlope ? 0.001 : kShipLandTol;
-            if (!c.grounded && (vpNow <= 0 || overtaking) && xOver
-                && prevFootP >= -shipLandTol && newFootP <= 0) {
+            // THE LANDING IS DECIDED IN THIS TICK'S GRAVITY FRAME, NOT THE ONE
+            // THE TICK STARTED IN. `gsign` is `s.flip` (step.hpp's decl), but a
+            // swing's tap has already flipped `c.flip` by the time this runs --
+            // the rHover block above says so in its own comment, "apply the
+            // previous tick's edge now", and it keeps a local `gsS` for exactly
+            // this reason. GD orders a substep buttons -> player update ->
+            // checkCollisions (survey A5), so on a tap tick the contact is
+            // resolved in the NEW frame.
+            //
+            // lv22 t=4,592 is the disagreement. GD lands on the block at
+            // y=390: it clamps to 405.000 = 390 + 15, zeroes vy through
+            // hitGround, and holds through the taps at 4,594 and 4,595. The
+            // model, still reasoning as flipped, takes its "foot" to be the
+            // HEAD at 405.403 + 15 = 420.403 -- 30 px from the face -- so
+            // prevFootP reads -30.403, the tolerance rejects it, and it lands a
+            // tick late at 4,593, by which time the same tap has become a
+            // launch to vy = +2.000. It ends 12.8 px out by t=4,632.
+            //
+            // Counted before landing (worktree swingland's counting arm, which
+            // evaluated the gate both ways on all 22 replays): the two frames
+            // disagree on exactly ONE tick in the whole corpus, this one, and
+            // `face` is already 390 there -- the frame changes the foot and the
+            // velocity, not which face was chosen. Only a swing's tap flips
+            // gravity mid-tick; a ship, UFO or wave flips from a portal or a
+            // pad, which is a different path, and lv22 is the only level with a
+            // swing.
+            const double gsL = c.flip ? -1.0 : 1.0;
+            const double prevFootL = ((double)s.y - gsL * pHalf - face) * gsL;
+            const double newFootL = ((double)c.y - gsL * pHalf - face) * gsL;
+            const double vpL = (double)c.vy * gsL;
+            if (!c.grounded && (vpL <= 0 || overtaking) && xOver
+                && prevFootL >= -shipLandTol && newFootL <= 0) {
                 // Used by the flight version of item 14 (seatFromPreLand). lv20
                 // t=21,983: on the UFO's landing tick, onto the ramp seat 222.90
                 // rather than the plate 222.35.
                 if (!landedThisTick) preLandY = c.y;
                 landedThisTick = true;
-                c.y = (float)(face + gsign * pHalf);
-                if (vpNow <= 0) {
+                c.y = (float)(face + gsL * pHalf);
+                if (vpL <= 0) {
                     c.vy = 0; CLAMP0O("fly/land", o);
                 } else {
                     // A rising floor RE-CATCHING a climbing ship (overtaking:
@@ -3867,7 +3897,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     // (= dcy/0.25), y glued to the lift again. See the
                     // carried-state catch in the flight integration above.
                     const double fv = (double)o->dcy / 0.25;
-                    if ((double)c.vy * gsign < fv * gsign)
+                    if ((double)c.vy * gsL < fv * gsL)
                         c.vy = (float)fv;
                 }
                 c.grounded = 1;
@@ -9615,3 +9645,4 @@ inline void markTouched(State& c, const StepCtx& K, double preY) {
 }
 
 }  // namespace dp
+
