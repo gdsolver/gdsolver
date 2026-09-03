@@ -175,8 +175,9 @@ inline int cliMain(int argc, char** argv) {
         // or neither; without them a door that only opens on contact reads as a
         // solid wall (see TouchTrig).
         if (!std::strcmp(argv[i], "--norevtoggle")) g_revToggle = false;
-        // --supporttol X: gap tolerance for staying supported (default 0.6,
-        // see kSupportTol's note)
+        // --supporttol X: gap tolerance for staying supported (default 0.01,
+        // and the surface's own |dcy| is added on top -- see kSupportTol's
+        // note)
         if (!std::strcmp(argv[i], "--supporttol"))
             kSupportTol = std::atof(argv[i + 1]);
         // --landtol X: penetration a landing allows (default 10.5, see
