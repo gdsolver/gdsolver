@@ -234,6 +234,26 @@ constexpr double kSwingFlipDamp = 0.8;
 // unchanged). The note is where L.dyn.samples gets filled. A provisional
 // prescription for lv22's 0.19px miss.
 inline double g_dynHazPad = 0.0;
+
+// THE LEVEL'S OWN COMPATIBILITY FLAGS (LevelSettingsObject). The mod writes
+// them beside objrects as `levelsettings.txt`; the loader picks the file up by
+// name, so nothing has to be threaded through a caller.
+//
+// Of the 22 official levels only lv22 has any of them set, and it has five
+// (lab: flags-levelsettings-branches-2026-09-01.md, collected for all 22 --
+// every other level is all-zero). All five are carried here because reading
+// four of them costs nothing and the next question about lv22 will want them;
+// only fixRadiusCollision has a reader today.
+//
+// fixRadiusCollision is kA39 at LevelSettingsObject+0x1cf, and
+// GJBaseGameLayer::playerCircleCollision (0x211df0) branches on it in its first
+// instruction: zero picks the player's RECT against the circle, non-zero picks
+// centre distance. See hazardHit.
+inline int g_fixRadiusCollision = 0;
+inline int g_fixGravityBug = 0;
+inline int g_fixNegativeScale = 0;
+inline int g_fixRobotJump = 0;
+inline int g_dynamicLevelHeight = 0;
 // --maxplayy <y>: GD's MAX GAMEPLAY Y, the world-y bound above which
 // checkCollisions declares the player out of bounds and (after two consecutive
 // ticks, latch at player+0xc38) destroys it with a NULL object

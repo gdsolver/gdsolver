@@ -73,7 +73,7 @@ inline int cliMain(int argc, char** argv) {
     int dbgLayers = 0;
     std::string snapLogPath;
     std::vector<std::string> groupsPaths;
-    std::string trigPath, grpPath, obbPath;
+    std::string trigPath, grpPath, obbPath, setPath;
     // y, vy, mode, held, grounded, flip (everything after that is zeroed)
     State init{(float)kFloorY, 0.f, 0, 0, 1, 0};
     // value-less flags get their own loop: the one below stops at argc-1 (every
@@ -236,6 +236,13 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--dyndbg")) g_dynDbg = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--triggers")) trigPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--objgroups")) grpPath = argv[i + 1];
+        // --levelsettings <file>: the level's LevelSettingsObject flags. Only
+        // lv22 has any of them set among the 22 official levels, and only
+        // fixRadiusCollision has a reader (hazardHit). Without the flag the
+        // loader looks for the file beside the objrects dump, which covers
+        // every caller that passes a real path; the in-process caller passes
+        // the level in memory, so it has to name the file.
+        if (!std::strcmp(argv[i], "--levelsettings")) setPath = argv[i + 1];
         // --obb <file>: GD's own corners for the turned objects (see loadObb).
         // Optional -- without it a turned hazard keeps the bound it has always
         // had, so a level with no obb dump cannot move.
@@ -725,6 +732,12 @@ inline int cliMain(int argc, char** argv) {
         g_autoTrig = loadAutoTriggers(trigPath, grpPath);
     }
     if (!obbPath.empty()) g_obb = loadObb(obbPath);   // before loadLevel reads it
+    // The flags decide the SHAPE of a circular hazard's test, so they have to
+    // be in before anything asks hazardHit anything.
+    if (setPath.empty()) setPath = settingsPathBeside(argv[1]);
+    if (!setPath.empty() && loadLevelSettings(setPath) && g_fixRadiusCollision)
+        std::printf("levelsettings: fixRadiusCollision=1 - circular hazards "
+                    "use centre distance (branch A) in this level\n");
     Level L = loadLevel(argv[1], groupsPaths.empty() ? nullptr : &gt,
                         g_touch.empty() ? nullptr : &g_touch,
                         g_autoTrig.empty() ? nullptr : &g_autoTrig);

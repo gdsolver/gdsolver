@@ -310,7 +310,23 @@ inline bool hazardHit(const Obj* o, double px, double py, double half,
     if (o->radius > 0.0) {
         const double dx = px - o->cx, dy = py - o->cy;
         const double hRect = sawRectHalfB(mode, mini);   // -1 when unmeasured
-        if (hRect >= 0.0) {
+        // WHICH BRANCH IS NOT A PROPERTY OF THE OBJECT -- IT IS THE LEVEL'S.
+        // GJBaseGameLayer::playerCircleCollision (0x211df0) branches on its
+        // first instruction, on LevelSettingsObject+0x1cf = kA39 =
+        // m_fixRadiusCollision, read off the LAYER:
+        //     kA39 == 0  ->  the player's RECT against the circle  (branch B)
+        //     kA39 != 0  ->  centre distance only                  (branch A)
+        // Of the 22 official levels only lv22 sets it, so every rig and every
+        // other level keeps branch B bit for bit -- including the 17 probes of
+        // 2026-08-28 that put movers on B, which were all measured at kA39=0.
+        // What that flag explains is the lv22 measurement those probes could
+        // not reproduce and which was shelved for it: the 2026-08-26 dome for
+        // uid710 vs the spider came out at 17.5..17.7 = 13.5 + 4, branch A's
+        // form. And lv22 t=934 is the same object saying it in a real replay --
+        // B kills the verified solution by 0.29 px at a near-diagonal approach
+        // (ex 2.227, ey 1.576 against r 3.02) where GD flies straight past.
+        // lab: flags-levelsettings-branches-2026-09-01.md 3.1
+        if (hRect >= 0.0 && !g_fixRadiusCollision) {
             // GD branch B, exact. The rig puts the true boundary at the
             // dumped radius itself (+-0.01), so the only addend is the flat
             // float-drift allowance -- NOT the caller's per-mode sawAdd,

@@ -1394,6 +1394,45 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
 // CLI never touches it, which is why its behaviour is unchanged (equiv suite).
 inline std::string g_levelCsv;
 
+// ---- the level's own compatibility flags --------------------------------
+// `levelsettings.txt`, written beside objrects by the mod (src/solver/
+// solver.hpp). Absent file = every flag 0, which is what 21 of the 22 official
+// levels actually have, so nothing changes for a caller that never passes one.
+//
+// The file is `key=value` per line. Unknown keys are ignored rather than
+// rejected: the dump grows a key whenever the survey finds another flag worth
+// carrying, and an older solver should not stop reading because of it.
+inline bool loadLevelSettings(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return false;
+    std::string ln;
+    while (std::getline(in, ln)) {
+        const size_t eq = ln.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string k = ln.substr(0, eq);
+        const int v = std::atoi(ln.c_str() + eq + 1);
+        if (k == "fixRadiusCollision")      g_fixRadiusCollision = v;
+        else if (k == "fixGravityBug")      g_fixGravityBug = v;
+        else if (k == "fixNegativeScale")   g_fixNegativeScale = v;
+        else if (k == "fixRobotJump")       g_fixRobotJump = v;
+        else if (k == "dynamicLevelHeight") g_dynamicLevelHeight = v;
+    }
+    return true;
+}
+
+// Where the settings live when nobody said: beside the objrects dump, with the
+// same suffix. `objrects.txt` -> `levelsettings.txt` for the mod's data dir,
+// `objrects_lv22.txt` -> `levelsettings_lv22.txt` for the lab's. Returns an
+// empty string when the argument is not a path at all -- the in-process caller
+// passes the level in memory and argv[1] is a placeholder, so THAT caller has
+// to pass --levelsettings explicitly.
+inline std::string settingsPathBeside(const std::string& objrectsPath) {
+    const size_t at = objrectsPath.rfind("objrects");
+    if (at == std::string::npos) return std::string();
+    return objrectsPath.substr(0, at) + "levelsettings"
+           + objrectsPath.substr(at + 8);
+}
+
 // The CLI's way in: the same parse, reading the dump the mod wrote to disk.
 inline Level loadLevel(const std::string& path, const GroupTimeline* gt = nullptr,
                 const std::vector<TouchTrig>* tt = nullptr,

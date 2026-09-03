@@ -153,6 +153,11 @@ inline void resetInvocationState() {
     kSupportTol = 0.01;
     g_startSpeedMul = 0.0;
     g_dynHazPad = 0.0;
+    g_fixRadiusCollision = 0;
+    g_fixGravityBug = 0;
+    g_fixNegativeScale = 0;
+    g_fixRobotJump = 0;
+    g_dynamicLevelHeight = 0;
     g_maxPlayY = 1e18;
     g_shiftDbgUid = -1;
     g_shiftDbgDone = false;
