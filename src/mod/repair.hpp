@@ -669,6 +669,17 @@ inline void addWorldArgs(std::vector<std::string>& a) {
             a.push_back(bp);
         }
     }
+    // The level's own compatibility flags, written beside objrects when the session opened.
+    // This one is NOT under dpWorld: kA39 changes the SHAPE of every circular hazard's test
+    // (centre distance instead of the player's rect against the circle -- see hazardHit), which
+    // is physics and not world state. The CLI finds the file next to the objrects path on its
+    // own; the in-process caller passes the level in memory and argv[1] is a placeholder, so
+    // here it has to be named. Levels without the file are unaffected: the loader leaves every
+    // flag at 0, which is what 21 of the 22 official levels actually have.
+    const std::string lset = std::string(DATA_DIR) + "/levelsettings.txt";
+    if (std::filesystem::exists(lset, ec)) {
+        a.push_back("--levelsettings"); a.push_back(lset);
+    }
     if (!g_cfg.dpWorld) return;
     const std::string trig = std::string(DATA_DIR) + "/triggers.txt";
     const std::string grp = std::string(DATA_DIR) + "/objgroups.txt";
