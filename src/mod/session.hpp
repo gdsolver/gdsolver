@@ -438,6 +438,10 @@ inline void loadConfig() {
             if (key == "restoreloopkeep") g_cfg.restoreLoopKeep = (val == "1");
             else if (key == "restoreloophold") cfgNum(key, val, g_cfg.restoreLoopHold);
             else if (key == "restoreloopcycle") g_cfg.restoreLoopCycle = (val == "1");
+            else if (key == "restoreloopclearq") g_cfg.restoreLoopClearQ = (val == "1");
+            else if (key == "restoreloopdrain") g_cfg.restoreLoopDrain = (val == "1");
+            else if (key == "restoreloopheap") cfgNum(key, val, g_cfg.restoreLoopHeapMB);
+            else if (key == "restoreloopdrainat") cfgNum(key, val, g_cfg.restoreLoopDrainAt);
             else if (key == "restoreloop") cfgNum(key, val, g_cfg.restoreLoop);
         }
         else if (key == "oobtest") g_cfg.oobTest = (val == "1");

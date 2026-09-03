@@ -240,6 +240,33 @@ struct Config {
     // not been touched for N iterations -- which is the one thing the search does
     // that this bench did not.
     bool restoreLoopCycle = false;
+    // The two control arms for what the bench does that the search does not.
+    // `restoreloopclearq=1`: drop m_queuedButtons every restore, as secRestoreFrom
+    // does -- resetLevel pushes one synthetic command per restore and
+    // removeReleasedButtons walks the whole queue.
+    // `restoreloopdrain=1`: pop cocos's autorelease pool every restore, standing in
+    // for the end of a frame this loop never reaches.
+    bool restoreLoopClearQ = false;
+    bool restoreLoopDrain = false;
+    // cfg `restoreloopheap=<MB>`: allocate and TOUCH that many MB before the
+    // loop starts and hold it for the whole bench, so the process runs with a
+    // heap the size the search ends up with (325 -> 545 MB over 584 layers)
+    // while the number of cumulative restores stays at zero.
+    //
+    // This is the arm that separates the two readings of the ramp. The section
+    // vectors are out (2026-09-03: the sort walks exactly 2,811 objects on every
+    // one of 584 layers while the per-restore cost goes 2,733 -> 6,841 us), and
+    // what is left is a fixed amount of work getting slower as the heap grows.
+    // If per-restore starts high here, the cause is the heap's SIZE and
+    // "cumulative restores" was only a correlate; if it starts low and still
+    // ramps, the restore itself is leaving something behind.
+    int restoreLoopHeapMB = 0;
+    // cfg `restoreloopdrainat=N`: pop the autorelease pool ONCE, after the Nth
+    // restore, instead of on every one. The buckets on either side of N then
+    // answer the follow-up: if the cost falls back after the drain, it tracks
+    // the LIVE heap (which is the locality reading); if it stays high, something
+    // persistent is left over that a drain does not reach.
+    int restoreLoopDrainAt = 0;
     // cfg `oobtest=1`: force the out-of-bounds latch (player+0x187) to 1 just
     // before the checkpoint is taken, so that the save/restore of it can be
     // tested at all. The latch is only set by a substep that is genuinely out

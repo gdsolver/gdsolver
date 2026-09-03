@@ -1,5 +1,8 @@
 // GJBaseGameLayer hook: tick control, fast loop, replay/serve, section solver, tracing.
 #include "mod/playlayer_helpers.hpp"
+// For PROCESS_MEMORY_COUNTERS's named fields -- the struct is only used through
+// GetProcAddress("K32GetProcessMemoryInfo"), so nothing links psapi.
+#include <psapi.h>
 
 using namespace p1;
 
@@ -11,27 +14,126 @@ using namespace p1;
 // cold objects cycled, array length, cumulative count: 4.3-5.1 ms throughout),
 // so this counter is what settles whether the growth is inside the restore at all.
 static double g_secRestMs = 0.0;
+// ...and the same total split in two, because "the restore got slower" is not yet
+// a place to look. A section restore is two GD calls: storeCheckpoint, which
+// copies the state out of the node's CheckpointObject, and resetLevel, which
+// rebuilds the level around it. The ramp has to sit in one of them, and which one
+// halves the candidate list: the copy is a read of a cold ~70 KB object (locality
+// of the node bank), the reset is GD's own O(level) work (effects, colours,
+// sections, spawn objects). Both accumulate over a layer and are reported beside
+// lrestms, whose remainder is this function's own tail.
+static double g_secStoreMs = 0.0;
+static double g_secResetMs = 0.0;
 
 // The process's working set, for putting the cost curve and the resident curve on
 // the same axis. Resolved dynamically so nothing has to link psapi: measured from
 // outside, 60,000 restores leave ~250 MB behind (~4 KB each), and the per-restore
 // cost tracks that growth -- but "tracks" has to be shown on one series, not
 // inferred from two runs.
-// Returns {current working set, peak working set} in MB. BOTH, because the first
-// version of this printed one number and it was the PEAK -- which is monotone by
-// definition, so correlating a cost against it proves nothing. Caught by putting
-// the mod's reading next to an external one (10,599 vs 737 MB) rather than by
-// reading the struct again.
+// {current working set, peak working set} in MB, through psapi's NAMED fields.
+// Two hand-rolled offset guesses got this wrong in both directions on 2026-09-02:
+// the first printed PeakWorkingSetSize as "current", the second printed
+// QuotaPeakPagedPoolUsage (a kernel pool quota, not physical memory) as "ws". The
+// numbers mattered -- read as a peak, the 10 GB looked like a monotone artefact
+// and was withdrawn; read correctly it is the LIVE working set during the loop,
+// which is a completely different hypothesis (something held until the frame ends,
+// not something transient). No third guess: the struct has names.
 static void procMemMB(size_t& cur, size_t& peak) {
-    using Fn = int(__stdcall*)(void*, void*, unsigned long);
+    using Fn = int(__stdcall*)(HANDLE, PROCESS_MEMORY_COUNTERS*, DWORD);
     static Fn fn = (Fn)GetProcAddress(GetModuleHandleA("kernel32.dll"),
                                       "K32GetProcessMemoryInfo");
-    struct PMC { unsigned long cb; unsigned long pf; size_t a[8]; } pmc{};
+    PROCESS_MEMORY_COUNTERS pmc{};
     pmc.cb = sizeof(pmc);
     cur = peak = 0;
     if (fn && fn(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-        peak = pmc.a[1] / (1024 * 1024);   // measured: this slot is the PEAK
-        cur = pmc.a[2] / (1024 * 1024);    // ...so the one after it is current
+        cur = pmc.WorkingSetSize / (1024 * 1024);
+        peak = pmc.PeakWorkingSetSize / (1024 * 1024);
+    }
+}
+
+// NOT counting the autorelease pool directly: CCPoolManager::getCurReleasePool is
+// private in this cocos and CCAutoreleasePool has no count(). The working set is
+// the proxy -- the pool is drained at the END OF A FRAME, so a loop that never
+// returns a frame keeps every autoreleased object it makes (candidate 1 of
+// notes/restore-growth-mechanism-2026-09-03.md: ColorAction::create, 168 B,
+// autoreleased, remade for every channel on every resetLevel), and that shows up
+// as live memory. The decisive test is the drain control arm, which needs no count.
+
+static size_t layerWsMB() {
+    size_t cur = 0, peak = 0;
+    procMemMB(cur, peak);
+    return cur;
+}
+
+static int runningActionsOn(cocos2d::CCNode* t) {
+    if (!t) return -1;
+    auto* d = cocos2d::CCDirector::sharedDirector();
+    if (!d || !d->getActionManager()) return -1;
+    return d->getActionManager()->numberOfRunningActionsInTarget(t);
+}
+
+// GD's section vectors: how many objects the restore's SORT walks, and how big
+// the pool behind them has grown. Read once per layer / per bench bucket.
+//
+// Why these two numbers and not a timer: PlayLayer::resetLevel is the ONLY caller
+// of GJBaseGameLayer::sortSectionVector (win 2.2081, 0x226fa0, one call site at
+// resetLevel+0xbd1), and that sort is the only part of a restore whose cost is
+// O(objects). Everything else the reset does to the sections is two
+// removeObjectFromSection calls -- on the two players, not in a loop.
+//
+// The layout, read off addToSection (0x226500) / removeObjectFromSection
+// (0x226d60) / sortSectionVector itself:
+//     +0x35b0  vector<vector<vector<GameObject*>*>*>   sections[i][j] -> leaf
+//     +0x3658  vector<vector<int>*>                    counts  [i][j] = LIVE size
+// and the same pair again at +0x35c8 / +0x3670 for the second family. A leaf is
+// only ever push_back'd; removal swaps the last live element into the hole and
+// decrements counts[i][j]. So the leaf's std::vector size is a HIGH-WATER MARK
+// and counts[i][j] is the live number -- the sort's own bound
+// (`movsxd rsi, [counts + j*4]`, then std::sort over rsi elements).
+//
+// That asymmetry is the whole point of measuring it. Add and remove are
+// symmetric on every arm (both dispatch on obj+0x40c == 0x718, obj+0x3a0 == 7 and
+// obj+0x280 the same way), so the maintenance CANNOT leak by itself: `live` can
+// only grow if something adds objects to sections without removing them. If
+// `live` is flat across a run, the restore ramp is not the section vectors and
+// this closes brief-023 (A) as a negative; if it climbs, the ramp has its
+// mechanism and the next question is who does the adding.
+// Takes the base pointer, not PlayLayer*, so the upcast is the compiler's job:
+// these offsets are GJBaseGameLayer's.
+static void sectionCensus(GJBaseGameLayer* layer, size_t& live, size_t& phys) {
+    live = phys = 0;
+    if (!layer) return;
+    const uint8_t* b = (const uint8_t*)layer;
+    // std::vector<T> element count, for an 8-byte or 4-byte T.
+    auto vecN = [](const uint8_t* v, size_t elem) -> size_t {
+        if (!v) return 0;
+        const uint8_t* beg = *(const uint8_t* const*)v;
+        const uint8_t* end = *(const uint8_t* const*)(v + 8);
+        if (!beg || !end || end < beg) return 0;
+        return (size_t)(end - beg) / elem;
+    };
+    const size_t fam[2][2] = {{0x35b0, 0x3658}, {0x35c8, 0x3670}};
+    for (const auto& f : fam) {
+        const uint8_t* secV = b + f[0];
+        const uint8_t* cntV = b + f[1];
+        const size_t nSec = std::min(vecN(secV, 8), vecN(cntV, 8));
+        const uint8_t* const* secB = *(const uint8_t* const* const*)secV;
+        const uint8_t* const* cntB = *(const uint8_t* const* const*)cntV;
+        if (!secB || !cntB) continue;
+        for (size_t i = 0; i < nSec; ++i) {
+            const uint8_t* inner = secB[i];
+            const uint8_t* ints = cntB[i];
+            if (!inner || !ints) continue;
+            const size_t nSub = std::min(vecN(inner, 8), vecN(ints, 4));
+            const uint8_t* const* leafB = *(const uint8_t* const* const*)inner;
+            const int* cv = *(const int* const*)ints;
+            if (!leafB || !cv) continue;
+            for (size_t j = 0; j < nSub; ++j) {
+                if (!leafB[j]) continue;
+                if (cv[j] > 0) live += (size_t)cv[j];
+                phys += vecN(leafB[j], 8);
+            }
+        }
     }
 }
 
@@ -574,9 +676,61 @@ class $modify(GJBaseGameLayer) {
                                      std::chrono::steady_clock::now() - ht0).count());
                         writeResult(hb2);
                     }
+                    // CONTROL ARM 3: run the bench with the heap the SEARCH ends
+                    // up with, and no cumulative restores at all. 4 MB blocks
+                    // rather than one slab, and every page written, because an
+                    // untouched reservation costs nothing and would test nothing
+                    // -- what is being reproduced is a process whose live pages
+                    // are spread over hundreds of MB, not its address space.
+                    // Written with a per-block varying byte so a compiler cannot
+                    // decide the stores are dead.
+                    static std::vector<char*> s_heap;
+                    if (g_cfg.restoreLoopHeapMB > 0 && s_heap.empty()) {
+                        const size_t blk = 4u << 20;
+                        const auto gt0 = std::chrono::steady_clock::now();
+                        for (int mb = 0; mb < g_cfg.restoreLoopHeapMB; mb += 4) {
+                            char* p = (char*)malloc(blk);
+                            if (!p) break;
+                            for (size_t o = 0; o < blk; o += 4096)
+                                p[o] = (char)(mb + 1);
+                            s_heap.push_back(p);
+                        }
+                        size_t hc = 0, hp = 0;
+                        procMemMB(hc, hp);
+                        char gb[160];
+                        snprintf(gb, sizeof(gb),
+                                 "restoreloop_heap: blocks=%zu MB=%zu wsMB=%zu "
+                                 "madeMs=%.0f",
+                                 s_heap.size(), s_heap.size() * 4, hc,
+                                 std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - gt0).count());
+                        writeResult(gb);
+                    }
                     const int bucket = 50;
+                    // Counted, not `i % bucket`: the one-shot drain restarts the
+                    // clock, and a bucket that spans the restart would divide a
+                    // short interval by 50 and report a cost nobody paid.
+                    int bn = 0;
                     auto bt0 = std::chrono::steady_clock::now();
                     for (int i = 0; i < g_cfg.restoreLoop; ++i) {
+                        // CONTROL ARM 4: drain ONCE, here, rather than on every
+                        // restore. The buckets on either side say whether the
+                        // cost follows the live heap back down.
+                        if (g_cfg.restoreLoopDrainAt > 0
+                            && i == g_cfg.restoreLoopDrainAt) {
+                            size_t bc = 0, bp = 0;
+                            procMemMB(bc, bp);
+                            cocos2d::CCPoolManager::sharedPoolManager()->pop();
+                            size_t ac = 0, ap = 0;
+                            procMemMB(ac, ap);
+                            char db[160];
+                            snprintf(db, sizeof(db),
+                                     "restoreloop_drain: at=%d wsMB %zu -> %zu",
+                                     i, bc, ac);
+                            writeResult(db);
+                            bn = 0;
+                            bt0 = std::chrono::steady_clock::now();
+                        }
                         if (!g_cfg.restoreLoopKeep && pl->m_checkpointArray)
                             pl->m_checkpointArray->removeAllObjects();
                         // **Restore from a COLD object, the way the search does.**
@@ -590,23 +744,43 @@ class $modify(GJBaseGameLayer) {
                         if (g_cfg.restoreLoopCycle && !s_held.empty())
                             src = s_held[(size_t)i % s_held.size()];
                         pl->storeCheckpoint(src);
+                        // CONTROL ARM 1: make the bench look like the search, which
+                        // throws this queue away on every restore (secRestoreFrom).
+                        // resetLevel pushes one synthetic button command per restore
+                        // and removeReleasedButtons walks the whole queue, so the
+                        // bench alone carries an O(N) the search does not have.
+                        if (g_cfg.restoreLoopClearQ) pl->m_queuedButtons.clear();
                         g_restorePending = true;
                         pl->resetLevel();
                         g_restorePending = false;
-                        if ((i + 1) % bucket == 0) {
+                        // CONTROL ARM 2: drain the autorelease pool the way the end
+                        // of a frame would. The loop never returns a frame, so every
+                        // autoreleased object a restore makes (candidate 1: the
+                        // ColorAction generation that GJEffectManager::reset throws
+                        // away and loadDefaultColors/loadFromState rebuild) stays
+                        // live. If the cost slope and the memory slope BOTH vanish
+                        // here, that is the mechanism.
+                        if (g_cfg.restoreLoopDrain)
+                            cocos2d::CCPoolManager::sharedPoolManager()->pop();
+                        if (++bn == bucket) {
+                            bn = 0;
                             const auto bt1 = std::chrono::steady_clock::now();
                             size_t wsCur = 0, wsPeak = 0;
                             procMemMB(wsCur, wsPeak);
-                            char sb[160];
+                            size_t secLive = 0, secPhys = 0;
+                            sectionCensus(pl, secLive, secPhys);
+                            char sb[224];
                             snprintf(sb, sizeof(sb),
                                      "restoreloop_series: i=%d perMs=%.4f arr=%d "
-                                     "wsMB=%zu peakMB=%zu",
+                                     "wsMB=%zu peakMB=%zu actN=%d "
+                                     "secLive=%zu secPhys=%zu",
                                      i + 1,
                                      std::chrono::duration<double, std::milli>(
                                          bt1 - bt0).count() / bucket,
                                      pl->m_checkpointArray
                                          ? (int)pl->m_checkpointArray->count() : -1,
-                                     wsCur, wsPeak);
+                                     wsCur, wsPeak, runningActionsOn(m_player1),
+                                     secLive, secPhys);
                             writeResult(sb);
                             bt0 = bt1;
                         }
@@ -1413,9 +1587,19 @@ class $modify(GJBaseGameLayer) {
     void secRestoreFrom(PlayLayer* pl, CheckpointObject* cp, int heldAfter = 0) {
     const SecRestTimer restTimer;
         if (pl->m_checkpointArray) pl->m_checkpointArray->removeAllObjects();
-        pl->storeCheckpoint(cp);
+        {
+            const auto s0 = std::chrono::steady_clock::now();
+            pl->storeCheckpoint(cp);
+            g_secStoreMs += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - s0).count();
+        }
         g_restorePending = true;
-        pl->resetLevel();
+        {
+            const auto r0 = std::chrono::steady_clock::now();
+            pl->resetLevel();
+            g_secResetMs += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - r0).count();
+        }
         g_restorePending = false;
         // The button state after a restore is not necessarily "released". Assuming so and
         // setting g_held=0 means that, while actually still held, no difference shows up,
@@ -2684,6 +2868,8 @@ class $modify(GJBaseGameLayer) {
             const double layerT0 = elapsedS;
             const long long layerR0 = restores;
             const double layerRestMs0 = g_secRestMs;
+            const double layerStoreMs0 = g_secStoreMs;
+            const double layerResetMs0 = g_secResetMs;
             for (int ni : cur) {
                 if (foundLeaf >= 0) break;
                 // Hand the frame back BETWEEN EXPANSIONS as well, not only between layers. A
@@ -3246,12 +3432,16 @@ class $modify(GJBaseGameLayer) {
                 const double layerMs = (std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - t0).count()
                     - layerT0 * 1000.0);
-                char lb[352];
+                size_t secLive = 0, secPhys = 0;
+                sectionCensus(pl, secLive, secPhys);
+                char lb[512];
                 snprintf(lb, sizeof(lb),
                          "seclayer: d=%d parents=%zu keep=%zu dead=%d dup=%d "
                          "capped=%d x=%.1f y=%.1f..%.1f deadX=%.1f fp=%016llx "
                          "xr=%.1f..%.1f axis=%c cnt=%d..%d spine=%d spineY=%.1f "
-                         "lms=%.0f lrest=%lld lrestms=%.0f nodes=%zu dedup=%zu",
+                         "lms=%.0f lrest=%lld lrestms=%.0f nodes=%zu dedup=%zu "
+                         "wsMB=%zu actN=%d secLive=%zu secPhys=%zu "
+                         "lstorems=%.0f lresetms=%.0f",
                          depth, cur.size(), nxt.size(), layDead, layDup, layCap,
                          layMaxX, layMinY > 1e8 ? 0.0 : layMinY,
                          layMaxY < -1e8 ? 0.0 : layMaxY, deadMaxX,
@@ -3260,7 +3450,11 @@ class $modify(GJBaseGameLayer) {
                          capByX ? 'x' : 'y', cntLo, cntHi, g_spineNext,
                            g_spineNext >= 0 ? (double)g_nodes[(size_t)g_spineNext].y : -1.0,
                          layerMs, restores - layerR0,
-                         g_secRestMs - layerRestMs0, g_nodes.size(), seen.size());
+                         g_secRestMs - layerRestMs0, g_nodes.size(), seen.size(),
+                         layerWsMB(), runningActionsOn(m_player1),
+                         secLive, secPhys,
+                         g_secStoreMs - layerStoreMs0,
+                         g_secResetMs - layerResetMs0);
                 writeResult(lb);
             }
             for (int ni : cur) releaseCp(ni);          // the previous layer is no longer needed
