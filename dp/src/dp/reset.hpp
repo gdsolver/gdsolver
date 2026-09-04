@@ -74,6 +74,7 @@ inline void resetInvocationState() {
 
     // constants.hpp -- the measured values, which --flags override per call
     g_noMiniWave = false;
+    g_noRingMode = false;
     g_oldLatency = false;
     g_oldSlope = false;
     kLandTol = 10.0;

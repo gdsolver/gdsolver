@@ -8637,8 +8637,58 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // model carried on at -1.671 and was 12 px below GD five ticks later.
         // Re-firing is still prevented by usedOrb, which is the real "once per
         // touch" rule; the edge test was redundant with it and wrong besides.
+        //
+        // [2026-09-04] Confirmed against GD, and the citation above corrected.
+        // Three arms on lv11, cube, the same orb (3179,195), differing only in
+        // when the button is released (cfg orbtrace=1):
+        //   press 2420, hold  -> fires t=2422 (lag 2)
+        //   press 2390, hold  -> fires t=2422 (lag 32)  <- no edge at contact
+        //   press 2400, release 2401 -> DOES NOT FIRE   <- must still be down
+        // The first two are identical in fire tick, dxx/dyy, vy and death tick,
+        // so the press moved without moving the trajectory: only the button
+        // changed. So the rule is "down at the contact tick", which is what this
+        // gate already says. (The old lv11 t=8,567 mini-ship citation above is
+        // stale -- the current plan is a mini BALL there, firing at t=8,549 for
+        // -6.2608 -- but the rule it argued for is right for a different reason.)
+        //
+        // WHERE IT IS WRONG: GD reaches a ring by two paths, and only one of
+        // them is open in flight. GJBaseGameLayer::playerTouchedRing ends with
+        // `!ship && !ufo && !wave && !swing && m_claimTouch == 0` before calling
+        // ringJump, so the CONTACT path -- the one that fires a held button on
+        // the tick the boxes meet -- is closed in the four flight modes.
+        // pushButton offers every touched ring regardless of mode, so a ring
+        // still fires in flight, but only on the tick of the press itself.
+        // Hence: held is enough on foot, an edge is required in flight.
+        //
+        // The edge is taken against `s.jumpBuf`, not `s.action` and not
+        // `s.held`. `action` keeps the RAW plan value inside a ctrlOff window,
+        // so it would see an edge GD never received. `held` is a clean accepted
+        // level but only the flight branches maintain it, so on the tick a
+        // portal turns a cube INTO a flight mode it still holds whatever the
+        // last flight section left. `jumpBuf` is written from the gated `input`
+        // at the top of every tick in every mode, which is also what GD's own
+        // ringJump reads (the 0x989 mirror of m_jumpBuffered).
+        //
+        // Its one impurity is harmless here: it is also cleared when a ring
+        // fires or the ball's tap spends the press, so the next tick could read
+        // as an edge while the button is merely still down -- but `ringHold` is
+        // set in both of those cases and is only cleared by a release, so the
+        // gate below is shut anyway.
+        //
+        // `jumpBuf` IS NOT m_jumpBuffered. It agrees on press and release, and
+        // that is all this gate needs, but GD clears 0x985 from a longer list:
+        // releaseButton / releaseAllButtons / disablePlayerControls (the Player
+        // Control trigger) / lockPlayer / didHitHead / toggleDualMode, plus the
+        // jump, the flap, the ball's tap, the end of a dash and the collision
+        // path. Those extra droppers are not modelled anywhere, and the
+        // difference between the two lists is an unmeasured family, not a
+        // closed one -- do not read this comment as saying it agrees.
+        const bool ringFly = !g_noRingMode
+                             && (c.mode == 1 || c.mode == 3
+                                 || c.mode == 4 || c.mode == 7);
+        const bool ringGate = ringFly ? (input && !s.jumpBuf) : (input != 0);
         if (!input) c.ringHold = 0;   // released: the next press may ring again
-        if (input && !s.ringHold) {
+        if (ringGate && !s.ringHold) {
             // Two orbs can sit on the SAME square, and then which one fires is
             // not a detail: lv14 x=16875 y=585 carries a yellow ring (id 36,
             // uid 4774) and a gravity ring (id 84, uid 4775) exactly on top of

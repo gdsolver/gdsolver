@@ -103,6 +103,13 @@ constexpr int kRobotHoverTicks = 67;
 // runs instead of two rebuilds.
 inline bool g_noMiniWave = false;   // --no-miniwave
 inline bool g_oldLatency = false;   // --old-latency
+// --no-ringmode: restore "a held button fires a ring in every mode". GD closes
+// the CONTACT path in ship/UFO/wave/swing (playerTouchedRing's last gate), so
+// in those four a ring only fires from the press itself. This exists because a
+// change that only ever REMOVES firings cannot be told from "no change" by a
+// suite that reports the same numbers either way -- the two arms have to be one
+// build apart, not one rebuild apart.
+inline bool g_noRingMode = false;   // --no-ringmode
 // --old-slope: A/B escape hatch (same convention as --old-latency). Restores
 // the pre-2026-08-04 slope exit: ball = tap-anchored line / mini x0.625, and
 // NO ride-time ramp. See slopeExitVy / slopeRampFactor for why the new form

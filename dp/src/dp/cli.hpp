@@ -118,6 +118,9 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--refeps") && i + 1 < argc)
             g_refEps = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--no-miniwave")) g_noMiniWave = true;
+        // --no-ringmode: the pre-2026-09-04 ring gate (held fires in every
+        // mode). A/B switch, see g_noRingMode.
+        if (!std::strcmp(argv[i], "--no-ringmode")) g_noRingMode = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;
