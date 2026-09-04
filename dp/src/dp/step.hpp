@@ -4122,7 +4122,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // the y=345 corridor and run into wall uid5427"); the cause was the
                 // low route (through the row of plates to the wedge at 195) being
                 // blocked by this kill.
-                for (int si = 0; si <= kSubSteps && !dead; ++si) {
+                // ENDPOINT ONLY, no sweep. GD splits a
+                // 240 Hz step in two only when a click timestamp falls in its
+                // second half (survey A4), so on a tick with no button event it
+                // makes exactly ONE collision evaluation, at the end. Neither
+                // lv6 t=12,177 (nearest inputs 12,165 / 12,209) nor lv11
+                // t=12,243 (12,240 / 12,247) is a click tick, so every sample
+                // but f=1 is a position the player never occupied.
+                for (int si = kSubSteps; si <= kSubSteps && !dead; ++si) {
                     const double f = si / (double)kSubSteps;
                     const double sx = xPrev + (x - xPrev) * f;
                     const double sy = (double)s.y + ((double)c.y - (double)s.y) * f;

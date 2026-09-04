@@ -40,7 +40,7 @@ constexpr double kCubeJumpMini = 8.944;
 // (This is separate from the per-MODE ratios -- ball is 0.600/0.700 -- which
 // really do differ per constant and must stay measured one by one.)
 constexpr double kMiniImpulse = 0.800;
-constexpr double kCubeInner = 5.0;  // side/ceiling kill box
+constexpr double kCubeInner = 4.5;  // side/ceiling kill box
 // ---- ROBOT (mode 5) -------------------------------------------------------
 // Read out of PlayerObject::updateJump (win RVA 0x38b900), not fitted. The
 // robot is a cube with three differences, all of which are literal branches in
