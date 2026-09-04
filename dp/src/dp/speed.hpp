@@ -101,6 +101,36 @@ inline float dxForSpeedId(int id) {
 // So the scale is a property of the "jump impulse" family. The pink ring is
 // assumed to be in that family too (same object class) but is UNVERIFIED, and
 // so are the ball-mode ring values at speeds other than 0.9.
+// THE BALL'S SPIN RATE, in degrees per tick, ready to be staked into
+// State::rotRate. From PlayerObject::runBallRotation (@0x38d350, grounded) and
+// runBallRotation2 (@0x38d480, airborne):
+//
+//     m_rotationSpeed = +-120 / (S * 0.20 * V)      grounded
+//     m_rotationSpeed = +-340 / (S * 0.80 * V)      airborne
+//     applied as (dt/60) * speed with dt = 0.25, i.e. speed / 240
+//
+// S is `(scale == 1.0) ? 1.0 : 0.8` -- the scale field is read but used only as
+// a boolean, and the 0.8 is a literal, so the mini sprite's 0.6 never reaches
+// the arithmetic. That is why mini/full is 5/4 and not 1/0.6.
+//
+// V is the speed divisor, and it works out to kDxF/dx: at 0.9 it is 1 and the
+// rates are the round 2.5 / 3.125 (grounded) and 1.7708333 / 2.2135417 (air).
+// Writing it against dx is what makes the whole family look "proportional to
+// distance travelled" -- it is not. GD stakes a RATE and spends it per tick, so
+// it does NOT change on a slope, where the distance covered per tick does.
+//
+// Checked against the corpus: grounded full 2.5000 (7,658 ticks), grounded mini
+// 3.1250 (2,366), and the 1.1 / 1.3 tiers land on 3.1085 / 3.7551 to four
+// decimals. air/ground = 17/24 = 0.7083333 reproduces the measured mode over
+// 24,551 airborne ticks.
+inline double ballRotRate(bool mini, bool airborne, double dx) {
+    const double S = mini ? 0.8 : 1.0;
+    const double V = (dx > 0.0) ? ((double)kDxF / dx) : 1.0;
+    const double rate = airborne ? (340.0 / (S * 0.80 * V))
+                                 : (120.0 / (S * 0.20 * V));
+    return rate / 240.0;
+}
+
 struct CubePhys { double jump, g; };
 inline CubePhys cubePhysFor(float dxF) {
     if (dxF > 1.78f) return {11.230, -0.216};   // 1.3

@@ -407,6 +407,21 @@ struct State {
     // both mid-air, and no flip ever passes without one. A take-off always sets
     // it positive (rspd goes 0 -> +415.3846 at t=261/437/547/617).
     uint8_t rotNeg = 0;
+    // NO `rotRate` FIELD YET, ON PURPOSE. GD holds the spin's magnitude in
+    // m_rotationSpeed (+0x720) as a STAKE -- an event writes it and
+    // updateRotation spends it every tick until another event overwrites it --
+    // and the ball's air rate is written by only two callers, flipGravity and
+    // ringJump. So a ball that leaves the ground any other way (off a step, off
+    // a pad) keeps rolling at the GROUND rate in mid-air, which is 20% of the
+    // corpus's airborne ball ticks (5,019 of 24,551 at a rate ratio of exactly
+    // 1.000) and which no expression in `grounded` can reproduce.
+    //
+    // Carrying that needs a field here, and a field here needs an anchor seed
+    // and a serial cold. The GROUNDED half needs neither: while the ball is on
+    // the floor the rate is a pure function of size and speed, so it is
+    // recomputed in place (see the ball branch in step.hpp). That is the half
+    // that went in first -- one variable, measurable today, and no State growth
+    // until the air half actually requires it.
     // Pinned against a solid's UNDERSIDE (see "cube/ceilstop"). Its own bit on
     // purpose: `grounded` is true for a player merely standing on the floor too,
     // and using that as the "still held" test let any block whose underside
