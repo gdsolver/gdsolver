@@ -901,16 +901,25 @@ inline std::string startArg(long long t0, const AnchorRow& r, int held) {
 //
 // Every value is the state AT t0: a value written at t0+1 lands one tick of
 // motion further on, which shows up as a first-tick difference of about one dx.
+//
+// OWNERSHIP IS CLAIMED FROM WHAT WAS CARRIED, NEVER UNCONDITIONALLY. An empty
+// payload that still says `owns=touch` tells dp to take trig and fireB from
+// here and then hands it nothing, so the recording-derived seeding is
+// suppressed on every level and replaced by nothing. That is not hypothetical:
+// on lv22 the map and dp's box window name almost disjoint objects (0 of 24
+// mapped, see Config::touchPayload), so the always-on version was that empty
+// case in practice. The call sites are gated too, but a gate is caller
+// discipline -- it protects the two call sites that exist today and not the
+// third one. Carrying nothing must be indistinguishable from not being asked.
 inline std::string anchorPayload(long long t0) {
-    std::string s = "owns=touch;touch=";
-    bool first = true;
+    std::string body;
     for (const auto& kv : touchseed::g_first) {
         if (kv.second > t0) continue;
-        if (!first) s += ",";
-        first = false;
-        s += std::to_string(kv.first) + ":" + std::to_string(kv.second);
+        if (!body.empty()) body += ",";
+        body += std::to_string(kv.first) + ":" + std::to_string(kv.second);
     }
-    return s;
+    if (body.empty()) return std::string();
+    return "owns=touch;touch=" + body;
 }
 
 // ============================================================
