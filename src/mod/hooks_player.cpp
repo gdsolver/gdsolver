@@ -290,6 +290,23 @@ class $modify(PlayerObject) {
     // position and the orb centre at fire time. addToTouchedRings is defined inline and
     // cannot be hooked, but the difference between press tick and fire tick tells whether
     // "the press was buffered and fired at the moment of contact"
+    //
+    // READ `lag` WITH `pend`, NEVER ALONE. A tick runs update -> collisions -> buttons,
+    // and the mod queues row T's input at the END of tick T, so this hook (a collision
+    // path) runs BEFORE this tick's press exists. A fire caused by the press ON THIS TICK
+    // therefore reports the PREVIOUS press and an arbitrarily large lag: measured on lv11
+    // 2026-09-04, the orb at t=8,548 printed `press=8395 lag=153` while the plan holds
+    // `input=8548,1` -- a one-tick tap on the firing tick itself. Read as it stood, the
+    // lv11 lines say orbs routinely fire 78 to 287 ticks after a press, which would make
+    // hold-firing look ordinary; every one of those was this off-by-one instead.
+    // `pend=1` means "this tick's own press has not been injected yet", i.e. lag is one
+    // press stale and the true lag is 0. Measured on lv11 the same day: 25 firings,
+    // `pend=1` on all 25, raw lag 60..287 on every one of them.
+    //
+    // The same ordering shifts the TICK: an analysis that counts the fire on the tick
+    // after the press reports 8,549 where this line says 8,548. Neither is wrong; they
+    // are one step apart in the same tick. `lag` is left as it always was so that old
+    // logs keep meaning what they meant -- when the meaning changes, the name changes.
     void ringJump(RingObject* object, bool skipCheck) {
         auto* l = GJBaseGameLayer::get();
         bool isP1 = object && l && this == l->m_player1;
@@ -309,15 +326,19 @@ class $modify(PlayerObject) {
         if (++orbtrace::g_lines > 400) return;
         long long lag = (orbtrace::g_lastPress >= 0)
                       ? (long long)g_tick - orbtrace::g_lastPress : -1;
+        // ...and whether THIS tick's press is still queued behind us (see above).
+        const int pend = (g_nextInput < g_cfg.inputs.size()
+                          && g_cfg.inputs[g_nextInput].step == g_tick
+                          && g_cfg.inputs[g_nextInput].down) ? 1 : 0;
         char buf[256];
         snprintf(buf, sizeof(buf),
             "orb: id=%d mode=%d size=%.2f flip=%d spd=%.1f "
-            "t=%lld press=%lld lag=%lld dxx=%.1f dyy=%.1f "
+            "t=%lld press=%lld lag=%lld pend=%d dxx=%.1f dyy=%.1f "
             "orb=(%.0f,%.0f) vy=%.4f->%.4f",
             object->m_objectID, (int)solver::modeOf(this),
             this->m_vehicleSize, this->m_isUpsideDown ? 1 : 0,
             (float)this->m_playerSpeed,
-            (long long)g_tick, (long long)orbtrace::g_lastPress, lag,
+            (long long)g_tick, (long long)orbtrace::g_lastPress, lag, pend,
             this->getPositionX() - ox, this->getPositionY() - oy,
             ox, oy, vyBefore, vyAfter);
         writeResult(buf);
