@@ -33,5 +33,10 @@ inline std::unordered_map<int, int> g_first;   // trigger uid -> first tick
 // t=17,119. This counter runs inside GD, which replays lv20 to the end, so it
 // is the one observer that reaches the case.
 inline int g_p2 = 0;
-inline void reset() { g_first.clear(); g_p2 = 0; }
+// ...and how often the hook ran at all, so the p2 count has a denominator. A
+// zero on its own cannot tell "watched and saw none" from "never watched",
+// which is the reading that stalled three separate measurements on
+// 2026-09-04. The reported line carries this beside it.
+inline int g_calls = 0;
+inline void reset() { g_first.clear(); g_p2 = 0; g_calls = 0; }
 }

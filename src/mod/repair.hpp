@@ -1313,6 +1313,13 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
                                "--shipyq", num(kYq), "--shipvq", num(kVq),
                                "--threads", kThreads};
     if (!band.empty()) { a.push_back("--startband"); a.push_back(band); }
+    {   // ...and the touch triggers GD had already set off by t0. Inferring
+        // them from the moving-geometry recording works only for objects the
+        // recording contains, which left 163 seeding differences on lv22; this
+        // is what GD observed, so nothing is inferred.
+        const std::string ap = anchorPayload(t0);
+        if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
+    }
     {   // the resim must not fire 2900s the recorded run already consumed either --
         // a phantom rotation in the REFERENCE side of the diff writes fixups against
         // a world GD does not have (the -7.8 carry family at x=16,003)
@@ -1791,6 +1798,13 @@ inline bool runLadder(long long dt) {
         }
         a.push_back("--start");
         a.push_back(arg);
+        // ...and the touch triggers GD had already set off by t0 (see
+        // anchorPayload). The solve gets the same seeding the fixup resim does,
+        // or the two would be anchored into different worlds.
+        {
+            const std::string ap = anchorPayload(t0);
+            if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
+        }
         std::string band;
         if (r->pmax > r->pmin) {
             band = num(r->pmin) + "," + num(r->pmax);

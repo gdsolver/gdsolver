@@ -217,6 +217,15 @@ inline void resetInvocationState() {
     g_touchMoveTicks.clear();
     for (auto& f : g_touchFrame) f.clear();
     for (int b = 0; b < 32; ++b) g_touchFireT[b] = -1;
+    // ...and the boxes' travel coordinates, the last of the touch family that
+    // was not here. A level with 32 boxes followed by one with 5 leaves the
+    // previous level's coordinates in slots 5..31, where the 400 px proximity
+    // gates read them. No firing has been shown today -- the readers index by
+    // State::trig bits and the loader only assigns bits below out.size() -- but
+    // the anchor path re-windows that set (triggers.hpp:437-448) and this
+    // session is changing how anchored bits are made, so the tail stops being
+    // unreachable by construction.
+    for (int b = 0; b < 32; ++b) g_touchBoxU[b] = 0.f;
     g_trigReported = 0;
     g_bandPath.clear();
     g_bands.clear();

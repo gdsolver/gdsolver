@@ -643,8 +643,16 @@ inline void endSession(const std::string& why) {
     // with both a dual portal and touch boxes -- dies at t=1,157 while its
     // dual section starts near t=17,119. GD replays lv20 to the end, so this
     // counter reaches what that check cannot.
+    //
+    // The p1 count and the hook's call count travel WITH the zero, because a
+    // zero alone cannot separate "watched and saw none" from "never watched" --
+    // the reading that stalled three measurements the day this was written.
+    // The claim "p2 set off no trigger" is only worth anything when the
+    // numbers beside it are non-zero.
     writeResult("p2 activated trigger boxes: " + std::to_string(touchseed::g_p2)
-        + " (non-zero means the model cannot fire a trigger this run did)");
+        + " (p1: " + std::to_string((int)touchseed::g_first.size())
+        + ", hook calls: " + std::to_string(touchseed::g_calls)
+        + ") -- non-zero p2 means the model cannot fire a trigger this run did");
     // ...and the proof: the level's own record, compared with the sample taken before the
     // level had run a tick. "changed: none" is the only acceptable outcome for a solver
     // session; anything else names the field that leaked. `restored` counts the writes GD

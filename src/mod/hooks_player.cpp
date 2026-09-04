@@ -13,6 +13,7 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
         // base -- which is exactly why the hook sees triggers at all.
         auto* eff = typeinfo_cast<EffectGameObject*>(this);
         if (eff && eff->m_isTouchTriggered) {
+            ++touchseed::g_calls;
             auto* l = GJBaseGameLayer::get();
             const bool isP1 = (l && p == l->m_player1);
             if (isP1) {
