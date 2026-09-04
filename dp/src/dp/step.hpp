@@ -2160,10 +2160,18 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // player-frame velocity is expressed against the new sign, so
                 // this cannot go through the shared `vpNew * gsign` below
                 c.flip = c.flip ? 0 : 1;
-                // NOTE for the air stake, when it goes in: the tap IS a
-                // flipGravity, one of the only two callers that write the ball's
-                // AIR rate (the other is ringJump). Not staked yet -- the sign
-                // that stake leaves is unmeasured, see the ball branch below.
+                // The tap IS a flipGravity, one of the only two callers that
+                // write the ball's AIR step. Staked here, AFTER the flip above,
+                // because GD stores the new gravity before it stakes -- that
+                // ordering is the whole of why a stake arriving with a flip
+                // keeps the sign while one arriving without it inverts.
+                //
+                // runBallRotation2's sign is `NOT (g XOR r)`: inverted against
+                // the grounded law, and with no rotation-gameplay term. The
+                // inversion exists to cancel the flip that brought us here, so
+                // the spin looks continuous through a tap.
+                c.rotStep = (float)ballRotRate(c.mini != 0, true, useDx);
+                c.rotNeg = (uint8_t)!((c.flip != 0) ^ (c.rev != 0));
                 // the ball's tap scales with size like every other impulse.
                 // Measured on lv11 t=8398 (mini ball): GD leaves with 2.6832
                 // where the model produced 3.3540, and 2.6832 / 3.354 = 0.800.
@@ -9087,11 +9095,23 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 if (ob->type != 13) releasePin();
                 c.usedOrb = ob;
                 c.ringHold = 1;
-                // NOTE for the air stake: ringJump is the second of the two
-                // callers that write the ball's AIR rate. In GD it carries no
-                // mode gate, which is how the ball's spin leaks into UFO and
-                // swing -- the reason those two also read as unrotated. Not
-                // staked yet, for the same reason as the tap above.
+                // ringJump is the second of the two callers that write the
+                // ball's AIR step, and unlike the tap it does NOT move gravity
+                // first -- so the same `NOT (g XOR r)` computed against the
+                // UNCHANGED gravity comes out inverted relative to the roll.
+                // That is the whole of the 67.6% kept / 32.4% inverted split
+                // measured against the preceding roll: not two rules, one rule
+                // and two arrival conditions.
+                //
+                // In GD this path has no mode gate, which is how the ball's
+                // spin leaks into UFO and swing and why those two also read as
+                // unrotated. Gated to the ball here on purpose: reproducing the
+                // leak needs the attitude law those modes also run, and that is
+                // a separate piece of work.
+                if (c.mode == 2) {
+                    c.rotStep = (float)ballRotRate(c.mini != 0, true, useDx);
+                    c.rotNeg = (uint8_t)!((c.flip != 0) ^ (c.rev != 0));
+                }
                 // A ring that takes the press SPENDS it: in GD the ring path of
                 // pushButton runs `ringJump(); m_jumpBuffered = 0; return;` and
                 // never calls updateJump. Without this the mirrored buffer would
@@ -9303,24 +9323,32 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // takes effect; the corpus agrees, the 1.1 and 1.3 tiers reading 3.1085
         // and 3.7551 against the formula's own values to four decimals.
         //
-        // THE SIGN IS `flip`, and that is not a guess: over all 10,226 grounded
-        // ball ticks that turn at all, the direction is positive when upright
-        // and negative when flipped, 10,226 of 10,226.
+        // THE SIGN is the three-way XOR runBallRotation writes,
+        // `neg = g XOR r XOR q` -- gravity (0x9bf), reverse (0x9c2) and
+        // rotation-gameplay (0x9c3). Measuring it against the corpus gave
+        // `flip` on 10,226 of 10,226 grounded ball ticks, but that is a
+        // CROSS-SECTION and not the rule: no level rolls a ball with `rev` or a
+        // rotation frame raised, so the two were indistinguishable there. The
+        // XOR is written out here anyway, because the shipped shape of a rule
+        // should be the rule.
         //
-        // AIRBORNE IS LEFT ALONE, for two separate reasons and neither is
-        // "later". GD stakes the air rate from exactly two callers, flipGravity
-        // and ringJump, so carrying it needs a State field -- and a State field
-        // needs an anchor seed and a serial cold, which the grounded half does
-        // not. And the SIGN that stake leaves is unmeasured: against the sign of
-        // the preceding roll it comes out 67.6% kept and 32.4% negated, so
-        // neither rule holds. A wrong sign DOUBLES the error where no rotation
-        // merely leaves it, so guessing would be worse than the gap. The binary
-        // can say it; the corpus cannot.
+        // GROUNDED is re-staked every tick on the floor (GD re-enters through
+        // hitGround / postCollision), so a speed portal crossed mid-roll takes
+        // effect; the 1.1 and 1.3 tiers read 3.1085 and 3.7551 against the
+        // formula's own values to four decimals.
         if (c.grounded) {
-            c.rotNeg = c.flip;
-            c.rot = (float)((double)s.rot + (c.flip ? -1.0 : 1.0)
-                            * ballRotRate(c.mini != 0, false, useDx));
+            c.rotStep = (float)ballRotRate(c.mini != 0, false, useDx);
+            c.rotNeg = (uint8_t)((c.flip != 0) ^ (c.rev != 0)
+                                 ^ (c.frame != 0));
         }
+        // ...and then the stake is SPENT, grounded or not. Airborne it is
+        // whatever the last event left, which is the whole point of carrying it:
+        // only flipGravity and ringJump write the air value, so a ball that
+        // left the ground off a step or a pad is still turning at the ground
+        // rate up here.
+        if (c.rotStep != 0.f)
+            c.rot = (float)((double)s.rot
+                            + (c.rotNeg ? -1.0 : 1.0) * (double)c.rotStep);
     }
     // RIDE. GD carries a standing player with the surface under it; the support
     // test above only asks "is a face still within 0.6 px of the foot" and

@@ -470,6 +470,38 @@ struct State {
     // member after it and every anchored replay dies on its first tick (measured,
     // 2026-09-03: all 22 levels went "400 -> 1 ticks" until this moved down here).
     uint8_t jumpBuf = 0;
+    // THE SPIN'S SIZE, in DEGREES PER TICK -- not a rate. GD holds the rate in
+    // m_rotationSpeed (+0x720) as degrees per second and the tail multiplies by
+    // (dt/60) = 1/240; this holds the value AFTER that division, because that is
+    // what gets added to `rot`. Seeding it is therefore `rot[t] - rot[t-1]`
+    // straight from the reference, with no factor of 240. Naming it `rotRate`
+    // was rejected for exactly that reason: a reader who assumes deg/sec puts
+    // the 240 into both the seed and the application, where the two errors
+    // cancel and nothing measurable ever disagrees.
+    //
+    // A STAKE, which is why it has to be carried. An event writes it and every
+    // later tick spends it. The ball's AIR value is written by only two callers
+    // in GD, flipGravity and ringJump, so a ball that leaves the ground any
+    // other way -- off a step, off a pad -- keeps turning at the GROUND rate in
+    // mid-air. That is 20% of the corpus's airborne ball ticks (5,019 of
+    // 24,551, measured at a rate ratio of exactly 1.000) and no expression in
+    // `grounded` can produce it. The grounded value alone needs no field, which
+    // is why a0c4c8f shipped without one.
+    //
+    // `rotLaw` and the staked `rev`/`rotgp` were designed alongside this and
+    // dropped: the law is already baked into the size, and the sign those two
+    // inputs decide is baked into `rotNeg` at stake time. Neither had a reader.
+    //
+    // ONE READER: the ball branch's own application. The three contact tests
+    // that advance the player one step (pRotE / pRotHere / pRotPad) still
+    // hard-code `mini ? 2.25 : 1.7307692` and MUST keep doing so -- those run in
+    // CUBE mode, and every writer of this field is on a ball path, so pointing
+    // them here would hand the cube a ball's step or a stale zero. They can be
+    // folded in on the day the cube gets a stake of its own; that is a change to
+    // the cube's behaviour and belongs in its own landing, not this one.
+    //
+    // **At the END of the struct on purpose** -- same reason as jumpBuf above.
+    float rotStep = 0.f;
 };
 
 // THIS ASSERT IS A QUESTION, NOT A BUDGET. If you added a field and the build
@@ -501,7 +533,7 @@ struct State {
 // That happened the same day this assert was written (8f1ae6b added three
 // payload globals and reset none of them), so the two rules are siblings and
 // neither mechanism covers the other.
-static_assert(sizeof(State) == 328,
+static_assert(sizeof(State) == 336,
               "State changed size. If the new field ACCUMULATES over ticks, "
               "seed it in the --start anchor scan, print it in --seeddump, and "
               "run oneoff/py/seedcheck.py to zero before updating this. (This "

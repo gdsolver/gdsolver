@@ -437,8 +437,8 @@ inline int cliMain(int argc, char** argv) {
             // -1 in the last three = "the caller did not say", which is not the
             // same as 0 (a real mode / a flip on this very tick) -- see the
             // notes at the dual block and at State::flipT.
-            double a[29] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                            0, -1, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1};
+            double a[30] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, -1, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, 0};
             // 8th field = flip. It used to be absent entirely, so every
             // re-anchor taken while the player was upside down restarted the
             // solve in NORMAL gravity -- the tail was then solved for a world
@@ -546,14 +546,20 @@ inline int cliMain(int argc, char** argv) {
             // real value (flipped on the anchor tick), so it cannot be the
             // sentinel. An anchor taken in the 24 ticks after a blue pad or a
             // gravity portal without it kills states GD spares.
+            // 30th = the SIZE of the spin (State::rotStep), deg/tick. Default 0
+            // = "not turning", which is what every caller written before this
+            // meant and is correct for a cube and for a grounded ball; it is
+            // wrong only for an anchor landing mid-air on a ball, which is the
+            // case the field exists for.
             std::sscanf(argv[i + 1],
                         "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,"
                         "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,"
-                        "%lf,%lf,%lf",
+                        "%lf,%lf,%lf,%lf",
                         &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6], &a[7],
                         &a[8], &a[9], &a[10], &a[11], &a[12], &a[13], &a[14],
                         &a[15], &a[16], &a[17], &a[18], &a[19], &a[20], &a[21],
-                        &a[22], &a[23], &a[24], &a[25], &a[26], &a[27], &a[28]);
+                        &a[22], &a[23], &a[24], &a[25], &a[26], &a[27], &a[28],
+                        &a[29]);
             const uint8_t startRev = (uint8_t)((int)a[21] & 1);
             startFrame = (int)a[20] & 3;
             startSnapUid = (long long)a[18];
@@ -676,6 +682,22 @@ inline int cliMain(int argc, char** argv) {
             // old behaviour.
             init.rot = (float)a[22];
             init.rotNeg = (uint8_t)(a[23] != 0.0 ? 1 : 0);
+            // 30th: the SIZE of the spin (State::rotStep). Rides in the same
+            // seeding path as the two fields above rather than getting one of
+            // its own, because it is the same quantity measured from the same
+            // two reference rows: the caller reads `rot(t0) - rot(t0-1)`, sends
+            // the sign as the 24th and the magnitude here. No factor of 240 --
+            // see State::rotStep for why the name says "step" and not "rate".
+            //
+            // BALL ONLY, and seedcheck is why. The caller measures the turn
+            // whatever mode it is in, but this field is a ball's stake: nothing
+            // stakes it in any other mode, so a whole run leaves it at 0 there.
+            // Seeded unconditionally it disagreed on 25 of 105 sampled ticks,
+            // every one of them a CUBE holding the cube's own step (t=400:
+            // whole 0.000000, seeded 1.730773 = 180/0.43333334/240). Copying an
+            // observation into a field that means something narrower is how a
+            // seed ends up describing a state the run can never be in.
+            if ((int)a[4] == 2) init.rotStep = (float)std::fabs(a[29]);
             init.dual = (uint8_t)a[9];
             if (init.dual) {
                 init.y2 = (float)a[10];
@@ -2263,10 +2285,11 @@ inline int cliMain(int argc, char** argv) {
                 || (g_seedEvery > 0 && t % (long long)g_seedEvery == 0)) {
                 std::printf("seed: t=%lld sizeof=%zu trig=0x%x trigT=%d "
                             "lockOff=%.4f rotSpent=0x%x rotChan=%d "
-                            "rotRev=0x%x fireB=",
+                            "rotRev=0x%x rotStep=%.6f rotNeg=%d fireB=",
                             t, sizeof(State), s.trig, (int)s.trigT,
                             (double)s.lockOff, s.rotSpent, (int)s.rotChan,
-                            (unsigned)s.rotRev);
+                            (unsigned)s.rotRev, (double)s.rotStep,
+                            (int)s.rotNeg);
                 for (int b = 0; b < 32; ++b)
                     if (s.fireB[b]) std::printf("%d:%u,", b, s.fireB[b]);
                 std::printf("\n");

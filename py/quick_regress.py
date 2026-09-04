@@ -353,6 +353,22 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
             rotneg = 1 if float(rot) < float(prev["rot"]) else 0
         except ValueError:
             rotneg = 0
+    # field 30 = the SIZE of that turn, degrees per tick (State::rotStep). It is
+    # the magnitude of the very difference rotneg took the sign of, so the two
+    # always agree about which pair of rows they came from. NOT a rate: the
+    # solver stores the per-tick step, so there is no factor of 240 here.
+    #
+    # It matters only for an anchor that lands mid-air on a BALL. GD stakes the
+    # airborne spin from just two callers, so a ball that left the ground off a
+    # step or a pad is still turning at the grounded rate, and nothing in the
+    # anchored state says so. A cube re-derives its spin per tick and a grounded
+    # ball is re-staked on its first tick down, so 0 is right for both.
+    rotstep = 0.0
+    if prev is not None and prev.get("rot") not in (None, ""):
+        try:
+            rotstep = abs(float(rot) - float(prev["rot"]))
+        except ValueError:
+            rotstep = 0.0
     # field 16, rHover: no such column in the dump, but it can be derived from
     # "the length of the run of constant vy". Only callers that passed ref (all
     # the reference rows) get the benefit; without it, the old 0.
@@ -375,9 +391,15 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
             mn2 = 1 if float(r["p2vsize"]) < 0.9 else 0
         except ValueError:
             mn2 = -1
+    # Fields 28 and 29 are flipT and armT, which this builder has never had a
+    # value for and which the solver reads as -1 = "not told". They have to be
+    # written out all the same now that a 30th follows them: the list is
+    # POSITIONAL, so appending past an omitted optional silently feeds the new
+    # field's value into flipT and leaves rotStep at its default. Passing the
+    # sentinels keeps both meanings intact.
     return (f"{t},{r['x']},{r['y']},{r['yvel']},{mode},{g},{held},{fl},{mn},"
             f"{du},{y2},{vy2},{f2},{g2},{sp},{rh},{dsh},{dsl},{su},{sd},"
-            f"{frame},{rev},{rot},{rotneg},0,{m2},{mn2}")
+            f"{frame},{rev},{rot},{rotneg},0,{m2},{mn2},-1,-1,{rotstep}")
 
 
 def dash_at(t: int, r: dict, ref: dict, held: int, prev: dict | None
