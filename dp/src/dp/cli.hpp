@@ -73,7 +73,7 @@ inline int cliMain(int argc, char** argv) {
     int dbgLayers = 0;
     std::string snapLogPath;
     std::vector<std::string> groupsPaths;
-    std::string trigPath, grpPath, obbPath, setPath;
+    std::string trigPath, grpPath, obbPath, setPath, rotQPath;
     // y, vy, mode, held, grounded, flip (everything after that is zeroed)
     State init{(float)kFloorY, 0.f, 0, 0, 1, 0};
     // value-less flags get their own loop: the one below stops at argc-1 (every
@@ -241,6 +241,10 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--dyndbg")) g_dynDbg = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--triggers")) trigPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--objgroups")) grpPath = argv[i + 1];
+        // --rotgameplay <path>: the MOD's dump of the 2899/2900 queue (channel,
+        // ord, the switch fields). Absent on 21 of 22 levels, which have no
+        // such object at all.
+        if (!std::strcmp(argv[i], "--rotgameplay")) rotQPath = argv[i + 1];
         // --levelsettings <file>: the level's LevelSettingsObject flags. Only
         // lv22 has any of them set among the 22 official levels, and only
         // fixRadiusCollision has a reader (hazardHit). Without the flag the
@@ -1113,6 +1117,9 @@ inline int cliMain(int argc, char** argv) {
             }
         }
     }
+    // After the level, because the queue joins to g_rotTrig by uid.
+    if (!rotQPath.empty() && !loadRotQueue(rotQPath))
+        std::printf("rotq: could not read %s\n", rotQPath.c_str());
     std::printf("level: %zu colliders, %zu portals, %zu pads, %zu orbs, "
                 "%zu moving, maxX=%.0f\n",
                 L.objs.size(), L.portals.size(), L.pads.size(), L.orbs.size(),
@@ -1127,6 +1134,39 @@ inline int cliMain(int argc, char** argv) {
                         r.cx, r.cy, r.frame,
                         r.frame == 0 ? "+X" : r.frame == 1 ? "-Y"
                         : r.frame == 2 ? "-X" : "+Y");
+    }
+    // ...and the queue those objects sit in, if the dump was passed. Printed in
+    // consumption order per channel, because the order IS the mechanism: GD
+    // walks one channel from a cursor and stops at the first element the player
+    // has not passed, so an element in the wrong place blocks everything behind
+    // it. Nothing reads the queue yet -- this stage only builds and shows it.
+    if (!g_rotQ.empty()) {
+        std::printf("rotq: %zu queued objects in %d channels\n",
+                    g_rotQ.size(), g_rotQChans);
+        for (int ch = 0; ch <= 15; ++ch) {
+            if (g_rotQEnd[(size_t)ch] <= g_rotQBeg[(size_t)ch]) continue;
+            int d = 4;
+            for (const RotQEntry& e : g_rotQ)
+                if (e.swarm && e.swch == ch && e.rotIdx >= 0) {
+                    d = rotQDirection(g_rotTrig[(size_t)e.rotIdx].rawRot,
+                                      g_rotTrig[(size_t)e.rotIdx].flipX != 0);
+                    break;
+                }
+            std::printf("  rotq ch=%d dir=%s n=%d\n", ch,
+                        d == 1 ? "y+" : d == 2 ? "y-" : d == 3 ? "x-" : "x+",
+                        g_rotQEnd[(size_t)ch] - g_rotQBeg[(size_t)ch]);
+            for (int k = g_rotQBeg[(size_t)ch]; k < g_rotQEnd[(size_t)ch]; ++k) {
+                const RotQEntry& e = g_rotQ[(size_t)k];
+                std::printf("    [%d] uid=%d ord=%d (%.0f,%.0f) swarm=%d "
+                            "swch=%d chanOnly=%d gnddir=%d rev=%d\n",
+                            k - g_rotQBeg[(size_t)ch], e.uid, e.ord, e.px, e.py,
+                            e.swarm, e.swch, e.chanOnly,
+                            e.rotIdx >= 0 ? g_rotTrig[(size_t)e.rotIdx].gndDir : -1,
+                            e.rotIdx >= 0
+                                ? ((unsigned)(g_rotTrig[(size_t)e.rotIdx].gndDir - 2) < 2u)
+                                : 0);
+            }
+        }
     }
     // How much of the moving geometry the closed form can actually stand in for
     // -- printed always, so a level whose doors it cannot describe says so

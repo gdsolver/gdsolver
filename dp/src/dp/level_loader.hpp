@@ -1057,6 +1057,12 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             if (ev)
                 rt.vmodY = f[39].empty() ? 0.0f : (float)std::atof(f[39].c_str());
             rt.ovrVel = f[40].empty() ? 0 : (uint8_t)std::atoi(f[40].c_str());
+            // The raw inputs the QUEUE's sort order needs. `fr` above has
+            // already been overridden from gnddir, and the sort reads the
+            // rotation, so the raw values have to be carried separately.
+            rt.rawRot = o.rot;
+            rt.flipX = (uint8_t)(f[30].empty() ? 0 : std::atoi(f[30].c_str()));
+            rt.gndDir = gd;
             g_rotTrig.push_back(rt);
         }
         // [correction 2026-08-18] id 2899 is NOT REVERSE -- it is an Options

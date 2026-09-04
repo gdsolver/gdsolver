@@ -97,8 +97,161 @@ struct RotTrig {
     // m_overrideVelocity(584). When set, vmodY is an absolute assignment, not a
     // multiplier. lv22 has no instance (carried only).
     uint8_t ovrVel = 0;
+    // The object's RAW rotation and flipX, kept because the queue's sort order
+    // is a function of them and of nothing else. `frame` above cannot serve:
+    // it is overridden from gnddir, and GD's own sort reads the rotation.
+    // `determineSlopeDirection` truncates the rotation to an int before its
+    // exact comparisons against 0 / +-180 / 90 / 270, so a non-cardinal
+    // rotation matches no branch and the direction stays x-ascending.
+    double rawRot = 0.0;
+    uint8_t flipX = 0;
+    // The raw gnddir, for the reverse predicate. The frame table above folds
+    // this into (frame, setRev) through a FITTED mapping; the queue needs the
+    // value itself, because GD's reverse flag is the pure predicate
+    // `gnddir - 2 <u 2` (i.e. gnddir is 2 or 3) and no mapping is involved.
+    int gndDir = 0;
 };
 inline std::vector<RotTrig> g_rotTrig;
+
+// ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
+//
+// GD does not fire these on proximity. Every trigger with m_objectType==1 sits
+// in a per-channel bucket, sorted once at load, and `checkSpawnObjects` walks
+// ONE channel per tick from a per-channel cursor, stopping at the first element
+// whose firing point the player has not passed. So an unconsumed element blocks
+// everything behind it, and a channel switch can release several at once -- not
+// because bulk firing is a rule, but because the loop keeps going until it
+// breaks.
+//
+// The model had none of this: it tested "did the player cross this trigger's
+// axis coordinate" against every 2900, with a perpendicular window standing in
+// for channel separation. That is why lv22's t=6,315 is missing -- uid5957 is
+// released by channel 3's REVERSE flag, which uid5809 set 335 ticks earlier.
+struct RotQEntry {
+    int uid = -1;
+    int chan = 0;     // m_channelValue: the bucket this object lives in
+    int ord = 0;      // m_ordValue: the first sort key, stronger than position
+    double px = 0.0, py = 0.0;   // the firing point: the LOAD position, frozen
+    int swarm = 0;    // m_changeChannel: only these switch the active channel
+    int swch = 0;     // m_targetChannelID
+    int chanOnly = 0; // 1 = switches the channel WITHOUT rotating the player
+    int rotIdx = -1;  // index into g_rotTrig
+};
+inline std::vector<RotQEntry> g_rotQ;      // grouped by channel, sorted in it
+// channel -> [beg, end) in g_rotQ. Two arrays rather than one of size 17,
+// because the channels a level uses are not consecutive (lv22 uses 15 of them
+// but not 0..14), so "the next channel's begin" is not this one's end.
+inline std::array<int, 16> g_rotQBeg{};
+inline std::array<int, 16> g_rotQEnd{};
+inline int g_rotQChans = 0;                // how many channels actually appear
+
+// GD's `getObjectDirection`, which is what decides a bucket's sort axis:
+// 1 = y ascending, 2 = y descending, 3 = x descending, 4/default = x ascending.
+// flipY does not reach the result and is not read here. The rotation is
+// truncated to an int and then compared for exact equality, so 89.5 degrees
+// matches nothing and falls through to x-ascending -- deliberately, that is
+// GD's own behaviour rather than a tolerance this code chose.
+inline int rotQDirection(double rot, bool flipX) {
+    const int r = ((int)rot) % 360;
+    if (r == 0)                  return flipX ? 3 : 4;   // x desc : x asc
+    if (r == 180 || r == -180)   return flipX ? 4 : 3;
+    if (r == 90 || r == -270)    return flipX ? 1 : 2;   // y asc : y desc
+    if (r == 270 || r == -90)    return flipX ? 2 : 1;
+    return 4;
+}
+
+// The signed coordinate a bucket is ordered along.
+inline double rotQAxis(int dir, double px, double py) {
+    switch (dir) {
+        case 1:  return  py;    // y ascending
+        case 2:  return -py;    // y descending
+        case 3:  return -px;    // x descending
+        default: return  px;    // x ascending
+    }
+}
+
+// Sort each channel's bucket the way LevelTools::sortChannelOrderObjects does:
+// ord first, then the axis coordinate TRUNCATED TO AN INT (so two objects in
+// the same integer bucket are not separated by position at all), then uid.
+// The direction comes from the FIRST 2900 in uid order that switches TO this
+// channel -- not from the objects in it, and not from the level's rotation.
+inline void buildRotQueue() {
+    g_rotQBeg.fill(0);
+    g_rotQEnd.fill(0);
+    g_rotQChans = 0;
+    if (g_rotQ.empty()) return;
+    // Pass 1: the direction of each channel, from the first switcher that
+    // names it. "First" is array order, which is uid order.
+    std::array<int, 17> dir{};
+    dir.fill(0);
+    std::vector<const RotQEntry*> byUid;
+    byUid.reserve(g_rotQ.size());
+    for (const RotQEntry& e : g_rotQ) byUid.push_back(&e);
+    std::sort(byUid.begin(), byUid.end(),
+              [](const RotQEntry* a, const RotQEntry* b) { return a->uid < b->uid; });
+    for (const RotQEntry* e : byUid) {
+        if (!e->swarm || e->swch < 0 || e->swch > 15) continue;
+        if (dir[e->swch]) continue;                       // first one wins
+        if (e->rotIdx < 0 || (size_t)e->rotIdx >= g_rotTrig.size()) continue;
+        const RotTrig& rt = g_rotTrig[(size_t)e->rotIdx];
+        dir[e->swch] = rotQDirection(rt.rawRot, rt.flipX != 0);
+    }
+    // Pass 2 + 3: bucket by channel, then sort inside each bucket.
+    std::stable_sort(g_rotQ.begin(), g_rotQ.end(),
+                     [](const RotQEntry& a, const RotQEntry& b) {
+                         return a.chan < b.chan;
+                     });
+    size_t i = 0;
+    while (i < g_rotQ.size()) {
+        size_t j = i;
+        const int ch = g_rotQ[i].chan;
+        while (j < g_rotQ.size() && g_rotQ[j].chan == ch) ++j;
+        const int d = (ch >= 0 && ch <= 15 && dir[ch]) ? dir[ch] : 4;
+        std::sort(g_rotQ.begin() + (long long)i, g_rotQ.begin() + (long long)j,
+                  [d](const RotQEntry& a, const RotQEntry& b) {
+                      if (a.ord != b.ord) return a.ord < b.ord;
+                      const int ka = (int)((float)a.ord
+                                           + (float)rotQAxis(d, a.px, a.py));
+                      const int kb = (int)((float)b.ord
+                                           + (float)rotQAxis(d, b.px, b.py));
+                      if (ka != kb) return ka < kb;
+                      return a.uid < b.uid;
+                  });
+        if (ch >= 0 && ch <= 15) {
+            g_rotQBeg[(size_t)ch] = (int)i;
+            g_rotQEnd[(size_t)ch] = (int)j;
+            ++g_rotQChans;
+        }
+        i = j;
+    }
+}
+
+// Read the MOD's rotgameplay.txt (solver.hpp has written it for a while; until
+// now nothing read it). Joins to g_rotTrig by uid, so it runs AFTER the level.
+inline bool loadRotQueue(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return false;
+    std::unordered_map<int, int> byUid;
+    for (size_t k = 0; k < g_rotTrig.size(); ++k)
+        byUid[g_rotTrig[k].uid] = (int)k;
+    std::string line;
+    std::getline(in, line);                       // header
+    g_rotQ.clear();
+    while (std::getline(in, line)) {
+        RotQEntry e{};
+        int id = 0, sord = 0, sordd = 0, spx = 0, target = 0, chanChanged = 0;
+        const int n = std::sscanf(
+            line.c_str(), "%d,%d,%lf,%lf,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+            &e.uid, &id, &e.px, &e.py, &e.chan, &e.ord, &sord, &sordd, &spx,
+            &target, &chanChanged, &e.swarm, &e.chanOnly, &e.swch);
+        if (n < 14) continue;
+        const auto it = byUid.find(e.uid);
+        e.rotIdx = (it == byUid.end()) ? -1 : it->second;
+        g_rotQ.push_back(e);
+    }
+    buildRotQueue();
+    return true;
+}
 // --spentrot uid,uid,...: the uids of the 2900s this run had already fired
 // before the anchor (--start's t0). The one-shot (firedT) cannot be carried
 // through --start, so re-anchoring behind the maze re-fires a spent trigger at

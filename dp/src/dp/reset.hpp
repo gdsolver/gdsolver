@@ -116,6 +116,12 @@ inline void resetInvocationState() {
 
     // frames.hpp
     g_rotTrig.clear();
+    // ...and the queue built from them. Same pairing rule as everywhere else in
+    // this file: it is constructed per level, so it is cleared per call.
+    g_rotQ.clear();
+    g_rotQBeg.fill(0);
+    g_rotQEnd.fill(0);
+    g_rotQChans = 0;
     g_spentRot.clear();
     g_revToggle = true;
     g_ctrlWin.clear();
