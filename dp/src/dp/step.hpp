@@ -9738,6 +9738,18 @@ inline void swapHalves(State& s) {
 // firing -- geometry and deaths change -- and there is nothing to measure the
 // change against. Whoever gives it a witness should read fullreplay and
 // deathref, not the seeding check.
+//
+// AND NOTHING IS WATCHING FOR IT. The anchor-seeding check compares a seeded
+// state against the model's own whole run, and lv20's whole run dies at
+// t=1,157 while its dual section starts near t=17,119 -- so that check cannot
+// reach the one place in the corpus where this could bite. There is no
+// detector that will name this the day it starts to matter; the condition for
+// one existing is lv20's replay reaching t~17,119.
+//
+// The reason to leave it alone is therefore NOT "something will catch it". It
+// is that only lv20 can be affected at all, it measures zero there over 805
+// dual ticks, and lv22 -- the 155-box level -- has no dual portal, so it is
+// excluded by the level data rather than by a measurement that might age.
 inline void markTouched(State& c, const StepCtx& K, double preY) {
     if (!K.trigs || K.trigs->empty()) return;
     const double half = playerHalf(c.mode, c.mini != 0);
