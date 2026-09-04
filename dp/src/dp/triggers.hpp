@@ -47,6 +47,37 @@ struct TouchTrig {
 // layer loop and the witness resim all need the same numbering, and there is
 // exactly one level in flight.
 inline std::vector<TouchTrig> g_touch;
+// How long box b's chain is still MOVING after it is entered, in ticks. The
+// dedupe key carries a state's per-box fire tick only while the move it started
+// is still running: once everything that box set off has come to rest, two
+// states that punched it at different ticks are in the same world again and
+// must merge, or the frontier splits forever on a difference that no longer
+// exists. Built from the same durTicks the chain walk sums, plus the measured
+// box->motion latency, and rebuilt whenever g_touch is.
+inline std::vector<int> g_touchMoveTicks;
+// fireB's invariant counters (--firebcheck). See the check at the key site.
+inline bool g_fireBCheck = false;
+inline unsigned long long g_fireBNoTick = 0, g_fireBNoBit = 0, g_fireBTooEarly = 0;
+// THE ERROR IS NOT SYMMETRIC, so this rounds up at every step. Too SHORT and
+// two states that are still at different points of the same move get the same
+// key and one is thrown away -- a wrong answer. Too LONG and a box stays in the
+// key after its motion has stopped -- only cost, and only until the state
+// leaves that stretch of the level. So: ceil rather than lround (a fractional
+// duration must never be truncated), plus the 5-tick box->motion latency the
+// chain players already apply (`u = (t - F - 5) / dur`, step.hpp), plus one
+// 4-tick quantum so the bucketing at the key cannot clip the move's last
+// bucket. If the frontier turns out too wide, the quantum is the knob -- not
+// this margin.
+inline void buildTouchMoveTicks() {
+    g_touchMoveTicks.assign(g_touch.size(), 0);
+    for (size_t b = 0; b < g_touch.size(); ++b) {
+        double d = 0.0;
+        for (const TrigCtl& c : g_touch[b].ctl)
+            d = std::max(d, c.durTicks);
+        if (d <= 0.0) continue;             // nothing moves: contributes nothing
+        g_touchMoveTicks[b] = (int)std::ceil(d) + 5 + 4;
+    }
+}
 // The same boxes read in a TURNED gameplay frame (see RotTrig / frameLevel).
 // markTouched compares the STATE's (xAbs, y) -- which are frame coordinates --
 // against the box, so a world-coordinate box becomes unreachable the moment the

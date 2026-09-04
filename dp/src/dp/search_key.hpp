@@ -78,7 +78,19 @@ inline uint8_t gdUpOf(const State& s) {
     return (s.frame == 3) ? (uint8_t)!s.flip : s.flip;
 }
 
-inline uint64_t keyOf(const State& s) {
+// `t` is the tick the state belongs to. It is a parameter rather than a field
+// because dedupe runs per tick layer, so every state compared against another
+// shares it -- the key stays consistent within the layer, which is the only
+// place it is ever used. Carrying it in the state instead would add a field
+// that has to be maintained every tick and that can only ever hold the layer's
+// own t: redundant, and a second place for the key's meaning to live.
+//
+// WHOEVER STORES A KEY MUST STORE ITS TICK. refwatch keeps a reference key
+// across ticks; comparing it against a key built at a different t silently
+// fails to match and reads as "the reference left the frontier" when nothing
+// left it. The two call sites there rebuild the reference key at the tick they
+// compare at, for that reason.
+inline uint64_t keyOf(const State& s, long long t) {
     // dedupe key: exact enough to keep distinct behaviours, coarse enough to
     // saturate. cube y 0.5px / vy 0.1; ship coarser (y 1px / vy 0.2) or the
     // per-layer set is ~100k cells and the run needs >10GB
@@ -117,7 +129,7 @@ inline uint64_t keyOf(const State& s) {
     // so it never had the choice. The bucket is 0.25 px, far finer than a snap
     // and far coarser than the float noise, so it costs almost no extra states.
     const int32_t xq = (int32_t)std::lround(s.xAbs * 4.0);
-    return ((uint64_t)(uint32_t)yq << 32) ^ ((uint64_t)(uint32_t)xq << 18)
+    uint64_t k = ((uint64_t)(uint32_t)yq << 32) ^ ((uint64_t)(uint32_t)xq << 18)
            ^ ((uint32_t)vq << 6)
            ^ ((uint64_t)s.mini << 5)
            // ringHold too: two states that differ only in "has this hold
@@ -280,6 +292,38 @@ inline uint64_t keyOf(const State& s) {
                          * (uint64_t)(s.ceilT | ((uint32_t)s.ceilM4 << 8)))
                       : 0)
            ^ ((uint64_t)s.held << 1) ^ s.grounded;
+    // Per-box fire ticks, for the boxes whose chain is STILL MOVING.
+    //
+    // `trig` itself is not in the key -- the layer is partitioned by it, the
+    // same way `dx` is -- so two states in the same group already agree on
+    // WHICH boxes they have entered. What they can still disagree about is
+    // WHEN, and that only matters while the motion a box started is running:
+    // once it has come to rest the two are in the same world again and must
+    // merge, or the frontier splits forever on a difference that has stopped
+    // existing.
+    //
+    // Quantised to 4 ticks. Within a layer `t` is a constant, so quantising
+    // the fire tick and quantising the elapsed time differ by a fixed offset
+    // and are the same partition -- the simpler one is used. 4 ticks is the
+    // knob if the frontier turns out too wide; move it only against an A/B,
+    // because a coarser bucket merges states that are genuinely at different
+    // points of the same move.
+    //
+    // Costs nothing where nothing moves: levels whose touch chains move
+    // nothing have g_touchMoveTicks all zero, so the loop adds nothing and
+    // their keys stay bit-identical.
+    if (s.trig) {
+        const size_t n = std::min<size_t>(g_touchMoveTicks.size(), 32);
+        for (size_t b = 0; b < n; ++b) {
+            if (!((s.trig >> b) & 1u)) continue;
+            const long long moving = g_touchMoveTicks[b];
+            if (moving <= 0) continue;
+            if (t - (long long)s.fireB[b] >= moving) continue;   // at rest
+            k ^= ((uint64_t)(s.fireB[b] >> 2) * 0x9E3779B97F4A7C15ull)
+                 ^ ((uint64_t)(b + 1) * 0xBF58476D1CE4E5B9ull);
+        }
+    }
+    return k;
 }
 
 }  // namespace dp

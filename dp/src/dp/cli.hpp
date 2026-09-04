@@ -81,6 +81,9 @@ inline int cliMain(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--touch-from-anchor")) g_touchFromAnchor = true;
         if (!std::strcmp(argv[i], "--memstat")) g_memStat = true;
+        // --firebcheck: count violations of fireB's invariant (a set bit with no
+        // tick, or a tick with no bit) and print the totals at the end.
+        if (!std::strcmp(argv[i], "--firebcheck")) g_fireBCheck = true;
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
         // "said it already" flag it keeps is not synchronised, so use it on
@@ -729,6 +732,7 @@ inline int cliMain(int argc, char** argv) {
             }
         }
         g_touch = loadTouchTriggers(trigPath, grpPath, winTouch ? x0 : -1e18);
+        buildTouchMoveTicks();   // the dedupe key's "is this box still moving"
         g_autoTrig = loadAutoTriggers(trigPath, grpPath);
     }
     if (!obbPath.empty()) g_obb = loadObb(obbPath);   // before loadLevel reads it
@@ -848,6 +852,13 @@ inline int cliMain(int argc, char** argv) {
                     init.trig |= (uint32_t)1 << b;
                     // far enough back that the move counts as finished
                     init.trigT = (int32_t)(t0 - (long long)std::llround(c.durTicks));
+                    // ...and this box's own tick, or the anchored state would
+                    // carry a set bit with no fire tick. fireB defaults to 0,
+                    // which the key reads as "fired at tick 0" = long finished,
+                    // so a box still sliding at the anchor would merge states
+                    // that are genuinely at different points of it.
+                    init.fireB[b] = (uint16_t)std::max(
+                        0LL, t0 - (long long)std::llround(c.durTicks));
                     break;
                 }
                 // Started, but not half way: the anchor landed INSIDE the slide.
@@ -856,6 +867,17 @@ inline int cliMain(int argc, char** argv) {
                 if (full > 0.5 && moved > 0.5) {
                     init.trig |= (uint32_t)1 << b;
                     g_recPhase |= (uint32_t)1 << b;
+                    // The anchor landed INSIDE the slide, so this box is still
+                    // moving and the key has to keep it. How far in is what the
+                    // recording already says: `moved` of `full` is the fraction
+                    // travelled, so the move began that much before t0. (Under
+                    // an ease this is approximate, and approximate LATE is the
+                    // safe side -- it holds the box in the key a little longer
+                    // than the motion lasts, which costs width, where early
+                    // would merge states that still differ.)
+                    init.fireB[b] = (uint16_t)std::max(
+                        0LL, t0 - (long long)std::llround(
+                                      (moved / full) * c.durTicks));
                     break;
                 }
             }
@@ -2331,7 +2353,34 @@ inline int cliMain(int argc, char** argv) {
             kid.valid = 1;
             // the dedupe key is a pure function of the child, so it belongs on
             // this thread rather than in the serial phase
-            if (!dead) kid.key = keyOf(kid.s);
+            if (!dead) kid.key = keyOf(kid.s, (long long)t);
+            // fireB's invariant, checked where every surviving child passes.
+            // (i) is invisible to every replay harness -- dedupe is not on the
+            // replay path -- so "quick_regress is byte-identical" says the
+            // change was not SEEN, not that it is right. This is the direct
+            // witness that the array is written where it should be: a tick
+            // present for a box the state never entered, or a box entered with
+            // no tick, is an implementation defect and nothing else would
+            // catch it.
+            if (!dead && g_fireBCheck) {
+                for (int b = 0; b < 32; ++b) {
+                    const bool bit = ((kid.s.trig >> b) & 1u) != 0;
+                    const bool has = kid.s.fireB[b] != 0;
+                    if (bit && !has) ++g_fireBNoTick;
+                    if (!bit && has) ++g_fireBNoBit;
+                    // ...and against an INDEPENDENT tick. g_touchFireT[b] is
+                    // written in a different scope (level-wide, first entry
+                    // only), so "no state entered box b before the first time
+                    // any state entered box b" is a real check on the index and
+                    // the value rather than a restatement of the line that
+                    // wrote them. An anchored run seeds fireB from --start, so
+                    // those may legitimately predate it and are skipped.
+                    if (bit && has && g_touchFireT[b] >= 0
+                        && (int)kid.s.fireB[b] < g_touchFireT[b]
+                        && !((init.trig >> b) & 1u))
+                        ++g_fireBTooEarly;
+                }
+            }
             // compact side arrays for phase 2p: the shard scans read 9 B per
             // child instead of dragging the whole Child through the cache
             kidKeys[i] = kid.key;
@@ -2756,10 +2805,13 @@ inline int cliMain(int argc, char** argv) {
                     // that cannot make it.
                     gate = "dedupe";
                     const int alt = refNearestInCell(nxt, g_refKidKey[want],
-                                                     g_refKidState[want], keyOf);
+                                                     g_refKidState[want],
+                                                     [t](const State& st) {
+                                                         return keyOf(st, (long long)t);
+                                                     });
                     int n = 0;
                     for (const State& s : nxt)
-                        if (keyOf(s) == g_refKidKey[want]) ++n;
+                        if (keyOf(s, (long long)t) == g_refKidKey[want]) ++n;
                     if (alt < 0) {
                         snprintf(detail, sizeof(detail), " cell-gone");
                     } else {
@@ -3068,6 +3120,9 @@ inline int cliMain(int argc, char** argv) {
     // Cap accounting, one line, parsed by the driver's tier ladder: a PARTIAL
     // with capHits=0 died of physics at full enumeration, so a bigger cap
     // cannot change the answer and the next tier is skipped.
+    if (g_fireBCheck)
+        std::printf("firebcheck: bit-without-tick=%llu tick-without-bit=%llu too-early=%llu"
+                    " (both must be 0)\n", g_fireBNoTick, g_fireBNoBit, g_fireBTooEarly);
     std::printf("capstat: maxAlive=%zu capHits=%lld dropped=%lld cap=%zu\n",
                 maxAlive, capHits, capDropped, g_aliveCap);
     clearReport();

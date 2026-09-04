@@ -186,6 +186,22 @@ struct State {
     // same way `dx` is, so states with different masks can never merge.
     uint32_t trig = 0;
     int32_t trigT = -1;
+    // ...and the tick each individual box was entered on. `trigT` is the LAST
+    // box only, which is what markTouched's own note says is not enough: the
+    // switch band's per-box delay needs each punch's own tick, and the
+    // level-wide g_touchFireT beside it cannot serve a search where two states
+    // punched the same box at different ticks.
+    //
+    // Only meaningful where the matching bit of `trig` is set -- 0 is "not
+    // entered", and nothing reads it without checking the bit first. A tick
+    // fits a uint16 with room (the longest level in the corpus ends near
+    // 24,000).
+    //
+    // 32 x uint16 takes State from 248 to 312 bytes (+25.8%). The frontier is
+    // capped by count, not by bytes, so this is memory rather than search
+    // width -- but it is the largest single addition the struct has taken, and
+    // the cost lands in the cold loop rather than in any replay harness.
+    uint16_t fireB[32] = {};
     // ---- dual (GameObjectType 23 splits, 24 merges) ----
     // Measured on lv16 x=10,551: the moment the portal fires, GD creates a
     // second player AT THE SAME POINT with the opposite gravity and the opposite

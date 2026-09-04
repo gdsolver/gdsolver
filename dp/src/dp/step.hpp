@@ -9641,6 +9641,10 @@ inline void markTouched(State& c, const StepCtx& K, double preY) {
                 int b = 0;
                 while (!(mbit & 1u) && b < 31) { mbit >>= 1; ++b; }
                 if (g_touchFireT[b] < 0) g_touchFireT[b] = (int)K.t;
+                // ...and this state's own tick for this box. The line above is
+                // level-wide and first-entry-only, so it cannot tell two
+                // worldlines apart; this can.
+                c.fireB[b] = (uint16_t)K.t;
             }
             if (g_slopeDbg)
                 std::printf("trigfire t=%lld box(%.1f,%.1f) %.0fx%.0f "

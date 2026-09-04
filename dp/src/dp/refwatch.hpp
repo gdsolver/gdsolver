@@ -203,9 +203,14 @@ inline int refFindExact(const std::vector<State>& v, const State& s) {
 }
 
 // The survivor of a merged state's own cell, nearest in (y, vy).
+// keyFn is a template parameter rather than a function pointer because keyOf
+// takes the layer's tick now, so the caller passes a lambda that captures it --
+// and a capturing lambda does not convert to a plain pointer. The tick must be
+// the one the compared keys were built at: a key from another layer silently
+// fails to match and reads as "the reference left the frontier".
+template <class KeyFn>
 inline int refNearestInCell(const std::vector<State>& v, uint64_t key,
-                            const State& want,
-                            uint64_t (*keyFn)(const State&)) {
+                            const State& want, KeyFn keyFn) {
     int best = -1;
     double bd = 1e18;
     for (size_t i = 0; i < v.size(); ++i) {

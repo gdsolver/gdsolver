@@ -182,6 +182,12 @@ inline void resetInvocationState() {
 
     // triggers.hpp
     g_touch.clear();
+    // ...and the per-box move length derived from it. Built beside g_touch in
+    // cliMain, so it is cleared beside g_touch here: left behind, the next
+    // level in a one-session run keys its states against the PREVIOUS level's
+    // box durations, and a leak of exactly that shape lived under a green
+    // 22/22 for months.
+    g_touchMoveTicks.clear();
     for (auto& f : g_touchFrame) f.clear();
     for (int b = 0; b < 32; ++b) g_touchFireT[b] = -1;
     g_trigReported = 0;
