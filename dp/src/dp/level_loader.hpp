@@ -284,7 +284,11 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // Python that could not reproduce the loader's own answer before this
         // line existed. Anyone touching the walk should diff this across the
         // corpus before and after.
-        if (g_dynDbg && tit != trigOf.end())
+        // `>= 0`, not truthiness: the flag's OFF value is -1, which is true.
+        // As written this printed a line per triggered object on every run that
+        // passed --triggers, and went unseen because quick_regress sends each
+        // section's stdout to DEVNULL.
+        if (g_dynDbg >= 0 && tit != trigOf.end())
             std::printf("ctl: uid=%d mask=%u dx=%.2f dy=%.2f dur=%.3f "
                         "aAnchor=%d adx=%.2f ady=%.2f adur=%.3f "
                         "autoMoves=%d noopTouch=%d controlled=%d autoCtl=%d\n",
