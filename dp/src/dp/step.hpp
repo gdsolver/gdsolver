@@ -8149,8 +8149,58 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // m_rotationSpeed here is unmeasured, and the corpus cannot
                 // tell -- every section here leaves grounded, where the ball
                 // re-stakes on its first tick down regardless.
-                if ((c.mode == 5 || c.mode == 6) && oldMode != c.mode)
+                // [2026-09-05, second pass] The rule is not "which mode did we
+                // enter" -- it is WHICH FLAG CHANGED ON WHICH EDGE. GD has one
+                // toggler per mode flag and each writes setRotation
+                // (PlayerObject vtable +0x150) asymmetrically:
+                //   ship / UFO / wave   rising: 0        falling: 0
+                //   swing               rising: 0        falling: flip?180:0
+                //   robot / spider      rising: 0        falling: (nothing)
+                //   ball                rising: (nothing) falling: flip?180:0
+                // CUBE IS NOT A MODE -- it is "all seven flags down", so it has
+                // no toggler and neither of its edges writes anything. The
+                // chain per transition is: raise the destination flag ->
+                // switchedToMode drops the old one (the old flag's FALLING edge
+                // write) -> the destination's RISING edge write. Last write
+                // wins. That is why entering ship/UFO/wave/swing/robot/spider
+                // always ends at 0, and why only cube and ball have a landing
+                // value that depends on where they came from.
+                // Falsified on the way in, and worth keeping because both
+                // mistakes were mine: (a) I scored lv22 t=4,635 swing->cube as
+                // a PRESERVE because my predicate was |rot| < 5, but GD lands
+                // on 178.269 = 180 - 1.731 with flip going 0->1 -- the swing's
+                // falling edge writing 180, then resetPlayerIcon re-latching
+                // the cube rate and updateRotation spending exactly one step in
+                // the same physics step. It is a reset, to 180. (b) lv13
+                // t=18,921 looked like a reset that ran a tick late; gdref
+                // carries its OWN mode column and it reads `ball` there and
+                // `cube` at 18,922, so the MODEL switches a tick early and the
+                // late reset does not exist. Corpus-wide the two mode columns
+                // disagree on 12 ticks out of ~400,000 (lv13 2, lv14 10).
+                // MEASURABILITY, stated before running rather than after: the
+                // only levels where any player-rotation change can show up are
+                // lv20/21/22 -- a deliberate +5 deg on every consumer of pRot
+                // left the other 19 byte-identical, and 5 deg is larger than
+                // most of the entry errors this fixes. The five no-reset pairs
+                // (cube->ball, robot/spider->ball, robot/spider->cube) are
+                // worse than that: only cube->ball is even discriminable, since
+                // the other four are entered with rot already 0. So this does
+                // not "pass" the suite; the suite CANNOT SEE IT. Neutrality is
+                // the expected result and the justification is the disassembly.
+                // Ghidra printed 3 of the 8 setRotation call sites as taking no
+                // argument when all 8 pass one, so the edge table above was read
+                // from instruction bytes. Do not cite a decompiled argument
+                // list as evidence for anything here.
+                const bool wroteOnEntry = (c.mode != 0 && c.mode != 2);
+                if (wroteOnEntry) {
                     c.rot = 0.f;
+                } else if (oldMode == 1 || oldMode == 3 || oldMode == 4) {
+                    c.rot = 0.f;                      // their falling edge: 0
+                } else if (oldMode == 2 || oldMode == 7) {
+                    c.rot = c.flip ? 180.f : 0.f;     // ball / swing falling
+                }
+                // oldMode 0/5/6 falling edge writes nothing: cube has no
+                // toggler, robot and spider deliberately leave the angle alone.
                 pHalfLive = (c.mode == 4 && c.mini)
                                 ? kWaveContactHalfMini
                                 : playerHalf(c.mode, c.mini != 0);
@@ -9300,9 +9350,24 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // in flipped gravity is what would tell them apart.
         const bool spinNow = rotPadSpin || (!c.grounded && !s.grounded);
         const uint8_t spinSign = rotPadSpin ? c.flip : rotSignNow;
+        // THE BASE IS c.rot, NOT s.rot, and every law below has to agree. A mode
+        // portal earlier in this same tick may already have written the angle
+        // (the edge table at the `c.mode = wantMode` site), and `State c = s` at
+        // the top means the two are identical whenever it did not -- so reading
+        // c.rot changes nothing except where a transition landed. Reading s.rot
+        // silently discarded that write: measured lv2 t=12,893, a ship->cube
+        // portal where GD reads 1.731 (reset to 0, then this law's one step) and
+        // the model read 17.249 = the pre-portal 15.519 plus the same step. The
+        // reset looked dead for every mode that HAS a rotation law, and looked
+        // fine for robot/spider only because nothing writes their angle at all.
+        // That is also where GD's 1.731 / 2.250 landings come from: setRotation
+        // puts 0 (or flip?180:0) down and resetPlayerIcon re-latches the cube
+        // rate, so updateRotation spends exactly one step in the same physics
+        // step. It is not a separate mechanism to model -- it falls out of
+        // applying this law to the base the transition just wrote.
         if (spinNow && !c.grounded) {
             const double rate = c.mini ? 2.25 : 1.7307692;
-            c.rot = (float)((double)s.rot + (spinSign ? -rate : rate));
+            c.rot = (float)((double)c.rot + (spinSign ? -rate : rate));
         } else {
             // ...and the rate is **0.13125 x GD's speed multiplier**.
             // Size-independent. Taking per-speed medians over 23,868 samples
@@ -9311,9 +9376,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             //   0.7 -> 0.09187   0.9 -> 0.11812   1.1 -> 0.14437   1.3 -> 0.17063
             // The old 0.1181 was the 0.9 row only, 1.44x short in the fast
             // band, leaving angle behind on every landing.
-            const double tgt = std::round((double)s.rot / 90.0) * 90.0;
+            const double tgt = std::round((double)c.rot / 90.0) * 90.0;
             const double rate = 0.13125 * speedMulForDx(useDx);
-            c.rot = (float)((double)s.rot + rate * (tgt - (double)s.rot));
+            c.rot = (float)((double)c.rot + rate * (tgt - (double)c.rot));
         }
     } else if (c.mode == 1) {
         // [2026-08-20 r37] **The ship's bank angle.** Until now the model only
@@ -9344,7 +9409,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         if (ddx != 0.0 || ddy != 0.0) {
             const double tgt =
                 -std::atan2(ddy, ddx) * 180.0 / 3.14159265358979;
-            c.rot = (float)((double)s.rot + 0.0375 * (tgt - (double)s.rot));
+            c.rot = (float)((double)c.rot + 0.0375 * (tgt - (double)c.rot));
         }
     } else if (c.mode == 2) {
         // THE BALL. Until now its `rot` never moved at all, which the rate
@@ -9381,7 +9446,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // left the ground off a step or a pad is still turning at the ground
         // rate up here.
         if (c.rotStep != 0.f)
-            c.rot = (float)((double)s.rot
+            c.rot = (float)((double)c.rot
                             + (c.rotNeg ? -1.0 : 1.0) * (double)c.rotStep);
     }
     // RIDE. GD carries a standing player with the surface under it; the support
