@@ -450,9 +450,14 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                     "(dropped %zu behind, %zu ahead)\n",
                     total, out.front().cx, first, total - first - 32);
     }
-    for (const TouchTrig& t : out)
-        std::printf("triggers: box (%.0f,%.0f) %.0fx%.0f moves %zu objects\n",
-                    t.cx, t.cy, t.hw * 2, t.hh * 2, t.ctl.size());
+    // The uid travels with the box because bit numbering is a property of THIS
+    // window (see the anchor payload): without it there is no way to say which
+    // object a State::trig bit stands for, and the payload's uid->bit mapping
+    // cannot be checked against what GD reports activating.
+    for (size_t b = 0; b < out.size(); ++b)
+        std::printf("triggers: box %zu uid %d (%.0f,%.0f) %.0fx%.0f moves %zu objects\n",
+                    b, out[b].uid, out[b].cx, out[b].cy, out[b].hw * 2,
+                    out[b].hh * 2, out[b].ctl.size());
     // the ownTouch proximity gate's table (see g_touchBoxU)
     for (size_t b = 0; b < 32 && b < out.size(); ++b)
         g_touchBoxU[b] = (float)out[b].cx;

@@ -1313,11 +1313,12 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
                                "--shipyq", num(kYq), "--shipvq", num(kVq),
                                "--threads", kThreads};
     if (!band.empty()) { a.push_back("--startband"); a.push_back(band); }
-    {   // ...and the touch triggers GD had already set off by t0. Inferring
-        // them from the moving-geometry recording works only for objects the
-        // recording contains, which left 163 seeding differences on lv22; this
-        // is what GD observed, so nothing is inferred.
-        const std::string ap = anchorPayload(t0);
+    {   // ...and the touch triggers GD had already set off by t0 (cfg
+        // touchpayload, off by default -- see Config::touchPayload for the
+        // lv22 measurement that says why). Both anchor paths are gated the
+        // same way, or the resim and the solve would be anchored into
+        // different worlds, which is the failure this seeding exists to avoid.
+        const std::string ap = g_cfg.touchPayload ? anchorPayload(t0) : std::string();
         if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
     }
     {   // the resim must not fire 2900s the recorded run already consumed either --
@@ -1801,18 +1802,25 @@ inline bool runLadder(long long dt) {
         // ...and the touch triggers GD had already set off by t0 (see
         // anchorPayload). The solve gets the same seeding the fixup resim does,
         // or the two would be anchored into different worlds.
-        {
-            const std::string ap = anchorPayload(t0);
-            if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
-        }
+        const std::string ap = g_cfg.touchPayload ? anchorPayload(t0) : std::string();
+        if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
         std::string band;
         if (r->pmax > r->pmin) {
             band = num(r->pmin) + "," + num(r->pmax);
             a.push_back("--startband");
             a.push_back(band);
         }
+        // The payload goes on this line too, and not only for reading: it is the
+        // ONLY place it is ever written down. The argv is built in-process and
+        // handed to cliMain, dp's own printf does not reach result.txt, and
+        // `solver args:` prints once per session (g_argsLogged) -- at the FIRST
+        // solve, which has no anchor. So every instrument pointed at this file
+        // reported "no payload" for a run in which the payload fired at every
+        // anchor. Logged here, seedcheck can also replay a real payload offline
+        // instead of a hand-made one.
         writeResult("dpsolve:   [anchor] --start " + arg
-                    + (band.empty() ? "  (band guessed from x)" : "  --startband " + band));
+                    + (band.empty() ? "  (band guessed from x)" : "  --startband " + band)
+                    + (ap.empty() ? "" : "  --anchor-state " + ap));
         std::error_code ec;
         std::filesystem::remove(g_tailPath, ec);   // a stale tail must not read as this call's
         const int rc = dpbridge::solveInProcess(g_csv, a);

@@ -409,6 +409,7 @@ inline void loadConfig() {
         else if (key == "orbtrace") g_cfg.orbTrace = (val == "1");
         else if (key == "orbtracex") cfgNum(key, val, g_cfg.orbTraceX);
         else if (key == "padtrace") g_cfg.padTrace = (val == "1");
+        else if (key == "touchpayload") g_cfg.touchPayload = (val == "1");
         else if (key == "snaptrace") g_cfg.snapTrace = (val == "1");
         else if (key == "hitboxtrace") g_cfg.hitboxTrace = (val == "1");
         else if (key == "hbfrom") g_cfg.hbFrom = std::atoll(val.c_str());
@@ -653,6 +654,22 @@ inline void endSession(const std::string& why) {
         + " (p1: " + std::to_string((int)touchseed::g_first.size())
         + ", hook calls: " + std::to_string(touchseed::g_calls)
         + ") -- non-zero p2 means the model cannot fire a trigger this run did");
+    // ...and the map itself, which is what the payload is cut from. A payload is
+    // per-anchor (the entries at or before t0) and the anchors only exist inside
+    // a solve, so checking the seeding through them would cost a solve per
+    // measurement. The whole map comes out of a PLAIN REPLAY -- half a minute --
+    // and every anchor's payload is a prefix of it, so the offline check can
+    // build the payload for any t0 itself.
+    {
+        std::string m = "touchseed map:";
+        bool first = true;
+        for (const auto& kv : touchseed::g_first) {
+            m += (first ? " " : ",") + std::to_string(kv.first) + ":"
+               + std::to_string(kv.second);
+            first = false;
+        }
+        writeResult(m);
+    }
     // ...and the proof: the level's own record, compared with the sample taken before the
     // level had run a tick. "changed: none" is the only acceptable outcome for a solver
     // session; anything else names the field that leaked. `restored` counts the writes GD

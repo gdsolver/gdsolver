@@ -178,6 +178,22 @@ struct Config {
     // Injection breaks the contact state and changes the result even with the same values, so
     // boundaries are pinned down with this + plan changes
     bool padTrace = false;
+    // Seed an anchored solve's touch bits from what GD observed rather than
+    // from the moving-geometry recording (cfg `touchpayload=1`, dp's
+    // --anchor-state). OFF, because measured on lv22 on 2026-09-04 the two
+    // sides name almost disjoint sets of objects: GD reported 24 activations,
+    // of which 22 are not in triggers_lv22.txt at all and the other 2 sit at
+    // cx 13,335 and 15,549, outside the 32-box window an early anchor holds
+    // (cx 511..2,283). Zero of 24 mapped. The payload still declares
+    // `owns=touch`, so leaving it on would SUPPRESS the recording-derived
+    // seeding on every level and put nothing in its place.
+    //
+    // The cause is the population, not the wiring: the hook fires on
+    // EnhancedGameObject::activatedByPlayer, which catches every
+    // touch-triggered EffectGameObject, while dp's window models the
+    // move-style triggers only. Turning this on before that is reconciled
+    // measures the suppression, not the payload.
+    bool touchPayload = false;
     // Observe the stair snap (checkSnapJumpToObject). For measuring the phenomenon where x
     // advances extra on the landing tick
     bool snapTrace = false;
