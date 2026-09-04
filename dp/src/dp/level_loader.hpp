@@ -1590,6 +1590,15 @@ inline std::string settingsPathBeside(const std::string& objrectsPath) {
     return objrectsPath.substr(0, at) + "levelsettings"
            + objrectsPath.substr(at + 8);
 }
+// ...and the same for the trigger queue, so every caller gets it without being
+// taught a new flag. The mod writes rotgameplay_lvN.txt beside objrects_lvN.txt
+// and 21 of the 22 files are a bare header.
+inline std::string rotQPathBeside(const std::string& objrectsPath) {
+    const size_t at = objrectsPath.rfind("objrects");
+    if (at == std::string::npos) return std::string();
+    return objrectsPath.substr(0, at) + "rotgameplay"
+           + objrectsPath.substr(at + 8);
+}
 
 // The CLI's way in: the same parse, reading the dump the mod wrote to disk.
 inline Level loadLevel(const std::string& path, const GroupTimeline* gt = nullptr,

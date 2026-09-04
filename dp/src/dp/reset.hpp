@@ -121,7 +121,9 @@ inline void resetInvocationState() {
     g_rotQ.clear();
     g_rotQBeg.fill(0);
     g_rotQEnd.fill(0);
+    g_rotQChanMask.fill(0);
     g_rotQChans = 0;
+    g_rotQueue = false;
     g_spentRot.clear();
     g_revToggle = true;
     g_ctrlWin.clear();

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "dp/slopes.hpp"
 
 namespace dp {
@@ -343,12 +343,81 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
     const int rev0 = (int)c.rev;   // reverse travel is a 180-degree heading = true frame +2
     int nf = -1;
     int nflip = -1;
+    // ---- THE QUEUE (frames.hpp) ------------------------------------------
+    // GD walks ONE channel from a cursor and stops at the first element the
+    // player has not passed. That is not a nearest-match search, so none of the
+    // selection below runs: no perpendicular window (the pairs 6 px apart that
+    // it was invented for are in DIFFERENT CHANNELS, and the cursor picks
+    // between them), no scroll gate, no last/nearest rule.
+    //
+    // The axis is the player's -- vertical exactly when the frame is turned,
+    // since a quarter turn is what makes travel vertical -- while the DIRECTION
+    // is the channel's reverse bit. GD is asymmetric that way on purpose, and
+    // the comparison is against WORLD coordinates either way.
+    bool qFired = false;
+    float qModY = 1.0f;
+    uint8_t qOvr = 0;
+    if (g_rotQueue && !g_rotQ.empty()) {
+        double wx, wy;
+        fromFrame(f0, (double)c.xAbs, (double)c.y, wx, wy);
+        // A guard rather than `while (true)`: GD's loop is bounded by the
+        // bucket, and a bug here would otherwise hang the search.
+        for (int guard = 0; guard < 64; ++guard) {
+            const int ch = (int)c.rotChan & 15;
+            const int beg = g_rotQBeg[(size_t)ch], end = g_rotQEnd[(size_t)ch];
+            if (end <= beg) break;                       // no such channel
+            const int done = popCount32(c.rotSpent & g_rotQChanMask[(size_t)ch]);
+            const int idx = beg + done;
+            if (idx >= end) break;                       // (A) consumed to the end
+            const RotQEntry& e = g_rotQ[(size_t)idx];
+            const bool rev = ((c.rotRev >> ch) & 1u) != 0;
+            const bool vertical = (f0 & 1) != 0;
+            const double ref = vertical ? wy : wx;
+            const double p = vertical ? e.py : e.px;
+            // (B2)-(B5). Forward fires on `ref >= p`, reverse on `ref <= p`;
+            // the same value fires in both, which is GD's own asymmetry.
+            if (!rev) { if (ref < p) break; }
+            else      { if (p < ref) break; }
+            if (idx < 32) c.rotSpent |= (uint32_t)1 << idx;
+            // The switch half: only a 2900 with `swarm` moves the active
+            // channel, and the reverse it writes is the pure predicate
+            // `gnddir - 2 <u 2` -- no mapping through the frame.
+            if (e.swarm && e.swch >= 0 && e.swch <= 15) {
+                c.rotChan = (uint8_t)e.swch;
+                const int gd = (e.rotIdx >= 0)
+                    ? g_rotTrig[(size_t)e.rotIdx].gndDir : 0;
+                if ((unsigned)(gd - 2) < 2u) c.rotRev |= (uint16_t)(1u << e.swch);
+                else c.rotRev &= (uint16_t)~(1u << e.swch);
+            }
+            // ...and the rotation half, which a channel-only trigger skips.
+            if (!e.chanOnly && e.rotIdx >= 0) {
+                const RotTrig& r = g_rotTrig[(size_t)e.rotIdx];
+                if (r.setRev >= 0) c.rev = (uint8_t)r.setRev;
+                nf = r.frame;
+                nflip = r.setFlip;
+                qModY = r.vmodY;
+                qOvr = r.ovrVel;
+                qFired = true;
+                // ONE ROTATION PER TICK. GD's loop would keep going, and the
+                // next element could be eligible in the frame this one just
+                // set. It does not happen in the corpus -- lv22's 20 firings
+                // are 71 to 2,884 ticks apart -- and the effect code below
+                // rebases the state once, so a second turn in the same tick
+                // would need it restructured. If a level ever needs it, the
+                // symptom is a frame transition GD makes and the model makes
+                // one tick late.
+                break;
+            }
+        }
+    }
+    const bool qUsed = (g_rotQueue && !g_rotQ.empty());
     const RotTrig* best = nullptr;   // the matching trigger nearest in the perpendicular axis
     double bestDv = 1e18;
     float rotModY = 1.0f;          // vy multiplier of the adopted trigger (RotTrig::vmodY)
     uint8_t rotOvr = 0;
     bool toggleRev = false;
     for (const RotTrig& r : g_rotTrig) {
+        if (qUsed) break;   // the queue above already decided
         // A 2900 that points to the current frame is a **reverse-travel toggle**.
         // GD measurement (2026-08-15, lv22's 14 firings tabulated by frame and
         // travel before/after):
@@ -517,7 +586,15 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
             rotOvr = r.ovrVel;
         }
     }
-    if (toggleRev) c.rev = (uint8_t)!c.rev;
+    if (qUsed) {
+        // The queue owns the answer: no toggle rule (a same-frame firing sets
+        // reverse as an absolute value from gnddir) and no nearest-match.
+        if (!qFired) return -1;
+        rotModY = qModY;
+        rotOvr = qOvr;
+    } else if (toggleRev) {
+        c.rev = (uint8_t)!c.rev;
+    }
     if (nf < 0) return -1;
     // A same-frame firing (one that sets reverse travel as an absolute value via
     // gnddir) changes **only the heading**. Coordinates and velocity stay as they

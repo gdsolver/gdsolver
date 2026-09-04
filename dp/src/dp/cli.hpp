@@ -86,6 +86,9 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--firebcheck")) g_fireBCheck = true;
         // --noformula: keep formula-driven objects on the recording path.
         if (!std::strcmp(argv[i], "--noformula")) g_noFormula = true;
+        // --rotqueue: consume rotations from the queue (frames.hpp) instead of
+        // the pre-queue selection. Opt-in until the anchor can seed the state.
+        if (!std::strcmp(argv[i], "--rotqueue")) g_rotQueue = true;
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
         // "said it already" flag it keeps is not synchronised, so use it on
@@ -1117,8 +1120,11 @@ inline int cliMain(int argc, char** argv) {
             }
         }
     }
-    // After the level, because the queue joins to g_rotTrig by uid.
-    if (!rotQPath.empty() && !loadRotQueue(rotQPath))
+    // After the level, because the queue joins to g_rotTrig by uid. Defaulted
+    // from the objrects path the same way levelsettings is, so the harnesses do
+    // not each have to learn a flag.
+    if (rotQPath.empty()) rotQPath = rotQPathBeside(argv[1]);
+    if (!rotQPath.empty() && !g_rotTrig.empty() && !loadRotQueue(rotQPath))
         std::printf("rotq: could not read %s\n", rotQPath.c_str());
     std::printf("level: %zu colliders, %zu portals, %zu pads, %zu orbs, "
                 "%zu moving, maxX=%.0f\n",

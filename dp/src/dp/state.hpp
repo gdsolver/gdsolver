@@ -218,6 +218,24 @@ struct State {
     // recorded run's player path -- right for the plan that made it and wrong
     // by the whole difference for any other.
     float lockOff = 0.f;
+    // ---- the 2.2 trigger queue (frames.hpp) ----
+    // Which queued triggers this state has consumed. One bit per entry of
+    // g_rotQ, and the corpus's only level with any has 30 of them. Consumption
+    // inside a channel is strictly front-to-back, so the cursor GD keeps per
+    // channel (+0x348) does not need its own field: it is the popcount of this
+    // mask restricted to that channel. GD never resets that cursor on a channel
+    // switch -- `rotateGameplay` writes only the active channel and the reverse
+    // dictionary, and `createCheckpoint` saves all three, which is what a
+    // persistent value looks like -- so leaving and returning to a channel
+    // resumes where it stopped, and the popcount stays honest.
+    uint32_t rotSpent = 0;
+    // The channel being walked. Not derivable: it is whatever the last 2900
+    // with `swarm` set pointed at.
+    uint8_t rotChan = 0;
+    // Per-channel reverse, one bit per channel. Also not derivable -- lv22's
+    // channel 1 is reached both from a 2900 with gnddir=2 (reverse) and from
+    // five with gnddir=0 (not), so the value depends on which fired last.
+    uint16_t rotRev = 0;
     // ---- dual (GameObjectType 23 splits, 24 merges) ----
     // Measured on lv16 x=10,551: the moment the portal fires, GD creates a
     // second player AT THE SAME POINT with the opposite gravity and the opposite

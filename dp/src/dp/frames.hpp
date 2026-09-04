@@ -143,6 +143,33 @@ inline std::vector<RotQEntry> g_rotQ;      // grouped by channel, sorted in it
 // but not 0..14), so "the next channel's begin" is not this one's end.
 inline std::array<int, 16> g_rotQBeg{};
 inline std::array<int, 16> g_rotQEnd{};
+// Bits of State::rotSpent that belong to each channel, so "how many of this
+// channel have been consumed" is one popcount.
+inline std::array<uint32_t, 16> g_rotQChanMask{};
+// --rotqueue: consume rotations from the queue instead of the pre-queue
+// selection (the travel-axis crossing, the perpendicular window, the
+// last/nearest rule). OPT-IN, and the reason is measured rather than cautious:
+//
+// the queue is right from t=0 and WRONG AT AN ANCHOR. State::rotSpent /
+// rotChan / rotRev are built up tick by tick, so a state handed to --start
+// mid-level begins on channel 0 with nothing consumed and re-fires everything
+// the run had already passed. Measured: from t=0 the queue fixes the
+// transition it was built for (lv22 t=6,315, frame AND gravity, 191 of 192
+// transitions agreeing), while quick_regress -- which is anchored sections
+// throughout -- loses tracking in 12 of lv22's, worst 400 -> 17 at t=1,800.
+//
+// This is the third instance today of the same hole: a per-state value the
+// anchor scan does not seed (State::fireB, State::lockOff, and now these).
+// The old path had --spentrot for exactly it, fed from the GD dump's frame
+// transitions before t0; the queue needs the equivalent before it can be the
+// default, and until then it is what the flag turns on.
+inline bool g_rotQueue = false;
+// std::popcount is C++20 and this tree builds as C++17.
+inline int popCount32(uint32_t v) {
+    int n = 0;
+    while (v) { v &= v - 1; ++n; }
+    return n;
+}
 inline int g_rotQChans = 0;                // how many channels actually appear
 
 // GD's `getObjectDirection`, which is what decides a bucket's sort axis:
@@ -220,6 +247,9 @@ inline void buildRotQueue() {
         if (ch >= 0 && ch <= 15) {
             g_rotQBeg[(size_t)ch] = (int)i;
             g_rotQEnd[(size_t)ch] = (int)j;
+            uint32_t m = 0;
+            for (size_t k = i; k < j && k < 32; ++k) m |= (uint32_t)1 << k;
+            g_rotQChanMask[(size_t)ch] = m;
             ++g_rotQChans;
         }
         i = j;
