@@ -8117,6 +8117,40 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             } else {
                 const uint8_t oldMode = c.mode;
                 c.mode = wantMode;
+                // [2026-09-05] A ROBOT or SPIDER portal zeroes the sprite
+                // rotation, and the player then stands upright for the whole
+                // section. GD does this the tick the portal fires: lv20
+                // t=7,707->7,708 goes 171.335 -> 0.000 and t=11,979->11,980
+                // goes 168.776 -> 0.000. Corpus-wide it is 11 sections over
+                // lv19/20/21/22 -- 15,326 ticks, every single one exactly 0,
+                // both modes, no exceptions. The model used to FREEZE instead
+                // -- it has no writer of `rot` in either mode -- so it carried
+                // the pre-portal value out the far side and every later
+                // oriented test on the level ran 81.328 deg (then 88.774,
+                // and up to 5,132 deg raw on lv21) out of phase.
+                // The phase is what the SAT eats: at lv20's speed portal
+                // uid8187 (rot 53) that made the player's projected radius
+                // 9*(|cos 81.68|+|sin 81.68|) = 10.208 against GD's
+                // 9*(|cos 0.347|+|sin 0.347|) = 9.054, and 1.15 px at
+                // ~1.2 px/tick is exactly the 1 tick the portal fired early.
+                // WHY THE ROTATION CENSUS CALLED THIS INNOCENT: rotrate scores
+                // a mode by the SHARE of ticks whose rate disagrees, and this
+                // defect is one tick per section -- 7 bad ticks for robot's 7
+                // entries, over 11,181 ticks, = 0.1% and it read as innocent.
+                // The instrument was not blind; it weighted a defect by its
+                // FREQUENCY when what matters is whether the error PERSISTS. A
+                // one-tick rate error that rewrites a base is permanent for the
+                // rest of the level; one that is corrected next tick is not.
+                // Nothing in a share column separates those two.
+                // Entry-only is enough BECAUSE nothing writes `rot` in either
+                // mode today (measured: all 15,326 ticks frozen). If a writer
+                // is ever added, this has to become a per-tick pin instead.
+                // `rotStep` is deliberately left alone: whether GD also clears
+                // m_rotationSpeed here is unmeasured, and the corpus cannot
+                // tell -- every section here leaves grounded, where the ball
+                // re-stakes on its first tick down regardless.
+                if ((c.mode == 5 || c.mode == 6) && oldMode != c.mode)
+                    c.rot = 0.f;
                 pHalfLive = (c.mode == 4 && c.mini)
                                 ? kWaveContactHalfMini
                                 : playerHalf(c.mode, c.mini != 0);
