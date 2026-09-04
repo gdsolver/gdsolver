@@ -89,6 +89,8 @@ inline int cliMain(int argc, char** argv) {
         // --rotqueue: consume rotations from the queue (frames.hpp) instead of
         // the pre-queue selection. Opt-in until the anchor can seed the state.
         if (!std::strcmp(argv[i], "--rotqueue")) g_rotQueue = true;
+        // --seeddump <t>: the accumulated-field line, for the seeding check.
+        if (!std::strcmp(argv[i], "--seeddump")) g_seedDump = std::atoi(argv[i + 1]);
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
         // "said it already" flag it keeps is not synchronised, so use it on
@@ -1988,6 +1990,26 @@ inline int cliMain(int argc, char** argv) {
             State c = stepBoth(s, (uint8_t)curIn, K, rdead);
             c.action = (uint8_t)curIn;
             s = c;
+            // --seeddump <t>: the state's ACCUMULATED fields at one tick.
+            //
+            // These are the fields an anchor has to seed, and the check they
+            // exist for is one comparison: run from t=0 with --seeddump T, run
+            // with --start at T-1 and --seeddump T, and the two lines must
+            // match. Three separate defects today were all "the anchor scan
+            // does not seed this" (State::fireB, State::lockOff, and the
+            // queue's rotSpent / rotChan / rotRev), each found only after it
+            // changed an answer. WHOEVER ADDS A PER-STATE ACCUMULATED FIELD
+            // ADDS IT HERE -- a field missing from this line is a field the
+            // check cannot see.
+            if (g_seedDump >= 0 && t == (long long)g_seedDump) {
+                std::printf("seed: t=%lld trig=0x%x trigT=%d lockOff=%.4f "
+                            "rotSpent=0x%x rotChan=%d rotRev=0x%x fireB=",
+                            t, s.trig, (int)s.trigT, (double)s.lockOff,
+                            s.rotSpent, (int)s.rotChan, (unsigned)s.rotRev);
+                for (int b = 0; b < 32; ++b)
+                    if (s.fireB[b]) std::printf("%d:%u,", b, s.fireB[b]);
+                std::printf("\n");
+            }
             // ...and now turn, if the tick that just ran crossed one. The world
             // point is what carries over; (u,v) is re-read in the new frame.
             // The world VELOCITY carries too: the forward speed becomes the new

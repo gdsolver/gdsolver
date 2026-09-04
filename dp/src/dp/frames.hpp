@@ -173,6 +173,9 @@ inline std::array<uint32_t, 16> g_rotQChanMask{};
 // transitions before t0; the queue needs the equivalent before it can be the
 // default, and until then it is what the flag turns on.
 inline bool g_rotQueue = false;
+// --seeddump <t>: print the state's accumulated fields at tick t. The
+// self-check for anchor seeding -- see the print site in cli.hpp.
+inline int g_seedDump = -1;
 // std::popcount is C++20 and this tree builds as C++17.
 inline int popCount32(uint32_t v) {
     int n = 0;
