@@ -5,6 +5,28 @@ using namespace p1;
 
 class $modify(PadTraceGameObject, EnhancedGameObject) {
     void activatedByPlayer(PlayerObject* p) {
+        // THE ANCHOR PAYLOAD'S SOURCE. This is the only setter of the flag the
+        // spawn queue reads, and triggers reach it because EffectGameObject
+        // derives from EnhancedGameObject -- so a touch trigger firing is
+        // observable here exactly, with no polling and no threshold.
+        // m_isTouchTriggered is EffectGameObject's, and this hook is on its
+        // base -- which is exactly why the hook sees triggers at all.
+        auto* eff = typeinfo_cast<EffectGameObject*>(this);
+        if (eff && eff->m_isTouchTriggered) {
+            auto* l = GJBaseGameLayer::get();
+            const bool isP1 = (l && p == l->m_player1);
+            if (isP1) {
+                // First wins: the flag latches within an attempt, and dp
+                // writes its own fire tick once (markTouched skips a box whose
+                // bit is already set), so "first" is the matching convention.
+                auto& m = touchseed::g_first;
+                if (m.find(this->m_uniqueID) == m.end())
+                    m[this->m_uniqueID] = (int)g_tick;
+            } else if (l) {
+                // Counted, never carried -- see touchseed::g_p2.
+                ++touchseed::g_p2;
+            }
+        }
         if (g_cfg.padTrace) {
             const int ty = (int)this->m_objectType;
             if (ty == 8 || ty == 9 || ty == 10) {

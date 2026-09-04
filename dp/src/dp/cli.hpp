@@ -854,24 +854,29 @@ inline int cliMain(int argc, char** argv) {
                         "build that carries what this one would drop\n");
             return 2;
         }
-        bool haveLock = false;
+        bool sawTouchKey = false;
         for (const auto& p : kv) {
-            if (p.first == "touch") {
+            if (p.first == "owns") {
+                if (p.second.find("touch") != std::string::npos)
+                    g_ownsTouch = true;
+            } else if (p.first == "touch") {
                 payloadTouch = parseTouchPayload(p.second);
-                havePayload = true;
-            } else if (p.first == "lockOff") {
-                init.lockOff = (float)std::atof(p.second.c_str());
-                haveLock = true;
+                sawTouchKey = true;
             }
         }
+        havePayload = g_ownsTouch;
         // A PAYLOAD REPLACES THE RECORDING-DERIVED SEED WHOLESALE, so a key it
         // does not carry is a value nobody sets -- not a value that falls back.
         // Found by this build's own first test: a payload with `touch` and no
         // `lockOff` seeded the fire ticks perfectly and left the platform's ride
         // at zero, and the replay died 45 ticks later. That is the exact silent
         // degradation this refusal exists for, so it is not optional.
+        // Refusal is per DECLARED subsystem: a payload that claims `touch` and
+        // carries no `touch` key is incomplete, while one that never claimed
+        // the lock is not missing anything -- the lock simply keeps its own
+        // seeding.
         std::string missing;
-        if (havePayload && !haveLock) missing = "lockOff";
+        if (g_ownsTouch && !sawTouchKey) missing = "touch";
         if (!missing.empty()) {
             if (!g_seedPartialOk) {
                 // Say WHY this is fatal rather than a warning: the payload
@@ -910,6 +915,10 @@ inline int cliMain(int argc, char** argv) {
         }
         std::printf("seed payload: %d boxes set, %d named but not in this "
                     "build's window\n", set, unmapped);
+        // Provenance, in the run's own output. Which side set a value is the
+        // first question when two runs disagree, and stderr does not survive
+        // into the place results are compared.
+        std::printf("seed: touch=payload lock=recording\n");
         // The one diagnosis worth pre-writing, because the convention breaks
         // in exactly one shape: values are the state at t0, and a payload
         // written at t0+1 lands one tick of motion further on. If the first
@@ -919,7 +928,14 @@ inline int cliMain(int argc, char** argv) {
                     "difference near one dx means the payload was written at "
                     "t0+1\n");
     }
-    if (t0 > 0 && !havePayload && !g_touch.empty()) {
+    // The recording-derived seeding still runs even when a payload owns
+    // `touch`, because it also seeds the LOCK -- a subsystem no payload claims
+    // today. What ownership changes is only whether the trig/fireB branches
+    // below are allowed to write; skipping the whole block would leave the
+    // lock unseeded, which is the death this code's first test produced.
+    if (t0 > 0 && !g_touch.empty()) {
+        if (!havePayload)
+            std::printf("seed: touch=recording lock=recording\n");
         // Counted, because "nothing happened" is the failure mode this block has
         // (an anchor that silently keeps every door shut looks exactly like a
         // physics wall, and did for a whole session on lv22).
@@ -1079,6 +1095,9 @@ inline int cliMain(int argc, char** argv) {
                         break;
                     }
                 }
+                // A payload that owns `touch` has already set these; the rest
+                // of this block still runs for the lock.
+                if (havePayload) continue;
                 if (full > 0.5 && moved > full * 0.5) {
                     init.trig |= (uint32_t)1 << b;
                     // far enough back that the move counts as finished

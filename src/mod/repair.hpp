@@ -882,6 +882,37 @@ inline std::string startArg(long long t0, const AnchorRow& r, int held) {
     return s;
 }
 
+// The anchor payload (dp's --anchor-state), built from what GD actually did
+// rather than from what a recording can be made to say. Named keys, because
+// the 26 positional fields above cannot take another without every reader
+// changing; trigger UIDS, because dp's bit numbering is a property of its own
+// 32-box window and a bit index would mean a different box whenever that
+// window moved.
+//
+// Only activations at or before t0 belong to an anchor at t0 -- the map holds
+// the whole attempt, including triggers this anchor has not reached yet.
+// It declares the SUBSYSTEM it owns rather than a list of values. `owns=touch`
+// means dp takes trig and fireB from here and leaves every other seed to the
+// path that already fills it -- the lock keeps its recording-derived seeding,
+// because the lock's semantics (which box is locked, how long the window runs,
+// when it freezes) live in dp and would have to be re-implemented here to be
+// carried. lv19 is the only level with a lock and its recording-derived seed
+// already measures zero, so nothing is lost by leaving it there.
+//
+// Every value is the state AT t0: a value written at t0+1 lands one tick of
+// motion further on, which shows up as a first-tick difference of about one dx.
+inline std::string anchorPayload(long long t0) {
+    std::string s = "owns=touch;touch=";
+    bool first = true;
+    for (const auto& kv : touchseed::g_first) {
+        if (kv.second > t0) continue;
+        if (!first) s += ",";
+        first = false;
+        s += std::to_string(kv.first) + ":" + std::to_string(kv.second);
+    }
+    return s;
+}
+
 // ============================================================
 // Fixups: learning where the model is wrong, instead of walking around it
 //

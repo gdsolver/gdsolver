@@ -28,6 +28,10 @@ inline void resetSessionState() {
     solver::g_log.clear();
     orbtrace::reset();
     padtrace::reset();
+    // ...and the activations the anchor payload is built from. Left behind,
+    // one level's touched triggers would seed the next level's anchors, which
+    // is the same shape as the recording leak that hid under a green 22/22.
+    touchseed::reset();
     // Only a panel Solve session turns this on (session.hpp), and nothing ever turned it back
     // off: g_objs kept pointing at the outgoing level's GameObjects, and the next session --
     // Replay, Normal, another Solve -- inherited them. Measured (2026-08-24): solving lv16, then

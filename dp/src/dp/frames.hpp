@@ -227,7 +227,23 @@ inline std::string g_anchorState;
 // diagnoses the mismatch and says which is older (the shorter one), with no
 // build-stamp plumbing to keep in step. If a human-readable identity is ever
 // wanted, the mod version and the exe's mtime are already free.
-inline const char* const kAnchorKeys[] = {"touch", "lockOff"};
+// A PAYLOAD DECLARES THE SUBSYSTEMS IT OWNS, not a bag of keys. `owns=touch`
+// means the touch seeding (trig + fireB) comes from GD and everything else is
+// left to the path that already seeds it.
+//
+// The reason is a property this code's own first test established: a payload
+// REPLACES the recording-derived seed rather than topping it up, so a key it
+// omits is set by nobody -- three fire ticks perfect, the ride at zero, dead
+// 45 ticks later. If the payload were just a key list, dropping a key would
+// mean either that death by default, or a silent fall back to the recording
+// for that one value -- a hybrid seed, and the opposite of what the refusal
+// says. Declaring ownership keeps "replaces wholesale" true WITHIN a
+// subsystem and leaves the others honestly alone.
+inline const char* const kAnchorKeys[] = {"owns", "touch"};
+// Which subsystems this payload claims. Only `touch` exists today; the lock
+// and the rotation queue keep their own seeding until someone measures a
+// reason to move them.
+inline bool g_ownsTouch = false;
 // --seed-partial-ok: run anyway when a key this build wants is absent, and
 // stamp the outcome so the result carries it. A warning on stderr does not
 // survive into the place results are compared.

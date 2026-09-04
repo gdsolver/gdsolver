@@ -478,10 +478,19 @@ struct State {
 //
 // If it does not accumulate -- a value recomputed every tick from this tick's
 // inputs -- none of that applies and the number is all that changes.
+// WHAT THIS DOES NOT ENFORCE, so the next reader does not mistake its reach:
+// it watches the SIZE OF State and nothing else. Adding a namespace-scope
+// GLOBAL passes straight through it, and a global has the same discipline for
+// a different reason -- it must be cleared in reset.hpp or it survives into
+// the next in-process call, which in a one-session cold run is the next LEVEL.
+// That happened the same day this assert was written (8f1ae6b added three
+// payload globals and reset none of them), so the two rules are siblings and
+// neither mechanism covers the other.
 static_assert(sizeof(State) == 328,
               "State changed size. If the new field ACCUMULATES over ticks, "
               "seed it in the --start anchor scan, print it in --seeddump, and "
-              "run oneoff/py/seedcheck.py to zero before updating this.");
+              "run oneoff/py/seedcheck.py to zero before updating this. (This "
+              "says nothing about globals -- those belong in reset.hpp.)");
 
 // arena entry for witness reconstruction, packed: bit31 = action, rest parent
 struct Node {

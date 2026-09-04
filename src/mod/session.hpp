@@ -631,6 +631,20 @@ inline void endSession(const std::string& why) {
         + " stats=" + std::to_string(g_blockedStat)
         + " coins=" + std::to_string(g_blockedCoin)
         + " progress=" + std::to_string(g_blockedProgress));
+    // Touch triggers the SECOND player set off. dp's markTouched reads p1's
+    // position alone, so any count above zero names a trigger the model can
+    // never fire -- it would plan against a world where that trigger does not
+    // exist. It is reported and never carried into an anchor, because seeding
+    // a bit the step function cannot set forward would make an anchor claim
+    // what a whole run of the same plan would not.
+    //
+    // This line is the ONLY observer of that case. The model-side check
+    // compares against the model's own whole run, and lv20 -- the one level
+    // with both a dual portal and touch boxes -- dies at t=1,157 while its
+    // dual section starts near t=17,119. GD replays lv20 to the end, so this
+    // counter reaches what that check cannot.
+    writeResult("p2 activated trigger boxes: " + std::to_string(touchseed::g_p2)
+        + " (non-zero means the model cannot fire a trigger this run did)");
     // ...and the proof: the level's own record, compared with the sample taken before the
     // level had run a tick. "changed: none" is the only acceptable outcome for a solver
     // session; anything else names the field that leaked. `restored` counts the writes GD
