@@ -107,6 +107,10 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             else if (name == "exstat") colExStat = i;
         }
     }
+    // Counted per load, not per invocation: loadLevelFrom runs again for each
+    // rotated frame, and a count that accumulated across those would report
+    // the same objects several times.
+    g_formulaDriven = 0;
     g_freeModeCol = (colFree >= 0);
     g_trigGateCol = (colTouch >= 0 && colSpawn >= 0);
     g_staticCamCol = (colAxis >= 0 && colExStat >= 0);
@@ -277,6 +281,25 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                                 && !noopTouch;
         const bool autoCtl = (tit != trigOf.end()) && !controlled
                              && tit->second.aAnchor >= 0;
+        // FORMULA-DRIVEN: both kinds of controller reach this object AND both
+        // actually move it. GD applies both moves; a recording holds only one
+        // attempt's combination, so neither "replay the recording" nor "ignore
+        // it and use the mask" is that object's world.
+        //
+        // Both must MOVE, for the same reason `noopTouch` and `autoMoves`
+        // exist above. Reaching alone catches lv20's six (uid10997, 9056,
+        // 9057, 9126, 9127, 9197), whose touch AND autonomous controllers both
+        // carry offset 0 and duration 0 -- for them base IS the recording, so
+        // classifying them would move them onto a path that computes the same
+        // answer more slowly and gives the recording up for nothing. With the
+        // movement test the corpus-wide set is lv19's seven doors and nothing
+        // else (oneoff/py/touchmovers.py; lv22's group 265 arrives in 3b, when
+        // the switch band's boxes become visible).
+        const bool touchMoves = (tit != trigOf.end())
+                                && (tit->second.dx != 0.f || tit->second.dy != 0.f);
+        const bool formulaDriven = controlled && autoMoves && touchMoves
+                                   && tit->second.aAnchor >= 0;
+        if (formulaDriven) ++g_formulaDriven;
         // --dyndbg: what the trigger walk decided for this object. The walk is
         // the one place where a wrong edge turns into a wrong offset, a wrong
         // duration and a wrong anchor at once, and reading those back out of a
@@ -391,12 +414,23 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         L.dyn.trigDur.push_back(controlled ? tit->second.dur : 0.0);
         L.dyn.trigEase.push_back(controlled ? tit->second.ease : 0);
         L.dyn.trigErate.push_back(controlled ? tit->second.erate : 2.0);
-        L.dyn.autoAnchor.push_back(autoCtl ? tit->second.aAnchor : -1);
-        L.dyn.autoDx.push_back(autoCtl ? tit->second.adx : 0.f);
-        L.dyn.autoDy.push_back(autoCtl ? tit->second.ady : 0.f);
-        L.dyn.autoDur.push_back(autoCtl ? tit->second.adur : 0.0);
-        L.dyn.autoEase.push_back(autoCtl ? tit->second.aease : 0);
-        L.dyn.autoErate.push_back(autoCtl ? tit->second.aerate : 2.0);
+        L.dyn.formula.push_back(formulaDriven ? 1 : 0);
+        // The autonomous fields exist for `autoCtl` objects, which by
+        // definition are NOT touch-controlled -- so a formula-driven object,
+        // which is both, needs them filled too or its autonomous half is zero
+        // and the formula silently computes only the touch move.
+        // The autonomous fields exist for `autoCtl` objects, which by
+        // definition are NOT touch-controlled -- so a formula-driven object,
+        // which is both, needs them filled too or its autonomous half is zero.
+        // Only these six: the LOCK fields stay `autoCtl`-only, because the
+        // formula does not implement the lockToPlayer term and filling them
+        // would hand the recording-driven path a case it never sees today.
+        L.dyn.autoAnchor.push_back((autoCtl || formulaDriven) ? tit->second.aAnchor : -1);
+        L.dyn.autoDx.push_back((autoCtl || formulaDriven) ? tit->second.adx : 0.f);
+        L.dyn.autoDy.push_back((autoCtl || formulaDriven) ? tit->second.ady : 0.f);
+        L.dyn.autoDur.push_back((autoCtl || formulaDriven) ? tit->second.adur : 0.0);
+        L.dyn.autoEase.push_back((autoCtl || formulaDriven) ? tit->second.aease : 0);
+        L.dyn.autoErate.push_back((autoCtl || formulaDriven) ? tit->second.aerate : 2.0);
         L.dyn.autoLock.push_back(autoCtl ? tit->second.alock : 0.0);
         L.dyn.autoLockTrig.push_back(autoCtl ? tit->second.alockTrig : -1);
         L.dyn.autoParts.push_back(autoCtl ? tit->second.parts
@@ -1459,6 +1493,12 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                     "(uid %d); %zu unrecorded, %zu centre not recorded\n",
                     checked, pass, worstAll, worstUid, noRec, noCentre);
     }
+    // Say which objects came off the recording. Silent when there are none, so
+    // the 21 levels this does not touch print exactly what they printed before.
+    if (g_formulaDriven)
+        std::printf("dynamics: %d formula-driven (a touch AND an autonomous "
+                    "controller both reach them and both move)\n",
+                    g_formulaDriven);
     return L;
 }
 

@@ -386,6 +386,18 @@ inline bool g_trigRaw = false;
 // --dyndbg <uid>: dump one moving object's placement inputs at load (see the
 // print near the fireT resolution).
 inline int g_dynDbg = -1;
+// How many objects the loader put on the formula path, and how many of those
+// never saw either controller fire in this call. The second is the guard's
+// readout: an object that is formula-driven but whose triggers never fire sits
+// at its base position, which is right, but if the count is the whole set the
+// classification found objects the plan cannot reach and the formula is
+// carrying nothing.
+inline int g_formulaDriven = 0;
+// --noformula: classify as before but keep every object on the recording path.
+// The A/B switch for this feature -- and the only way to tell "the formula
+// moved something" from "filling the autonomous fields for a dual-controlled
+// object moved something", which are different changes that arrive together.
+inline bool g_noFormula = false;
 // --shiftstat: one `shiftstat:` line per moving object, the first time it is
 // placed, saying which recorded row the model ends up reading for it.
 //
@@ -417,6 +429,19 @@ struct Dynamics {
     // which window each one belongs in, mirroring the static split
     enum Bucket : uint8_t { NEAR, PORT, PAD, ORB, SPEED, SLOPE };
     std::vector<uint8_t> bucket;
+    // FORMULA-DRIVEN: this object's position is computed from its triggers
+    // rather than replayed from the recording. Set by the loader for objects a
+    // touch controller AND an autonomous one both reach, where BOTH actually
+    // move something. GD applies both; a recording only ever holds one
+    // attempt's answer to "was this touched" -- lv19's doors are recorded open,
+    // lv22's switch band recorded untouched -- so for these objects neither
+    // recording is the state's world, and everything the re-timing machinery
+    // does below is an approximation of a world it cannot see. The two eased
+    // moves ARE that world, to 0.0007 px against all 286 recorded rows of each
+    // of lv19's seven (oneoff/py/fit96.py), so an object on this path takes
+    // none of it: not the dual special case, not the ownTouch hold, not the
+    // autonomous re-timing.
+    std::vector<uint8_t> formula;
     // Last tick's FINAL cy (after seek AND applyTriggers). dcy for a
     // trigger-CONTROLLED object must be the delta of its analytic position,
     // not of the raw samples: the recorder SKIPS rows when the move since the
@@ -550,10 +575,113 @@ struct Dynamics {
     // `px` is where the player is THIS tick (the group's leading x during the
     // search, the single trajectory's x in a replay). Only the lockToPlayer
     // term reads it.
-    void applyTriggers(uint32_t mask, int fireHi, int t, double px = 0.0) {
+    // `fireB` is the group's per-box firing ticks (State::fireB, aggregated the
+    // same conservative way `fireHi` is: the LATEST tick in the group). Only
+    // the formula path reads it; it may be null, and then no object is
+    // formula-driven for this call.
+    void applyTriggers(uint32_t mask, int fireHi, const uint16_t* fireB, int t,
+                       double px = 0.0) {
         if (!anyTrig && !anyAuto) return;
         for (size_t i = 0; i < objs.size(); ++i) {
             const uint32_t m = trigMask[i];
+            // FORMULA-DRIVEN OBJECTS LEAVE HERE, before anything reads a
+            // sample. `fireHi` cannot serve them: it is the latest box THE
+            // STATE entered, which need not be a box that reaches THIS object,
+            // so two doors opened by two different boxes would be handed the
+            // same tick. The fit wants 20,504 for one and 20,591 for the
+            // other. What this object needs is the latest tick among the boxes
+            // that both reach it and the state has entered -- which is exactly
+            // what the per-box array gives, and is why this path could not be
+            // written before State carried one.
+            // Deliberately NOT conditioned on `fireB` being non-null: which
+            // path an object takes is a property of the object, and making it
+            // depend on a pointer would let a caller that forgot the array
+            // silently put a formula-driven object back on the recording path
+            // -- with the autonomous fields the loader filled in for the
+            // formula still set, which is a combination that exists nowhere
+            // else. A null array simply means no box has been entered.
+            if (!g_noFormula && i < formula.size() && formula[i]
+                && !samples[i].empty()) {
+                const DynSample& s0 = samples[i][0];
+                int fb = -1;
+                if (fireB)
+                    for (int b = 0; b < 32; ++b)
+                        if ((m & mask) & ((uint32_t)1 << b))
+                            fb = std::max(fb, (int)fireB[b]);
+                const int aa0 = autoAnchor[i];
+                const int ft0 = (aa0 >= 0 && (size_t)aa0 < g_autoTrig.size())
+                                ? g_autoTrig[(size_t)aa0].fireT : -1;
+                // The offset at an arbitrary tick. Being a closed form is the
+                // point: it answers for t-1 as readily as for t, which is what
+                // makes dcy exact here even across an anchor jump, where the
+                // recording-driven branch has to fall back to two consecutive
+                // recorded rows and reads 0 when the recorder skipped one.
+                auto offsetAt = [&](int tt, double& ox, double& oy) {
+                    ox = 0.0; oy = 0.0;
+                    if (fb >= 0 && tt > fb && trigDur[i] > 0.0) {
+                        const double e = gdEase(trigEase[i], trigErate[i],
+                                                (double)(tt - (fb + 1)) / trigDur[i]);
+                        ox += trigDx[i] * e; oy += trigDy[i] * e;
+                    }
+                    // NO +1 on this side. The two ticks mean different things:
+                    // `fireB` is the tick the box was ENTERED and the move
+                    // starts the tick after, while `AutoTrig::fireT` is already
+                    // the EFFECT tick (`fireT = crossing + delay`, cli.hpp), so
+                    // the move starts on it. The recording-driven branch says
+                    // the same by setting `lat = 0` for the autonomous case and
+                    // 5 for the touch case. With a spurious +1 lv19's door sits
+                    // 0.0615 px above the recording at t=20,601.
+                    if (ft0 >= 0 && tt >= ft0 && autoDur[i] > 0.0) {
+                        const double e = gdEase(autoEase[i], autoErate[i],
+                                                (double)(tt - ft0) / autoDur[i]);
+                        ox += autoDx[i] * e; oy += autoDy[i] * e;
+                    }
+                };
+                double fx = 0.0, fy = 0.0, px1 = 0.0, py1 = 0.0;
+                offsetAt(t, fx, fy);
+                offsetAt(t - 1, px1, py1);
+                const double ncy = (double)s0.cy + fy;
+                // ...and the face's PER-TICK motion, from the same closed form.
+                // Without it the object teleports as far as anything standing
+                // on it is concerned: the support tolerance is
+                // `kSupportTol + |dcy|`, so a rider on a descending face keeps
+                // its footing only while dcy says the face moved. This IS lv19
+                // t=20,601 -- a ball riding uid14011 down at 0.062 px/tick --
+                // and with dcy at zero the model drops the support on the first
+                // tick, falls, and dies 45 ticks later on a hazard the ride
+                // would have carried it over.
+                //
+                // NOT gated on `lastStep1`, unlike the branch below. That gate
+                // exists because a position difference across an anchor jump is
+                // the platform's whole journey rather than one tick; a formula
+                // evaluated at t-1 is one tick by construction, so the case the
+                // gate protects against cannot arise -- and the first tick
+                // after an anchor, which is exactly where this object is
+                // ridden, is not a 1-tick advance.
+                objs[i].dcy = fy - py1;
+                // cy ONLY. The fit that justifies this path (oneoff/py/fit96.py,
+                // 0.0007 px over 286 rows x 7 objects) is a fit of the vertical
+                // curve, and the closed form has no term for anything else, so
+                // writing cx here asserts something nobody measured -- and it is
+                // WRONG: lv19's uid14011 is recorded at cx=28,789 at t=20,601
+                // against a base of 28,631, though neither of its controllers
+                // carries an x offset (dx=0, adx=0). Something else moves these
+                // doors 158 px sideways, and `s0.cx + fx` teleports them back.
+                // seek() has already placed cx/hw/hh from the recording; leave
+                // them there until the x term is measured too.
+                objs[i].cy = ncy;
+                // --dyndbg <uid> follows one object; --dyndbg -3 prints EVERY
+                // formula-driven object, which is what you want when the set
+                // shares a group and a position (lv19's seven doors all sit at
+                // the same cy, so following one says nothing about which of
+                // them the player is actually standing on).
+                if (objs[i].uid == g_dynDbg || g_dynDbg == -3)
+                    std::printf("fdrv: uid=%d t=%d box=%d autoFireT=%d "
+                                "base=%.3f cx=%.2f fy=%+.4f dcy=%+.4f -> cy=%.4f\n",
+                                objs[i].uid, t, fb, ft0, (double)s0.cy,
+                                (double)s0.cx, fy, fy - py1, ncy);
+                continue;
+            }
             const int aA = m ? -1 : autoAnchor[i];   // touch control wins
             if ((!m && aA < 0) || samples[i].empty()) continue;
             const auto& sm = samples[i];

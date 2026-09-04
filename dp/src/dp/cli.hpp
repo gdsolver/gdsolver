@@ -84,6 +84,8 @@ inline int cliMain(int argc, char** argv) {
         // --firebcheck: count violations of fireB's invariant (a set bit with no
         // tick, or a tick with no bit) and print the totals at the end.
         if (!std::strcmp(argv[i], "--firebcheck")) g_fireBCheck = true;
+        // --noformula: keep formula-driven objects on the recording path.
+        if (!std::strcmp(argv[i], "--noformula")) g_noFormula = true;
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
         // "said it already" flag it keeps is not synchronised, so use it on
@@ -848,6 +850,28 @@ inline int cliMain(int argc, char** argv) {
                 const double moved = std::hypot((double)at->cx - (double)s0.cx,
                                                 (double)at->cy - (double)s0.cy);
                 const double full = std::hypot((double)c.dx, (double)c.dy);
+                // WHEN the box was entered, from the recording rather than from
+                // the anchor. The position at t0 cannot answer this once the
+                // move has finished -- every fire tick at or before t0 - dur
+                // puts the object in the same place -- but the recording holds
+                // the whole history, and its first moving row is the move's
+                // second tick (a box entered on F starts moving on F+1). The
+                // recorder's epsilon is 0.05 px, so the first row past that is
+                // the first row it wrote.
+                //
+                // This matters where the position does not: the formula path
+                // opens its door FROM this tick, so an estimate 26 ticks late
+                // (which `t0 - durTicks` is for lv19's uid14011 -- 20,530
+                // against the recording's 20,504) opens the door 26 ticks late
+                // and a hazard the real door had cleared kills the player.
+                long long recFire = -1;
+                for (const DynSample& s : it->second) {
+                    if (std::hypot((double)s.cx - (double)s0.cx,
+                                   (double)s.cy - (double)s0.cy) > 0.05) {
+                        recFire = (long long)s.t - 1;
+                        break;
+                    }
+                }
                 if (full > 0.5 && moved > full * 0.5) {
                     init.trig |= (uint32_t)1 << b;
                     // far enough back that the move counts as finished
@@ -858,7 +882,8 @@ inline int cliMain(int argc, char** argv) {
                     // so a box still sliding at the anchor would merge states
                     // that are genuinely at different points of it.
                     init.fireB[b] = (uint16_t)std::max(
-                        0LL, t0 - (long long)std::llround(c.durTicks));
+                        0LL, recFire >= 0 ? recFire
+                                          : t0 - (long long)std::llround(c.durTicks));
                     break;
                 }
                 // Started, but not half way: the anchor landed INSIDE the slide.
@@ -876,8 +901,10 @@ inline int cliMain(int argc, char** argv) {
                     // than the motion lasts, which costs width, where early
                     // would merge states that still differ.)
                     init.fireB[b] = (uint16_t)std::max(
-                        0LL, t0 - (long long)std::llround(
-                                      (moved / full) * c.durTicks));
+                        0LL, recFire >= 0
+                                 ? recFire
+                                 : t0 - (long long)std::llround(
+                                            (moved / full) * c.durTicks));
                     break;
                 }
             }
@@ -1842,7 +1869,7 @@ inline int cliMain(int argc, char** argv) {
             }
             std::vector<const Obj*> rn, rp, rd, ro, rs;
             Lf->dyn.seek((int)t);
-            Lf->dyn.applyTriggers(s.trig, (int)s.trigT, (int)t, x);
+            Lf->dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB, (int)t, x);
             std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
             const std::vector<TouchTrig>& tfr = touchFor((int)s.frame);
             for (size_t b = 0; b < tfr.size(); ++b) {
@@ -2201,12 +2228,19 @@ inline int cliMain(int argc, char** argv) {
         // tick (from where its slowest member starts to where it ends up)
         double gLo = 1e18, gHi = -1e18;
         int gFire = -1;   // latest tick any of them fired a touch trigger
+        // ...and the same thing per box, for the formula path. The group key
+        // holds `trig`, so every member has entered the SAME set of boxes --
+        // what differs is when, and this keeps the latest for each one
+        // separately instead of collapsing them onto a single scalar.
+        uint16_t gFireB[32] = {};
         for (const State& s : cur) {
             if (((s.dx > 0.f) ? s.dx : curDxF) != gdx || s.trig != gtrig
                 || (int)s.frame != gframe || (int)s.rev != grev) continue;
             gLo = std::min(gLo, (double)s.xAbs);
             gHi = std::max(gHi, (double)s.xAbs);
             gFire = std::max(gFire, (int)s.trigT);
+            for (int b = 0; b < 32; ++b)
+                if (s.fireB[b] > gFireB[b]) gFireB[b] = s.fireB[b];
         }
         // Drop a whole group once it is past a box it was required to enter.
         // Killing it here rather than at the end keeps the frontier spent on
@@ -2252,7 +2286,7 @@ inline int cliMain(int argc, char** argv) {
         // firing tick in the group, so a state that touched the box early is
         // shown a door that is still opening -- conservative, never the other
         // way round.
-        LG.dyn.applyTriggers(gtrig, gFire, (int)t, x);
+        LG.dyn.applyTriggers(gtrig, gFire, gFireB, (int)t, x);
         std::vector<const Obj*> near;
         FS.near->forRange(wLo - 40, wHi + 40, [&](const Obj& o) { near.push_back(&o); });
         LG.dyn.collect(Dynamics::NEAR, wLo - 40, wHi + 40, near);
@@ -3249,7 +3283,7 @@ inline int cliMain(int argc, char** argv) {
             // ...including the doors IT opened. The witness carries its own mask
             // (stepBoth sets it below), so this is the same call the search made
             // for the group this lineage belonged to.
-            L.dyn.applyTriggers(s.trig, (int)s.trigT, (int)t, x);
+            L.dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB, (int)t, x);
             std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
             for (size_t b = 0; b < g_touch.size(); ++b) {
                 if (s.trig & ((uint32_t)1 << b)) continue;
