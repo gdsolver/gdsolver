@@ -836,6 +836,49 @@ inline int cliMain(int argc, char** argv) {
         // physics wall, and did for a whole session on lv22).
         int nCtl = 0, nNoRec = 0, nNoOff = 0;
         for (size_t b = 0; b < g_touch.size(); ++b) {
+            // HOW MANY BOXES CAN THIS SCAN NEVER SEED. Both branches below are
+            // gated on `full > 0.5`, and `full` is the TRIGGER TABLE's offset,
+            // so a box whose controllers all carry a zero offset -- move to
+            // target, lock only, toggle -- gets no bit however plainly the
+            // recording shows its objects moving. Counted rather than argued:
+            // the fix's blast radius is exactly the boxes this reports.
+            // WHY a box gets no bit, per box. Both branches below are gated on
+            // `full > 0.5` and `full` is the TRIGGER TABLE's offset, so a
+            // controller whose displacement does not live there -- Move-To
+            // takes B-A at firing time, a lock or a toggle has no displacement
+            // at all -- is invisible to them however plainly its object moved.
+            // The three counts separate those cases so the fix is aimed rather
+            // than loosened.
+            if (g_seedDump >= 0 || g_seedEvery > 0) {
+                int passes = 0, movedNoOff = 0, offNoMove = 0, noRec = 0;
+                for (const TrigCtl& c : g_touch[b].ctl) {
+                    const auto itc = gt.find(c.uid);
+                    if (itc == gt.end() || itc->second.empty()) { ++noRec; continue; }
+                    const DynSample& f = itc->second.front();
+                    double mv = 0.0;
+                    for (const DynSample& s : itc->second)
+                        mv = std::max(mv, std::hypot((double)s.cx - (double)f.cx,
+                                                     (double)s.cy - (double)f.cy));
+                    const bool hasOff = std::hypot((double)c.dx, (double)c.dy) > 0.5;
+                    if (hasOff && mv > 0.5) ++passes;
+                    else if (!hasOff && mv > 0.5) ++movedNoOff;
+                    else if (hasOff) ++offNoMove;
+                }
+                // ...and the key's window for the same box. It is built from
+                // durTicks, and the chain walk only takes a hop's duration when
+                // that hop MOVES something -- so a box whose mover is a Rotate
+                // can lose the window for the same reason it loses the bit.
+                const int win = (b < g_touchMoveTicks.size())
+                                ? g_touchMoveTicks[b] : -1;
+                std::printf("boxctl: box=%zu ctl=%zu seedable=%d "
+                            "movedButNoTableOffset=%d offsetButNoMotion=%d "
+                            "noRecording=%d window=%d%s\n",
+                            b, g_touch[b].ctl.size(), passes, movedNoOff,
+                            offNoMove, noRec, win,
+                            (passes == 0 && movedNoOff > 0)
+                                ? "  <- MISSED: recorded motion, no table offset"
+                                : "");
+            }
             for (const TrigCtl& c : g_touch[b].ctl) {
                 ++nCtl;
                 const auto it = gt.find(c.uid);
@@ -980,6 +1023,65 @@ inline int cliMain(int argc, char** argv) {
                                  ? recFire
                                  : t0 - (long long)std::llround(
                                             (moved / full) * c.durTicks));
+                    break;
+                }
+                // NO DISPLACEMENT IN THE TABLE, BUT THE RECORDING MOVED.
+                //
+                // The two branches above answer two different questions with
+                // one gate. "Did this state enter the box" is the `trig` bit
+                // and CANNOT depend on how far anything travelled; "how far
+                // along is the move" is the phase, and only exists where there
+                // is a displacement to be a fraction of. Gating both on
+                // `full > 0.5` silently answered the first with the second.
+                //
+                // What falls through is a controller whose motion is not a
+                // translation. lv22's boxes 0, 2 and 5 are driven by Rotate
+                // triggers (id 1346: uid199 -> group 39, uid255 -> 38,
+                // uid321 -> 40 -- exactly three, exactly the three boxes that
+                // were missed), and a rotation has no ox/oy to read: the zero
+                // offset is CORRECT and the gate was wrong. Measured with
+                // seedcheck: 768 unexpected field differences on lv22, every
+                // one of them "recorded motion, no table offset", and zero of
+                // the opposite kind.
+                //
+                // The bit is set from the recording having moved BEFORE the
+                // anchor, which is the same evidence the branches above use
+                // and does not care how the movement is expressed. No phase is
+                // claimed: a rotation has no "fraction travelled", so this
+                // does not set g_recPhase.
+                // THE TICK THIS GIVES IS EARLY, AND KNOWINGLY SO. An object can
+                // be under two controllers at once -- lv22's group 39 holds
+                // both the touch Rotate (uid199) and an autonomous Move
+                // (uid89, oy=+120) -- so the recording's first motion says
+                // SOMETHING acted, not that this box was entered. uid195 climbs
+                // from t=292 under the autonomous one and is only turned from
+                // t=421, while the box is entered at 417.
+                //
+                // The rotation is not separable from the recording: grouptrace
+                // writes the object's own `rot`, which stays 0.000 for the
+                // whole run because the group is what turns, and the turn shows
+                // only as position drift indistinguishable in kind from the
+                // Move's. Splitting them needs the recorded ANGLE, which the
+                // dump does not carry per object.
+                //
+                // So the bit is set from the earlier evidence and the tick is
+                // early. That is the safe direction, the same asymmetry as the
+                // key window: an early tick holds the box in the key longer
+                // than it needs (cost), a late one merges states whose geometry
+                // still differs (a wrong answer). Not setting the bit at all is
+                // the worst of the three -- the anchor then plans against a
+                // door the run had already opened.
+                if (full <= 0.5 && recFire >= 0 && recFire <= t0) {
+                    init.trig |= (uint32_t)1 << b;
+                    // fireB from the recording's own first motion, taken on
+                    // EITHER axis because a rotation has no offset axis to
+                    // prefer -- and nothing fast can contaminate it here: the
+                    // only co-moving component that could is a lock, and the
+                    // census found locks on lv19 alone. Early is the safe
+                    // side, the same asymmetry as the key window: too early
+                    // holds the box in the key longer (cost), too late merges
+                    // states that still differ (a wrong answer).
+                    init.fireB[b] = (uint16_t)std::max(0LL, recFire);
                     break;
                 }
             }

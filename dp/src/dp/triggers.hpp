@@ -304,7 +304,15 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
         // "already open" from "never fired" -- `full` is 0 -- so every
         // re-anchored tail ran with that wall at rest. lv19 has no such row, so
         // this is inert there; lv20 has 4 and lv22 has 5.
-        const bool rootMoves = (T.ox != 0.0 || T.oy != 0.0);
+        //
+        // ...and a ROTATE root acts without an ox/oy, the same as a rotate hop
+        // below. lv22's boxes 0, 2 and 5 are exactly this -- their touch
+        // trigger IS the Rotate (uid199/255/321, id 1346, deg -5/7/-8) -- so
+        // reading only the offset gave them a key window of 0 where an ordinary
+        // box has 129, and a zero window means the box contributes nothing to
+        // the key at all while its geometry is still turning.
+        const bool rootTurns = (T.deg != 0.0 || T.t360 != 0);
+        const bool rootMoves = (T.ox != 0.0 || T.oy != 0.0 || rootTurns);
         std::vector<Item> stack{{T.target, (float)T.ox, (float)T.oy,
                                  rootMoves ? T.dur * 240.0 : 0.0,
                                  rootMoves ? T.ease : 0,
@@ -359,7 +367,20 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                     // The easing rides along with the duration: it belongs to
                     // the same hop, and a curve read off a hop that does not
                     // move is meaningless.
-                    const bool moves = (t2->second.ox != 0.0 || t2->second.oy != 0.0);
+                    //
+                    // "MOVES SOMETHING" HAS TO INCLUDE TURNING SOMETHING. A
+                    // Rotate acts without an ox/oy, so reading only the offset
+                    // left lv22's three Rotate-driven boxes with a key window
+                    // of 0 where an ordinary box has 129 -- and a zero window
+                    // means the box contributes nothing to the key at all, so
+                    // two states that entered it at different ticks merge while
+                    // the geometry is still turning. The same zero offset is
+                    // what hid those boxes from the anchor scan (cli.hpp), so
+                    // one reading of "moves" was costing both.
+                    const bool turns = (t2->second.deg != 0.0
+                                        || t2->second.t360 != 0);
+                    const bool moves = (t2->second.ox != 0.0
+                                        || t2->second.oy != 0.0 || turns);
                     const double d2 = t2->second.dur * 240.0;
                     const bool longer = moves && d2 >= it.dur;
                     stack.push_back({t2->second.target,
