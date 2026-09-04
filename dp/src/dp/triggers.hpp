@@ -68,18 +68,20 @@ inline unsigned long long g_fireBNoTick = 0, g_fireBNoBit = 0, g_fireBTooEarly =
 // 4-tick quantum so the bucketing at the key cannot clip the move's last
 // bucket. If the frontier turns out too wide, the quantum is the knob -- not
 // this margin.
+// THE WINDOW IS THE MAXIMUM OVER EVERY EFFECT THE BOX HAS, and whoever adds a
+// new kind of effect to a box has to widen it here. That is not a style note:
+// the lock was added with the window still measuring only the eased move, and
+// lv19's door slides for 69.5 ticks while the lock that carries the same object
+// sideways runs 284.1 -- so the key merged states 78 ticks in while their
+// platforms were still at different x, which is the exact failure this window
+// exists to prevent, reintroduced by the new effect. A shorter window is a
+// wrong answer, a longer one is only cost.
 inline void buildTouchMoveTicks() {
     g_touchMoveTicks.assign(g_touch.size(), 0);
     for (size_t b = 0; b < g_touch.size(); ++b) {
         double d = 0.0;
         for (const TrigCtl& c : g_touch[b].ctl)
             d = std::max(d, c.durTicks);
-        // A LOCK keeps the object moving too, and for far longer than the move
-        // that opened the box: lv19's door slides for 69.5 ticks while the lock
-        // that carries the same object sideways runs 284.1. Without this the key
-        // merges states 78 ticks in, while their platforms are still at
-        // different x -- which is the exact failure this window exists to
-        // prevent, reintroduced by the lock.
         for (const TrigCtl& c : g_touch[b].ctl) d = std::max(d, c.lockTicks);
         if (d <= 0.0) continue;             // nothing moves: contributes nothing
         g_touchMoveTicks[b] = (int)std::ceil(d) + 5 + 4;
