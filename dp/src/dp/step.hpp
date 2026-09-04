@@ -908,8 +908,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // `playerX(t) - playerX(t0)` and needs no remembered x. `fireB` is the tick
     // the box was entered, so the window is open while `t - fireB <= lockTicks`;
     // once it closes the sum stops, which is the formula's own `min(t, t0+L)`.
+    // The window closes `lockTicks` after the move STARTS, and the move starts
+    // the tick after the box is entered -- the same `+1` the eased moves take,
+    // so the last accumulating tick is F + 1 + lockTicks. Measured on lv19:
+    // uid14011's recording runs to t=20,788 with the box entered at 20,503 and
+    // a 284.1-tick lock, and 20,503 + 1 + 284.1 lands on 20,788. Without the
+    // +1 the model stops one tick early and freezes a whole dx short.
     if (g_lockBox >= 0 && ((c.trig >> g_lockBox) & 1u)
-        && (double)((long long)K.t - (long long)c.fireB[g_lockBox]) <= g_lockTicks)
+        && (double)((long long)K.t - (long long)c.fireB[g_lockBox] - 1)
+               <= g_lockTicks)
         c.lockOff = s.lockOff + (float)(x - xPrev);
     // STATIC CAMERA crossings. Unlike a portal these carry no box test at all
     // -- the x-crossing queue fires on the player's x passing the trigger's

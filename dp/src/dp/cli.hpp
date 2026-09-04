@@ -91,6 +91,7 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--rotqueue")) g_rotQueue = true;
         // --seeddump <t>: the accumulated-field line, for the seeding check.
         if (!std::strcmp(argv[i], "--seeddump")) g_seedDump = std::atoi(argv[i + 1]);
+        if (!std::strcmp(argv[i], "--seedevery")) g_seedEvery = std::atoi(argv[i + 1]);
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
         // "said it already" flag it keeps is not synchronised, so use it on
@@ -894,11 +895,55 @@ inline int cliMain(int argc, char** argv) {
                                     c.uid, b, (double)init.lockOff,
                                     (double)atL->cx, (double)f0.cx);
                 }
+                // ...minus how late that first row is. `- 1` was right only for
+                // a move that clears 0.05 px in its first tick: the recorder
+                // drops smaller changes, and an eased move spends its opening
+                // ticks in the thousandths, so a SLOW controller's first row
+                // can be several ticks after it started. recordLag computes
+                // exactly that from the offset, the duration and the curve --
+                // it is what the autonomous side already subtracts, and not
+                // using it here left lv19's two slow boxes seeded 3 ticks late
+                // (--seeddump: fireB[0] 19,586 against 19,589).
+                const int lag = recordLag((double)c.dx, (double)c.dy,
+                                          c.durTicks, c.ease, c.erate);
+                // ...and the first row is looked for ALONG THIS CONTROLLER'S
+                // OWN OFFSET. Taking the distance in both axes finds whichever
+                // coordinate moved first, and for lv19's platforms that is the
+                // LOCK -- their x tracks the player at 1.6 px/tick from the
+                // moment the box is punched, so every row clears 0.05 px in x
+                // while the eased y is still in the thousandths. The lag then
+                // gets subtracted from the wrong row. Measured either way: the
+                // door's fire tick is 20,503, which the y-only row (20,506)
+                // minus its lag (3) gives and the both-axes row (20,504) does
+                // not.
+                const bool useX = std::fabs((double)c.dx) > 0.5;
+                const bool useY = std::fabs((double)c.dy) > 0.5;
                 long long recFire = -1;
                 for (const DynSample& s : it->second) {
-                    if (std::hypot((double)s.cx - (double)s0.cx,
-                                   (double)s.cy - (double)s0.cy) > 0.05) {
-                        recFire = (long long)s.t - 1;
+                    const double ddx = (double)s.cx - (double)s0.cx;
+                    const double ddy = (double)s.cy - (double)s0.cy;
+                    const bool moved =
+                        (useX || useY)
+                            ? ((useX && std::fabs(ddx) > 0.05)
+                               || (useY && std::fabs(ddy) > 0.05))
+                            : (std::hypot(ddx, ddy) > 0.05);
+                    if (moved) {
+                        // `- lag - 1`, not `- lag`: the move starts the tick
+                        // AFTER the box is entered (the chain players read
+                        // `(t - F - 1)/dur`), so the first row recordLag counts
+                        // to is F + 1 + lag. Measured on all four of lv19's
+                        // controllers at once -- 19,590-3-1, 19,950-3-1,
+                        // 20,506-2-1 and the lock-only 20,504-0-1 give
+                        // 19,586 / 19,946 / 20,503 / 20,503, which is what a
+                        // whole run holds.
+                        recFire = (long long)s.t - lag - 1;
+                        if (g_seedDump >= 0 || g_seedEvery > 0)
+                            std::printf("seedscan: box=%zu uid=%d firstRow=%d "
+                                        "lag=%d recFire=%lld dx=%.2f dy=%.2f "
+                                        "dur=%.3f ease=%d\n",
+                                        b, c.uid, s.t, lag, recFire,
+                                        (double)c.dx, (double)c.dy, c.durTicks,
+                                        c.ease);
                         break;
                     }
                 }
@@ -2001,7 +2046,8 @@ inline int cliMain(int argc, char** argv) {
             // changed an answer. WHOEVER ADDS A PER-STATE ACCUMULATED FIELD
             // ADDS IT HERE -- a field missing from this line is a field the
             // check cannot see.
-            if (g_seedDump >= 0 && t == (long long)g_seedDump) {
+            if ((g_seedDump >= 0 && t == (long long)g_seedDump)
+                || (g_seedEvery > 0 && t % (long long)g_seedEvery == 0)) {
                 std::printf("seed: t=%lld trig=0x%x trigT=%d lockOff=%.4f "
                             "rotSpent=0x%x rotChan=%d rotRev=0x%x fireB=",
                             t, s.trig, (int)s.trigT, (double)s.lockOff,

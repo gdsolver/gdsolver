@@ -176,6 +176,11 @@ inline bool g_rotQueue = false;
 // --seeddump <t>: print the state's accumulated fields at tick t. The
 // self-check for anchor seeding -- see the print site in cli.hpp.
 inline int g_seedDump = -1;
+// --seedevery <n>: print them every n ticks instead. The check needs the truth
+// at MANY ticks and the seed at one each, and the truth comes from a single
+// whole run -- so this turns the expensive half into one run rather than one
+// per tick.
+inline int g_seedEvery = 0;
 // std::popcount is C++20 and this tree builds as C++17.
 inline int popCount32(uint32_t v) {
     int n = 0;
