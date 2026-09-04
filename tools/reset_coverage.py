@@ -73,6 +73,35 @@ resolve to a declaration the scanner parsed, so a declaration form it cannot
 read is reported instead of silently dropped (that check found six globals
 missing from the first draft's table).
 
+WHAT THE CLOSURE IS NOT
+-----------------------
+The audit that produced this file also asked, by hand and separately, "who
+calls each of the mod's reset functions". That question was asked with a grep
+whose namespace alternation was typed from memory --
+`(dpsolve|secsolve|grouptrace|psnap|itermap|probe|clearance)::(reset|clear)`
+-- and `anchors` was not in it, so `anchors::reset()` (src/mod/repair.hpp:117,
+declared under `namespace anchors {` at :95) was reported as having no caller.
+It has one: repair.hpp:2202, in the level-start block immediately above the
+`dpsolve: start level=` line, with `anchors::onAttemptStart()` at
+hooks_playlayer.cpp:184 as its per-attempt counterpart.
+
+That miss cannot reach the verdicts here, and the reason is structural rather
+than lucky. It was a BACKWARD query (who calls X) driven by a hand-enumerated
+list of names. reset_set() runs FORWARD (what does X call, transitively) over
+a generic `(?:(\w+)\s*::\s*)?(\w+)\s*\(`, so there is no name list in this
+file to leave something out of -- it resolves probe::reset, secsolve::reset,
+grouptrace::reset, padtrace::reset, orbtrace::reset and speedgate::reset
+without ever being told they exist. And a missed CALLER cannot change what a
+function DOES: every claim here has the form "the reset body does not mutate
+this name", which depends only on that body's contents.
+
+For dp/ the point is sharper still. resetInvocationState calls no free
+function at all -- the closure enters exactly one body, its own, and follows
+zero call edges -- so the dp verdicts, the only ones this file classifies,
+involve no call resolution whatsoever. (Were a call edge ever missed, the
+error direction is worth knowing: fewer resolved resets means MORE globals
+reported unreset -- false findings rather than silence.)
+
     python tools/reset_coverage.py            # audit, exit 1 on anything new
     python tools/reset_coverage.py --list     # every global and its verdict
     python tools/reset_coverage.py --writers RE  # the assignments behind a bucket
