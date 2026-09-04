@@ -371,11 +371,19 @@ class $modify(PlayerObject) {
         // EXACTLY equal to the dump (25x4), so this is a real question, not a
         // foregone one.
         auto rr = object->getObjectRect();
+        // ...and the PLAYER's rect, because `dxx` above is a difference of
+        // getPositionX() and the gate compares RECT CENTRES. getObjectRect runs
+        // the size through getBoxOffset(), so the two need not coincide, and
+        // lv14 t=13,363 turns on 0.4 px: with dxx the yellow orb sits at 32.5
+        // against a gate of 18+15=33 and should be touched, yet GD fires only
+        // the gravity orb. If the rect centre is offset from the position, that
+        // gap is arithmetic rather than a missing rule.
+        auto pr = this->getObjectRect();
         char buf[352];
         snprintf(buf, sizeof(buf),
             "orb: id=%d uid=%d mode=%d size=%.2f flip=%d spd=%.1f "
             "t=%lld press=%lld lag=%lld pend=%d dxx=%.1f dyy=%.1f "
-            "orect=(%.4f,%.4f) "
+            "orect=(%.4f,%.4f) prc=(%.4f,%.4f) px=%.4f orc=%.4f "
             "orb=(%.0f,%.0f) vy=%.4f->%.4f",
             object->m_objectID, object->m_uniqueID, (int)solver::modeOf(this),
             this->m_vehicleSize, this->m_isUpsideDown ? 1 : 0,
@@ -383,6 +391,10 @@ class $modify(PlayerObject) {
             (long long)g_tick, (long long)orbtrace::g_lastPress, lag, pend,
             this->getPositionX() - ox, this->getPositionY() - oy,
             rr.size.width, rr.size.height,
+            pr.origin.x + pr.size.width * 0.5f,
+            pr.origin.y + pr.size.height * 0.5f,
+            this->getPositionX(),
+            rr.origin.x + rr.size.width * 0.5f,
             ox, oy, vyBefore, vyAfter);
         writeResult(buf);
     }
