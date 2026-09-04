@@ -136,6 +136,29 @@ def ctrlwin_args(level: int) -> list[str]:
     return ["--ctrlwin", ",".join(f"{a}:{b}" for a, b in wins)]
 
 
+def whole_run_args(level: int) -> list[str]:
+    """Flags that are right for a run STARTING AT t=0 and wrong at an anchor.
+
+    Only `--rotqueue`, and only on lv22, which is the one level with a rotation
+    queue that matters. Measured on 2026-09-04, same build, both arms:
+
+        default      2 mismatched frame/gravity transitions, model stops t=6,350
+        --rotqueue   t=6,315 agrees on BOTH axes, model stops t=6,375
+
+    The flag cannot be the default because State::rotSpent / rotChan / rotRev
+    accumulate: a state handed to --start mid-level begins on channel 0 with
+    nothing consumed and re-fires what the run already passed (lv22 loses
+    tracking in 12 of quick_regress's anchored sections, worst 400 -> 17 at
+    t=1,800). That objection does not apply to an instrument that replays from
+    the start, so DO NOT call this from quick_regress or anything else anchored.
+
+    Without this, every whole-run measurement of lv22 is taken on a trajectory
+    already known to be wrong from t=6,315 -- measuring the downstream of a
+    defect that is already fixed behind a flag.
+    """
+    return ["--rotqueue"] if level == 22 else []
+
+
 def trim_dump(src: Path, dst: Path) -> int:
     """Trim GD's dump down to the reference columns and write it. Returns the rows."""
     n = 0
