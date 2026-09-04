@@ -1,4 +1,4 @@
-"""Which `g_*` global carries state out of one solve and into the next?
+r"""Which `g_*` global carries state out of one solve and into the next?
 
 `dp::cliMain` was written as a process: parse a command line, load a level,
 search, print, exit. Under that assumption a namespace-scope global IS
