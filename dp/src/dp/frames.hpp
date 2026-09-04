@@ -185,6 +185,95 @@ inline int g_seedEvery = 0;
 // markTouched reads p1's position alone, so a box only p2 reaches is one the
 // model can never fire -- see the print site in step.hpp.
 inline bool g_p2Touch = false;
+
+// ---- THE ANCHOR PAYLOAD ----------------------------------------------------
+//
+// `--start` carries the physics state. It does NOT carry the values whose
+// worth at tick t depends on the ticks before t, so an anchor begins those at
+// their defaults and unmakes what the run had already done: State::fireB read
+// as "fired at tick 0", State::lockOff as "never rode anything", the rotation
+// queue's three as "channel 0, nothing consumed". Three defects on 2026-09-04,
+// one shape.
+//
+// Seeding them from the recording goes as far as the recording goes and no
+// further -- 768 unexpected differences on lv22 became 163, and the remainder
+// is boxes whose objects have no recording at all. Those have to come from GD,
+// which knows.
+//
+// NAMED, NOT POSITIONAL. The 26 positional --start fields cannot take another
+// one without every reader changing, and appending after an optional field is
+// its own trap. So: `--anchor-state key=value;key=value`.
+//
+// TRIGGERS ARE NAMED BY UID, NOT BY BIT. Bit numbering is a property of this
+// build's 32-box window; a bit index crossing the boundary would mean a
+// different box whenever the window moved.
+//
+// AND THE TOUCH IS p1's ONLY. markTouched reads p1's position, so a bit set
+// from "either player entered it" would be one the step function can never set
+// going forward -- an anchor claiming what a whole run of the same plan would
+// not. The payload's meaning is fixed as "what GD observed under the model's
+// own convention", which on today's corpus is the same set (p2 enters no box)
+// and is the safe side if that ever stops being true.
+// EVERY VALUE IS THE STATE AT t0, like every other --start field. The first
+// simulated tick is t0+1, so a payload written at t0+1 is one tick of motion
+// too far along -- measured while testing this: lockOff handed in at t0+1 came
+// out a whole dx (1.615 px) high at the first compared tick.
+inline std::string g_anchorState;
+// Which keys this build understands. A payload naming anything else is a
+// payload from a different build, and the run stops rather than quietly
+// dropping it -- see the refusal in cliMain.
+//
+// NO VERSION FIELD: the key set IS the version. Printing both sides' keys
+// diagnoses the mismatch and says which is older (the shorter one), with no
+// build-stamp plumbing to keep in step. If a human-readable identity is ever
+// wanted, the mod version and the exe's mtime are already free.
+inline const char* const kAnchorKeys[] = {"touch", "lockOff"};
+// --seed-partial-ok: run anyway when a key this build wants is absent, and
+// stamp the outcome so the result carries it. A warning on stderr does not
+// survive into the place results are compared.
+inline bool g_seedPartialOk = false;
+inline std::string g_seedPartial;   // what was missing, for the outcome line
+
+// Split `a=1;b=2` into pairs, rejecting a key this build does not know. The
+// rejection is the point: a payload naming an unknown key was written by a
+// build that carries something this one would silently drop, and dropping it
+// is how a run degrades without saying so.
+inline bool parseAnchorState(const std::string& s,
+                             std::vector<std::pair<std::string, std::string>>& out,
+                             std::string& unknown) {
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t semi = s.find(';', i);
+        if (semi == std::string::npos) semi = s.size();
+        const std::string tok = s.substr(i, semi - i);
+        i = semi + 1;
+        if (tok.empty()) continue;
+        const size_t eq = tok.find('=');
+        if (eq == std::string::npos) { unknown = tok; return false; }
+        const std::string k = tok.substr(0, eq);
+        bool known = false;
+        for (const char* kk : kAnchorKeys) if (k == kk) { known = true; break; }
+        if (!known) { unknown = k; return false; }
+        out.emplace_back(k, tok.substr(eq + 1));
+    }
+    return true;
+}
+// `uid:tick,uid:tick` -> pairs. Uids, not bit indices: see g_anchorState.
+inline std::vector<std::pair<int, int>> parseTouchPayload(const std::string& v) {
+    std::vector<std::pair<int, int>> out;
+    size_t i = 0;
+    while (i < v.size()) {
+        size_t comma = v.find(',', i);
+        if (comma == std::string::npos) comma = v.size();
+        const std::string tok = v.substr(i, comma - i);
+        i = comma + 1;
+        const size_t colon = tok.find(':');
+        if (colon == std::string::npos) continue;
+        out.emplace_back(std::atoi(tok.substr(0, colon).c_str()),
+                         std::atoi(tok.substr(colon + 1).c_str()));
+    }
+    return out;
+}
 // std::popcount is C++20 and this tree builds as C++17.
 inline int popCount32(uint32_t v) {
     int n = 0;

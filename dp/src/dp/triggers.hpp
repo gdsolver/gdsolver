@@ -42,6 +42,13 @@ namespace dp {
 struct TouchTrig {
     double cx, cy, hw, hh;          // the box the player has to enter
     std::vector<TrigCtl> ctl;
+    // The TRIGGER's own uid. Bit numbering here is a property of this build's
+    // window (the first 32 boxes from the anchor), so anything arriving from
+    // outside -- an anchor payload written by the mod, say -- has to name the
+    // trigger and let this side do the mapping. Carrying a bit index across
+    // that boundary would silently mean a different box whenever the window
+    // moved.
+    int uid = -1;
 };
 // Bit b of State::trig is g_touch[b]. Global because the step function, the
 // layer loop and the witness resim all need the same numbering, and there is
@@ -290,6 +297,7 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
         const TrigRow& T = kv.second;
         if (!T.touch || T.target == 0) continue;
         TouchTrig tt{T.cx, T.cy, T.w * 0.5, T.h * 0.5, {}};
+        tt.uid = T.uid;   // so an outside payload can name the box (see the field)
         struct Item {
             int group; float dx, dy; double dur; int ease; double erate;
             double lock, lockY;

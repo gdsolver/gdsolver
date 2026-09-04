@@ -94,6 +94,9 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--seedevery")) g_seedEvery = std::atoi(argv[i + 1]);
         // --p2touch: count touch boxes the second player enters (diagnostic).
         if (!std::strcmp(argv[i], "--p2touch")) g_p2Touch = true;
+        // --anchor-state / --seed-partial-ok: the anchor payload (frames.hpp).
+        if (!std::strcmp(argv[i], "--anchor-state")) g_anchorState = argv[i + 1];
+        if (!std::strcmp(argv[i], "--seed-partial-ok")) g_seedPartialOk = true;
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
         // "said it already" flag it keeps is not synchronised, so use it on
@@ -832,7 +835,74 @@ inline int cliMain(int argc, char** argv) {
     // Without this the anchor is dropped inside a door GD has open and the
     // frontier dies on tick 0 (measured on lv19 --start 19900, x=27,721, which
     // sits exactly where gate uid 13395 was before it slid away).
-    if (t0 > 0 && !g_touch.empty()) {
+    // ...unless GD told us directly. The recording can only answer for objects
+    // it contains, which is why reading it left 163 differences on lv22; a
+    // payload names the triggers GD saw fire and their ticks, so nothing has to
+    // be inferred. It takes precedence over the block below and reports what it
+    // set, including the boxes it named that this build has no bit for -- a
+    // payload written against a wider window than this one's 32.
+    std::vector<std::pair<int, int>> payloadTouch;
+    bool havePayload = false;
+    if (!g_anchorState.empty()) {
+        std::vector<std::pair<std::string, std::string>> kv;
+        std::string unknown;
+        if (!parseAnchorState(g_anchorState, kv, unknown)) {
+            std::printf("seed payload rejected: unknown key '%s'\n"
+                        "  this exe knows:", unknown.c_str());
+            for (const char* kk : kAnchorKeys) std::printf(" %s", kk);
+            std::printf("\n  a payload naming something else was written by a "
+                        "build that carries what this one would drop\n");
+            return 2;
+        }
+        bool haveLock = false;
+        for (const auto& p : kv) {
+            if (p.first == "touch") {
+                payloadTouch = parseTouchPayload(p.second);
+                havePayload = true;
+            } else if (p.first == "lockOff") {
+                init.lockOff = (float)std::atof(p.second.c_str());
+                haveLock = true;
+            }
+        }
+        // A PAYLOAD REPLACES THE RECORDING-DERIVED SEED WHOLESALE, so a key it
+        // does not carry is a value nobody sets -- not a value that falls back.
+        // Found by this build's own first test: a payload with `touch` and no
+        // `lockOff` seeded the fire ticks perfectly and left the platform's ride
+        // at zero, and the replay died 45 ticks later. That is the exact silent
+        // degradation this refusal exists for, so it is not optional.
+        std::string missing;
+        if (havePayload && !haveLock) missing = "lockOff";
+        if (!missing.empty()) {
+            if (!g_seedPartialOk) {
+                std::printf("seed payload incomplete: missing %s\n"
+                            "  this exe wants:", missing.c_str());
+                for (const char* kk : kAnchorKeys) std::printf(" %s", kk);
+                std::printf("\n  payload carried:");
+                for (const auto& p : kv) std::printf(" %s", p.first.c_str());
+                std::printf("\n  (the shorter list is the older build; pass "
+                            "--seed-partial-ok to run anyway)\n");
+                return 2;
+            }
+            // Allowed -- but the result has to carry it, because a line on
+            // stderr does not survive into the place results are compared.
+            g_seedPartial = missing;
+        }
+    }
+    if (t0 > 0 && havePayload) {
+        int set = 0, unmapped = 0;
+        for (const auto& ut : payloadTouch) {
+            int bit = -1;
+            for (size_t b = 0; b < g_touch.size() && b < 32; ++b)
+                if (g_touch[b].uid == ut.first) { bit = (int)b; break; }
+            if (bit < 0) { ++unmapped; continue; }
+            init.trig |= (uint32_t)1 << bit;
+            init.fireB[bit] = (uint16_t)std::max(0, ut.second);
+            ++set;
+        }
+        std::printf("seed payload: %d boxes set, %d named but not in this "
+                    "build's window\n", set, unmapped);
+    }
+    if (t0 > 0 && !havePayload && !g_touch.empty()) {
         // Counted, because "nothing happened" is the failure mode this block has
         // (an anchor that silently keeps every door shut looks exactly like a
         // physics wall, and did for a whole session on lv22).
