@@ -127,6 +127,14 @@ inline void resetInvocationState() {
     g_seedDump = -1;
     g_seedEvery = 0;
     g_p2Touch = false;
+    // ...and the anchor payload. Left behind, LEVEL N's payload seeds LEVEL
+    // N+1 in a one-session cold run -- and it does so plausibly, planning
+    // against a world where triggers are already open, which is the shape
+    // CLAUDE.md records as having hidden under a green 22/22 for months. A
+    // launch per level cannot reach it, so no per-level regression will.
+    g_anchorState.clear();
+    g_seedPartialOk = false;
+    g_seedPartial.clear();
     g_spentRot.clear();
     g_revToggle = true;
     g_ctrlWin.clear();

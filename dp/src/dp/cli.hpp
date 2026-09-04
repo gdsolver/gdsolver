@@ -874,7 +874,16 @@ inline int cliMain(int argc, char** argv) {
         if (havePayload && !haveLock) missing = "lockOff";
         if (!missing.empty()) {
             if (!g_seedPartialOk) {
+                // Say WHY this is fatal rather than a warning: the payload
+                // replaces the recording-derived seed wholesale, so a key it
+                // omits is not filled from the recording -- it is filled by
+                // nobody. Without this line the next reader assumes the old
+                // path still covers the gap, which is what the first test of
+                // this code did: three fire ticks perfect, the ride at zero,
+                // dead 45 ticks later.
                 std::printf("seed payload incomplete: missing %s\n"
+                            "  a payload REPLACES the recording-derived seed, "
+                            "so an omitted key is set by nobody\n"
                             "  this exe wants:", missing.c_str());
                 for (const char* kk : kAnchorKeys) std::printf(" %s", kk);
                 std::printf("\n  payload carried:");
@@ -901,6 +910,14 @@ inline int cliMain(int argc, char** argv) {
         }
         std::printf("seed payload: %d boxes set, %d named but not in this "
                     "build's window\n", set, unmapped);
+        // The one diagnosis worth pre-writing, because the convention breaks
+        // in exactly one shape: values are the state at t0, and a payload
+        // written at t0+1 lands one tick of motion further on. If the first
+        // compared tick is out by about one dx (1.615 px on lv19), that is
+        // what happened -- not a physics difference.
+        std::printf("seed payload: values are the state at t0; a first-tick "
+                    "difference near one dx means the payload was written at "
+                    "t0+1\n");
     }
     if (t0 > 0 && !havePayload && !g_touch.empty()) {
         // Counted, because "nothing happened" is the failure mode this block has
