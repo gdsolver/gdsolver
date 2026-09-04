@@ -381,8 +381,12 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
             if (idx < 32) c.rotSpent |= (uint32_t)1 << idx;
             // The switch half: only a 2900 with `swarm` moves the active
             // channel, and the reverse it writes is the pure predicate
-            // `gnddir - 2 <u 2` -- no mapping through the frame.
-            if (e.swarm && e.swch >= 0 && e.swch <= 15) {
+            // `gnddir - 2 <u 2` -- no mapping through the frame. The id check
+            // is not defensive: ten of lv22's thirty queued objects are 2899
+            // Options triggers, two of them carry m_changeChannel, and an
+            // Options trigger never reaches rotateGameplay -- it is consumed
+            // here and does nothing to the channel.
+            if (e.id == 2900 && e.swarm && e.swch >= 0 && e.swch <= 15) {
                 c.rotChan = (uint8_t)e.swch;
                 const int gd = (e.rotIdx >= 0)
                     ? g_rotTrig[(size_t)e.rotIdx].gndDir : 0;

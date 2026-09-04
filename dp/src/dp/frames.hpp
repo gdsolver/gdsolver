@@ -129,6 +129,15 @@ inline std::vector<RotTrig> g_rotTrig;
 // released by channel 3's REVERSE flag, which uid5809 set 335 ticks earlier.
 struct RotQEntry {
     int uid = -1;
+    // 2900 or 2899. Both are queue residents -- they carry m_channelValue and
+    // m_ordValue and are consumed the same way -- but ONLY a 2900 touches the
+    // channel machinery: EffectGameObject::triggerObject sends 2900 to
+    // rotateGameplay and 2899 to processOptionsTrigger, and the writers of the
+    // active channel (+0x33c) are rotateGameplay, resetSpawnChannelIndex,
+    // loadUpToPosition, createCheckpoint and init -- no Options path. Ten of
+    // lv22's thirty are 2899 and two of those carry m_changeChannel, so reading
+    // that field without checking the id switches the channel twice over.
+    int id = 0;
     int chan = 0;     // m_channelValue: the bucket this object lives in
     int ord = 0;      // m_ordValue: the first sort key, stronger than position
     double px = 0.0, py = 0.0;   // the firing point: the LOAD position, frozen
@@ -269,10 +278,10 @@ inline bool loadRotQueue(const std::string& path) {
     g_rotQ.clear();
     while (std::getline(in, line)) {
         RotQEntry e{};
-        int id = 0, sord = 0, sordd = 0, spx = 0, target = 0, chanChanged = 0;
+        int sord = 0, sordd = 0, spx = 0, target = 0, chanChanged = 0;
         const int n = std::sscanf(
             line.c_str(), "%d,%d,%lf,%lf,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
-            &e.uid, &id, &e.px, &e.py, &e.chan, &e.ord, &sord, &sordd, &spx,
+            &e.uid, &e.id, &e.px, &e.py, &e.chan, &e.ord, &sord, &sordd, &spx,
             &target, &chanChanged, &e.swarm, &e.chanOnly, &e.swch);
         if (n < 14) continue;
         const auto it = byUid.find(e.uid);
