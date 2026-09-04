@@ -9720,12 +9720,54 @@ inline void swapHalves(State& s) {
 // The model tested the POST-teleport v=2,143.5 (dv=133.5), never fired, and so
 // kept that spike frozen at its t=1 position 150 px away from where GD has it --
 // a phantom hazard sitting in the only lane out of the section.
+// THIS READS p1's POSITION ONLY. In a dual section a box that only the second
+// player enters is one the model can never fire -- the DP then plans against a
+// world where that trigger does not exist, with or without an anchor, and a
+// fire tick carried in from GD would be a value the step function cannot
+// reproduce going forward.
+//
+// COUNTED 2026-09-04, and the corpus does not exercise it. Only lv20 has both
+// a dual portal and touch boxes at all (lv16 and lv17 have portals and no
+// boxes; lv19 and lv22 have boxes and NO dual portal, so their 3 and 155 can
+// never be reached by a second player). On lv20, GD's own trajectory puts the
+// two players against its six boxes for 805 dual ticks and p2 enters none of
+// them (oneoff/py/p2boxes.py).
+//
+// So this is a real limit on what the model can express, with zero witnesses.
+// It is recorded rather than fixed because adding the p2 arm increases forward
+// firing -- geometry and deaths change -- and there is nothing to measure the
+// change against. Whoever gives it a witness should read fullreplay and
+// deathref, not the seeding check.
 inline void markTouched(State& c, const StepCtx& K, double preY) {
     if (!K.trigs || K.trigs->empty()) return;
     const double half = playerHalf(c.mode, c.mini != 0);
     for (const auto& tb : *K.trigs) {
         if (c.trig & tb.second) continue;
         const TouchTrig* T = tb.first;
+        // --p2touch: WOULD THE SECOND PLAYER HAVE ENTERED THIS BOX.
+        //
+        // This function reads c.xAbs and c.y and nothing else, so in a dual
+        // section only p1 can ever enter a box: a trigger p2 alone reaches is
+        // one the DP plans against as if it never fires, anchor or no anchor.
+        // That is a hole in what the model can express rather than in how an
+        // anchor is seeded, so it is counted before anything is carried from
+        // GD -- seeding a bit the step function can never set forward would
+        // make an anchor claim what a whole run of the same plan would not.
+        //
+        // Diagnostic only: it prints and changes nothing. Both players share
+        // an x (the portal makes the second at the same point), so the test is
+        // p2's own half against y2.
+        if (g_p2Touch && c.dual) {
+            const double half2 = playerHalf(c.mode2, c.mini2 != 0);
+            const bool p2in = std::fabs((double)c.xAbs - T->cx) < T->hw + half2
+                              && std::fabs((double)c.y2 - T->cy) < T->hh + half2;
+            const bool p1in = std::fabs((double)c.xAbs - T->cx) < T->hw + half
+                              && (std::fabs((double)c.y - T->cy) < T->hh + half
+                                  || std::fabs(preY - T->cy) < T->hh + half);
+            if (p2in)
+                std::printf("p2touch: t=%lld box=0x%x p1=%d p2=1\n",
+                            (long long)K.t, tb.second, p1in ? 1 : 0);
+        }
         if (std::fabs((double)c.xAbs - T->cx) < T->hw + half
             && (std::fabs((double)c.y - T->cy) < T->hh + half
                 || std::fabs(preY - T->cy) < T->hh + half)) {

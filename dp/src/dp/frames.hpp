@@ -181,6 +181,10 @@ inline int g_seedDump = -1;
 // whole run -- so this turns the expensive half into one run rather than one
 // per tick.
 inline int g_seedEvery = 0;
+// --p2touch: count the touch boxes the SECOND player enters. Diagnostic only.
+// markTouched reads p1's position alone, so a box only p2 reaches is one the
+// model can never fire -- see the print site in step.hpp.
+inline bool g_p2Touch = false;
 // std::popcount is C++20 and this tree builds as C++17.
 inline int popCount32(uint32_t v) {
     int n = 0;

@@ -126,6 +126,7 @@ inline void resetInvocationState() {
     g_rotQueue = false;
     g_seedDump = -1;
     g_seedEvery = 0;
+    g_p2Touch = false;
     g_spentRot.clear();
     g_revToggle = true;
     g_ctrlWin.clear();

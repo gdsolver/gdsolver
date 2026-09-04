@@ -92,6 +92,8 @@ inline int cliMain(int argc, char** argv) {
         // --seeddump <t>: the accumulated-field line, for the seeding check.
         if (!std::strcmp(argv[i], "--seeddump")) g_seedDump = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--seedevery")) g_seedEvery = std::atoi(argv[i + 1]);
+        // --p2touch: count touch boxes the second player enters (diagnostic).
+        if (!std::strcmp(argv[i], "--p2touch")) g_p2Touch = true;
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
         // "said it already" flag it keeps is not synchronised, so use it on
