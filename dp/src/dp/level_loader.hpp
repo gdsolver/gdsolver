@@ -148,6 +148,20 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // x=22,455 while the lock comes from a Move at x=24,285, so the window
         // has to carry its own trigger (fireT / fireX live there).
         double alock = 0, alockY = 0; int alockTrig = -1; int alockN = 0;
+        // ...and the same thing arriving down a TOUCH chain, kept apart. The
+        // two indices mean different things -- `alockTrig` is an index into the
+        // autonomous trigger list (which is what `b` is in that loop, and what
+        // dynamics.hpp reads it as), while a touch lock's is a BOX -- so they
+        // cannot share a field without the reader having to know which kind of
+        // object it is holding.
+        //
+        // The touch side was collected by the walk (triggers.hpp accumulates it
+        // hop by hop) and then dropped: the loop below that reads `lockTicks`
+        // is the autonomous one, and the touch loop never looked. Measured on
+        // lv19: 26 objects arrive through box 2 with lockTicks=284.1, of which
+        // 7 collide -- 4 platforms and 3 yellow pads, which are exactly the
+        // seven the formula path already computes the y of.
+        double tlock = 0; int tlockBox = -1; int tlockN = 0;
         // The ANCHOR controller's own contribution, kept apart from the sum.
         // recFire is that ONE trigger's first effect, so the recorder's
         // threshold lag has to be computed from ITS move, not from every
@@ -166,6 +180,14 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         for (size_t b = 0; b < tt->size(); ++b)
             for (const TrigCtl& c : (*tt)[b].ctl) {
                 TrigOf& e = trigOf[c.uid];
+                // The lock the walk carried down this chain. Same shape as the
+                // autonomous block below, and the reason it has to exist here
+                // too: a Move with offset (0,0) that only locks contributes
+                // nothing to dx/dy, so every other line in this loop ignores it.
+                if (c.lockTicks > 0.0) {
+                    ++e.tlockN;
+                    if (e.tlockBox < 0) { e.tlockBox = (int)b; e.tlock = c.lockTicks; }
+                }
                 e.mask |= (uint32_t)1 << b;
                 e.dx += c.dx;
                 e.dy += c.dy;
@@ -433,6 +455,23 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         L.dyn.autoErate.push_back((autoCtl || formulaDriven) ? tit->second.aerate : 2.0);
         L.dyn.autoLock.push_back(autoCtl ? tit->second.alock : 0.0);
         L.dyn.autoLockTrig.push_back(autoCtl ? tit->second.alockTrig : -1);
+        // The touch lock is NOT gated on `controlled`: an object can be reached
+        // by a lock-only Move (offset 0,0) down a chain that moves it nowhere
+        // else, and 19 of lv19's 26 are exactly that. What gates it is the box
+        // having been punched, which is per-state and lives in `trig`.
+        L.dyn.touchLock.push_back(tit != trigOf.end() ? tit->second.tlock : 0.0);
+        if (tit != trigOf.end() && tit->second.tlockBox >= 0) {
+            if (g_lockBox < 0) {
+                g_lockBox = tit->second.tlockBox;
+                g_lockTicks = tit->second.tlock;
+            } else if (g_lockBox != tit->second.tlockBox) {
+                // Two boxes would need two accumulators. Say so rather than
+                // serve one of them silently.
+                std::printf("triggers: WARNING second touch lock box %d (using "
+                            "%d) -- objects on it will not follow the player\n",
+                            tit->second.tlockBox, g_lockBox);
+            }
+        }
         L.dyn.autoParts.push_back(autoCtl ? tit->second.parts
                                           : std::vector<Dynamics::AutoPart>{});
         L.dyn.touchParts.push_back(controlled ? tit->second.tparts

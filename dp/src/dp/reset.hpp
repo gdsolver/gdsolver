@@ -99,6 +99,12 @@ inline void resetInvocationState() {
     g_dynDbg = -1;
     g_formulaDriven = 0;
     g_noFormula = false;
+    // ...and the locked box, which the loader finds. Same trap as
+    // g_touchMoveTicks: left behind, the next level in a one-session run reads
+    // the PREVIOUS level's box index, and a one-session run is exactly the
+    // arrangement the serial cold uses.
+    g_lockBox = -1;
+    g_lockTicks = 0.0;
 
     // fixup.hpp -- --fixups appends, so without this the file is loaded once per call and the
     // records of every earlier call are still in the list

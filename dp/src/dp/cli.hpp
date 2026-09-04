@@ -864,6 +864,27 @@ inline int cliMain(int argc, char** argv) {
                 // (which `t0 - durTicks` is for lv19's uid14011 -- 20,530
                 // against the recording's 20,504) opens the door 26 ticks late
                 // and a hazard the real door had cleared kills the player.
+                // A LOCK the anchor is already inside. `lockOff` is accumulated
+                // tick by tick during a run, so an anchor dropped after the box
+                // was punched has none of it -- the platform snaps back to its
+                // base and the ride disappears, which is the same hole the fire
+                // tick had. The recording answers it directly: this controller
+                // moves the object nowhere (a lock-only Move carries offset
+                // (0,0)), so whatever its recorded x has done since the first
+                // sample IS the lock.
+                if (c.lockTicks > 0.0
+                    && std::hypot((double)c.dx, (double)c.dy) <= 0.5) {
+                    const DynSample& f0 = it->second.front();
+                    const DynSample* atL = &f0;
+                    for (const DynSample& s : it->second)
+                        if ((long long)s.t <= t0) atL = &s;
+                    init.lockOff = (float)((double)atL->cx - (double)f0.cx);
+                    if (dbg)
+                        std::printf("triggers: dyndbg uid=%d box=%zu lock seed "
+                                    "%.3f (recorded cx %.3f - base %.3f)\n",
+                                    c.uid, b, (double)init.lockOff,
+                                    (double)atL->cx, (double)f0.cx);
+                }
                 long long recFire = -1;
                 for (const DynSample& s : it->second) {
                     if (std::hypot((double)s.cx - (double)s0.cx,
@@ -1869,7 +1890,10 @@ inline int cliMain(int argc, char** argv) {
             }
             std::vector<const Obj*> rn, rp, rd, ro, rs;
             Lf->dyn.seek((int)t);
-            Lf->dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB, (int)t, x);
+            // + this tick's advance (xPrevR is tick t-1's x): see the group
+            // call's note on why a lock needs the CURRENT tick.
+            Lf->dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB,
+                                  s.lockOff + (float)(x - xPrevR), (int)t, x);
             std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
             const std::vector<TouchTrig>& tfr = touchFor((int)s.frame);
             for (size_t b = 0; b < tfr.size(); ++b) {
@@ -2233,6 +2257,11 @@ inline int cliMain(int argc, char** argv) {
         // what differs is when, and this keeps the latest for each one
         // separately instead of collapsing them onto a single scalar.
         uint16_t gFireB[32] = {};
+        // ...and how far the least-advanced member has carried a locked
+        // platform. Same conservative direction as `gFire`, which takes the
+        // LATEST firing tick so the group is shown a door that is still
+        // opening: the smallest offset is the one that has ridden least.
+        float gLockOff = 1e30f;
         for (const State& s : cur) {
             if (((s.dx > 0.f) ? s.dx : curDxF) != gdx || s.trig != gtrig
                 || (int)s.frame != gframe || (int)s.rev != grev) continue;
@@ -2241,7 +2270,9 @@ inline int cliMain(int argc, char** argv) {
             gFire = std::max(gFire, (int)s.trigT);
             for (int b = 0; b < 32; ++b)
                 if (s.fireB[b] > gFireB[b]) gFireB[b] = s.fireB[b];
+            if (s.lockOff < gLockOff) gLockOff = s.lockOff;
         }
+        if (gLockOff > 1e29f) gLockOff = 0.f;   // no member (group is empty)
         // Drop a whole group once it is past a box it was required to enter.
         // Killing it here rather than at the end keeps the frontier spent on
         // states that can still satisfy the requirement.
@@ -2286,7 +2317,14 @@ inline int cliMain(int argc, char** argv) {
         // firing tick in the group, so a state that touched the box early is
         // shown a door that is still opening -- conservative, never the other
         // way round.
-        LG.dyn.applyTriggers(gtrig, gFire, gFireB, (int)t, x);
+        // ...plus THIS tick's advance. A lock is a per-tick copy of where the
+        // player is NOW, so the geometry placed for tick t needs the player's
+        // x at t -- while `gLockOff` comes from states that have only stepped
+        // to t-1. Every member shares dx, so the advance is `sdx` for all of
+        // them. Measured without it: lv19's platform sits exactly one dx
+        // (1.614 px) behind its recording, at every tick.
+        LG.dyn.applyTriggers(gtrig, gFire, gFireB,
+                             gLockOff + (float)sdx, (int)t, x);
         std::vector<const Obj*> near;
         FS.near->forRange(wLo - 40, wHi + 40, [&](const Obj& o) { near.push_back(&o); });
         LG.dyn.collect(Dynamics::NEAR, wLo - 40, wHi + 40, near);
@@ -3283,7 +3321,11 @@ inline int cliMain(int argc, char** argv) {
             // ...including the doors IT opened. The witness carries its own mask
             // (stepBoth sets it below), so this is the same call the search made
             // for the group this lineage belonged to.
-            L.dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB, (int)t, x);
+            // + this tick's advance: see the group call's note. `x` is tick t's
+            // x and `s.xAbs` is tick t-1's, so their difference is it.
+            L.dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB,
+                                s.lockOff + (float)(x - (double)s.xAbs),
+                                (int)t, x);
             std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
             for (size_t b = 0; b < g_touch.size(); ++b) {
                 if (s.trig & ((uint32_t)1 << b)) continue;

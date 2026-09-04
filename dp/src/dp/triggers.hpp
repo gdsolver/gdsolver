@@ -74,6 +74,13 @@ inline void buildTouchMoveTicks() {
         double d = 0.0;
         for (const TrigCtl& c : g_touch[b].ctl)
             d = std::max(d, c.durTicks);
+        // A LOCK keeps the object moving too, and for far longer than the move
+        // that opened the box: lv19's door slides for 69.5 ticks while the lock
+        // that carries the same object sideways runs 284.1. Without this the key
+        // merges states 78 ticks in, while their platforms are still at
+        // different x -- which is the exact failure this window exists to
+        // prevent, reintroduced by the lock.
+        for (const TrigCtl& c : g_touch[b].ctl) d = std::max(d, c.lockTicks);
         if (d <= 0.0) continue;             // nothing moves: contributes nothing
         g_touchMoveTicks[b] = (int)std::ceil(d) + 5 + 4;
     }

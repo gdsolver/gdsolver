@@ -202,6 +202,22 @@ struct State {
     // width -- but it is the largest single addition the struct has taken, and
     // the cost lands in the cold loop rather than in any replay harness.
     uint16_t fireB[32] = {};
+    // How far this state has travelled since it punched the locked box
+    // (g_lockBox), while that lock is open. The lock makes an object's x the
+    // player's own, offset by wherever both were when it fired:
+    //
+    //     x(t) = base + (moves) + (playerX(min(t, t0+lockTicks)) - playerX(t0))
+    //
+    // and playerX(t) - playerX(t0) is just the advance summed over the ticks
+    // between, so ACCUMULATING it costs one float and removes the need to
+    // remember an x at all. Once the window closes the sum stops growing, which
+    // is the `min` in the formula.
+    //
+    // Four platforms and three yellow pads on lv19 ride on this. Their x is
+    // therefore a property of the state, and the recording of them is the
+    // recorded run's player path -- right for the plan that made it and wrong
+    // by the whole difference for any other.
+    float lockOff = 0.f;
     // ---- dual (GameObjectType 23 splits, 24 merges) ----
     // Measured on lv16 x=10,551: the moment the portal fires, GD creates a
     // second player AT THE SAME POINT with the opposite gravity and the opposite

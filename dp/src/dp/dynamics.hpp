@@ -398,6 +398,16 @@ inline int g_formulaDriven = 0;
 // moved something" from "filling the autonomous fields for a dual-controlled
 // object moved something", which are different changes that arrive together.
 inline bool g_noFormula = false;
+// The one touch box whose chain locks something to the player's x, and how long
+// the lock lasts in ticks. A per-BOX quantity rather than a per-object one
+// because what a state has to remember is "how far have I travelled since I
+// punched THAT box", and the corpus needs exactly one of them: the census over
+// all 22 levels found locks down a touch chain on lv19 only, through a single
+// box (26 objects, 7 of them collidable). A second box would need a second
+// accumulator, so it is reported rather than silently averaged -- the same
+// treatment `alockN` already gives two locks on one object.
+inline int g_lockBox = -1;
+inline double g_lockTicks = 0.0;
 // --shiftstat: one `shiftstat:` line per moving object, the first time it is
 // placed, saying which recorded row the model ends up reading for it.
 //
@@ -531,6 +541,13 @@ struct Dynamics {
     // opened it -- NOT necessarily the object's anchor. See TrigCtl::lockTicks.
     std::vector<double> autoLock;
     std::vector<int> autoLockTrig;
+    // ...and the touch side. Non-zero means "while this object's box has been
+    // punched and the window is open, this object's x IS the player's x,
+    // offset by wherever both were when it fired" -- so its x is a property of
+    // the STATE, not of the level, and a recording of it is one attempt's
+    // player path. dynamics' own note on TrigCtl::lockTicks calls this "the one
+    // class where a RECORDING is provably wrong for anyone else".
+    std::vector<double> touchLock;
     bool anyTrig = false;
     bool anyAuto = false;
     int lastT = -1;
@@ -579,8 +596,12 @@ struct Dynamics {
     // same conservative way `fireHi` is: the LATEST tick in the group). Only
     // the formula path reads it; it may be null, and then no object is
     // formula-driven for this call.
-    void applyTriggers(uint32_t mask, int fireHi, const uint16_t* fireB, int t,
-                       double px = 0.0) {
+    // `lockOff` is how far the state has travelled since it punched the locked
+    // box (State::lockOff). Applied only on the formula path: a recording of a
+    // locked object already contains the recorded run's own lock, so adding
+    // this to it would count the ride twice.
+    void applyTriggers(uint32_t mask, int fireHi, const uint16_t* fireB,
+                       float lockOff, int t, double px = 0.0) {
         if (!anyTrig && !anyAuto) return;
         for (size_t i = 0; i < objs.size(); ++i) {
             const uint32_t m = trigMask[i];
@@ -659,16 +680,18 @@ struct Dynamics {
                 // after an anchor, which is exactly where this object is
                 // ridden, is not a 1-tick advance.
                 objs[i].dcy = fy - py1;
-                // cy ONLY. The fit that justifies this path (oneoff/py/fit96.py,
-                // 0.0007 px over 286 rows x 7 objects) is a fit of the vertical
-                // curve, and the closed form has no term for anything else, so
-                // writing cx here asserts something nobody measured -- and it is
-                // WRONG: lv19's uid14011 is recorded at cx=28,789 at t=20,601
-                // against a base of 28,631, though neither of its controllers
-                // carries an x offset (dx=0, adx=0). Something else moves these
-                // doors 158 px sideways, and `s0.cx + fx` teleports them back.
-                // seek() has already placed cx/hw/hh from the recording; leave
-                // them there until the x term is measured too.
+                // x: the moves, plus the lock. The 158 px that `s0.cx + fx`
+                // could not account for (uid14011 is recorded at cx=28,789 at
+                // t=20,601 against a base of 28,631, with dx=0 and adx=0 on both
+                // controllers) is a lockToPlayerX -- the recording shows its x
+                // advancing by the player's own dx, from the tick the box fires.
+                // With the lock the closed form covers x as well, so this writes
+                // it; without one it stays on the recording, which is where the
+                // objects the formula cannot fully describe belong.
+                const bool locked = (g_lockBox >= 0 && i < touchLock.size()
+                                     && touchLock[i] > 0.0
+                                     && ((mask >> g_lockBox) & 1u));
+                if (locked) objs[i].cx = (double)s0.cx + fx + (double)lockOff;
                 objs[i].cy = ncy;
                 // --dyndbg <uid> follows one object; --dyndbg -3 prints EVERY
                 // formula-driven object, which is what you want when the set
@@ -677,9 +700,11 @@ struct Dynamics {
                 // them the player is actually standing on).
                 if (objs[i].uid == g_dynDbg || g_dynDbg == -3)
                     std::printf("fdrv: uid=%d t=%d box=%d autoFireT=%d "
-                                "base=%.3f cx=%.2f fy=%+.4f dcy=%+.4f -> cy=%.4f\n",
+                                "base=%.3f lock=%d off=%.3f cx=%.3f "
+                                "fy=%+.4f dcy=%+.4f -> cy=%.4f\n",
                                 objs[i].uid, t, fb, ft0, (double)s0.cy,
-                                (double)s0.cx, fy, fy - py1, ncy);
+                                locked ? 1 : 0, (double)lockOff, objs[i].cx,
+                                fy, fy - py1, ncy);
                 continue;
             }
             const int aA = m ? -1 : autoAnchor[i];   // touch control wins

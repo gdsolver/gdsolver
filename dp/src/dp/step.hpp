@@ -820,6 +820,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     c.xAbs = advanceX(s.xAbs,
                       (float)(useDx * tScale * (s.rev ? -1.0 : 1.0)));
     const double x = (double)c.xAbs, xPrev = (double)s.xAbs;
+    // LOCKED-TO-PLAYER GEOMETRY. While the lock its box opened is still running,
+    // whatever that box locked moves with the player, so the state carries how
+    // far it has come since it punched the box -- which is this tick's advance
+    // added to the parent's total. Summing the advance is the same quantity as
+    // `playerX(t) - playerX(t0)` and needs no remembered x. `fireB` is the tick
+    // the box was entered, so the window is open while `t - fireB <= lockTicks`;
+    // once it closes the sum stops, which is the formula's own `min(t, t0+L)`.
+    if (g_lockBox >= 0 && ((c.trig >> g_lockBox) & 1u)
+        && (double)((long long)K.t - (long long)c.fireB[g_lockBox]) <= g_lockTicks)
+        c.lockOff = s.lockOff + (float)(x - xPrev);
     // STATIC CAMERA crossings. Unlike a portal these carry no box test at all
     // -- the x-crossing queue fires on the player's x passing the trigger's
     // own x -- so the test is the span this tick covered, taken both ways
