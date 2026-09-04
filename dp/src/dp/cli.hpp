@@ -697,6 +697,19 @@ inline int cliMain(int argc, char** argv) {
             // whole 0.000000, seeded 1.730773 = 180/0.43333334/240). Copying an
             // observation into a field that means something narrower is how a
             // seed ends up describing a state the run can never be in.
+            //
+            // WHAT THE GATE CANNOT FIX, and exactly who it reaches: an anchor
+            // taken in a NON-ball mode while a ball's stake is still live. The
+            // stake outlives the mode -- nothing clears it -- so a run that was
+            // a ball, changed mode, and comes back to ball in mid-air is still
+            // spending the old step, and the reference has no column that says
+            // so. Seeded from a non-ball row this reads 0 and the anchored run
+            // stops turning. That is the whole population: every other anchor
+            // either re-derives its spin per tick (cube) or is re-staked on its
+            // first tick down (grounded ball). 21 of 105 sampled ticks on lv22,
+            // and quick_regress is per-level identical to a0c4c8f, so no
+            // section in the corpus is anchored inside that window -- which is
+            // a fact about the corpus, not a bound on the defect.
             if ((int)a[4] == 2) init.rotStep = (float)std::fabs(a[29]);
             init.dual = (uint8_t)a[9];
             if (init.dual) {
