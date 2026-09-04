@@ -33,15 +33,29 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
             if (ty == 8 || ty == 9 || ty == 10) {
                 auto* l = GJBaseGameLayer::get();
                 if (l && p == l->m_player1 && ++padtrace::g_lines <= 400) {
-                    char buf[224];
+                    // ...AND THE PAD'S OWN RECT, which is the one input to the
+                    // pad gate that has never been checked against GD. objrects'
+                    // w,h are getObjectRect()'s bounding box for most things, but
+                    // "the dump is not the hitbox, ask GD" is a standing rule and
+                    // pads were never the family it was verified on. It matters
+                    // to 0.21 px: with the player half now MEASURED at 9.0 (the
+                    // hbox ppre= rect reads 18x18 at size=0.60), lv13's uid 5059
+                    // brackets the gate at (19.99, 21.29], so the pad half has to
+                    // be in (10.99, 12.29] -- and the dump says 12.5, just
+                    // outside. If GD's rect is 24.58 wide or less, that single
+                    // number explains why GD stays silent at t=17,406 and fires
+                    // at t=17,407, with no new condition anywhere.
+                    auto r = this->getObjectRect();
+                    char buf[288];
                     snprintf(buf, sizeof(buf),
                         "padact: t=%lld id=%d uid=%d ty=%d o=(%.3f,%.3f) "
-                        "p=(%.4f,%.4f) vy=%.4f used=%d",
+                        "p=(%.4f,%.4f) vy=%.4f used=%d orect=(%.4f,%.4f,%.4f,%.4f)",
                         (long long)g_tick, this->m_objectID, this->m_uniqueID,
                         ty, this->getPositionX(), this->getPositionY(),
                         p->getPositionX(), p->getPositionY(),
                         (float)p->m_yVelocity,
-                        this->m_activatedByPlayer1 ? 1 : 0);
+                        this->m_activatedByPlayer1 ? 1 : 0,
+                        r.origin.x, r.origin.y, r.size.width, r.size.height);
                     writeResult(buf);
                 }
             }
@@ -346,16 +360,29 @@ class $modify(PlayerObject) {
         //     distance" on lv18).
         // dxx/dyy are centre-to-centre; the clamped distance is computed offline
         // from them plus the player half, so no geometry is duplicated here.
-        char buf[288];
+        // ...and the ring's OWN rect, for the same reason the pad line carries
+        // one: the model derives its gate half from objrects' w,h, and "the dump
+        // is not the hitbox, ask GD" is a standing rule that rings were never
+        // checked against. lv14 t=13,363 turns on 0.4 px -- the yellow orb sits
+        // at |dx| 32.6 against a gate of 18+15=33, so the model counts it as
+        // touched and takes it (lowest uid) while GD fires only the gravity orb.
+        // A ring rect of 35.2 or less would settle that with no rule change.
+        // The pad family was measured this way on 2026-09-05 and came back
+        // EXACTLY equal to the dump (25x4), so this is a real question, not a
+        // foregone one.
+        auto rr = object->getObjectRect();
+        char buf[352];
         snprintf(buf, sizeof(buf),
             "orb: id=%d uid=%d mode=%d size=%.2f flip=%d spd=%.1f "
             "t=%lld press=%lld lag=%lld pend=%d dxx=%.1f dyy=%.1f "
+            "orect=(%.4f,%.4f) "
             "orb=(%.0f,%.0f) vy=%.4f->%.4f",
             object->m_objectID, object->m_uniqueID, (int)solver::modeOf(this),
             this->m_vehicleSize, this->m_isUpsideDown ? 1 : 0,
             (float)this->m_playerSpeed,
             (long long)g_tick, (long long)orbtrace::g_lastPress, lag, pend,
             this->getPositionX() - ox, this->getPositionY() - oy,
+            rr.size.width, rr.size.height,
             ox, oy, vyBefore, vyAfter);
         writeResult(buf);
     }
