@@ -8929,8 +8929,33 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 if (ob == used) { stillTouching = true; continue; }
                 if (!pick || ob->uid < pick->uid) pick = ob;
             }
-            if (pick) {
-                const Obj* ob = pick;
+            // [2026-09-05, stage 1 of 2 -- BEHAVIOUR-PRESERVING, no rule change]
+            // Everything below applies ONE orb. It is lifted into a lambda so the
+            // second stage can call it more than once, because GD fires EVERY
+            // touched ring rather than choosing one:
+            //   PlayerObject::pushButton (0x397f40) walks m_touchedRings; a ring
+            //   with the claim bit +0x740 fires alone and returns, otherwise the
+            //   list is split into type==0x24 and everything else, and BOTH
+            //   buckets are fired in full, first bucket first.
+            // Composition is safe because nothing accumulates: ringJump makes 16
+            // direct writes (one double via `=`, never `+=`, plus 15 constant byte
+            // flags) and calls setYVelocity (a SET), flipGravity (stores the target
+            // polarity, so a no-op when it already matches), and
+            // runNormalRotation / runBallRotation2 (stake +0x720, last wins). The
+            // two calls that are NOT idempotent are reversePlayer and
+            // teleportPlayer. teleportPlayer is excluded structurally: it needs
+            // type 0x2e (46), which is absent from the playerTouchedRing case list
+            // AND has zero instances across all 22 levels. reversePlayer cannot be
+            // excluded by type at all -- its gate is the per-object property
+            // +0x704 -- but applying orbs one at a time through this lambda
+            // reproduces it exactly, so stage 2 removes the question rather than
+            // answering it.
+            // WHAT STAGE 1 DOES NOT DO: it still passes exactly the one orb `pick`
+            // selected (lowest uid), so behaviour is unchanged and all three
+            // instruments must be byte-identical. lv14's first divergence must
+            // STAY at t=13,363; if it moves, this extraction is not neutral and
+            // the fault is here, not in the mechanism.
+            auto applyOrb = [&](const Obj* ob) {
                 // [OPEN 2026-08-18] lv20 t=11,896: on the tick a grounded cube
                 // fires gravity orb uid10053, GD stays y=219.000 while the model
                 // gets 218.9514 (-0.0486 = 0.225 x 0.216 = one gravity step).
@@ -9204,7 +9229,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 c.jumpBuf = 0;
                 used = ob;
                 stillTouching = true;
-            }
+            };
+            if (pick) applyOrb(pick);
         }
         // Only on a teleported tick are the landing site's portals applied here
         // (the runPortalPass note: GD goes in uid order, so pads/orbs come
