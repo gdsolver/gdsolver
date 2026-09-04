@@ -330,12 +330,28 @@ class $modify(PlayerObject) {
         const int pend = (g_nextInput < g_cfg.inputs.size()
                           && g_cfg.inputs[g_nextInput].step == g_tick
                           && g_cfg.inputs[g_nextInput].down) ? 1 : 0;
-        char buf[256];
+        // `uid` names WHICH orb, and the line is unusable without it wherever more
+        // than one is in reach. Two open questions both need exactly this field:
+        //   - lv14 t=13,363 has a yellow and a gravity orb bracketing the player,
+        //     both inside the contact box; GD takes the gravity one and the model
+        //     takes the yellow. Corpus-wide there is exactly ONE firing with two
+        //     kinds touched, so the selection rule cannot be measured from
+        //     positions alone -- it needs GD to name its own choice.
+        //   - kOrbRadius (19.5) is an unfalsified upper bound. lv6 t=15,297 fires
+        //     in the model at a clamped distance of 17.808 where GD does not, and
+        //     level.hpp records GD firing at 17.53, so the true value is inside
+        //     [17.53, 17.808). Bracketing it over all ~270 firings needs the
+        //     firing orb identified, because nearest-orb attribution is wrong
+        //     often enough to produce nonsense (it reported a 64.49 px "firing
+        //     distance" on lv18).
+        // dxx/dyy are centre-to-centre; the clamped distance is computed offline
+        // from them plus the player half, so no geometry is duplicated here.
+        char buf[288];
         snprintf(buf, sizeof(buf),
-            "orb: id=%d mode=%d size=%.2f flip=%d spd=%.1f "
+            "orb: id=%d uid=%d mode=%d size=%.2f flip=%d spd=%.1f "
             "t=%lld press=%lld lag=%lld pend=%d dxx=%.1f dyy=%.1f "
             "orb=(%.0f,%.0f) vy=%.4f->%.4f",
-            object->m_objectID, (int)solver::modeOf(this),
+            object->m_objectID, object->m_uniqueID, (int)solver::modeOf(this),
             this->m_vehicleSize, this->m_isUpsideDown ? 1 : 0,
             (float)this->m_playerSpeed,
             (long long)g_tick, (long long)orbtrace::g_lastPress, lag, pend,
