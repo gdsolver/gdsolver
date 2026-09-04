@@ -2048,10 +2048,12 @@ inline int cliMain(int argc, char** argv) {
             // check cannot see.
             if ((g_seedDump >= 0 && t == (long long)g_seedDump)
                 || (g_seedEvery > 0 && t % (long long)g_seedEvery == 0)) {
-                std::printf("seed: t=%lld trig=0x%x trigT=%d lockOff=%.4f "
-                            "rotSpent=0x%x rotChan=%d rotRev=0x%x fireB=",
-                            t, s.trig, (int)s.trigT, (double)s.lockOff,
-                            s.rotSpent, (int)s.rotChan, (unsigned)s.rotRev);
+                std::printf("seed: t=%lld sizeof=%zu trig=0x%x trigT=%d "
+                            "lockOff=%.4f rotSpent=0x%x rotChan=%d "
+                            "rotRev=0x%x fireB=",
+                            t, sizeof(State), s.trig, (int)s.trigT,
+                            (double)s.lockOff, s.rotSpent, (int)s.rotChan,
+                            (unsigned)s.rotRev);
                 for (int b = 0; b < 32; ++b)
                     if (s.fireB[b]) std::printf("%d:%u,", b, s.fireB[b]);
                 std::printf("\n");

@@ -457,6 +457,32 @@ struct State {
     uint8_t jumpBuf = 0;
 };
 
+// THIS ASSERT IS A QUESTION, NOT A BUDGET. If you added a field and the build
+// stopped here, ask whether it ACCUMULATES -- whether its value at tick t
+// depends on the ticks before t rather than only on this one.
+//
+// If it does, three things have to happen before the number below is updated,
+// because three separate defects on 2026-09-04 were each exactly this and each
+// was found only after it had changed an answer:
+//
+//   1. SEED IT in the --start anchor scan (cli.hpp). A state handed to --start
+//      mid-level starts at the field's default, which for fireB read as "fired
+//      at tick 0", for lockOff as "never rode anything", and for the queue's
+//      three as "channel 0, nothing consumed" -- and that last one re-fired
+//      every rotation the run had already passed.
+//   2. PRINT IT in --seeddump (cli.hpp). A field missing from that line is a
+//      field the check below cannot see.
+//   3. RUN oneoff/py/seedcheck.py, which compares "seeded at t0" against "run
+//      from t=0" field by field and must report zero unexpected differences.
+//      Run it DENSE: 11 anchors found 5 of lv19's 47.
+//
+// If it does not accumulate -- a value recomputed every tick from this tick's
+// inputs -- none of that applies and the number is all that changes.
+static_assert(sizeof(State) == 328,
+              "State changed size. If the new field ACCUMULATES over ticks, "
+              "seed it in the --start anchor scan, print it in --seeddump, and "
+              "run oneoff/py/seedcheck.py to zero before updating this.");
+
 // arena entry for witness reconstruction, packed: bit31 = action, rest parent
 struct Node {
     uint32_t packed;
