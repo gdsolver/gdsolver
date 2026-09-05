@@ -98,9 +98,45 @@ def groups_args(plan_out: Path) -> list[str]:
     return a
 
 
+def whole_run_args(level: int) -> list[str]:
+    """Flags that are right for a run STARTING AT t=0 and wrong at an anchor.
+
+    Only `--rotqueue`, and only on lv22, which is the one level with a rotation
+    queue that matters. Measured on 2026-09-04, same build, both arms:
+
+        default      2 mismatched frame/gravity transitions, model stops t=6,350
+        --rotqueue   t=6,315 agrees on BOTH axes, model stops t=6,375
+
+    The flag cannot be the default because State::rotSpent / rotChan / rotRev
+    accumulate: a state handed to --start mid-level begins on channel 0 with
+    nothing consumed and re-fires what the run already passed (lv22 loses
+    tracking in 12 of quick_regress's anchored sections, worst 400 -> 17 at
+    t=1,800). That objection does not apply to an instrument that replays from
+    the start, so DO NOT pass it from quick_regress or anything else anchored.
+
+    Without this, every whole-run measurement of lv22 is taken on a trajectory
+    already known to be wrong from t=6,315 -- measuring the downstream of a
+    defect that is already fixed behind a flag.
+
+    [2026-09-05] MOVED HERE FROM quick_regress. It lived there while the only
+    caller that needed it was fixcensus, and `model_replay` -- the whole-run
+    replay itself, which is exactly what the docstring above is about -- never
+    called it, so the main instrument measured lv22 on the trajectory this text
+    forbids. quick_regress imports model_replay from here, so the definition has
+    to live on this side to be reachable from both without a cycle.
+    """
+    return ["--rotqueue"] if level == 22 else []
+
+
 def model_replay(level: int, plan_out: Path, out_base: Path, leveldp: Path,
-                 with_fixups: bool) -> tuple[Path, int, str]:
-    """Replay the plan with leveldp to build .trace.csv. (trace, tick of death, raw log)."""
+                 with_fixups: bool,
+                 whole_run: bool = False) -> tuple[Path, int, str]:
+    """Replay the plan with leveldp to build .trace.csv. (trace, tick of death, raw log).
+
+    `whole_run` selects the flags that are only right from t=0 (see
+    whole_run_args). It defaults to False because quick_regress calls this for
+    ANCHORED sections, where those flags are actively wrong.
+    """
     objrects = LEVEL_DATA / f"objrects_lv{level}.txt"
     args = [str(objrects), "--replay", str(plan_out), "--out", str(out_base)]
     trig, grp = LEVEL_DATA / f"triggers_lv{level}.txt", LEVEL_DATA / f"objgroups_lv{level}.txt"
@@ -110,6 +146,8 @@ def model_replay(level: int, plan_out: Path, out_base: Path, leveldp: Path,
     if obb.exists():
         args += ["--obb", str(obb)]
     args += groups_args(plan_out)
+    if whole_run:
+        args += whole_run_args(level)
     fx = Path(str(plan_out) + ".fixups.txt")
     if with_fixups and fx.exists():
         args += ["--fixups", str(fx)]
@@ -205,7 +243,7 @@ def run_level(level: int, worker_id: int, a) -> Result:
     dump_dst = tmp / f"fid_lv{level}.dump.csv"
     try:
         trace, died, _ = model_replay(level, plan_out, base, Path(a.leveldp),
-                                      a.with_fixups)
+                                      a.with_fixups, whole_run=True)
         out.model_died = died
         out.gd_clear, out.gd_detail, goal_x = gd_replay(
             worker_id, level, plan_out, dump_dst, a.timeout_minutes * 60,

@@ -91,7 +91,8 @@ sys.path.insert(0, str(_PY.parent / "mcp"))
 
 from gdtas.solveutil import (has_grouped_colliders, grounded_of, held_before,
                              FLYING, MODE_ID)
-from fidelity_diff import groups_args, model_replay, gd_cut_tick, gd_replay
+from fidelity_diff import (groups_args, model_replay, gd_cut_tick, gd_replay,
+                           whole_run_args)
 from gdmcp.data import diff_trace
 from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
 
