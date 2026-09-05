@@ -124,6 +124,9 @@ inline int cliMain(int argc, char** argv) {
         // --no-pressspent: the pre-2026-09-05 ring gate (only a RING spends the
         // hold). A/B switch, see g_noPressSpent.
         if (!std::strcmp(argv[i], "--no-pressspent")) g_noPressSpent = true;
+        // --no-portalseat: no same-tick seating after a mode change. See
+        // g_noPortalSeat.
+        if (!std::strcmp(argv[i], "--no-portalseat")) g_noPortalSeat = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;

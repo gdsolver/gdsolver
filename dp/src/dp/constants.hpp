@@ -117,6 +117,12 @@ inline bool g_noRingMode = false;   // --no-ringmode
 // on this corpus it removes exactly one, so the two arms have to be one build
 // apart rather than one rebuild apart to be told from "no change" at all.
 inline bool g_noPressSpent = false; // --no-pressspent
+// --no-portalseat: restore "a mode portal never seats on its own tick" (the
+// pre-2026-09-05 behaviour). GD runs the activation pass before the solid
+// pass, so a body that becomes a cube inside a flat solid is resolved on that
+// tick; the model picks its landing branch from the mode ENTERING the tick
+// (step.hpp:1521) and so could not. A/B switch, one build apart.
+inline bool g_noPortalSeat = false; // --no-portalseat
 // --old-slope: A/B escape hatch (same convention as --old-latency). Restores
 // the pre-2026-08-04 slope exit: ball = tap-anchored line / mini x0.625, and
 // NO ride-time ramp. See slopeExitVy / slopeRampFactor for why the new form

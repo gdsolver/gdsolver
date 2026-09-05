@@ -8419,13 +8419,108 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                                 + nh;
                             if ((double)c.y < line) continue;  // centre below the line
                             if ((double)c.y >= seat) continue; // not touching
+                            // --slopedbg: does this branch still fire? Its two
+                            // witnesses (8396-8397) are ticks in another repo's
+                            // base and cannot be located in today's gdref, so
+                            // "how often" has to be asked rather than assumed.
+                            if (g_slopeDbg)
+                                std::printf("rampseat t=%lld uid=%d portal=%d "
+                                            "y=%.4f seat=%.4f nh=%.2f oh=%.2f\n",
+                                            (long long)K.t, sp->uid, p->uid,
+                                            (double)c.y, seat, nh, oh);
                             c.y = (float)seat;
                             c.vy = 0.f;
                             c.grounded = 1;
                             break;
                         }
                     }
-                }
+                    // [2026-09-05] THIS RAMP BRANCH FIRES ZERO TIMES on today's
+                    // 22 levels (counted with the print above). Its two witnesses
+                    // are ticks in the approx repo's base (e24f1c7) and cannot be
+                    // located in today's gdref -- neither lv18 nor lv21 has a
+                    // single mode change with onGround 0->1 any more. Left in
+                    // place as UNVERIFIED rather than deleted: unwitnessed is not
+                    // refuted, and the uid gate below it is the only record of
+                    // that measurement.
+                // [2026-09-05] ...and the case where the box does NOT grow.
+                // `playerHalf` gives wave and spider their own halves and sends
+                // everything else -- ship AND cube -- to kCubeHalf, so a
+                // ship->cube portal has nh == oh and the branch above cannot
+                // reach it. The difference there is not the box, it is WHICH
+                // BODY collides: GD's solid pass runs after the activation pass
+                // with the new body, and a cube stops on a flat face the ship
+                // flew through.
+                // Measured, lv11 t=15,506 (hook 15,505, hitboxtrace, the whole
+                // result.txt is kept in the lab's notes/raw):
+                //   t=15,497..15,504  obj 3870, the SAME 30x30 player rect
+                //                     overlapping the block by ~9px, hit=0
+                //   t=15,505          hit=1, ppre y 170.71 -> player y 180.00
+                //                     (centre 185.71 -> 195.000 = GD's y)
+                // Geometry continuous, only the mode changed, and the 9.29px
+                // lift is the whole of the family's dy -9.294.
+                // THE GATE IS NOT A MODE WHITELIST. "Which bodies collide with
+                // flat solids" is a question the model already answers, at the
+                // selector on line 1521 (`s.mode != 1 && s.mode != 3 && s.mode
+                // != 7`, with the wave taking its own branch at 1284) -- that
+                // selector reads the mode ENTERING the tick, which is exactly
+                // why a body that becomes a cube mid-tick never reaches its own
+                // landing loop. The condition below is that same predicate on
+                // the NEW mode, not a list fitted to two samples.
+                // This is a compensation for the activation -> solid inversion,
+                // the fourth fossil of the same hole (the ramp branch above,
+                // `releasePin(undoSnap)`, and the teleport-only portal pass at
+                // the orb loop). Reordering the passes is a separate campaign.
+                // ...and the predicate is the WHOLE of the new mode's landing
+                // test, velocity gate included -- `vpNow <= 0` at the landing
+                // loop's own line 2884, i.e. the body has to be moving toward
+                // the face. Leaving that out is not a near miss: the geometry
+                // alone fires 11 times on the corpus and GD seats on exactly
+                // one of them, and the split is clean with nothing near the
+                // boundary --
+                //   GD seats      lv11 t=15,506   vy -0.2065   (falling)
+                //   GD does not   the other 10    vy +0.0015 .. +3.1985
+                // lv8 t=9,966 is the tight one: +0.0015 above zero and GD
+                // still does not seat, so `<= 0` is the boundary the loop
+                // already uses and not a value fitted here.
+                const bool newBodyLands = (c.mode != 1 && c.mode != 3
+                                           && c.mode != 7 && c.mode != 4);
+                if (!g_noPortalSeat && !c.grounded && newBodyLands && K.near
+                    && (double)c.vy * (c.flip ? -1.0 : 1.0) <= 0.0) {
+                    const double gs = c.flip ? -1.0 : 1.0;
+                    const Obj* best = nullptr;
+                    double bestFace = 0.0;
+                    for (const Obj* o : *K.near) {
+                        if (o->type != 0 || o->slope || o->oneway
+                            || o->oriented)
+                            continue;
+                        if (std::fabs(x - o->cx) > o->hw + nh + kContactEps)
+                            continue;
+                        const double face =
+                            c.flip ? (o->cy - o->hh) : (o->cy + o->hh);
+                        // centre above the face, foot below it = the new body is
+                        // standing in the solid the old one passed through
+                        if (((double)c.y - face) * gs <= 0.0) continue;
+                        if (((double)c.y - gs * nh - face) * gs > 0.0) continue;
+                        if (!best || (face - bestFace) * gs > 0.0) {
+                            best = o;
+                            bestFace = face;
+                        }
+                    }
+                    if (best) {
+                        if (g_slopeDbg)
+                            std::printf("portalseat t=%lld uid=%d portal=%d "
+                                        "old=%d new=%d y=%.4f -> %.4f "
+                                        "vy=%.4f gs=%.0f flip=%d\n",
+                                        (long long)K.t, best->uid, p->uid,
+                                        (int)oldMode, (int)c.mode,
+                                        (double)c.y, bestFace + gs * nh,
+                                        (double)c.vy, gs, (int)c.flip);
+                        c.y = (float)(bestFace + gs * nh);
+                        c.vy = 0.f;
+                        c.grounded = 1;
+                    }
+                    }
+                }   // oh / nh scope
                 // (Entering the SWING halves vy. That used to be a special case
                 // right here, one-directional; it is now the flying-ends ladder
                 // above, which also covers LEAVING one -- see the swing note by
