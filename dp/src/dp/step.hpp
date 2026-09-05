@@ -6749,10 +6749,21 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     // trace's onslope column cannot tell them apart, so a false
                     // acquisition reads as "the model zeroed vy for no reason".
                     if (g_slopeDbg)
-                        std::printf("slopedbg t=%lld x=%.2f y=%.3f pH=%.1f "
+                        // ...and the FREE y, which is the one GD's own test sees.
+                        // `y` here is c.y at this point in the tick, already
+                        // moved by whatever ran before; reading the rect test off
+                        // it fed the seat's own output back in as its input, and
+                        // lv20 t=5,278 then read `gap 0.000` and looked like a
+                        // counterexample when GD plainly acquires there
+                        // (collidedWithSlopeInternal, onSlope 0->1, y 283.216 ->
+                        // 285.000). yFreeBeforeSlope is the post-integration,
+                        // pre-collision value the call actually gets.
+                        std::printf("slopedbg t=%lld x=%.2f y=%.3f yfree=%.3f "
+                                    "pH=%.1f "
                                     "uid=%d m=%.3f top=%.3f gap=%.3f allow=%.3f "
                                     "why=%s\n",
-                                    (long long)K.t, x, (double)c.y, pH, sp->uid,
+                                    (long long)K.t, x, (double)c.y,
+                                    (double)yFreeBeforeSlope, pH, sp->uid,
                                     m, top, ((double)c.y - top) * gs, landAllow,
                                     (((double)c.y - top) * gs <= landAllow)
                                         ? "land"
