@@ -115,13 +115,29 @@ def has_grouped_colliders(path) -> bool:
 #   0 tick 1 x 2 y 3 vy 4 mode 5 grounded 6 dual 7 y2 8 vy2 9 flip2 10 act
 #   11 onslope 12 slopem 13 slopet 14 bandf 15 bandc 16 mini 17 held 18 dx
 def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
-             gd_mode: int = -1) -> str:
+             gd_mode: int = -1, gd_grounded_out: str | None = None,
+             gd_mode_out: int | None = None) -> str:
     """One signature for what the model was DOING across this transition.
 
     **The key that groups by cause rather than by point.** If many records share
     a signature, what needs fixing is one rule, not n local overrides. A small
     spread in dy means a constant is off (fit it); a large one means the formula
     is wrong (fix the code) -- and point corrections could not tell those apart.
+
+    **BOTH SIDES ARE READ ENTERING THE TICK.** `gd_grounded` / `gd_mode` are
+    GD's values on the SAME row the model's come from (t-1); GD's values on the
+    way out go in `gd_grounded_out` / `gd_mode_out` and are emitted only when
+    they differ, as `gdgo` / `gdmo`.
+    Until 2026-09-05 the model's half was read at t-1 and GD's at t, and the
+    mismatch misread four separate families in one day -- most sharply lv17
+    t=15,730, where `gdm3` said "GD is in another mode" about a tick on which
+    BOTH sides switch on time, because the model's mode was taken from the row
+    before the switch and GD's from the row after.
+    The asymmetry was not useless: `g0/gdg1` happened to mean "the model came in
+    airborne and GD left grounded", which is the same-tick portal seat's
+    signature and is how that family was found. `gdgo` keeps that -- and states
+    it as what it is, a transition of GD's own, rather than as an artefact of
+    comparing two different rows.
     """
     if len(row) < 18:
         return "notrace"          # an old trace (the columns are not there)
@@ -130,6 +146,10 @@ def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
     # share a signature. Measured on lv20: m1/mini1/g0/air was 47 of 59 records
     # with an 11.8 px spread in dy -- the mark of two causes mixed, not one.
     parts = [f"m{row[4]}", f"mini{row[16]}", f"g{row[5]}", f"gdg{gd_grounded}"]
+    # ...and GD's own within-tick transition of it, when there is one. This is
+    # what carries "GD seated on this tick" (see the docstring).
+    if gd_grounded_out is not None and gd_grounded_out != gd_grounded:
+        parts.append(f"gdgo{gd_grounded_out}")
     # **A tick where GD's MODE differs is a different cause.** Portal boundaries
     # are a known +/-1 tick class, and there the two are running different
     # physics. Mixed in, it reads as "the mini ship's integration error"
@@ -137,6 +157,16 @@ def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
     # maximum acceleration of 0.127, which cannot happen in one mode).
     if gd_mode >= 0 and str(gd_mode) != row[4]:
         parts.append(f"gdm{gd_mode}")
+    # ...and GD's own within-tick mode change, by the same rule as gdgo. No
+    # corpus instance today (the one level that had a `gdm` lost it when the
+    # portal seat landed), so this changes no key now; it is here so the mode
+    # cannot repeat the misreading the grounded column just had.
+    # `>= 0` on BOTH: -1 is MODE_ID's "not a mode I know", which a row can carry
+    # when GD's column is blank, and reading it as a transition put a literal
+    # `gdmo-1` on lv16's ride24+ family the first time this was run.
+    if (gd_mode_out is not None and gd_mode >= 0 and gd_mode_out >= 0
+            and gd_mode_out != gd_mode):
+        parts.append(f"gdmo{gd_mode_out}")
     if len(row) >= 19:
         # Velocity arrives in px/tick, so it goes back to the familiar multiplier
         # for the signature (0.9 -> 1.29825). The thresholds are per speed, so

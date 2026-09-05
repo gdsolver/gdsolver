@@ -78,7 +78,13 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
             continue
         if abs(edy) < eps and abs(edvy) < eps:
             continue
-        cause = cause_of(m0, m1, g1.get("onGround", "?"),
+        # g0, not g1: the model's half of the signature comes from m0 (t-1), so
+        # GD's has to come from the same row. GD's values on the way out are
+        # passed separately and surface as gdgo/gdmo when they differ -- see
+        # cause_of's docstring for the four families the old mismatch misread.
+        cause = cause_of(m0, m1, g0.get("onGround", "?"),
+                         MODE_ID.get(g0.get("mode", ""), -1),
+                         g1.get("onGround", "?"),
                          MODE_ID.get(g1.get("mode", ""), -1))
         out.append({"lv": lv, "t": t, "x": round(float(m0[1]), 1),
                     "cause": cause, "in": m1[10] if len(m1) > 10 else "?",
