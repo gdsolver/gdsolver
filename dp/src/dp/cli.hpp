@@ -152,6 +152,12 @@ inline int cliMain(int argc, char** argv) {
         // (the pre-2026-09-06 behaviour) instead of GD's speed-widened reach.
         if (!std::strcmp(argv[i], "--no-mpushreach"))
             g_noMpushReach = true;
+        // --no-boostlatch: only the swing carries GD's velocity-limit
+        // exemption (the pre-2026-09-06 scope), so a ship or UFO clamps on the
+        // tick after any boost and its acceleration never takes the latched
+        // rung.
+        if (!std::strcmp(argv[i], "--no-boostlatch"))
+            g_noBoostLatch = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;

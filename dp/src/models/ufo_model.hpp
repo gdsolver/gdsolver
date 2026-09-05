@@ -21,8 +21,15 @@ public:
                           const SimulateOptions& options) const override;
     using IApproxModel::simulate;
 
+    // `boostLatch` is GD's velocity-limit exemption, the byte [player+0x952]
+    // (dp/state.hpp State::boost, dp/slopes.hpp boostLatchMode). Unlike the
+    // ship's, the UFO's acceleration block (updateJump 0x38c701-0x38c8df)
+    // never reads it -- a byte scan of the whole flying branch finds the four
+    // references at 0x38c59e (the clear), 0x38c5be / 0x38c5d8 (the ship) and
+    // 0x38ca9f (the clamp) and no other -- so for the UFO the latch does one
+    // thing only: it skips the terminal clamp.
     static double stepVy(double vy, bool flap, const UfoParams& p,
-                         bool gravityFlipped = false) {
+                         bool gravityFlipped = false, bool boostLatch = false) {
         // A flap RAISES vy to the target and then the same call's gravity step
         // runs, which is where the old constant 6.871 came from. It is not an
         // overwrite: GD (PlayerObject::updateJump) only calls setYVelocity when
@@ -36,6 +43,7 @@ public:
         // rise side a UFO thrown upwards by an orb or a pad kept climbing at a
         // speed the game does not allow (see vyMaxPlayerFrame for the
         // measurement and for the exemption this does not model).
+        if (boostLatch) return next;   // 0x38ca9f: the clamp block is jumped
         if (next > p.vyMaxPlayerFrame) next = p.vyMaxPlayerFrame;
         return next < p.vyMinPlayerFrame ? p.vyMinPlayerFrame : next;
     }

@@ -892,10 +892,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     c.pFlap = 0;   // 1-tick lifetime (see the note on State::pFlap)
     c.pExitVy = 0.f;  // same (State::pExitVy, r93)
     c.pNoTerm = 0;    // same (State::pNoTerm, r102)
-    // The velocity-limit exemption is swing-scoped for now (State::boost):
-    // outside mode 7 nothing maintains it, so drop it rather than let a stale
-    // bit cross a mode portal.
-    if (c.mode != 7) c.boost = 0;
+    // The velocity-limit exemption (State::boost) is carried by the three modes
+    // whose updateJump branch reads GD's byte: ship, UFO and swing
+    // (boostLatchMode, which has the addresses). Outside them nothing here
+    // maintains it, so drop it rather than let a stale bit cross a mode portal.
+    // LEAF: GD does NOT drop it on a mode change. Its byte has no mode test at
+    // any writer and survives a cube section untouched; only the flying band
+    // test and the five other clearers put it down. Nothing in the corpus
+    // enters a cube out of band and comes back to a ship still out of band, so
+    // the two readings are indistinguishable here.
+    if (!boostLatchMode(c.mode)) c.boost = 0;
     // ONE float x per state, advanced and snapped exactly as GD does it.
     // It used to be `shared double base + per-state xAdj`, which cannot be exact:
     // GD writes the stair snap straight into the same float it accumulates into,
@@ -3756,6 +3762,34 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // (measurements at the declaration of ridingCarry).
             const double vp = (groundedNow && !ridingCarry)
                                   ? 0.0 : (double)s.vy * gsign;
+            // GD's velocity-limit exemption (State::boost) clears at the HEAD
+            // of updateJump's flying branch, on the INCOMING gravity-frame vy,
+            // before the press handling, the acceleration and the clamp
+            // (0x38c527-0x38c59e). The band is (-6.4, +8.0)/chi and the clear
+            // runs BEFORE the per-mode dispatch, so it is the same test the
+            // swing branch above already ran -- what was missing here is that
+            // the ship and the UFO reach that dispatch too. NOTE the fall-side
+            // edge is 6.4 and not the clamp's 8: a ramp launch at 6.4..8 keeps
+            // the flag alive for as many ticks as the decay needs to come back
+            // inside, which is the whole of lv16 8,913-8,919.
+            // The raw s.vy is read, not `vp`: GD reads m_yVelocity, so a
+            // CARRIED grounded body is judged on the velocity it carries
+            // rather than on the 0 the resting branch substitutes.
+            if (boostLatchMode(c.mode)) {
+                const double bandChi = (c.mini != 0) ? 0.85 : 1.0;
+                const double vpIn = (double)s.vy * gsign;
+                if (vpIn > -6.4 / bandChi && vpIn < 8.0 / bandChi) c.boost = 0;
+            }
+            // While it is up, the terminal clamp is skipped outright
+            // (0x38ca9f) -- for the UFO that is the whole of the latch's
+            // effect, and for the SHIP the acceleration selector reads it too
+            // (0x38c5be / 0x38c5d8; the reading is in ShipModel::stepVy).
+            // A byte scan of the whole flying branch 0x38c4f0-0x38cb36 finds
+            // exactly four references to [+0x952]: the clear at 0x38c59e, the
+            // ship's two, and the clamp gate -- so the UFO's own block
+            // (0x38c701-0x38c8df) and the swing's (0x38c8e4-) are
+            // latch-independent in their acceleration.
+            const bool boostNow = (c.boost != 0);
             // the 4th argument mirrors the accel-switch threshold; leaving it at
             // its default picked the wrong branch for an inverted ship, which is
             // how lv8 t=21137 got +0.069/tick where GD had +0.103
@@ -3787,9 +3821,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                      forceUnitFor(s.mode, useDx)) * gdSign;
             const double vpNew = qVy(
                 (isUfo ? gdapprox::UfoModel::stepVy(
-                            vp, act, ufoParamsFor(useDx, c.mini, K), thrFlip)
+                            vp, act, ufoParamsFor(useDx, c.mini, K), thrFlip,
+                            boostNow)
                        : gdapprox::ShipModel::stepVy(
-                            vp, act, shipParamsFor(useDx, c.mini, K), thrFlip))
+                            vp, act, shipParamsFor(useDx, c.mini, K), thrFlip,
+                            boostNow))
                 + fbAcc);
             c.vy = (float)(vpNew * gsign);
             c.y = (float)((double)s.y + kYScale * (double)c.vy);
@@ -7673,8 +7709,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // (postCollision +0x18ca, next to the launch record update). A
             // slow exit clears it at the next tick's band check; a fast one
             // (>= 6.4 on the fall side) is what removes the swing's terminal
-            // -- lv22 x=5,391. Swing-scoped like the rest of State::boost.
-            if (c.mode == 7) c.boost = 1;
+            // -- lv22 x=5,391.
+            // [2026-09-06] ...and it is not the swing's alone. postCollision
+            // reaches boostPlayer (0x38d966 -> 0x39ff0a), which raises the byte
+            // before it writes vy, with no mode test anywhere in the chain --
+            // so a ship or UFO leaving a ramp carries it too. Witnessed on
+            // lv16 t=8,913, both halves: the flipped ship leaves at 6.906 and
+            // GD lets it decay 6.820 / 6.734 / 6.648 / 6.562 / 6.476 / 6.390
+            // before the clamp touches it at all.
+            if (boostLatchMode(c.mode)) c.boost = 1;
             // ...and "like a pad" includes the y: the ramp is a block, so the
             // tick's gravity step is in y and nothing re-seats the player.
             // Measured on lv19 t=254 (ramp uid=33 at (300,105), exit 3.999):
@@ -7710,8 +7753,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             c.vy = (float)(mTravel * std::fabs((double)K.dxF) / 0.25);
             c.grounded = 0;
             // same as the uphill launch above: the slope machinery sets the
-            // velocity-limit exemption (State::boost)
-            if (c.mode == 7) c.boost = 1;
+            // velocity-limit exemption (State::boost), in every mode that
+            // reads it (boostLatchMode)
+            if (boostLatchMode(c.mode)) c.boost = 1;
             releasePin(false);
         }
         // Ride counter for the exit ramp above: 0 on the contact tick,
@@ -9606,9 +9650,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             c.vy = (float)(c.flip ? -pv : pv);
             // The RED pad is the bumpPlayer type that sets the velocity-limit
             // exemption (type==34 at +0x191) where every other pad clears it.
-            // Swing-scoped like the rest of State::boost; kPadRed is 20, so
-            // without it the swing handed back 12 of those units next tick.
-            if (pd->type == 34 && c.mode == 7) c.boost = 1;
+            // kPadRed is 20, so without it the swing handed back 12 of those
+            // units next tick. bumpPlayer has no mode test either, so a ship
+            // or UFO off a red pad carries it as well (boostLatchMode).
+            // UNWITNESSED for ship/UFO: no red pad in the corpus launches
+            // either of them out of the band.
+            if (pd->type == 34 && boostLatchMode(c.mode)) c.boost = 1;
         }
         c.grounded = 0;
         // ...and the ROBOT's hover budget dies with it. The budget belongs to
@@ -10064,11 +10111,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // RED is one of the two ring/pad types that SET the
                     // velocity-limit exemption instead of clearing it
                     // (ringJump +0xc7a, type 35 only; every bumpPlayer orb
-                    // clears it). Swing-scoped like the rest of State::boost.
+                    // clears it). ringJump has no mode test, so it reaches
+                    // every mode that reads the byte (boostLatchMode).
                     // The full-size swing red ring is 11.18*1.38*0.6 = 9.257,
                     // above the terminal -- without the flag the model used to
                     // hand back everything over 8 on the next tick.
-                    if (!green && c.mode == 7) c.boost = 1;
+                    // UNWITNESSED for ship/UFO: no red ring in the corpus
+                    // throws either of them outside the band.
+                    if (!green && boostLatchMode(c.mode)) c.boost = 1;
                 } else {
                     // pink (12) and yellow (11), each with its own measured
                     // ball value -- there is no shared ball ratio.
@@ -10790,6 +10840,21 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if ((double)c.vy > -exU) {
                     c.vy = (float)-exU;
                     CLAMP0("ceil/release");
+                    // [2026-09-06] ...and it sets GD's velocity-limit
+                    // exemption, for the same reason the two uphill/downhill
+                    // sites above do: this IS the slope-exit launch machinery
+                    // (the comment at the head of this block says so), and
+                    // that machinery is postCollision 0x38d966 -> boostPlayer
+                    // 0x39ff0a, which raises [player+0x952] before it writes
+                    // vy. One GD event, three model sites -- which surface the
+                    // body left decides which of them runs.
+                    // WITNESS: lv16 t=8,913 is a DUAL, and its two halves come
+                    // out of the mirrored ramp pair through DIFFERENT sites --
+                    // p1 through the uphill launch (onSlope 1 -> 0) and p2
+                    // through this one (ceilT2 38 -> 0). GD decays both at
+                    // -0.086/tick for six ticks; without this line only p1
+                    // reproduced and p2 stayed pinned at the terminal.
+                    if (boostLatchMode(c.mode)) c.boost = 1;
                 }
             }
             c.ceilT = 0;
@@ -10873,6 +10938,11 @@ inline void swapHalves(State& s) {
     std::swap(s.flip, s.flip2);
     std::swap(s.ringHold, s.ringHold2);
     std::swap(s.pressSpent, s.pressSpent2);
+    // ...and the velocity-limit exemption, which became per-half on 2026-09-06
+    // (State::boost2). lv16 t=8,913 is a DUAL ship whose two halves both carry
+    // it; left shared, p2's step would read p1's byte and its own answer would
+    // be dropped by the merge in fixup.hpp.
+    std::swap(s.boost, s.boost2);
     std::swap(s.onSlope, s.onSlope2);
     std::swap(s.slopeT, s.slopeT2);
     std::swap(s.mode, s.mode2);

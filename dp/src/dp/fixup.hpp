@@ -231,6 +231,11 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     c.ringHold2 = cb.ringHold2; c.onSlope2 = cb.onSlope2;
     c.pressSpent2 = cb.pressSpent2;
     c.slopeT2 = cb.slopeT2;
+    // ...and the second body's velocity-limit exemption (State::boost2, added
+    // 2026-09-06 with swapHalves). The third of the three sites the SIZE note
+    // above is about: without this line p2's latch is written inside its own
+    // stepOne and thrown away here every tick.
+    c.boost2 = cb.boost2;
     c.slopeUid02 = cb.slopeUid02;  c.slopeUidNow2 = cb.slopeUidNow2;
     c.snapObj2 = cb.snapObj2;   c.usedOrb2 = cb.usedOrb2;
     // [2026-09-05] ...and the SPENT-GRAVITY-PORTAL mask, which 67ab13f added to

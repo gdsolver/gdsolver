@@ -261,6 +261,14 @@ inline uint64_t keyOf(const State& s, long long t) {
            // (a boosted state passes 8 and keeps accelerating; an unboosted
            // one sits pinned there).
            ^ (s.boost ? 0xA0761D6478BD642Full : 0)
+           // ...and the second body's (State::boost2, per-half since
+           // 2026-09-06). Gated on `dual` so that every single-player key is
+           // bit-identical; a dual pair whose halves differ in the exemption
+           // -- one of them off a ramp, the other not -- is two different
+           // world lines from the next tick onward. The corpus reaches it on
+           // lv16 t=8,913 only, where BOTH halves carry it, so the term costs
+           // that level nothing and every other level zero.
+           ^ ((s.dual && s.boost2) ? 0x7B7D159C79E2A32Full : 0)
            // [r93] The slope-exit launch of a ride a warp interrupted
            // (State::pExitVy). Same (y,vy), but whether the launch comes out
            // next tick differs.

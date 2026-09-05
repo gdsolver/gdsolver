@@ -334,10 +334,16 @@ struct State {
     // +0.086/tick); injected vy=20 at t=3,830 passed through unclamped while
     // the same injection at t=4,000 clamped to 8.000 (the flag, not gy1, was
     // the difference).
-    // Implemented for the SWING only, where it was measured; outside mode 7
-    // stepOne drops it so a stale bit cannot cross a mode portal. PERSISTENT,
-    // unlike the p* one-shots above, and carried by the anchor
-    // (--start field 25, read straight off GD's own byte).
+    // [2026-09-06] Carried by SHIP, UFO and SWING -- the three modes whose
+    // updateJump branch reads GD's byte (dp/slopes.hpp boostLatchMode has the
+    // addresses and the reasoning; the wave is exempt from the clamp
+    // unconditionally at 0x38caa8, so the byte cannot change anything there).
+    // It was swing-only until then, which is why lv16's flipped ship pinned
+    // 6.400 on the tick after a ramp launch where GD decays 6.906 -> 6.390
+    // over six ticks first. Outside those three stepOne drops it so a stale
+    // bit cannot cross a mode portal. PERSISTENT, unlike the p* one-shots
+    // above, and carried by the anchor (--start field 25, read straight off
+    // GD's own byte).
     uint8_t boost = 0;
     // [2026-08-21 r93] Marks the tick on which a warp interrupted a ride = THE
     // RAMP'S SLOPE-EXIT LAUNCH VALUE TO EMIT ON THE NEXT TICK (0 = none). Same
@@ -367,6 +373,17 @@ struct State {
     uint8_t grounded2, flip2, ringHold2, onSlope2;
     uint8_t pressSpent2 = 0;   // second body's pressSpent (see pressSpent)
     uint8_t slopeT2 = 0;   // second body's ride counter (see slopeT)
+    // The second body's own velocity-limit exemption (see boost). It became a
+    // per-half quantity on 2026-09-06, when the flag stopped being swing-only:
+    // the corpus' one witness is a DUAL ship (lv16 t=8,913, where both halves
+    // leave a mirrored ramp at 6.906 and both carry the latch for six ticks),
+    // and a shared byte would have handed p1's answer to p2 and then thrown
+    // p2's away in the merge -- the shape [[gd-per-half-state-field-has-three-
+    // sites]] records. All three sites are wired: here, swapHalves, and the
+    // merge list in fixup.hpp.
+    // NOT carried by the anchor: --start has one boost field (25) and it seeds
+    // p1's. Same documented hole as slopeUid02 / pressSpent2.
+    uint8_t boost2 = 0;
     // The second body's own MODE and its own ceiling-ramp push-down counters.
     // `mode` and `ceilT`/`ceilM4` used to be shared outright ("shared fields
     // come from the first half", stepBoth), which is right only for as long as

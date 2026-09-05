@@ -175,6 +175,16 @@ inline bool g_noSlopeNudge = false; // --no-slopenudge
 // the whole 22-level replay suite has to be byte-identical with it.
 inline bool g_noMpushReach = false; // --no-mpushreach
 
+// --no-boostlatch: GD's velocity-limit exemption (State::boost) is carried by
+// the SWING ONLY, as it was before 2026-09-06. The byte [player+0x952] has no
+// mode test at any of its ten writers and is read by the ship's acceleration
+// selector (0x38c5be / 0x38c5d8) and by the terminal clamp shared by ship, UFO
+// and swing (0x38ca9f), so the real scope is those three -- see boostLatchMode
+// in slopes.hpp for the reading and the sites in step.hpp for the consumers.
+// Kept as the A/B arm: with it the whole 22-level replay suite has to be
+// byte-identical to the build before the change.
+inline bool g_noBoostLatch = false; // --no-boostlatch
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip

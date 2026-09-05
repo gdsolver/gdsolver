@@ -86,6 +86,49 @@ inline bool slopeNudgeMode(int mode) {
     return mode == 1 || mode == 3 || mode == 4 || mode == 7;
 }
 
+// ---------------------------------------------------------------------------
+// WHICH MODES CARRY GD'S VELOCITY-LIMIT EXEMPTION (State::boost, the byte
+// [player+0x952] in 2.2081). NOT the same set as slopeNudgeMode above: the
+// wave is missing.
+//
+// The byte is written by ten sites across the binary (boostPlayer 0x39ff0a,
+// ringJump 0x39987a, bumpPlayer 0x39f831, redirectPlayerForce 0x39fe99,
+// rotateGameplay 0x399faa, postCollision 0x38ee4a, updateJump 0x38bc60,
+// update 0x389310 -- the force block --, stopDashing 0x3966f4,
+// teleportPlayer 0x21057a) with no mode test at any of them, and it is READ in
+// exactly three places, all inside updateJump's flying branch:
+//
+//   0x38c5be / 0x38c5d8   the SHIP's acceleration selector (it replaces the
+//                         thrust/drag factor while the body is moving with
+//                         gravity -- see ShipModel::stepVy)
+//   0x38ca9f              the terminal clamp for ship / UFO / swing
+//
+// so ship (m_isShip +0x9b9), UFO (m_isBird +0x9ba) and swing (m_isSwing
+// +0x9c4) are the three modes in which it can change anything. The WAVE is
+// excluded by GD itself one instruction after the latch test -- 0x38caa8
+// `cmp byte [rdi+0x9bc], 0 / jne past the clamp` exempts the dart
+// unconditionally, so the latch has nothing left to switch off (and the model
+// never reaches this code for a wave anyway: mode 4 has its own branch at the
+// head of stepOne with its own kWaveClamp). A cube, ball, robot or spider
+// reaches neither read; their terminal is the bare +-15.0 at 0x38c2f2.
+//
+// The clear is the band test at the head of the flying branch,
+// 0x38c527-0x38c59e: `[+0x952] = 0` iff the INCOMING gravity-frame velocity is
+// strictly inside (-6.4/chi, +8.0/chi). It runs before the per-mode dispatch,
+// so the swing shares that band even though its own CLAMP is the symmetric
+// +-8.0 with chi forced to 1.0 at 0x38c959.
+//
+// Measurements: measure-ship-terminal-clamp-2026-09-06 (the disassembly) and
+// the corpus census in measure-boostlatch-2026-09-06 (lv16 8,913-8,918, both
+// halves, and lv16 14,366-14,370).
+inline bool boostLatchMode(int mode) {
+    // --no-boostlatch: the pre-2026-09-06 scope, where only the swing carried
+    // the exemption. Every one of the sites below reads this helper, so the
+    // flag restores the old behaviour exactly.
+    if (g_noBoostLatch) return mode == 7;
+    return mode == 1 || mode == 3 || mode == 7;
+}
+
 // bVar20 (0x38ff3e), the flag that both fires the gravity-facing nudge and, as
 // `bVar3` (0x38ff4f), SKIPS the whole landing block at 0x39078a -- so on a tick
 // where this is set `hitGround` does not run and vy is not zeroed, whether or
