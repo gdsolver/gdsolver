@@ -37,6 +37,140 @@ inline double slopeXOffset(double m, double pHalf) {
 inline bool slopeIsCeiling(uint8_t dir) {
     return dir == 1 || dir == 3 || dir == 5 || dir == 6;
 }
+// m_slopeUphill, which GD stores at obj+0x440. It is a pure function of the
+// direction ({0,3,6,7} rise, {1,2,4,5} fall) -- checked over all 2,631 type-25
+// objects in the 22 dumps, and confirmed on the rig calib_slopeflags, where
+// every one of 160 id/rotation/flip combinations reported sup=1 on exactly
+// that set.
+inline bool slopeIsUphill(uint8_t dir) {
+    return dir == 0 || dir == 3 || dir == 6 || dir == 7;
+}
+// GD REFUSES TO RESOLVE A SOLID THAT A RAMP IS ALREADY GOVERNING.
+// PlayerObject::collidedWithObjectInternal walks the player's slope map before
+// touching the solid, and two sites decide it: the top face at 0x3924ff-0x392536
+// and the underside at 0x392a60-0x392ab1. Witnesses: lv16 t=8,696 (GD leaves the
+// flipped ship at 573.337 where the model clamped to 569.000) and lv20 t=5,278
+// (GD reaches 285.000 through the ramp, not through the 1.5px bar uid5263 --
+// `hbox: obj=5263 hit=0`, and the model's own ballCornerM comment had already
+// called it "the neighbouring slope hijacking the test").
+//
+// `faceIsTop` says which of the two sites is asking: the player came down onto
+// the solid's top face, or up into its underside. The 2.0 is ONE-SIDED per face
+// (0x622E60) -- reading it as |line - face| <= 2.0 rejects every case where the
+// solid sits below the line, which on the rig was 67 of 1,673 ticks.
+//
+// LEAF: `slopes` stands in for GD's slope map [player+0x6E0]. GD inserts a ramp
+// in preSlopeCollision when the player enters one of two 1px probes (a vertical
+// strip at the ramp's high end, a horizontal one along its flat face) while
+// m_isOnSlope == 0; scanning every nearby ramp instead is wider. It has to scan
+// them all rather than just the adjacent one: at lv16 8,696 the ramp that
+// carries the veto is 3763, one further down the chain, not the neighbour 3741.
+// Would GD acquire this ramp with the player here? The acquisition gate is
+// `targetY > y` (0x38fea5) against the CAPPED target of measure-slopeypos section
+// 4: max(min(slopeYPos(cx) + playerH/(2 cos t), objMaxY + playerH/2), objMinY).
+//
+// This exists because the model's own `onSlope` is the wrong proxy for it. GD
+// holds m_isOnSlope for as long as the player's box overlaps the ramp's -- the
+// cap pins the target at the ramp's top corner, so a player standing on a solid
+// at that height still passes the gate -- while the model's ride ends at the
+// span. Measured directly (hbox with m_isOnSlope/m_wasOnSlope/m_currentSlope at
+// the solid pass): every refused tick of the rig's d=0 unit reads
+// onslp=1 wasslp=1 curslp=107, and lv22 t=4,592 reads 0/0/-1. The per-tick dump
+// shows 0 for both because checkCollisions zeroes the flag at the top of a tick
+// and the slope pass sets it again.
+// `continuing` picks which reach test GD applies: a NEW contact goes through the
+// object rect INSET 1px top and bottom (0x38fc3c-0x38fc73: y+1.0, h-2.0, no x
+// inset), a continuing one through the cheap edge test (0x38fc0e-0x38fc2c: the
+// ride ends once pos.y - h/(2 cos t) - 4.0 rises past the rect's top).
+//
+// The inset is not a detail. At lv22 t=4,592 the swing's foot is 389.98 and the
+// ramp's rect top is 390; without the inset the contact stands by 0.02px, the
+// bypass follows, and the model vetoes a solid GD resolves. With it the foot is
+// 0.98px clear of the inset top 389.0 and the row comes out right.
+inline bool slopeWouldAcquire(const Obj* R, double px, double py, double pHalf,
+                              bool continuing) {
+    const double rx0 = R->cx - R->hw, rx1 = R->cx + R->hw;
+    const double ry0 = R->cy - R->hh, ry1 = R->cy + R->hh;
+    if (rx1 <= rx0) return false;
+    if (!(px + pHalf >= rx0 && px - pHalf <= rx1)) return false;
+    const double m = (R->sy1 - R->sy0) / (rx1 - rx0);
+    const double cosT = std::cos(std::atan(std::fabs(m)));
+    if (continuing) {
+        if (py - pHalf / cosT - 4.0 > ry1) return false;
+    } else if (!(py + pHalf >= ry0 + 1.0 && py - pHalf <= ry1 - 1.0)) {
+        return false;
+    }
+    const double half = pHalf / cosT;
+    const double line = R->sy0 + (R->sy1 - R->sy0) * (px - rx0) / (rx1 - rx0);
+    if (!slopeIsCeiling(R->slopeDir)) {
+        const double t = std::max(std::min(line + half, ry1 + pHalf), ry0);
+        return t > py;
+    }
+    const double t = std::min(std::max(line - half, ry0 - pHalf), ry1);
+    return t < py;
+}
+inline bool slopeVetoesSolid(const Obj* o, const std::vector<const Obj*>* slopes,
+                             double px, double py, double pHalfW, double pHalfH,
+                             bool faceIsTop, double prevX, double prevY,
+                             int curSlopeUid) {
+    if (g_noSlopeVeto || !slopes || o->type != 0) return false;
+    const double sx0 = o->cx - o->hw, sx1 = o->cx + o->hw;
+    const double sy0 = o->cy - o->hh, sy1 = o->cy + o->hh;
+    for (const Obj* R : *slopes) {
+        // A spiked ramp is NOT skipped. GD's scan has no kind filter and no
+        // direction filter, and slopeYPos already carries the hazard's own +-4
+        // shift (0x623748 / 0x622E90) -- which reaches here for free, because
+        // sy0/sy1 are the MOD's samples of GD's slopeYPos at the rect edges.
+        // (An earlier draft skipped them; nothing in the disassembly justified
+        // it, and skipping is not the safe direction -- it silently drops a veto
+        // GD performs.)
+        const bool isTop = slopeIsCeiling(R->slopeDir);
+        const bool uphill = slopeIsUphill(R->slopeDir);
+        // The sub-condition is mirrored between the two sites (0x392520 /
+        // 0x392a9b): the top-face site wants a floor ramp or the one being
+        // ridden, the underside site wants a ceiling ramp or the one being ridden.
+        if (faceIsTop ? (isTop && R->uid != curSlopeUid)
+                      : (!isTop && R->uid != curSlopeUid)) continue;
+        // getObjectRect(1.2f, 1.1f) @0x622C84/0x622C54 scales the object's LOCAL
+        // W and H and then swaps for rotation (obj+0x390), so a quarter-turned
+        // ramp takes 1.1 across world x and 1.2 up world y. Measured on the pair
+        // at d=+2.0: the rot-0 unit still vetoes at cx+18.000 and the rot-90 one
+        // has stopped by cx+16.5 (lv22's ramp inflates 30x60 -> 33x72).
+        const bool turned = std::fabs(std::fmod(std::fabs(R->rot), 180.0) - 90.0) < 45.0;
+        const double iw = R->hw * (turned ? 1.1 : 1.2);
+        const double ih = R->hh * (turned ? 1.2 : 1.1);
+        const double ix0 = R->cx - iw, ix1 = R->cx + iw;
+        const double iy0 = R->cy - ih, iy1 = R->cy + ih;
+        if (!(ix0 <= sx1 && ix1 >= sx0 && iy0 <= sy1 && iy1 >= sy0)) continue;
+        if (!(ix0 <= px + pHalfW && ix1 >= px - pHalfW
+              && iy0 <= py + pHalfH && iy1 >= py - pHalfH)) continue;
+        // 0x3920cf-0x392137. A ramp the player is not on, was not on last tick
+        // and is not currently riding only counts when the solid's own position
+        // lies strictly inside the ramp's x span. This is what lets lv16 6,046
+        // and lv22 4,592/4,595 resolve (8820 < 8895 < 8880 and 6600 < 6645 < 6630
+        // are both false) while lv18 9,297 and lv19 254/506 do not.
+        // The bypass GD actually reads is `m_isOnSlope || m_wasOnSlope ||
+        // partner == NULL || ramp == m_currentSlope`, and the first two are the
+        // acquisition of THIS tick and the last one, not a ride window.
+        const bool cont = (R->uid == curSlopeUid);
+        if (!(cont
+              || slopeWouldAcquire(R, px, py, pHalfH, cont)
+              || slopeWouldAcquire(R, prevX, prevY, pHalfH, cont))) {
+            const double rx0 = R->cx - R->hw, rx1 = R->cx + R->hw;
+            if (!(rx0 < o->cx && o->cx < rx1)) continue;
+        }
+        // The line is read off the BARE rect, at the edge the direction picks
+        // (0x3921d0): `(uphill == isTop) ? maxX : minX`. There is no "nearest
+        // edge" -- evaluating at minX throughout vetoes lv18 11,978 and lv16
+        // 6,973, which GD resolves.
+        const double xEdge = (uphill == isTop) ? sx1 : sx0;
+        const double rx0 = R->cx - R->hw, rx1 = R->cx + R->hw;
+        if (rx1 == rx0) continue;
+        const double line = R->sy0 + (R->sy1 - R->sy0) * (xEdge - rx0) / (rx1 - rx0);
+        if (faceIsTop ? (sy1 - line <= 2.0) : (line - 2.0 <= sy0)) return true;
+    }
+    return false;
+}
 inline double slopeExitVy(double m, uint8_t mode, float dxF, bool mini) {
     const double a = std::fabs(m);
     // BALL. The old single point (4.316, "lv16 t=4565") was wrong -- read one

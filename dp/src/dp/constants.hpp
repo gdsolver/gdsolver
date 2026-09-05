@@ -147,6 +147,13 @@ inline int g_halfNow = 0;
 // on. See the site in step.hpp for the band and why the press is the whole gate.
 inline bool g_noCeilSeat = false; // --no-ceilseat
 
+// --no-slopeveto: solids are resolved even where a ramp beside them is already
+// governing the surface (the pre-2026-09-05 behaviour). GD's own scan sits in
+// collidedWithObjectInternal ahead of the solid; see slopeVetoesSolid for the
+// predicate, which scores 1,673 of 1,673 overlapping ticks on the rigs
+// calib_slopeveto/2 and matches all 14 corpus ticks the hit-flag census found.
+inline bool g_noSlopeVeto = false; // --no-slopeveto
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip

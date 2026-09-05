@@ -2871,6 +2871,27 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // too, so the discriminator is the DEPTH boundary (~10.0), not
             // the entry direction. The flat kLandTol stays; only its value
             // moved (10.5 -> 10.0, see the declaration).
+            // GD walks the player's slope map before it resolves a solid, and a
+            // ramp already governing this face makes the solid a no-op for the
+            // whole tick -- no clamp, and no crush kill either (0x393643). The
+            // predicate is slopeVetoesSolid; witnesses lv20 t=5,278 and lv16
+            // t=8,696, both measured through GD's own hit flag.
+            //
+            // NOTE the neighbouring `landTol` line is very likely a compensating
+            // fossil of this: it was added for lv19 t=245, a 1.5px slab (id 468)
+            // at the top of the first slope -- the same object family and the
+            // same arrangement as lv19 t=254/506, two of the five ticks the veto
+            // census caught. Whether it can go once the veto is in is a separate
+            // measurement; leaving it means both rules guard the same tick.
+            // LEAF: GD picks the face block from which side the contact entered
+            // (playerBottom + tol >= solid.maxY for the top site, solid.minY >=
+            // playerTop - tol for the underside), not from gravity. `gsign > 0`
+            // agrees with that on an ordinary landing and is what the 14 corpus
+            // ticks were scored with; a player entering a face against its own
+            // gravity would part them.
+            if (slopeVetoesSolid(o, K.slopes, x, (double)c.y, pHalf, pHalf,
+                                 gsign > 0, xPrev, (double)s.y, c.slopeUidNow))
+                continue;
             double landTol = c.onSlope ? 0.001 : kLandTol;
             bool stepCandidate = false;
             // [2026-08-21 r84] **Even mid-ride, a "top face deeper below the line"
@@ -4129,6 +4150,17 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // pad, which is a different path, and lv22 is the only level with a
             // swing.
             const double gsL = c.flip ? -1.0 : 1.0;
+            // The same veto as the cube/ball path (see the site by `landTol`).
+            // It has to be repeated here because flight resolves solids in its
+            // OWN loop: with the call only on the other one, the veto fired on
+            // the three `solid/land` ticks of the corpus and on none of the five
+            // `fly/land` ones -- including lv16 t=8,696, the only row where GD
+            // and the model actually disagree in y. Same LEAF on the face as
+            // there: gravity stands in for GD's "which side did the contact
+            // enter from".
+            if (slopeVetoesSolid(o, K.slopes, x, (double)c.y, pHalf, pHalf,
+                                 gsL > 0, xPrev, (double)s.y, c.slopeUidNow))
+                continue;
             const double prevFootL = ((double)s.y - gsL * pHalf - face) * gsL;
             const double newFootL = ((double)c.y - gsL * pHalf - face) * gsL;
             const double vpL = (double)c.vy * gsL;
