@@ -127,6 +127,10 @@ inline bool g_noPortalSeat = false; // --no-portalseat
 // BEFORE the terminal clamp (the pre-2026-09-05 order). GD adds it after, in
 // PlayerObject::update rather than updateJump, and does not clamp it.
 inline bool g_noForceOrder = false; // --no-forceorder
+// --no-rot2900halve: a same-frame 2900 turn that changes the polarity does not
+// halve vy (the pre-2026-09-05 behaviour). GD reaches it through flipGravity,
+// whose mulsd 0.5 @0x39a2dc runs on any real polarity change.
+inline bool g_noRot2900Halve = false; // --no-rot2900halve
 // --old-slope: A/B escape hatch (same convention as --old-latency). Restores
 // the pre-2026-08-04 slope exit: ball = tap-anchored line / mini x0.625, and
 // NO ride-time ramp. See slopeExitVy / slopeRampFactor for why the new form

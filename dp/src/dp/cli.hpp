@@ -129,6 +129,8 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--no-portalseat")) g_noPortalSeat = true;
         // --no-forceorder: force inside the terminal clamp. See g_noForceOrder.
         if (!std::strcmp(argv[i], "--no-forceorder")) g_noForceOrder = true;
+        // --no-rot2900halve: no halving on a same-frame 2900 polarity change.
+        if (!std::strcmp(argv[i], "--no-rot2900halve")) g_noRot2900Halve = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;

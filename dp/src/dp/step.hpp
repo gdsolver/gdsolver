@@ -604,11 +604,57 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
     // gnddir) changes **only the heading**. Coordinates and velocity stay as they
     // are -- running it through the re-basing below (fromFrame/toFrame and
     // kRotCarry) would replace the vy of an ongoing jump arc with the dx-derived
-    // carry. Measured (t=18,382 from the note at the head of this function,
-    // uid16659): dx +1.613 -> -1.613 with "the y progression does not change" --
-    // GD's vy simply decays normally, 9.598 -> 9.404, across the turn tick.
-    // [2026-08-18]
+    // carry. Measured (uid 16659, the note at the head of this function): dx
+    // +1.613 -> -1.613 with "the y progression does not change" -- GD's vy
+    // simply decays normally across the turn tick. [2026-08-18]
+    // The note gave t=18,382; in today's gdref that firing is t=18,467, same
+    // uid, 9.1200 -> 8.9050, one gravity step. The tick moved with the base and
+    // the uid did not, so match a note's evidence on the uid, not the tick.
+    // It is the flip-UNCHANGED case, so it is not a counter-example to the
+    // halving below -- it is that rule's negative side.
     if (nf == f0) {
+        // --slopedbg: WHICH of the two 2900 branches ran, and what it did to the
+        // flip. The two are measurably different in GD and the trace's own
+        // columns cannot tell them apart (both leave `frame` where it was for
+        // the same-frame one, and neither writes a clamp label):
+        //   lv22 t=11,351  frame 0->3   vy 5.7040 -> 5.1930  ratio 0.910  the
+        //                  frame-carry value (9245), NOT a halving
+        //   lv22 t=20,954  frame 0      vy 15.9450 -> 7.9725 ratio 0.500  a
+        //                  halving, and this branch is the one that runs
+        if (g_slopeDbg)
+            std::printf("rot2900 t=%lld site=samefr uid=%d nf=%d f0=%d "
+                        "nflip=%d flip=%d->%d vy=%.4f\n",
+                        (long long)t, best ? best->uid : -1, nf, f0, nflip,
+                        (int)c.flip, (nflip >= 0 ? nflip : (int)c.flip),
+                        (double)c.vy);
+        // ...and the polarity change halves vy, because GD reaches this through
+        // flipGravity, whose `mulsd 0.5` @0x39a2dc runs whenever the polarity
+        // ACTUALLY changes. Measured on every 2900 firing in the corpus, split
+        // by branch with the print above (18 firings, lv20/21/22):
+        //   same-frame, flip changes    lv22 t=20,954 uid 17039
+        //                               15.9450 -> 7.9725, ratio 0.500
+        //   same-frame, flip unchanged  t=13,685 / 18,467 / 19,376
+        //                               9.1200 -> 8.9050, ratio 0.976, i.e. one
+        //                               gravity step -- no halving
+        // 4 of 4 with no exception. The frame-changing branch below is a
+        // different mechanism and must not get this: its 14 firings replace vy
+        // with the frame-carry value (5.193 / 6.457 / 7.8) and their ratios
+        // scatter from 0.000 to 3.095.
+        // The mode gate is flipGravity's own -- ball, robot and spider do not
+        // halve. THE CORPUS IS SILENT ON IT HERE: all four same-frame firings
+        // are cube, so this path has no witness either way, and the binary
+        // decides rather than the corpus. Dropping the gate because nothing
+        // measures it is the error the corpus cannot witness: the first ball to
+        // turn on a same-frame 2900 would come out inverted against GD.
+        // No double-halving guard against the portal pass's own `gravChanged`
+        // halving (step.hpp:7628): applyRotation is called from the CLI tick
+        // loop after stepOne, not from inside it, and the one firing that halves
+        // has no portal on its tick (the objects at x=21,555 are the 2900 itself
+        // and two force boxes). If a tick ever carries both, this is where to
+        // look.
+        if (nflip >= 0 && !g_noRot2900Halve && (uint8_t)nflip != c.flip
+            && c.mode != 2 && c.mode != 5 && c.mode != 6)
+            c.vy = (float)((double)c.vy * 0.5);
         if (nflip >= 0) c.flip = (uint8_t)nflip;
         return nf;
     }
@@ -681,6 +727,12 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
     // The carry got the first one right by luck and the second one wrong, and
     // from that tick the model's gravity stepped +0.216/tick where GD stepped
     // -0.216 -- the whole post-rotation section solved upside down.
+    if (g_slopeDbg)
+        std::printf("rot2900 t=%lld site=newframe uid=%d nf=%d f0=%d "
+                    "nflip=%d flip=%d->%d vy=%.4f\n",
+                    (long long)t, best ? best->uid : -1, nf, f0, nflip,
+                    (int)c.flip, (nflip >= 0 ? nflip : (int)c.flip),
+                    (double)c.vy);
     if (nflip >= 0) c.flip = (uint8_t)nflip;
     // Entering frame 3 flips `upsideDown`. Measured directly with the trace's
     // own `flip`/`frame` columns against GD's dump: the two agree on every tick
