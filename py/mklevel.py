@@ -2033,6 +2033,95 @@ def build_padedge() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def padfall_unit(x: float, off: float, mini: bool, jump: bool = True
+                 ) -> tuple[list[str], list[tuple[int, int]], float, dict]:
+    """One pass at a pad while DESCENDING, to weigh the approach direction.
+
+    The horizontal sweeps (padedge, padedge13) put the activation delay in [0,1)
+    ticks over 39 samples at two speeds -- the pad fires on the first tick of
+    geometric contact. lv20's pad fires two ticks late. The difference left
+    between the two cases is that lv20's player is falling, and the horizontal
+    rig is STRUCTURALLY BLIND to that: with the player running its y never
+    moves, so a contact test reading a stale y would give identical results in
+    every unit of both sweeps. This rig makes y move.
+
+    The plate is rot=0, whose shape is already settled three ways, so any
+    residual here is delay and not geometry.
+
+    Placement without measuring the arc: a CURTAIN of identical pads at one x,
+    the trick orbair_unit uses for the same reason. Exactly one of them fires --
+    `padact:` names it and reports its centre -- and WHICH one fires is set by
+    where the arc is at that x, so sweeping the curtain's x sweeps the descent
+    speed without predicting the trajectory. Spacing is 34 = the pad's half 2
+    plus the player's 15, doubled: the reach regions tile with neither overlap
+    (two pads in range at once) nor gap (a hole the arc slips through).
+
+    The delay is read in ticks without any per-tick dump, because `padact:`
+    carries the fire `vy`:
+        predicted fire y = fired pad's cy + (2 + pHalf)      <- descending
+        delay [ticks]    = (predicted - measured y) / (|vy| * dyPerVy)
+    with dyPerVy calibrated from the run's own rows. k=0 means the pad fires on
+    the first overlapping tick here too, which would put lv20's two ticks down
+    to something level-specific (its teleport, its gravity portal, its speed
+    1.3) rather than to the direction of approach.
+
+    `jump=False` is the control arm: no press, so the player runs past at
+    constant y and must reproduce the horizontal rigs' k=0.
+    """
+    oid, _ = PAD["yellow"]
+    p_half = 9.0 if mini else 15.0
+    objs: list[str] = []
+    y0 = GROUND_TOP + 15.0
+    objs.append(obj(MODE_PORTAL["cube"], x, y0))
+    objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID, y0))
+    x_ref = x + 8 * GRID
+    plan: list[tuple[int, int]] = []
+    t = tick_at(x_ref)
+    if jump:
+        # One tick of press on flat ground = the cube's own 11.180 jump. The
+        # press tick is approximate (tick_at drifts a few px over a rig this
+        # long) but the player is grounded for hundreds of ticks here, so the
+        # jump lands wherever it lands and the curtain catches the arc anyway.
+        plan = [(t, 1), (t + 1, 0)]
+    x_curtain = x_ref + off
+    cy = GROUND_TOP + p_half
+    while cy <= GROUND_TOP + p_half + 320.0:
+        objs.append(obj(oid, x_curtain, cy))
+        cy += 34.0
+    meta = {"x0": x, "off": off, "mini": int(mini), "jump": int(jump),
+            "p_half": p_half, "x_curtain": x_curtain, "t_press": t if jump else -1,
+            "pad_w": 25.0, "pad_h": 4.0,
+            # the pre-registered rule: contact on the first tick where the boxes
+            # overlap. `pad_cy` is filled in from the run (which pad fired).
+            "pred_fire_y_offset": 2.0 + p_half,
+            "pred_x_reach": 12.5 + p_half}
+    return objs, plan, x_ref + 30 * GRID, meta
+
+
+def build_padfall() -> str:
+    """Descending-approach rig: is the pad's activation delay still 0 ticks when
+    the player's y is moving?
+
+    Sweeps the curtain's x past the apex so the contact walks down the descent,
+    which is what varies the fall speed. Two control arms: `jump=False` (y
+    constant -- must reproduce the horizontal rigs) and mini (a different player
+    half, which the horizontal sweep showed enters only through the reach).
+    """
+    objs: list[str] = []
+    x = 90.0
+    for mini in (False, True):
+        u, pl, x, meta = padfall_unit(x, 0.0, mini, jump=False)
+        objs += u
+        PLAN.extend(pl)
+        UNITS.append(meta)
+        for off in range(70, 210, 10):
+            u, pl, x, meta = padfall_unit(x, float(off), mini, jump=True)
+            objs += u
+            PLAN.extend(pl)
+            UNITS.append(meta)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 def build_padedge13() -> str:
     """The same outline at speed 1.3, which is the one thing lv20 has and the
     first rig did not.
@@ -4347,7 +4436,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "shortexit": build_shortexit, "edgeland": build_edgeland,
             "slopelandball": build_slopelandball,
             "ceilpush": build_ceilpush, "ceilpushball": build_ceilpushball,
-            "ceilpush8": build_ceilpush8, "padedge": build_padedge, "padedge13": build_padedge13}
+            "ceilpush8": build_ceilpush8, "padedge": build_padedge, "padedge13": build_padedge13, "padfall": build_padfall}
 
 
 def main() -> int:
@@ -4395,5 +4484,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
