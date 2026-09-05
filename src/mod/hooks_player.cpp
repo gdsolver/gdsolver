@@ -606,14 +606,21 @@ class $modify(PlayerObject) {
         //            clears it, so it reads 0 while the button is still down
         //   p9b8  -- m_maybeUpsideDownSlope, GD's own "this contact is the
         //            underside branch" flag (the side the nudge's sign follows)
-        const unsigned char p986 =
-            *(reinterpret_cast<const unsigned char*>(this) + 0x986);
-        char b[352];
+        const unsigned char* raw = reinterpret_cast<const unsigned char*>(this);
+        const unsigned char p986 = *(raw + 0x986);
+        // The two the nudge's gate is said to read: +0x68c (bVar22, saved) and
+        // +0x985. m_jumpBuffered is printed beside +0x985 because they are
+        // supposed to be the same byte -- if they disagree the offset is wrong,
+        // and the rest of the row would be read against the wrong field.
+        const unsigned char b68c = *(raw + 0x68c);
+        const unsigned char b985 = *(raw + 0x985);
+        char b[416];
         snprintf(b, sizeof(b),
                  "slp: t=%lld who=%s uid=%d id=%d forced=%d onSlope=%d up=%d top=%d "
                  "y %.3f->%.3f "
                  "vy=%.3f rect=(%.2f,%.2f,%.2f,%.2f) rot=%.1f syAtX=%.3f "
-                 "held=%d p986=%d p9b8=%d vyin=%.3f dvy=%.3f",
+                 "held=%d p986=%d p9b8=%d vyin=%.3f dvy=%.3f "
+                 "b68c=%d b985=%d jb=%d",
                  (long long)g_tick, who, obj->m_uniqueID, obj->m_objectID,
                  forced ? 1 : 0, (int)this->m_isOnSlope,
                  (int)this->m_isUpsideDown, (int)this->m_isCurrentSlopeTop,
@@ -622,7 +629,8 @@ class $modify(PlayerObject) {
                  obj->getRotation(), obj->slopeYPos(this->getPositionX()),
                  g_btnDown ? 1 : 0, (int)p986,
                  (int)this->m_maybeUpsideDownSlope,
-                 vyBefore, (double)this->m_yVelocity - vyBefore);
+                 vyBefore, (double)this->m_yVelocity - vyBefore,
+                 (int)b68c, (int)b985, (int)this->m_jumpBuffered);
         writeResult(b);
     }
 
@@ -640,7 +648,7 @@ class $modify(PlayerObject) {
             if (++lines <= 40000) {
                 CCRect pr = this->getObjectRect();
                 CCRect orr = obj->getObjectRect();
-                char b[352];
+                char b[416];
                 snprintf(b, sizeof(b),
                     "hbin: t=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
                     "arg=(%.2f,%.2f,%.2f,%.2f) objrect=(%.2f,%.2f,%.2f,%.2f) "
