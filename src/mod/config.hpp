@@ -493,6 +493,12 @@ inline int g_finishedAttempts = 0;
 inline bool g_sessionOver = false;
 inline size_t g_nextToggle = 0;
 inline bool g_injecting = false;
+// The jump button as GD was last told, tracked in the handleButton hook. This is
+// the RAW press, which is not the same thing as the +0x986 latch: that one means
+// "a press that has not been consumed yet" and every consumer clears it (the
+// grounded jump, rings, taps -- ten of them), so it reads 0 while the button is
+// still down. A gate on "is the player pressing" has to read this one.
+inline bool g_btnDown = false;
 inline std::chrono::steady_clock::time_point g_attemptStart;
 
 // Live commands (data/cmd.txt): pause / resume / step N

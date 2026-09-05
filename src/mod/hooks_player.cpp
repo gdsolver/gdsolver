@@ -588,22 +588,41 @@ class $modify(PlayerObject) {
                            && g_tick >= g_cfg.hbFrom
                            && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
         const double yBefore = watch ? this->getPositionY() : 0.0;
+        // vy across THIS call. If the +-2.000 nudge appears as vy_out - vy_in
+        // here, it is written inside the contact function and its gate can be
+        // read from the flags below; if it does not, the nudge is placed
+        // somewhere else (the exit or the update path) and the two asm sites are
+        // a different quantity.
+        const double vyBefore = watch ? (double)this->m_yVelocity : 0.0;
         PlayerObject::collidedWithSlopeInternal(dt, obj, forced);
         if (!watch) return;
         static int lines = 0;
         if (++lines > 4000) return;
         CCRect orr = obj->getObjectRect();
-        char b[288];
+        // THREE press-ish quantities, because they are not the same thing and a
+        // gate written against the wrong one is inverted rather than merely off:
+        //   held  -- the raw button, from the handleButton hook (g_btnDown)
+        //   p986  -- the +0x986 latch, "a press not yet consumed"; every consumer
+        //            clears it, so it reads 0 while the button is still down
+        //   p9b8  -- m_maybeUpsideDownSlope, GD's own "this contact is the
+        //            underside branch" flag (the side the nudge's sign follows)
+        const unsigned char p986 =
+            *(reinterpret_cast<const unsigned char*>(this) + 0x986);
+        char b[352];
         snprintf(b, sizeof(b),
                  "slp: t=%lld who=%s uid=%d id=%d forced=%d onSlope=%d up=%d top=%d "
                  "y %.3f->%.3f "
-                 "vy=%.3f rect=(%.2f,%.2f,%.2f,%.2f) rot=%.1f syAtX=%.3f",
+                 "vy=%.3f rect=(%.2f,%.2f,%.2f,%.2f) rot=%.1f syAtX=%.3f "
+                 "held=%d p986=%d p9b8=%d vyin=%.3f dvy=%.3f",
                  (long long)g_tick, who, obj->m_uniqueID, obj->m_objectID,
                  forced ? 1 : 0, (int)this->m_isOnSlope,
                  (int)this->m_isUpsideDown, (int)this->m_isCurrentSlopeTop,
                  yBefore, this->getPositionY(), this->m_yVelocity,
                  orr.origin.x, orr.origin.y, orr.size.width, orr.size.height,
-                 obj->getRotation(), obj->slopeYPos(this->getPositionX()));
+                 obj->getRotation(), obj->slopeYPos(this->getPositionX()),
+                 g_btnDown ? 1 : 0, (int)p986,
+                 (int)this->m_maybeUpsideDownSlope,
+                 vyBefore, (double)this->m_yVelocity - vyBefore);
         writeResult(b);
     }
 

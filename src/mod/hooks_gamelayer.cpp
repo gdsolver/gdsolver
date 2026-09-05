@@ -4589,6 +4589,11 @@ class $modify(GJBaseGameLayer) {
             return;
         }
         ev("handleButton", down, button, isPlayer1);
+        // Remember the raw press for the slope trace. Jump only (button 1) and
+        // player 1 only: the second body follows the same input in these levels,
+        // and a per-half press would need the dual input split, which no probe
+        // here varies.
+        if (button == 1 && isPlayer1) g_btnDown = down;
         GJBaseGameLayer::handleButton(down, button, isPlayer1);
     }
 
