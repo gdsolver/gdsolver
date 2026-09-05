@@ -2469,20 +2469,41 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // by gsign like every other world force. Position is the
                 // START-of-tick one (xPrev, s.y): the effect shows up one tick
                 // after the overlap in all six measured entry/exit edges.
+                double forceAcc = 0.0;
                 if (!g_forceFields.empty())
-                    acc += forceFieldAcc(modX, modY, pHalf) * gdSign;
+                    forceAcc += forceFieldAcc(modX, modY, pHalf) * gdSign;
                 // FORCE BOX (id 2069): same convention (start-of-tick position,
                 // world->player via gsign). Measurements at the declaration of kFF2069
                 if (!g_forceBoxes.empty())
-                    acc += forceBoxAcc(modX, modY, pHalf,
-                                       forceUnitFor(s.mode, useDx)) * gdSign;
+                    forceAcc += forceBoxAcc(modX, modY, pHalf,
+                                            forceUnitFor(s.mode, useDx)) * gdSign;
+                // THE FORCE IS ADDED OUTSIDE THE TERMINAL, because GD adds it in
+                // a different function. `updateJump` does gravity, then the cap
+                // (maxsd against -15.0 @0x623778 upright / minsd against +15.0
+                // @0x622EF0 flipped -- bare literals, no mini/speed/timeMod
+                // factor), then the 0.001 quantisation, all at 0x38c2f2-0x38c350.
+                // The force block's contribution is applied by PlayerObject::
+                // update AFTER updateJump returns (0x3892db-0x389302) and is not
+                // clamped at all.
+                // Folded into `acc` before the cap, as it used to be, the model
+                // pinned lv22 at exactly 15.000 where GD reaches 15.945. GD's
+                // own arithmetic, to three digits on all three ticks:
+                //   min(13.9040+0.215, 15) + 0.945 = 15.0640   GD 15.0640
+                //   min(15.0640+0.215, 15) + 0.945 = 15.9450   GD 15.9450
+                //   min(15.9450+0.215, 15) + 0.945 = 15.9450   GD 15.9450
+                // and 0.945 = 1.160 - 0.215 is the force's own step (0.225 x
+                // 4.2 x 1.0 for a cube), which is why mini, speed and flip do
+                // not enter: 15.945/15.0 = 1.063 is a coincidence, not a scale.
+                // qVy stays on the gravity half, where updateJump has it.
                 // The TIME WARP scales the increment, not the terminal: the cap
                 // is a velocity. The 0.001 grid is applied to each step (GD's
                 // vy went 0 -> 0.043 -> 0.086 -> 0.129 under a 0.0432 step; the
                 // exact accumulation would have given 0.130 on the third).
                 // r102: the tick after hitting a black orb on a fast climb has no terminal
+                if (g_noForceOrder) acc += forceAcc;
                 vpNew = s.pNoTerm ? qVy(vp + acc * tScale)
                                   : qVy(std::max(vp + acc * tScale, gTerm));
+                if (!g_noForceOrder) vpNew += forceAcc * tScale;
                 if (isRobot) c.rHover = 0;
                 c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;

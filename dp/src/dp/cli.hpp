@@ -127,6 +127,8 @@ inline int cliMain(int argc, char** argv) {
         // --no-portalseat: no same-tick seating after a mode change. See
         // g_noPortalSeat.
         if (!std::strcmp(argv[i], "--no-portalseat")) g_noPortalSeat = true;
+        // --no-forceorder: force inside the terminal clamp. See g_noForceOrder.
+        if (!std::strcmp(argv[i], "--no-forceorder")) g_noForceOrder = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;

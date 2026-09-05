@@ -77,6 +77,7 @@ inline void resetInvocationState() {
     g_noRingMode = false;
     g_noPressSpent = false;
     g_noPortalSeat = false;
+    g_noForceOrder = false;
     g_oldLatency = false;
     g_oldSlope = false;
     kLandTol = 10.0;

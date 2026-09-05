@@ -123,6 +123,10 @@ inline bool g_noPressSpent = false; // --no-pressspent
 // tick; the model picks its landing branch from the mode ENTERING the tick
 // (step.hpp:1521) and so could not. A/B switch, one build apart.
 inline bool g_noPortalSeat = false; // --no-portalseat
+// --no-forceorder: fold the force field/box contribution into the acceleration
+// BEFORE the terminal clamp (the pre-2026-09-05 order). GD adds it after, in
+// PlayerObject::update rather than updateJump, and does not clamp it.
+inline bool g_noForceOrder = false; // --no-forceorder
 // --old-slope: A/B escape hatch (same convention as --old-latency). Restores
 // the pre-2026-08-04 slope exit: ball = tap-anchored line / mini x0.625, and
 // NO ride-time ramp. See slopeExitVy / slopeRampFactor for why the new form
