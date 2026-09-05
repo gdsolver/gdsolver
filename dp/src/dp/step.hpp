@@ -2893,6 +2893,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                  gsign > 0, xPrev, (double)s.y, c.slopeUidNow))
                 continue;
             double landTol = c.onSlope ? 0.001 : kLandTol;
+            // Counting the fossil (--slopedbg). If this branch stops being taken
+            // now that the veto is in, the 0.001 was standing in for it and can
+            // retire; if it is still taken, the two guard different ticks and
+            // both are load-bearing. Retiring it is a separate judgement -- this
+            // only supplies the number.
+            if (g_slopeDbg && c.onSlope)
+                std::printf("landtol0001 t=%lld uid=%d\n",
+                            (long long)K.t, o->uid);
             bool stepCandidate = false;
             // [2026-08-21 r84] **Even mid-ride, a "top face deeper below the line"
             // is grabbed as a step.** The 0.001 above was a guess to reject lv19
