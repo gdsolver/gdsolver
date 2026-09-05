@@ -173,6 +173,15 @@ struct Config {
     // Record orb firing points (press tick / fire tick / offset from the orb centre)
     bool orbTrace = false;
     float orbTraceX = 0; // >0: record only orbs near this x (±300)
+    // SUBSTITUTION PROBE (cfg `subringspent=1`, windowed by hbfrom/hbto, default off).
+    // Forces the player's +0x98a ("this press has not been consumed", the per-tick mirror
+    // of 0x986 written at 0x389f18) to 1 for the duration of one ringJump call, so GD runs
+    // its own ring path under the MODEL's rule ("a held press still fires") instead of its
+    // own. It answers a question observation cannot: not "what differs" but "what does
+    // changing this rule DO", in GD's arithmetic.
+    // THIS MAKES THE RUN NOT-GD. A dump produced with this set must never reach gdref or a
+    // baseline; the session prints `subst:` lines so a stray dump names itself.
+    bool subRingSpent = false;
     // Record pad firing (cfg `padtrace=1`). Makes activatedByPlayer (pad types only, with
     // used=m_activatedByPlayer1) and propellPlayer (the launch itself) name themselves.
     // Injection breaks the contact state and changes the result even with the same values, so

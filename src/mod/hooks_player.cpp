@@ -324,9 +324,39 @@ class $modify(PlayerObject) {
     void ringJump(RingObject* object, bool skipCheck) {
         auto* l = GJBaseGameLayer::get();
         bool isP1 = object && l && this == l->m_player1;
+        // SUBSTITUTION PROBE (cfg `subringspent=1` + the hbfrom/hbto window, default off).
+        // Observation answers "what differs"; this answers "what does changing the RULE do",
+        // in GD's own arithmetic. 0x389f18 copies 0x986 ("this press has not been consumed")
+        // into 0x98a once per tick and ringJump early-returns on it, so forcing 0x98a to 1
+        // for the duration of one call makes GD run the MODEL's rule -- "a held press still
+        // fires" -- and the three-way GD / substituted-GD / model comparison says whether
+        // that rule is the whole of the difference or only part of it.
+        // Only the per-tick MIRROR is written, never 0x986 itself, so GD's own consumption
+        // bookkeeping is untouched and the forced bit dies with the call.
+        // THE RESULTING RUN IS NOT GD: every application prints `subst:`, and a dump made
+        // this way must never reach gdref or a baseline.
+        const bool inWin = g_tick >= g_cfg.hbFrom
+                        && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
+        unsigned char* const spentMirror = (unsigned char*)this + 0x98a;
+        const bool subst = g_cfg.subRingSpent && isP1 && inWin;
+        const unsigned char savedSpent = subst ? *spentMirror : (unsigned char)0;
+        if (subst) {
+            *spentMirror = 1;
+            if (orbtrace::g_lines < 400) {
+                char sb[128];
+                snprintf(sb, sizeof(sb),
+                         "subst: t=%lld uid=%d 0x98a %d->1 NOT-GD",
+                         (long long)g_tick, object->m_uniqueID,
+                         (int)savedSpent);
+                writeResult(sb);
+                ++orbtrace::g_lines;
+            }
+        }
         bool watch = g_cfg.orbTrace && isP1;
         if (!watch) {
-            PlayerObject::ringJump(object, skipCheck); return;
+            PlayerObject::ringJump(object, skipCheck);
+            if (subst) *spentMirror = savedSpent;
+            return;
         }
         // This function is a test path called every tick for the whole contact, not the
         // fire point. Whether it actually fired is decided by whether vy jumped
@@ -347,9 +377,10 @@ class $modify(PlayerObject) {
         // print the bits they test instead: 0x989 / 0x98a (the buffered-press
         // mirror), 0x98b (set by a successful fire -- this is the one-press-one-
         // fire latch), 0x98c, 0x98d, 0x9e4, and the ring's own 0x740 claim bit.
-        // Windowed with hbfrom/hbto so a whole level does not flood the cap.
-        const bool inWin = g_tick >= g_cfg.hbFrom
-                        && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
+        // Windowed with hbfrom/hbto so a whole level does not flood the cap (`inWin` is
+        // computed at the top of the function, where the substitution probe also needs it).
+        // Under `subringspent=1` the b98a printed here is the FORCED value; the bit as GD
+        // left it is on the `subst:` line.
         if (inWin && orbtrace::g_lines < 400) {
             auto bit = [&](int off) {
                 return (int)*((unsigned char*)this + off);
@@ -366,6 +397,7 @@ class $modify(PlayerObject) {
             ++orbtrace::g_lines;
         }
         PlayerObject::ringJump(object, skipCheck);
+        if (subst) *spentMirror = savedSpent;
         float vyAfter = (float)this->m_yVelocity;
         if (std::abs(vyAfter - vyBefore) < 1e-4f) return; // did not fire
         // Log-flood guard: only near the targeted x + a total cap

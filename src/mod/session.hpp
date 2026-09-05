@@ -408,6 +408,7 @@ inline void loadConfig() {
         else if (key == "endtrace") g_cfg.endTrace = (val == "1");
         else if (key == "orbtrace") g_cfg.orbTrace = (val == "1");
         else if (key == "orbtracex") cfgNum(key, val, g_cfg.orbTraceX);
+        else if (key == "subringspent") g_cfg.subRingSpent = (val == "1");
         else if (key == "padtrace") g_cfg.padTrace = (val == "1");
         else if (key == "touchpayload") g_cfg.touchPayload = (val == "1");
         else if (key == "snaptrace") g_cfg.snapTrace = (val == "1");
