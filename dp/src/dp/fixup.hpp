@@ -213,6 +213,15 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     c.slopeT2 = cb.slopeT2;
     c.slopeUid02 = cb.slopeUid02;  c.slopeUidNow2 = cb.slopeUidNow2;
     c.snapObj2 = cb.snapObj2;   c.usedOrb2 = cb.usedOrb2;
+    // [2026-09-05] ...and the SPENT-GRAVITY-PORTAL mask, which 67ab13f added to
+    // State and to swapHalves and then left out of this list -- exactly what the
+    // SIZE note above records happening on 2026-08-28. The second body's latch
+    // was written inside its own stepOne and thrown away here on every tick, so
+    // p2's mask read 0x0 forever and it re-fired the same portal indefinitely.
+    // Measured on lv16 uid 3450: `gplatch half=1 ... bit=5 spent=0 mask=0x0` on
+    // 65 consecutive ticks from t=8,016, with the dual `wasInBoxPrev` skip doing
+    // the suppression the latch was supposed to do.
+    c.portalLatch2 = cb.portalLatch2;
     for (int i = 0; i < 4; ++i) c.usedPad2[i] = cb.usedPad2[i];
     // Dual mode portal: GD re-MIRRORS the pair. playerWillSwitchMode
     // (0x212ef0) runs per toucher; for the SECOND one the other player is
