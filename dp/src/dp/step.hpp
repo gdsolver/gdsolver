@@ -866,7 +866,14 @@ inline bool portalOnFrameRotTrigger(const Obj& p, int frame) {
     return false;
 }
 
-inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
+// `linkFlip`, when given, comes back true if a gravity portal actually changed
+// this body's polarity. It is an out-parameter and NOT a global on purpose: the
+// DP's phase 1 steps the whole layer in parallel, so a global written in here
+// would be a race between states as well as leaking from one call into the next
+// (the shape gd-cli-globals-leak-in-process records). `dead` is passed the same
+// way for the same reason.
+inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
+                     bool* linkFlip = nullptr) {
     State c = s;
     // The no-control window (id 2899 / GameOptionsTrigger; history at the
     // declaration of g_ctrlWin). **Only the button fails to reach the physics**;
@@ -8408,6 +8415,27 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // GD's `upsideDown`, so convert back to the frame's own sign.
                 const uint8_t flipBefore = c.flip;
                 c.flip = (c.frame == 3) ? (uint8_t)!wantFlip : wantFlip;
+                // [2026-09-05] **GD's flipGravity also fires the PARTNER.** A
+                // dual's two bodies are not independent: GJBaseGameLayer's
+                // flipGravity calls the other player with the polarity inverted,
+                // and GD runs p1.update -> collisions(p1) -> p2.update ->
+                // collisions(p2), so the partner call lands BEFORE p2 has
+                // integrated. The model steps each half through a whole stepOne,
+                // so p2 halves after its own gravity: (vy + a)/2 where GD gives
+                // vy/2 - a.
+                // Measured on lv16 t=8,062 (dual cube, p1 on uid 3450, p2 on
+                // uid 3448 -- a mirrored pair): p2's vy is 7.176 against GD's
+                // 6.854, a fixed 0.322 forever after, and y2 moves +3.229 where
+                // GD moves +1.543 (about half). That position difference is why
+                // the model's p2 then also fires 3448 while GD's misses it by
+                // 0.25 px -- GD's p2, having halved first, sits lower.
+                // Only from p1, and only outside the same-box case: r101's skip
+                // above already models the round-trip that a partner call plus
+                // p2's own activation produce when both bodies are in ONE box,
+                // and doing both would count it twice. Whether the coupling can
+                // subsume r101 is a separate question with its own two witnesses
+                // (lv16 13,495) -- see the ledger.
+                if (linkFlip && c.flip != flipBefore) *linkFlip = true;
                 // [2026-08-21 r70] **On the tick a flipped body grounded on a
                 // ceiling is returned to normal, g/2 is placed in the old
                 // gravity direction (up).** Calibration rig ceilramp measured

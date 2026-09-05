@@ -160,7 +160,9 @@ inline void applyFixup(const State& s, int input, State& c, bool& dead,
 inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     bool d1 = false;
     g_halfNow = 0;
-    State c = stepOne(s, input, K, d1);
+    // Out-parameter, not a global: phase 1 steps the layer in parallel.
+    bool p1FlippedGravity = false;
+    State c = stepOne(s, input, K, d1, &p1FlippedGravity);
     if (!s.dual) {
         dead = d1;
         markTouched(c, K, (double)s.y);
@@ -193,6 +195,24 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     // ordering really means, but it is a much larger change than the one measurement here
     // supports, and this gate is the only cross-body read in stepOne.
     sb.grounded2 = c.grounded;
+    // [2026-09-05] ...and the SECOND cross-body read: p1's gravity flip reaches
+    // the partner. GD's flipGravity fires the other player with the polarity
+    // inverted, from inside p1's collision pass -- so it lands BEFORE p2's own
+    // update. Applying it to sb (p2's entering state) is what puts the halving
+    // on the correct side of p2's integration; leaving it to p2's own portal
+    // pass gives (vy + a)/2 where GD gives vy/2 - a.
+    // The gate is GD's: dual, and the six mode bytes equal between the bodies
+    // (wave is not compared -- so a cube and a wave still count as matching,
+    // which is the asm's own shape, not a simplification).
+    // Not applied when p1's firing was the same-box case: r101's skip in the
+    // portal pass already models that round-trip, and this would count it twice.
+    // p2's own portal on the same tick then finds itself already at the target
+    // and no-ops, so nothing double-flips.
+    if (!g_noDualFlip && p1FlippedGravity && s.dual
+        && sameModeFlags(s.mode, s.mode2)) {
+        sb.flip = (uint8_t)!sb.flip;
+        sb.vy = (float)((double)sb.vy * 0.5);
+    }
     bool d2 = false;
     g_halfNow = 1;
     State cb = stepOne(sb, input, K, d2);

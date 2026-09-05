@@ -146,6 +146,21 @@ inline int g_halfNow = 0;
 // takes it while the player is still under the line, within tol_u, and lifts it
 // on. See the site in step.hpp for the band and why the press is the whole gate.
 inline bool g_noCeilSeat = false; // --no-ceilseat
+
+// --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
+// each half re-derived the flip inside its own stepOne, one integration late).
+inline bool g_noDualFlip = false; // --no-dualflip
+// GD's gate for firing the partner: the two bodies' SIX mode bytes must match.
+// Written as GD writes it rather than as  == b, because the difference is
+// real -- wave is not among the six, so a cube and a wave both read false on
+// every compared flag and therefore COUNT AS MATCHING. Collapsing this to
+// equality would refuse a pair GD accepts.
+inline bool sameModeFlags(uint8_t a, uint8_t b) {
+    static const uint8_t kCmp[6] = {1, 2, 3, 5, 6, 7};  // ship ball ufo robot spider swing
+    for (int i = 0; i < 6; ++i)
+        if ((a == kCmp[i]) != (b == kCmp[i])) return false;
+    return true;
+}
 // --no-r52gravhold: drop r52 (a gravity portal right after a rotation-frame
 // change does not fire if the player was already inside it). The arm exists to
 // ask whether the portal latch has made r52 a fossil: r52 was measured on
