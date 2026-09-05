@@ -410,7 +410,14 @@ inline void loadConfig() {
         else if (key == "orbtracex") cfgNum(key, val, g_cfg.orbTraceX);
         else if (key == "subringspent") g_cfg.subRingSpent = (val == "1");
         else if (key == "padtrace") g_cfg.padTrace = (val == "1");
-        else if (key == "touchpayload") g_cfg.touchPayload = (val == "1");
+        // Two keys, ONE branch, and not for tidiness: this else-if chain is at
+        // MSVC's block-nesting ceiling, and adding a plain `else if` here is
+        // C1061 "nesting level too deep" -- the whole mod stops building. The
+        // next key added has to share a branch the same way, or the chain has
+        // to be broken into a second function.
+        else if (key == "touchpayload" || key == "portalpayload")
+            (key == "touchpayload" ? g_cfg.touchPayload : g_cfg.portalPayload)
+                = (val == "1");
         else if (key == "snaptrace") g_cfg.snapTrace = (val == "1");
         else if (key == "hitboxtrace") g_cfg.hitboxTrace = (val == "1");
         else if (key == "hbfrom") g_cfg.hbFrom = std::atoll(val.c_str());

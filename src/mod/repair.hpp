@@ -922,6 +922,52 @@ inline std::string anchorPayload(long long t0) {
     return "owns=touch;touch=" + body;
 }
 
+// ...and the same for the gravity portals dp has already SPENT by t0. Separate
+// from the touch payload rather than folded into it, because the two subsystems
+// are in different states: touch is off by default over a population mismatch
+// (Config::touchPayload), while the portal map's uids are dp's own portal uids
+// and map exactly. Sharing one function would tie the portal seeding to that
+// gate for no reason.
+//
+// Both keys ALWAYS, once ownership is claimed. dp refuses a payload that says
+// `owns=portal` and omits either -- a mask nobody sets is the shape of silent
+// degradation this whole mechanism exists to stop -- so a level where p2 spent
+// nothing carries `portal2=` empty, saying so out loud.
+//
+// Ownership is still claimed only from what was carried: if neither half has
+// spent anything by t0 this returns nothing at all, and dp keeps its own
+// (empty, and for this field correct) default.
+//
+// Uids, not bit indices. The ordinal is dp's, assigned at load over
+// L.portals; the uid is the level's. dp prints the map under --slopedbg
+// (`gpbit`), which is also how the one portal it does NOT number was found --
+// a rotating gravity portal reaches the portal pass from the moving-geometry
+// side and gets no bit, so it can never appear here either.
+inline std::string portalPayload(long long t0) {
+    std::string p1, p2;
+    for (const auto& kv : portalseed::g_first)
+        if (kv.second <= t0)
+            p1 += (p1.empty() ? "" : ",") + std::to_string(kv.first);
+    for (const auto& kv : portalseed::g_first2)
+        if (kv.second <= t0)
+            p2 += (p2.empty() ? "" : ",") + std::to_string(kv.first);
+    if (p1.empty() && p2.empty()) return std::string();
+    return "owns=portal;portal=" + p1 + ";portal2=" + p2;
+}
+
+// The two joined, so a call site asks once. Either half may be absent; `owns`
+// is a comma list, so a payload can claim both.
+inline std::string anchorPayloadAll(long long t0) {
+    const std::string t = g_cfg.touchPayload ? anchorPayload(t0) : std::string();
+    const std::string p = g_cfg.portalPayload ? portalPayload(t0) : std::string();
+    if (t.empty()) return p;
+    if (p.empty()) return t;
+    // `owns=touch;touch=...` + `owns=portal;portal=...;portal2=...` -- dp reads
+    // the keys in order and ORs the ownership, so the two `owns` can simply be
+    // concatenated rather than merged into one list.
+    return t + ";" + p;
+}
+
 // ============================================================
 // Fixups: learning where the model is wrong, instead of walking around it
 //
@@ -1322,12 +1368,13 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
                                "--shipyq", num(kYq), "--shipvq", num(kVq),
                                "--threads", kThreads};
     if (!band.empty()) { a.push_back("--startband"); a.push_back(band); }
-    {   // ...and the touch triggers GD had already set off by t0 (cfg
-        // touchpayload, off by default -- see Config::touchPayload for the
-        // lv22 measurement that says why). Both anchor paths are gated the
-        // same way, or the resim and the solve would be anchored into
-        // different worlds, which is the failure this seeding exists to avoid.
-        const std::string ap = g_cfg.touchPayload ? anchorPayload(t0) : std::string();
+    {   // ...and the touch triggers GD had already set off by t0, and the
+        // gravity portals it had already spent (cfg touchpayload /
+        // portalpayload, both off by default -- see Config for what each is
+        // waiting on). Both anchor paths take the SAME payload, or the resim
+        // and the solve would be anchored into different worlds, which is the
+        // failure this seeding exists to avoid.
+        const std::string ap = anchorPayloadAll(t0);
         if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
     }
     {   // the resim must not fire 2900s the recorded run already consumed either --
@@ -1811,7 +1858,7 @@ inline bool runLadder(long long dt) {
         // ...and the touch triggers GD had already set off by t0 (see
         // anchorPayload). The solve gets the same seeding the fixup resim does,
         // or the two would be anchored into different worlds.
-        const std::string ap = g_cfg.touchPayload ? anchorPayload(t0) : std::string();
+        const std::string ap = anchorPayloadAll(t0);
         if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
         std::string band;
         if (r->pmax > r->pmin) {

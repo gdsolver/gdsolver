@@ -203,6 +203,22 @@ struct Config {
     // move-style triggers only. Turning this on before that is reconciled
     // measures the suppression, not the payload.
     bool touchPayload = false;
+    // Seed an anchored solve's SPENT-GRAVITY-PORTAL mask from what GD observed
+    // (cfg `portalpayload=1`, dp's --anchor-state owns=portal). Separate from
+    // touchpayload because the two are in different states: that one is held off
+    // by a population mismatch, while this map's uids are dp's own portal uids
+    // and land exactly (checked on lv22: dp numbers 7 portals and all 7 latch on
+    // the tick GD activates them).
+    // OFF for now, and the reason is that no instrument here can see it. dp's
+    // State::portalLatch starts empty at an anchor, and empty means "nothing
+    // spent" -- which is exactly the behaviour before the latch existed, so an
+    // anchored section can only fail to inherit a refusal, never invent one.
+    // Measured: lv22's quick_regress sections are byte-identical with the latch
+    // on and off. The payload's effect is therefore invisible to the anchored
+    // suites and shows up only in a serial cold run, so it is turned on when
+    // there is a cold run to judge it rather than on the strength of the
+    // argument.
+    bool portalPayload = false;
     // Observe the stair snap (checkSnapJumpToObject). For measuring the phenomenon where x
     // advances extra on the landing tick
     bool snapTrace = false;
