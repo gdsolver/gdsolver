@@ -3936,6 +3936,158 @@ def build_ridestep() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def build_slopeflags() -> str:
+    u"""Survey: which (object id, rotation, flip) yields which m_slopeDirection.
+
+    The slope-adjacency veto census (2026-09-05) has GD refusing to resolve a
+    solid next to a ramp on 5 of 14 ticks and resolving it on the other 9, and
+    the ramp's `sdir` column explains 13 of the 14 -- but that is a fit of a
+    5-valued category to 14 rows, and the corpus' ramps are seven different
+    object ids (309, 321, 323, 484, 665, 666, 1744). Before sdir can be an axis
+    of a sweep, GD has to say which construction produces which value:
+    determineSlopeDirection is the only authority, and the RAMP table above only
+    pins three combinations.
+
+    Geometry only -- nothing here is ridden. The verdict is objrects' sdir/sup
+    (and w/h/sy0/sy1 for the shape), so the run only has to load the level.
+    """
+    objs: list[str] = []
+    x = 90.0
+    # The rig's own four, then the seven the corpus actually uses.
+    ids = (SLOPE30, SLOPE60A, SLOPE60B, SLOPE30B,
+           309, 321, 323, 484, 665, 666)
+    for oid in ids:
+        for rot in (0.0, 90.0, 180.0, 270.0):
+            for fx, fy in ((False, False), (True, False),
+                           (False, True), (True, True)):
+                cx, cy = x + 2 * GRID, GROUND_TOP + GRID
+                objs.append(obj(oid, cx, cy, rot=rot, flip_x=fx, flip_y=fy))
+                UNITS.append({"x0": x, "cx": cx, "cy": cy, "oid": oid,
+                              "rot": rot, "flip_x": int(fx), "flip_y": int(fy)})
+                x += 4 * GRID
+    objs += floor_run(0, x + 300.0)
+    return header() + ";" + ";".join(objs) + ";"
+
+
+def slopeveto_unit(x: float, mode: str, rot: float, fx: bool, fy: bool,
+                   d: float) -> tuple[list[str], float, dict]:
+    u"""A ramp chain climbing to a junction, with a solid butted against its
+    high end whose top face is d px off the ramp's line there.
+
+    This is the corpus arrangement: lv19 t=254 (ramp uid33 rising to the corner
+    at x=330,y=120, slab uid47 occupying 330..360 with its top face at 120) and
+    lv18 t=9,297 (ramp uid6440 to 12810,210, block uid6528 at 12810..12840 top
+    210) are both d = 0, and GD refuses to resolve the solid on both.
+
+    The ramp is always id 1743, always the same 30x30 box, and -- for the four
+    uphill directions -- always the same line 105->135 (the flag survey,
+    calib_slopeflags, read all 160 id/rot/flip combinations back from GD). So
+    `rot`/`fx`/`fy` move m_slopeDirection WITHOUT moving the geometry, which is
+    what makes this a single-variable test rather than another corpus fit.
+    """
+    oid, w, h = SLOPE30, 30.0, 30.0
+    objs: list[str] = []
+    objs.append(obj(MODE_PORTAL[mode], x, GROUND_TOP + 15.0))
+    objs.append(obj(SIZE_NORM, x + 2 * GRID, GROUND_TOP + 15.0))
+    n_up = 3
+    xr = x + 8 * GRID
+    bottom = GROUND_TOP
+    for _ in range(n_up):
+        cy = bottom + h / 2.0
+        objs.append(obj(oid, xr + w / 2.0, cy, rot=rot, flip_x=fx, flip_y=fy))
+        yy = GROUND_TOP + GRID / 2
+        while yy < cy - h / 2.0 + 1.0:
+            for k in range(int(w / GRID)):
+                objs.append(obj(BLOCK, xr + GRID / 2 + k * GRID, yy))
+            yy += GRID
+        bottom += h
+        xr += w
+    # The line reaches `bottom` at x = xr, so the solid's top face is bottom + d.
+    top = bottom + d
+    objs.append(obj(BLOCK, xr + GRID / 2, top - GRID / 2))
+    u = {"x0": x, "mode": mode, "rot": rot, "flip_x": int(fx),
+         "flip_y": int(fy), "d": d, "solid_cx": xr + GRID / 2,
+         "solid_top": top, "ramp_hi_x": xr, "ramp_hi_y": bottom}
+    return objs, xr + 12 * GRID, u
+
+
+def build_slopeveto() -> str:
+    u"""Does GD's refusal to resolve a ramp-adjacent solid read the ramp's
+    m_slopeDirection?
+
+    The veto census (2026-09-05) measured GD's own `hit` flag out of
+    collidedWithObject on the 14 ticks where the model clamps to a solid beside
+    a ramp: 5 refusals, 9 resolutions. `sdir` explains 13 of the 14 (sdir=0
+    always refused, {2,3,4,7} always resolved), but that is a 5-valued category
+    fitted to 14 rows whose ramps are seven different object ids -- exactly the
+    shape of a coincidence.
+
+    So hold everything else still. sdir 0 and 7 are both FLOOR ramps
+    (slopeIsCeiling = {1,3,5,6}) and both uphill, and for id 1743 both are a
+    30x30 box carrying the identical line 105->135 -- an upright cube rides them
+    the same way. Only the flag differs.
+
+      sdir=0 : rot 0,  no flip     corpus says REFUSED (lv18 9,297 / lv19 254,
+                                   506 / lv20 5,278)
+      sdir=7 : rot 90, flip Y      corpus says RESOLVED (lv22 4,592 / 4,595)
+
+    If the hit flag splits along that pair, the veto reads the direction flag
+    and the census' 13/14 was real. If it does not split, sdir was a confound
+    and the first axis goes back to the placement.
+
+    Run it with nodeath=1 and hitboxtrace=1; the verdict is per unit, so the
+    window has to cover the whole level.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for rot, fx, fy, sdir in ((0.0, False, False, 0), (90.0, False, True, 7)):
+        # d is measured the opposite way round from `ridestep`'s depth: there,
+        # depth = line - the step's top surface, so depth = -d. Its boundary is
+        # kStepDepth 3.15 (<= 3.1 passes / >= 3.2 mounts), i.e. d <= -3.15, so
+        # the sweep runs to -4.0 to straddle the veto's +-2.0 AND that one, on
+        # the same units.
+        for d in (-4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0,
+                  0.5, 1.0, 1.5, 2.0, 2.5, 3.0):
+            u_objs, x_next, u = slopeveto_unit(x, "cube", rot, fx, fy, d)
+            objs += u_objs
+            u["x1"] = x_next
+            u["sdir_expected"] = sdir
+            UNITS.append(u)
+            x = x_next
+    objs += floor_run(0, x + 600.0)
+    return header() + ";" + ";".join(objs) + ";"
+
+
+def build_slopeveto2() -> str:
+    u"""Second pass: bracket the two boundaries the coarse sweep exposed.
+
+    calib_slopeveto (2026-09-05) ran sdir 0 against sdir 7 with the geometry held
+    bit-identical and found NO difference -- so the veto does not read
+    m_slopeDirection, and the corpus' 13-of-14 fit was a confound. What it did
+    find is a sharp transition in d (the solid's top face minus the ramp's line
+    at the junction): refusals run 20-26 per unit up to d = +2.0 and are 0 at
+    d = +2.5, on both directions at once. That is the asm's +-2.0.
+
+    So drop the direction axis and spend the units on resolution:
+      +1.85 .. +2.60 in 0.05/0.1 steps  -- where exactly the veto stops
+      -2.90 .. -3.50                    -- kStepDepth's 3.15 lives at d = -3.15
+                                           (depth = -d), on these same units
+    """
+    objs: list[str] = []
+    x = 90.0
+    fine = (1.85, 1.90, 1.95, 2.00, 2.05, 2.10, 2.20, 2.30, 2.40, 2.50, 2.60,
+            -2.90, -3.00, -3.10, -3.15, -3.20, -3.30, -3.50)
+    for d in fine:
+        u_objs, x_next, u = slopeveto_unit(x, "cube", 0.0, False, False, d)
+        objs += u_objs
+        u["x1"] = x_next
+        u["sdir_expected"] = 0
+        UNITS.append(u)
+        x = x_next
+    objs += floor_run(0, x + 600.0)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 def build_seam07() -> str:
     global SEAM_SPEED
     SEAM_SPEED = 1
@@ -4036,6 +4188,9 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "ceilrel07": build_ceilrel07, "seam": build_seam,
             "seam07": build_seam07, "seam11": build_seam11,
             "ridestep": build_ridestep, "ceilhold": build_ceilhold,
+            "slopeflags": build_slopeflags,
+            "slopeveto": build_slopeveto,
+            "slopeveto2": build_slopeveto2,
             "dropair": build_dropair, "dualport": build_dualport,
             "flyramps": build_flyramps,
             "portwavebig": build_portwavebig,
@@ -4112,3 +4267,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
