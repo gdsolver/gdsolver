@@ -131,6 +131,14 @@ inline bool g_noForceOrder = false; // --no-forceorder
 // halve vy (the pre-2026-09-05 behaviour). GD reaches it through flipGravity,
 // whose mulsd 0.5 @0x39a2dc runs on any real polarity change.
 inline bool g_noRot2900Halve = false; // --no-rot2900halve
+// The gravity-frame speed at or below which a ramp CONTACT becomes a LANDING.
+// GD's own: hitGround sets m_isOnGround only when s*v <= this (comisd against
+// the double @0x622E98); above it the caller restores the old vy (0x3907dd).
+// Not fitted -- read from the binary.
+constexpr double kSlopeLandV = 5.0;
+// --no-slopeland5: a ramp contact always lands, whatever the speed (the
+// pre-2026-09-05 behaviour).
+inline bool g_noSlopeLand5 = false; // --no-slopeland5
 // --old-slope: A/B escape hatch (same convention as --old-latency). Restores
 // the pre-2026-08-04 slope exit: ball = tap-anchored line / mini x0.625, and
 // NO ride-time ramp. See slopeExitVy / slopeRampFactor for why the new form

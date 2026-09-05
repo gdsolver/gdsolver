@@ -131,6 +131,8 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--no-forceorder")) g_noForceOrder = true;
         // --no-rot2900halve: no halving on a same-frame 2900 polarity change.
         if (!std::strcmp(argv[i], "--no-rot2900halve")) g_noRot2900Halve = true;
+        // --no-slopeland5: ramp contact always lands. See g_noSlopeLand5.
+        if (!std::strcmp(argv[i], "--no-slopeland5")) g_noSlopeLand5 = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;

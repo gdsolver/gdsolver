@@ -6762,6 +6762,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     //   the census lv16 `mini1/sp0.7/slope+0.50/ride0` is **in=1**
                     // So the ride itself pins vy to 0, and the ladder rises from
                     // 2.000 **only while pressing**.
+                    // The velocity as it stands ENTERING this block, i.e. after
+                    // the tick's own integration. GD's restore at 0x3907dd puts
+                    // back the value hitGround was called with, which is this
+                    // one and not the previous tick's: restoring s.vy instead
+                    // left lv22 t=18,606 exactly one gravity step out
+                    // (edvy -0.2150, the model on 13.0645 where GD is 12.849).
+                    const float vyPreRide = c.vy;
                     if (c.mode == 1 && input) {
                         // [2026-08-24] ...and the ladder is MIRRORED BY GRAVITY. A ship's
                         // press acts toward the player's own "up", which is world-down when
@@ -6889,6 +6896,46 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     } else if (!(flipForRide && ridesTop)) {
                         c.vy = 0;
                     }
+                    // CONTACT IS NOT LANDING. collidedWithSlopeInternal does
+                    // setPosition(x, targetY) @0x39074a and m_isOnSlope = 1
+                    // @0x390750 unconditionally, and only decides about landing
+                    // ~180 instructions later: hitGround always zeroes vy
+                    // (0x39c164) but sets m_isOnGround only when the
+                    // gravity-frame speed is <= 5.0 (comisd against the double
+                    // @0x622E98), and the caller PUTS THE OLD VELOCITY BACK when
+                    // it is above (comiss against 5.0f @0x623010 / -5.0f
+                    // @0x6237C0, then setYVelocity at 0x3907dd).
+                    // So above the threshold the ramp still corrects the
+                    // position and still counts as onSlope; it simply is not a
+                    // landing. lv22 t=18,606 is that case in GD's own trace: it
+                    // sets onSlope=1 for uid 16681 and moves y 2021.843 ->
+                    // 2021.949 while keeping vy=12.849 and staying ungrounded,
+                    // where the model zeroed vy and grounded on the tick after a
+                    // jump.
+                    // Measured over all 1,016 ramp acquisitions, split by GD's
+                    // grounded TRANSITION (the value alone is no evidence: the
+                    // non-landing path does not clear the flag, so 912 rows sit
+                    // in 1->1 and say nothing):
+                    //   0->1  GD lands       23 rows, ALL s*v <= 5   23/23
+                    //   0->0  GD refuses     66 rows, ALL s*v <= 5    0/66
+                    // so the threshold is sufficient to refuse and not necessary
+                    // -- the 66 belong to the other three refusal causes (the
+                    // underside branch 0x390931, the re-acquisition suppression
+                    // 0x390488, the two contact-test forms) and are untouched.
+                    // On this corpus the gate is therefore NEUTRAL: every
+                    // informative row is below it. What it changes is lv22
+                    // t=18,606 at s*v = +13.06, which the whole-run census
+                    // cannot reach because lv22 dies at t=6,350.
+                    // The entering velocity is used, matching the census; GD
+                    // tests the integrated one, a gravity step away, and no row
+                    // is near enough to 5.0 for that to matter (the largest is
+                    // +2.6). For the same reason the corpus cannot say whether
+                    // the deciding compare is the double or the caller's float.
+                    const double svRide =
+                        (double)vyPreRide * (c.flip ? -1.0 : 1.0);
+                    const bool rideLands =
+                        g_noSlopeLand5 || svRide <= kSlopeLandV;
+                    if (!rideLands) c.vy = vyPreRide;   // 0x3907dd's restore
                     // ...and **it is not grounded either**. GD's onGround stays 0
                     // throughout this ride (the measurement table above, every
                     // tick of 8,227..8,235). Setting it lets the next tick's
@@ -6896,8 +6943,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     // vanishes in 1 tick (r61b's remainder: only t=8,233 matches
                     // at 3.020, and from 8,234 only the model is 0). r67: this
                     // too is limited to the push-out case.
-                    if (!(flipForRide && ridesTop)) c.grounded = 1;
-                    else rodeFlipped = true;
+                    if (rideLands && !(flipForRide && ridesTop)) c.grounded = 1;
+                    else if (rideLands) rodeFlipped = true;
                     c.onSlope = 1;
                     c.slopeM = (float)m;
                     c.slopeUid0 = s.onSlope ? s.slopeUid0 : sp->uid;
