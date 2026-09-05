@@ -2052,9 +2052,12 @@ def padfall_unit(x: float, off: float, mini: bool, jump: bool = True
     the trick orbair_unit uses for the same reason. Exactly one of them fires --
     `padact:` names it and reports its centre -- and WHICH one fires is set by
     where the arc is at that x, so sweeping the curtain's x sweeps the descent
-    speed without predicting the trajectory. Spacing is 34 = the pad's half 2
-    plus the player's 15, doubled: the reach regions tile with neither overlap
-    (two pads in range at once) nor gap (a hole the arc slips through).
+    speed without predicting the trajectory. Spacing is 2 * (pad half 2 + player
+    half): the reach regions then tile with neither overlap (two pads in range
+    at once, which would make "which fired" ambiguous) nor gap (a hole the arc
+    slips through un-caught). IT DEPENDS ON THE PLAYER'S HALF -- 34 normal, 22
+    mini -- and a curtain built at 34 for a mini body leaves a 12 px hole every
+    34 px, which is not a wrong measurement but a partly blind one.
 
     The delay is read in ticks without any per-tick dump, because `padact:`
     carries the fire `vy`:
@@ -2084,13 +2087,22 @@ def padfall_unit(x: float, off: float, mini: bool, jump: bool = True
         # jump lands wherever it lands and the curtain catches the arc anyway.
         plan = [(t, 1), (t + 1, 0)]
     x_curtain = x_ref + off
+    spacing = 2.0 * (2.0 + p_half)      # 34 normal, 22 mini
     cy = GROUND_TOP + p_half
+    n_pads = 0
     while cy <= GROUND_TOP + p_half + 320.0:
         objs.append(obj(oid, x_curtain, cy))
-        cy += 34.0
+        n_pads += 1
+        cy += spacing
     meta = {"x0": x, "off": off, "mini": int(mini), "jump": int(jump),
             "p_half": p_half, "x_curtain": x_curtain, "t_press": t if jump else -1,
             "pad_w": 25.0, "pad_h": 4.0,
+            "spacing": spacing, "n_pads": n_pads,
+            # Coverage is gapless by construction: the curtain's step equals the
+            # height of one pad's reach, so every y in the swept band belongs to
+            # exactly one pad. A unit that does not fire is therefore evidence
+            # about the ARC (it left the band), never about coverage.
+            "coverage": "gapless",
             # the pre-registered rule: contact on the first tick where the boxes
             # overlap. `pad_cy` is filled in from the run (which pad fired).
             "pred_fire_y_offset": 2.0 + p_half,
