@@ -8497,31 +8497,29 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                             continue;
                         const double face =
                             c.flip ? (o->cy - o->hh) : (o->cy + o->hh);
-                        // How deep the new body's foot sits below the face. The
-                        // bound is the landing loop's own reach-back (`dHangL >=
-                        // -landTol`, kLandTol = 10, measured on the floor) and
-                        // NOT nh: allowing a full half-height would seat bodies
-                        // 10-15px inside a solid, which is the band GD hands to
-                        // the crush box (half 4.5), and nothing measured says it
-                        // seats there. Claiming to be "the new mode's landing
-                        // predicate" while carrying a different tolerance would
-                        // make this a new predicate instead.
-                        // The loop measures its reach-back from the PREVIOUS
-                        // foot, which a body that has just changed does not
-                        // have. GD says which one to use: the `ppre` rect on
-                        // the hbox line is taken immediately before
-                        // collidedWithObject resolves, and at lv11 t=15,505 it
-                        // reads y origin 170.71 -- the CURRENT foot (c.y 185.706
-                        // - 15), not the previous one (s.y 185.799 - 15 =
-                        // 170.80). So the bound goes on the current foot.
-                        // `groundedInvCeil`'s arm of the same test is moot here:
-                        // this branch already requires !c.grounded.
-                        const double pen =
-                            (face - ((double)c.y - gs * nh)) * gs;
-                        if (pen < 0.0 || pen > kLandTol) continue;
-                        // ...and the centre still has to be above the face: for
-                        // a mini body (nh 9) kLandTol alone does not imply it.
-                        if (((double)c.y - face) * gs <= 0.0) continue;
+                        // GD's own test, not an analogy to one. collidedWithObject
+                        // carries TWO edge sets: the current rect (the `ppre` on
+                        // an hbox line) and a previous one it builds as the
+                        // current edge minus the position delta
+                        // (getPosition().y - [this+0x4d4], 0x391e8e-0x391f48).
+                        // For a body whose half just changed, that previous edge
+                        // is the NEW body's foot displaced back a tick, which is
+                        // exactly `s.y - gs*nh` -- so both edges use nh and
+                        // neither uses the old mode's half.
+                        // The previous edge is then widened by a slack (xmm8):
+                        // 10.0f at 0x62307C, and 6.0f at 0x391c48 for the modes
+                        // in the [+0x9bb] set. There is NO minimum-overlap
+                        // threshold anywhere in the function, so the depth is
+                        // bounded only through that slack, and the direction is
+                        // decided by the velocity sign gate at 0x392a60-6e.
+                        // (This replaced a bound on the CURRENT foot's
+                        // penetration. That form was not GD's: it is the overlap
+                        // term alone, missing the widened previous edge.)
+                        const double prevFoot =
+                            ((double)s.y - gs * nh - face) * gs;
+                        const double curFoot =
+                            ((double)c.y - gs * nh - face) * gs;
+                        if (prevFoot < -kLandTol || curFoot > 0.0) continue;
                         if (!best || (face - bestFace) * gs > 0.0) {
                             best = o;
                             bestFace = face;
