@@ -603,6 +603,16 @@ struct State {
 // That happened the same day this assert was written (8f1ae6b added three
 // payload globals and reset none of them), so the two rules are siblings and
 // neither mechanism covers the other.
+// AND IT IS SILENT ON THE EASIEST ADDITION OF ALL: a one-byte field that lands
+// in existing PADDING leaves sizeof unchanged, so this assert never fires.
+// `boost2` (e6324c4) is exactly that -- a uint8_t added beside the other
+// per-half bytes, size still 344, build green, no question asked. The seeding
+// hole it carries (--start has one boost field and it seeds p1's) was caught
+// because its author wrote it down, which is discipline and not this
+// mechanism. So when the new field is a uint8_t, check by hand what this
+// cannot: the three per-half sites if it has a second body (declaration,
+// swapHalves, the merge list in fixup.hpp) and which --start field, if any,
+// seeds it.
 static_assert(sizeof(State) == 344,
               "State changed size. If the new field ACCUMULATES over ticks, "
               "seed it in the --start anchor scan, print it in --seeddump, and "
