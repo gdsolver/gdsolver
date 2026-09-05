@@ -5577,11 +5577,56 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // -2, no-ops -- consistent at 3 points. No re-clamp while
                         // pressing continues (e.g. the press edge at 18,833).
                         const bool holdRelU = s.held && !input;
-                        const double vClampU = (c.mode == 6) ? 0.0 : -2.0;
-                        if (dirU < 0.0 && (freshU || holdRelU)
-                            && (double)c.vy > vClampU) {
-                            c.vy = (float)vClampU;
-                            CLAMP0O("slope/upceil", sp);
+                        // [2026-09-06] **The +-2.000 is GD's V4 (bVar24), and
+                        // none of the three gates above is GD's.** This site is
+                        // `!c.flip && ceilRamp`, i.e. m_isUpsideDown=0 and
+                        // isTop=1, so it is always the UNDERSIDE branch, where
+                        // the only velocity writes are V3 (`min(vy,0)`, already
+                        // done at the seat above) and V4 @0x3909d5. V4 is
+                        // signed by m_isUpsideDown alone -- -2.0 upright, along
+                        // gravity -- and is gated on `!m_jumpBuffered &&
+                        // flight-mode && bVar22`, not on the gradient (`dirU`),
+                        // not on the contact being fresh and not on a
+                        // hold-release edge.
+                        // Witnesses, all from GD's own dump of the shipped
+                        // lv16/lv18 plans (button = the plan's press tick plus
+                        // the mode's latency, which is what `input` already is
+                        // here; the phase is 100% of 4,156 free-flight ship
+                        // ticks in lv9/lv10/lv11/lv16 against the thrust sign):
+                        //   lv16 p2 8,875/8,876 held  -> 0.000 (V3 only)
+                        //   lv16 p2 8,877     released -> **-2.000**
+                        //   lv16 p1 14,307..14,343 held -> 0.000 every tick
+                        //   lv16 p1 14,344/14,350/14,352/14,355 released ->
+                        //        **-2.000** each time, the SAME contact firing
+                        //        four times ("once" is not a latch)
+                        //   lv16 p1 14,358 released -> **no write**: the tick's
+                        //        own gravity step had already taken vy to
+                        //        -2.030, past the gate's -2.0
+                        //   lv16 p1 14,588 released -> -2.000 from vy=+7.387
+                        // The three witnesses the old comment above cites
+                        // (lv20 18,826 / lv18 20,479 / lv22 8,259) are all
+                        // outside the current corpus or no longer fire, so the
+                        // `mode == 6` value and the `freshU || holdRelU` gate
+                        // had no live evidence left.
+                        // The CUBE FAMILY keeps the old branch: a cube/ball/
+                        // robot/spider can set neither nudge flag, and what it
+                        // gets on the underside is the crush push V0
+                        // (0x39028b), which lv18 t=20,178's -2.000 is.
+                        if (!g_noSlopeNudge && slopeNudgeMode(c.mode)) {
+                            const float vN = slopeNudge(c.vy, c.flip != 0,
+                                                        sp->slopeDir, c.mode,
+                                                        input);
+                            if (vN != c.vy) {
+                                c.vy = vN;
+                                CLAMP0O("slope/upceil", sp);
+                            }
+                        } else {
+                            const double vClampU = (c.mode == 6) ? 0.0 : -2.0;
+                            if (dirU < 0.0 && (freshU || holdRelU)
+                                && (double)c.vy > vClampU) {
+                                c.vy = (float)vClampU;
+                                CLAMP0O("slope/upceil", sp);
+                            }
                         }
                     }
                 }
@@ -5757,7 +5802,49 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             const bool contH =
                                 s.onSlope && c.slopeM == (float)m;
                             bool flyHangRide = false;
-                            if (!g_noHangLadder && c.mode == 1 && input) {
+                            // [2026-09-06] **This block is `c.flip &&
+                            // ceilRamp`, so it is always the GRAVITY-FACING
+                            // side** (m_isUpsideDown=1, isTop=1, XOR=0), and
+                            // there GD does exactly two things: `hitGround`
+                            // @0x3907ad zeroes vy every ride tick, UNLESS
+                            // bVar3/bVar20 is set (`m_jumpBuffered && flight &&
+                            // !bVar22`), in which case the landing block is
+                            // skipped entirely and V5 @0x390a19 assigns
+                            // -2.0 flipped / +2.0 upright once the gate lets it.
+                            // The ladder that used to live here (2.0 * dirH,
+                            // then kShipRampG) was the gradient's sign and a
+                            // rule of its own; GD has neither -- what follows a
+                            // V5 write is the mode's own updateJump step,
+                            // because hitGround is not running.
+                            // Witness, GD's dump of the shipped lv16 plan:
+                            //   p1 8,699..8,719 (flipped ship, ceiling ramp
+                            //   uid3763, released) -> vy 0.000 for 21 ticks;
+                            //   8,720, the first held tick -> **-2.000**, and
+                            //   the seat still writes y (539.000) on that tick.
+                            //   p2 18,689 held -> -2.000; 18,690 held but
+                            //   vy=-2.101 already past -> **no write and no
+                            //   zeroing** (hitGround stayed skipped);
+                            //   18,691/18,692 released -> 0.000; 18,693 and
+                            //   18,695 held -> -2.000 again.
+                            // The `contH` guard on the zeroing is the model's,
+                            // not GD's: a body merely falling through the line
+                            // (lv21 t=19,837) keeps its velocity here, and that
+                            // is measured. Only the ride continuation is zeroed.
+                            const bool nudgeHere =
+                                !g_noSlopeNudge && slopeNudgeMode(c.mode);
+                            if (nudgeHere
+                                && slopeSkipsHitGround(c.flip != 0,
+                                                       sp->slopeDir, c.mode,
+                                                       input)) {
+                                c.vy = slopeNudge(c.vy, c.flip != 0,
+                                                  sp->slopeDir, c.mode, input);
+                                flyHangRide = true;
+                            } else if (nudgeHere && contH) {
+                                c.vy = 0.f;       // V1, hitGround @0x39c164
+                                flyHangRide = true;
+                            } else if (nudgeHere) {
+                                // nothing to continue: the generic clamp below
+                            } else if (!g_noHangLadder && c.mode == 1 && input) {
                                 const double dirH =
                                     (m * (double)useDx >= 0.0) ? 1.0 : -1.0;
                                 if (!(contH && s.vy != 0.0f))
@@ -6048,10 +6135,28 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             // sections, i.e. exactly the family the generic
                             // ride's `c.vy = 0` was measured on.
                             if ((double)c.vy > 0.0) {
-                                const double dir =
-                                    (m * (double)useDx >= 0.0) ? 1.0 : -1.0;
-                                c.vy = (c.mode == 1 && dir < 0.0)
-                                           ? (float)(2.0 * dir) : 0.f;
+                                // [2026-09-06] Same site, same rule as
+                                // `slope/upceil`: `!c.flip && ceilRamp` is the
+                                // UNDERSIDE, so V3 (`min(vy,0)`, and vy > 0
+                                // here, hence 0) runs first and V4 @0x3909d5
+                                // then places -2.000 while the button is NOT
+                                // held. The old form read the SHIP off the
+                                // gradient (`dir < 0`), which is the one factor
+                                // the disassembly says the sign does not have.
+                                // The witness the old comment cites, lv16
+                                // t=15,320 (upright ship rising into ceiling
+                                // ramp uid7606, GD sets -2.000), is a released
+                                // tick, so it survives the change.
+                                if (!g_noSlopeNudge && slopeNudgeMode(c.mode)) {
+                                    c.vy = slopeNudge(0.f, c.flip != 0,
+                                                      sp->slopeDir, c.mode,
+                                                      input);
+                                } else {
+                                    const double dir =
+                                        (m * (double)useDx >= 0.0) ? 1.0 : -1.0;
+                                    c.vy = (c.mode == 1 && dir < 0.0)
+                                               ? (float)(2.0 * dir) : 0.f;
+                                }
                                 CLAMP0("slope/ceillim");
                             }
                         // [2026-08-21 r78] **While still being pressed on the same
@@ -7042,7 +7147,57 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // left lv22 t=18,606 exactly one gravity step out
                     // (edvy -0.2150, the model on 13.0645 where GD is 12.849).
                     const float vyPreRide = c.vy;
-                    if (c.mode == 1 && input) {
+                    // [2026-09-06] **The ride's velocity is decided by the
+                    // contact SIDE, and the two ladders below are not GD's.**
+                    // `m_isUpsideDown XOR isTop` (0x38fe00) picks one of two
+                    // regimes, and neither of them has a gradient factor, a
+                    // per-mode coefficient or a "carried is 0" entry test:
+                    //   GRAVITY-FACING  hitGround @0x3907ad zeroes vy every
+                    //                   tick, unless bVar3 (`m_jumpBuffered &&
+                    //                   flight && !bVar22`) skips the landing
+                    //                   block, and then V5 @0x390a19 assigns
+                    //                   +2.0 upright / -2.0 flipped once the
+                    //                   gate lets it and the rest is the mode's
+                    //                   own updateJump step
+                    //   UNDERSIDE       no hitGround at all: V3 @0x390942/49
+                    //                   (`min(vy,0)` upright / `max(vy,0)`
+                    //                   flipped) and then V4 @0x3909d5, -2.0
+                    //                   upright / +2.0 flipped while the button
+                    //                   is NOT held. In between, vy
+                    //                   free-integrates.
+                    // The ship's kShipRampG ladder and the swing's walkIn0 are
+                    // both descriptions of "free integration on the side where
+                    // hitGround does not run" plus "0 on the side where it
+                    // does", fitted per mode; the side test replaces both.
+                    // Witnesses (GD's dump of the shipped plans, `input` here
+                    // is already the plan's press plus the mode's latency):
+                    //   lv16 p1 8,875/8,876 held, flipped above floor ramp
+                    //        uid3820 = underside -> V3 gives 0.000, 0.000
+                    //   lv16 p1 8,877 released -> V4 -> **+2.000**, then plain
+                    //        integration for the remaining 35 ride ticks
+                    //   lv16 p2 8,877, the mirror half (upright under ceiling
+                    //        ramp uid3819) -> **-2.000**
+                    //   lv16 both halves 9,244/9,246/9,248 held, gravity-facing
+                    //        -> V5 (-2.000 p1 / +2.000 p2), and 9,245/9,247
+                    //        released -> 0.000, the same contact alternating
+                    //   lv20 p1 14,016 released, flipped above floor ramp
+                    //        uid11804 = underside -> **+2.000** (the model
+                    //        wrote nothing here at all)
+                    if (!g_noSlopeNudge && slopeNudgeMode(c.mode)) {
+                        const double gsN = c.flip ? -1.0 : 1.0;
+                        if (slopeUnderside(c.flip != 0, sp->slopeDir)) {
+                            if (gsN * (double)c.vy > 0.0) c.vy = 0.f;   // V3
+                            c.vy = slopeNudge(c.vy, c.flip != 0, sp->slopeDir,
+                                              c.mode, input);
+                        } else if (slopeSkipsHitGround(c.flip != 0,
+                                                       sp->slopeDir, c.mode,
+                                                       input)) {
+                            c.vy = slopeNudge(c.vy, c.flip != 0, sp->slopeDir,
+                                              c.mode, input);
+                        } else {
+                            c.vy = 0.f;                                 // V1
+                        }
+                    } else if (c.mode == 1 && input) {
                         // [2026-08-24] ...and the ladder is MIRRORED BY GRAVITY. A ship's
                         // press acts toward the player's own "up", which is world-down when
                         // it is flipped, so the entry value follows the flip and not the
@@ -7208,7 +7363,19 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         (double)vyPreRide * (c.flip ? -1.0 : 1.0);
                     const bool rideLands =
                         g_noSlopeLand5 || svRide <= kSlopeLandV;
-                    if (!rideLands) c.vy = vyPreRide;   // 0x3907dd's restore
+                    // [2026-09-06] **V2 is the GRAVITY-FACING branch's restore.**
+                    // 0x3907dd sits behind `hitGround` on the XOR == 0 path
+                    // (0x390790 jumps the underside past it), so on the
+                    // underside there is nothing to undo -- the min/max clamp
+                    // and the nudge above ARE the write, and putting vyPreRide
+                    // back would erase them for any contact entered above 5.0
+                    // (lv16 t=14,588 arrives at +7.387 and GD still reads
+                    // -2.000 on that tick).
+                    const bool undoneBySide =
+                        !g_noSlopeNudge && slopeNudgeMode(c.mode)
+                        && slopeUnderside(c.flip != 0, sp->slopeDir);
+                    if (!rideLands && !undoneBySide)
+                        c.vy = vyPreRide;               // 0x3907dd's restore
                     // ...and **it is not grounded either**. GD's onGround stays 0
                     // throughout this ride (the measurement table above, every
                     // tick of 8,227..8,235). Setting it lets the next tick's

@@ -45,6 +45,86 @@ inline bool slopeIsCeiling(uint8_t dir) {
 inline bool slopeIsUphill(uint8_t dir) {
     return dir == 0 || dir == 3 || dir == 6 || dir == 7;
 }
+
+// ---------------------------------------------------------------------------
+// THE +-2.000 SLOPE NUDGE (collidedWithSlopeInternal, 2.2081).
+//
+// Which of five velocity writes a ramp contact runs is decided by ONE bit,
+// `m_isUpsideDown XOR isTop`, at 0x38fe00-0x38fe25 (isTop = m_slopeDirection in
+// {1,3,5,6} = slopeIsCeiling). XOR == 0 is the GRAVITY-FACING side (the ramp is
+// the player's floor: upright on a floor ramp, flipped on a ceiling ramp) and
+// XOR == 1 is the UNDERSIDE.
+inline bool slopeUnderside(bool flip, uint8_t dir) {
+    return flip != slopeIsCeiling(dir);
+}
+
+// `bVar22`, the second gate both nudges read. Four terms, in order
+// (0x38f8c8-0x38f9f8, spelled out in measure-slope-underside-gate-2026-09-05
+// section 2):
+//
+//   bVar22 = (m_slopeUphill == 0)
+//            XOR goingLeft                       (m_isGoingLeft, or the
+//                                                 platformer x velocity's sign)
+//            XOR (objDeltaAlongTravel > m_playerSpeed * m_speedMultiplier * dt)
+//            XOR (m_isUpsideDown != m_isSideways)
+//
+// LEAF: only the first and last terms are modelled here, i.e. the static,
+// forward-travelling, non-sideways case, which is what every witness on disk
+// is. The mover term needs the ramp's own travel this tick against the
+// player's, and `goingLeft`/`m_isSideways` need the reverse and rotated-frame
+// bits; a ramp that is moving, a reversed player and a rotated frame each read
+// this bit the other way and are NOT covered.
+inline bool slopeBVar22(bool flip, uint8_t dir) {
+    return (!slopeIsUphill(dir)) != flip;
+}
+
+// The four modes that can set either nudge flag at all: ship, UFO, wave, swing
+// (0x3900ab-0x3900c6 for bVar24, 0x38ff0c-0x38ff27 for bVar20). A cube, ball,
+// robot or spider sets NEITHER, on either side -- what a cube gets on the
+// underside is the crush push (V0, 0x39028b), which is a different rule.
+inline bool slopeNudgeMode(int mode) {
+    return mode == 1 || mode == 3 || mode == 4 || mode == 7;
+}
+
+// bVar20 (0x38ff3e), the flag that both fires the gravity-facing nudge and, as
+// `bVar3` (0x38ff4f), SKIPS the whole landing block at 0x39078a -- so on a tick
+// where this is set `hitGround` does not run and vy is not zeroed, whether or
+// not the nudge's own velocity gate lets the write through (GD leaves
+// vy=-2.101 at lv16 dump t=18,690 for exactly that reason).
+inline bool slopeSkipsHitGround(bool flip, uint8_t dir, int mode, bool held) {
+    return held && slopeNudgeMode(mode) && !slopeUnderside(flip, dir)
+        && !slopeBVar22(flip, dir);
+}
+
+// The nudge itself. Returns the vy after it; unchanged when it does not fire.
+//
+//   V5 bVar20 @0x390a19  gravity-facing, `jb && flight && !bVar22`
+//                        vy := +2.0 upright / -2.0 flipped  (AGAINST gravity)
+//                        gate: upright vy < +2.0, flipped vy > -2.0
+//   V4 bVar24 @0x3909d5  underside,      `!jb && flight && bVar22`
+//                        vy := -2.0 upright / +2.0 flipped  (ALONG gravity)
+//                        gate: upright vy > -2.0, flipped vy < +2.0
+//
+// The sign is `m_isUpsideDown` ALONE (`eax = m_isUpsideDown ? -1 : +1`, then
+// `eax + eax` for V5 and `eax * -2.0f` for V4): no gradient factor and no
+// travel direction. Both are plain assignments of 2.000, and both re-test the
+// gate every tick, so "once" is emergent -- see the lv16 dump ticks 14,344 /
+// 14,350 / 14,352 / 14,355, where the same contact fires four times as the
+// button is released, and 14,358, where the same release does NOT fire because
+// the tick's own gravity step had already carried vy to -2.030.
+inline float slopeNudge(float vy, bool flip, uint8_t dir, int mode, bool held) {
+    if (!slopeNudgeMode(mode)) return vy;
+    const double gs = flip ? -1.0 : 1.0;
+    const double v = (double)vy;
+    if (slopeUnderside(flip, dir)) {
+        if (!held && slopeBVar22(flip, dir) && gs * v > -2.0)
+            return (float)(-gs * 2.0);
+    } else {
+        if (held && !slopeBVar22(flip, dir) && gs * v < 2.0)
+            return (float)(gs * 2.0);
+    }
+    return vy;
+}
 // GD REFUSES TO RESOLVE A SOLID THAT A RAMP IS ALREADY GOVERNING.
 // PlayerObject::collidedWithObjectInternal walks the player's slope map before
 // touching the solid, and two sites decide it: the top face at 0x3924ff-0x392536

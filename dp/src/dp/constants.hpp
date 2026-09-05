@@ -162,6 +162,13 @@ inline bool g_noSlopeVeto = false; // --no-slopeveto
 // rule; the same test is already spelled out in slopeWouldAcquire.
 inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
 
+// --no-slopenudge: a ramp contact keeps the pre-2026-09-06 velocity rules --
+// the gradient-signed +-2.0 writes at the three ceiling/ride sites, the ship's
+// kShipRampG ladder and the swing's walkIn0 one -- instead of GD's own
+// V3/V4/V5 (see slopeNudge in slopes.hpp and the site in step.hpp). Kept as the
+// A/B arm: the whole 22-level replay suite has to be byte-identical with it.
+inline bool g_noSlopeNudge = false; // --no-slopenudge
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip

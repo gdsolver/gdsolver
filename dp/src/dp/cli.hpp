@@ -144,6 +144,10 @@ inline int cliMain(int argc, char** argv) {
         // --no-slopefreshrect: a fresh ramp contact skips GD's inset rect test.
         if (!std::strcmp(argv[i], "--no-slopefreshrect"))
             g_noSlopeFreshRect = true;
+        // --no-slopenudge: the ramp contact keeps the pre-2026-09-06 velocity
+        // rules (the gradient-signed +-2.0 writes) instead of GD's V3/V4/V5.
+        if (!std::strcmp(argv[i], "--no-slopenudge"))
+            g_noSlopeNudge = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
