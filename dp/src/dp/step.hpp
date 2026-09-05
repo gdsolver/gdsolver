@@ -9787,7 +9787,62 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // out of the sort, which for equal cx is unspecified; here it was
             // the gravity ring, so the model flipped and rose at 4.472 where GD
             // jumped at 11.180. Pick the candidate with the smallest uid.
+            //
+            // [2026-09-06] ...but the lowest uid is only GD's SAME-TICK
+            // tie-break. GD fires the ring it touched FIRST.
+            // `PlayerObject +0xa38` is `CCArray m_touchedRings` and it is
+            // PERSISTENT across ticks:
+            //   playerTouchedRing (0x217e40) does containsObject (0x217ea1) and
+            //     addObject ONLY if absent (0x217eb5), so a ring's index in the
+            //     array is fixed at its FIRST contact tick and never refreshed;
+            //   +0xa40 is a per-tick "touched this tick" uid set, and every
+            //     tick's head calls resetTouchedRings(player, 0) (0x3982e0,
+            //     from GJBaseGameLayer::update 0x23809e / 0x2380b5) which prunes
+            //     the entries missing from it (removeObjectAtIndex 0x3983e4)
+            //     PRESERVING ORDER, then clears the set (0x398412);
+            //   a fired ring is removed (ringJump 0x398e33);
+            //   pushButton (0x397f40) walks the array FORWARD (0x3980b7).
+            // Ties inside one tick are ascending uid because checkCollisions
+            // sorts each section bucket (0x2143a6, comparator 0x205210
+            // `a->m_uniqueID < b->m_uniqueID`) and collisionCheckObjects
+            // (0x214960) scans it forward.
+            // So: first-contact order, ties within a tick by ascending uid.
+            //
+            // WITNESS -- lv14 dump tick 13,363. A falling cube (vy -15.000) has
+            // yellow orb uid 4934 (id 36, 17325,615) and blue gravity orb uid
+            // 4938 (id 84, 17389,675) both inside its ring box (centre
+            // 17357.54, 645.41; gate 18 + 15 = 33 on both axes). On the PREVIOUS
+            // row only the blue was inside -- blue |dy| 26.210 < 33, yellow
+            // 33.790 > 33 -- so the blue entered the array first and GD fires
+            // it: vy -15.000 -> +4.472 with the gravity flip (11.18 x 0.8 x 0.5,
+            // ringJump's orb factor 0x399254 then flipGravity's halving
+            // 0x39a2d4). The lowest-uid model fired the yellow at 11.18 and
+            // never flipped, which is lv14's first divergence.
+            //
+            // WHAT IS RECONSTRUCTED HERE: one tick of history, recomputed from
+            // the previous state rather than stored -- State does not grow.
+            // A candidate that was ALSO in contact on the previous tick beats
+            // one that was not; when both were, or neither was, the minimum-uid
+            // rule stands, which is why every other branch is bit-identical.
+            // LEAF: the exact GD rule needs each candidate's contact-run START
+            // tick, so one tick of history is exact only while at most one
+            // candidate entered before the current tick. Censused on the 22
+            // whole-run replays with this very gate: **103 ticks** have two
+            // rings in the box at once (lv9 80, all yellow+yellow; lv14 23,
+            // yellow+gravity) and **none has three**, so that is the only
+            // witnessed case. Exactly ONE of the 103 -- lv14 13,363 -- reaches
+            // this selection at all; on the other 102 the press gate above is
+            // shut, which is why the arms are byte-identical everywhere else.
+            // Three candidates entering on three different earlier ticks would
+            // tie here and fall back to uid, and the fold below is then
+            // order-dependent.
+            // LEAF: a MOVING ring has no previous-tick position in the model
+            // (Dynamics::seek rewrites cx/cy in place), so `dynObj` is treated
+            // as ambiguous and the comparison degrades to minimum uid for the
+            // whole tick -- unmeasured, and deliberately the old behaviour.
             const Obj* pick = nullptr;
+            bool pickPrevIn = false;   // `pick` was in contact last tick too
+            bool ringAmbig = false;    // a mover is in play: uid only
             // WHERE the contact is measured. GD's per-tick order is
             //   update -> checkCollisions (this is where the ring is latched)
             //   -> processQueuedButtons (this is where the press is consumed)
@@ -9919,7 +9974,29 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         continue;
                 }
                 if (ob == used) { stillTouching = true; continue; }
-                if (!pick || ob->uid < pick->uid) pick = ob;
+                // Was this ring in the container BEFORE this tick? The same box
+                // logic as the gate above, evaluated at the previous state.
+                // Nothing is stored: `s` is the previous tick.
+                if (ob->dynObj) ringAmbig = true;
+                bool prevIn = !ob->dynObj
+                              && odxPre < ob->hw + pHalf
+                              && odyPre < ob->hh + pHalf;
+                if (prevIn && ob->oriented) {
+                    const double prx = xPrev - ob->cx;
+                    const double pry = (double)s.y - ob->cy;
+                    const double plx = prx * ob->rc - pry * ob->rs;
+                    const double ply = prx * ob->rs + pry * ob->rc;
+                    const double pph = pHalf * (std::fabs(ob->rc)
+                                                + std::fabs(ob->rs));
+                    if (std::fabs(plx) >= ob->ohw + pph
+                        || std::fabs(ply) >= ob->ohh + pph)
+                        prevIn = false;
+                }
+                if (!pick) { pick = ob; pickPrevIn = prevIn; }
+                else if (g_noRingFirstTouch || ringAmbig
+                         || prevIn == pickPrevIn) {
+                    if (ob->uid < pick->uid) { pick = ob; pickPrevIn = prevIn; }
+                } else if (prevIn) { pick = ob; pickPrevIn = prevIn; }
             }
             // [2026-09-05, stage 1 of 2 -- BEHAVIOUR-PRESERVING, no rule change]
             // Everything below applies ONE orb. It is lifted into a lambda so the
@@ -9943,10 +10020,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // reproduces it exactly, so stage 2 removes the question rather than
             // answering it.
             // WHAT STAGE 1 DOES NOT DO: it still passes exactly the one orb `pick`
-            // selected (lowest uid), so behaviour is unchanged and all three
-            // instruments must be byte-identical. lv14's first divergence must
-            // STAY at t=13,363; if it moves, this extraction is not neutral and
-            // the fault is here, not in the mechanism.
+            // selected, so stage 1 itself was byte-identical on all three
+            // instruments. (`pick` was "lowest uid" when that was written; since
+            // 2026-09-06 it is "first-touched, ties by lowest uid" -- see the
+            // block above. Stage 2, firing EVERY touched ring, is still unwritten.)
             auto applyOrb = [&](const Obj* ob) {
                 // [OPEN 2026-08-18] lv20 t=11,896: on the tick a grounded cube
                 // fires gravity orb uid10053, GD stays y=219.000 while the model

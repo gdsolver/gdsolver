@@ -185,6 +185,19 @@ inline bool g_noMpushReach = false; // --no-mpushreach
 // byte-identical to the build before the change.
 inline bool g_noBoostLatch = false; // --no-boostlatch
 
+// --no-ringfirsttouch: when several rings touch on the same tick the model
+// picks the LOWEST UID, the pre-2026-09-06 behaviour, instead of preferring the
+// one that was already in contact on the previous tick. GD's container
+// `PlayerObject +0xa38` (m_touchedRings) is appended to only on a ring's FIRST
+// contact (playerTouchedRing 0x217e40, containsObject 0x217ea1 / addObject
+// 0x217eb5) and is pruned in place, order preserved, at every tick's head
+// (resetTouchedRings(p,0) 0x3982e0), so pushButton's forward walk (0x3980b7)
+// fires the FIRST-TOUCHED ring; ascending uid is only the same-tick tie-break
+// (the bucket sort 0x2143a6 / comparator 0x205210). See the site in step.hpp.
+// Kept as the A/B arm: with it the whole 22-level replay suite has to be
+// byte-identical to the build before the change.
+inline bool g_noRingFirstTouch = false; // --no-ringfirsttouch
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip

@@ -88,6 +88,7 @@ inline void resetInvocationState() {
     g_noSlopeNudge = false;
     g_noMpushReach = false;
     g_noBoostLatch = false;
+    g_noRingFirstTouch = false;
     g_noDualFlip = false;
     g_noR52GravHold = false;
     g_oldLatency = false;

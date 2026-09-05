@@ -158,6 +158,11 @@ inline int cliMain(int argc, char** argv) {
         // rung.
         if (!std::strcmp(argv[i], "--no-boostlatch"))
             g_noBoostLatch = true;
+        // --no-ringfirsttouch: several rings touching at once are resolved by
+        // lowest uid alone (the pre-2026-09-06 behaviour), without preferring
+        // the one that was already in contact on the previous tick.
+        if (!std::strcmp(argv[i], "--no-ringfirsttouch"))
+            g_noRingFirstTouch = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
