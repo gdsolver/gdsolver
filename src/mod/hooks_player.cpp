@@ -547,18 +547,29 @@ class $modify(PlayerObject) {
             if (++lines <= 40000) {
                 CCRect pr = this->getObjectRect();
                 CCRect orr = obj->getObjectRect();
-                char b[352];
+                // The slope state AT THE SOLID PASS, which is the only place it
+                // can be read honestly: checkCollisions zeroes m_isOnSlope at the
+                // top of every tick and the slope pass sets it again, so the
+                // per-tick dump always shows 0 and the `slp:` line only fires when
+                // collidedWithSlopeInternal is called at all. The veto's x-filter
+                // bypass is `m_isOnSlope || m_wasOnSlope || partner == NULL ||
+                // ramp == m_currentSlope`, so these three are what decides it.
+                GameObject* cs = static_cast<GameObject*>(this->m_currentSlope);
+                char b[416];
                 snprintf(b, sizeof(b),
                     "hbox: t=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
                     "arg=(%.2f,%.2f,%.2f,%.2f) objrect=(%.2f,%.2f,%.2f,%.2f) "
-                    "player=(%.2f,%.2f,%.2f,%.2f) ppre=(%.2f,%.2f,%.2f,%.2f)",
+                    "player=(%.2f,%.2f,%.2f,%.2f) ppre=(%.2f,%.2f,%.2f,%.2f) "
+                    "onslp=%d wasslp=%d curslp=%d",
                     (long long)g_tick, who, obj->m_uniqueID, (int)obj->getType(),
                     r ? 1 : 0, this->m_vehicleSize,
                     rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
                     orr.origin.x, orr.origin.y, orr.size.width, orr.size.height,
                     pr.origin.x, pr.origin.y, pr.size.width, pr.size.height,
                     prePr.origin.x, prePr.origin.y,
-                    prePr.size.width, prePr.size.height);
+                    prePr.size.width, prePr.size.height,
+                    (int)this->m_isOnSlope, (int)this->m_wasOnSlope,
+                    cs ? cs->m_uniqueID : -1);
                 writeResult(b);
             }
         }
