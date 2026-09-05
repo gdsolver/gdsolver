@@ -332,6 +332,39 @@ class $modify(PlayerObject) {
         // fire point. Whether it actually fired is decided by whether vy jumped
         float ox = object->getPositionX(), oy = object->getPositionY();
         float vyBefore = (float)this->m_yVelocity;
+        // EVERY CALL, not just the ones that move vy. The `orb:` line below is
+        // gated on a velocity change, so "one orb: line" only ever meant "one
+        // ringJump changed vy" -- it never showed whether a second ring was
+        // offered and rejected. lv14 t=13,363 needs exactly that distinction:
+        // the yellow orb 4934 and the gravity orb 4938 are BOTH inside the gate
+        // (32.545 and 31.455 against 18+15=33, measured from the rect centre,
+        // which equals getPositionX()), yet only 4938 ever appears. Three
+        // readings fit and they need different fixes -- 4934 called first and
+        // rejected (a gate inside ringJump), 4934 called second (scan order is
+        // not ascending uid), or 4934 never called at all (GD's contact set does
+        // not contain it, and the question goes back to geometry).
+        // The early returns are inside GD's ringJump and cannot be hooked, so
+        // print the bits they test instead: 0x989 / 0x98a (the buffered-press
+        // mirror), 0x98b (set by a successful fire -- this is the one-press-one-
+        // fire latch), 0x98c, 0x98d, 0x9e4, and the ring's own 0x740 claim bit.
+        // Windowed with hbfrom/hbto so a whole level does not flood the cap.
+        const bool inWin = g_tick >= g_cfg.hbFrom
+                        && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
+        if (inWin && orbtrace::g_lines < 400) {
+            auto bit = [&](int off) {
+                return (int)*((unsigned char*)this + off);
+            };
+            char cb[256];
+            snprintf(cb, sizeof(cb),
+                "orbcall: t=%lld uid=%d id=%d vy=%.4f "
+                "b989=%d b98a=%d b98b=%d b98c=%d b98d=%d b9e4=%d claim=%d",
+                (long long)g_tick, object->m_uniqueID, object->m_objectID,
+                vyBefore, bit(0x989), bit(0x98a), bit(0x98b), bit(0x98c),
+                bit(0x98d), bit(0x9e4),
+                (int)*((unsigned char*)object + 0x740));
+            writeResult(cb);
+            ++orbtrace::g_lines;
+        }
         PlayerObject::ringJump(object, skipCheck);
         float vyAfter = (float)this->m_yVelocity;
         if (std::abs(vyAfter - vyBefore) < 1e-4f) return; // did not fire
