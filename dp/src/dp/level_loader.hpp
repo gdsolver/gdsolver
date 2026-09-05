@@ -1313,6 +1313,21 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // The budget is now tight. Counting both types, lv20 holds exactly 32
         // (12 + 20) -- the cap with nothing to spare, so the next level over the
         // line stops here instead of running.
+        // ...AND THIS LOOP DOES NOT SEE EVERY GRAVITY PORTAL. StepCtx::ports is
+        // built from two sources -- the frame's static index, which comes from
+        // L.portals, and Dynamics::PORT -- while the numbering walks L.portals
+        // alone. So a gravity portal carried by moving geometry gets gpBit -1
+        // and can never be spent. Measured on lv22 uid 1158 (id 10, type 4,
+        // cx 2085, rotating: prot 84.808 -> 93.462): GD activates it at
+        // t=1,595, dp's own portgate prints it as type=4 from t=1,586, and it
+        // holds no bit. Seven of that level's eight are numbered, and those
+        // seven latch on the tick GD activates them.
+        // The fix is not local. The ordinal is "this level's gravity portals in
+        // cx order", which the DUMP can answer at load time even for the ones
+        // the dynamic set will own -- but rebuilding the numbering around the
+        // dump rather than around L.portals is a change to make when
+        // State::portalLatch is widened, not before, because the two share the
+        // seeding discipline that a size change re-opens.
         int nGrav = 0;
         for (Obj& p : L.portals)
             if (p.type == 3 || p.type == 4) {
