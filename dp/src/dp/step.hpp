@@ -7776,6 +7776,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             const uint32_t bit = 1u << (unsigned)p->gpBit;
             const bool spent = (s.portalLatch & bit) != 0;
             c.portalLatch |= bit;
+            // --slopedbg: which halves reach the latch, and with what mask. The
+            // question this answers is whether a gravity portal can also be
+            // handled by a LATER block that never sees this line -- lv16's p2
+            // reaches the dual `wasInBoxPrev` skip 65 times on uid 3450, which
+            // it could not do if the latch had already spent it here.
+            if (g_slopeDbg)
+                std::printf("gplatch half=%d t=%lld uid=%d bit=%d spent=%d "
+                            "mask=0x%x\n",
+                            g_halfNow, (long long)K.t, p->uid, (int)p->gpBit,
+                            spent ? 1 : 0, s.portalLatch);
             if (spent) continue;
         }
         // [2026-08-21 r52] **A gravity portal right after a rotation-frame
@@ -8187,7 +8197,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // makes it one-shot.
             // **Dual only** -- the non-dual "entry tick only" generalisation is
             // already rejected (lv5/14/18/20/21 regressed, the r52 note).
-            if (isGrav && c.dual && wasInBoxPrev) continue;
+            if (isGrav && c.dual && wasInBoxPrev) {
+                // --slopedbg: is this still doing work? The portal LATCH
+                // (67ab13f) suppresses a re-fire per half on the object's own
+                // flag, which is the same suppression this line was written for
+                // before that existed. If the count is 0 the line is a fossil.
+                if (g_slopeDbg)
+                    std::printf("dualskip kind=wasinbox half=%d t=%lld uid=%d\n",
+                                g_halfNow, (long long)K.t, p->uid);
+                continue;
+            }
             // [Rejected (2026-08-22 r100)] Two rules were tried from the reading
             // above:
             //   (a) `if (isGrav && c.dual) continue;` (gravity portals pass
@@ -8372,7 +8391,19 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // **Must not fall out of this branch** -- falling out runs the
                 // `else { c.mode = wantMode; }` below, and type 4's wantMode=0
                 // turns the player into a cube (stepped on once).
-                if (dualBothGrav) continue;
+                if (dualBothGrav) {
+                    // --slopedbg: how often the same-box case is taken. This is
+                    // not a compensation for a missing coupling -- it IS the
+                    // coupling, modelled as "skip", because GD's partner call
+                    // TOGGLES p2 and p2's own activation then SETS it back, so
+                    // the pair round-trips. Counted so that a later explicit
+                    // coupling can be checked against it rather than beside it.
+                    if (g_slopeDbg)
+                        std::printf("dualskip kind=bothbox half=%d t=%lld "
+                                    "uid=%d\n",
+                                    g_halfNow, (long long)K.t, p->uid);
+                    continue;
+                }
                 // 3 = inverse (upside down), 4 = back to normal -- stated in
                 // GD's `upsideDown`, so convert back to the frame's own sign.
                 const uint8_t flipBefore = c.flip;
