@@ -671,6 +671,33 @@ inline void endSession(const std::string& why) {
         }
         writeResult(m);
     }
+    // ...and the same for the gravity portals (see portalseed). Same shape and
+    // the same reason: a plain replay writes the whole map, and any anchor's
+    // portal mask is the prefix of it at or before t0.
+    // The FIRST thing this line answers is whether activatedByPlayer is the
+    // right source at all. lv22 uid 13833 must read 6,300 -- the tick the ccl
+    // probe watched hasBeenActivated go up -- and if it is absent or reads
+    // something else, the flag those virtual methods return is not this one and
+    // the mask has to come from the collision path instead.
+    {
+        std::string m = "portalseed map:";
+        bool first = true;
+        for (const auto& kv : portalseed::g_first) {
+            m += (first ? " " : ",") + std::to_string(kv.first) + ":"
+               + std::to_string(kv.second);
+            first = false;
+        }
+        writeResult(m);
+        std::string m2 = "portalseed map2:";
+        first = true;
+        for (const auto& kv : portalseed::g_first2) {
+            m2 += (first ? " " : ",") + std::to_string(kv.first) + ":"
+                + std::to_string(kv.second);
+            first = false;
+        }
+        writeResult(m2 + " (hook calls: "
+                    + std::to_string(portalseed::g_calls) + ")");
+    }
     // ...and the proof: the level's own record, compared with the sample taken before the
     // level had run a tick. "changed: none" is the only acceptable outcome for a solver
     // session; anything else names the field that leaked. `restored` counts the writes GD

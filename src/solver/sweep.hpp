@@ -40,3 +40,24 @@ inline int g_p2 = 0;
 inline int g_calls = 0;
 inline void reset() { g_first.clear(); g_p2 = 0; g_calls = 0; }
 }
+// ...and the same question for GRAVITY PORTALS, which have the same hole:
+// State::portalLatch accumulates over the run, so a state handed to dp's
+// --start begins with an empty mask and believes every portal the run has
+// already spent is still live. Unlike the rotation queue's version the wrong
+// value is the LENIENT one (0 = nothing spent = the behaviour before the latch
+// existed), so it degrades to blind rather than to inventing work -- but blind
+// still means an anchored solve plans firings the whole run does not have.
+//
+// WHETHER THIS HOOK IS THE RIGHT SOURCE IS THE FIRST THING TO MEASURE, not to
+// assume. sweep.hpp's note above says activatedByPlayer is the only setter of
+// +0x5b3, the flag the SPAWN QUEUE reads. The portal latch was measured through
+// hasBeenActivated() / hasBeenActivatedByPlayer(), which are virtual methods and
+// need not be backed by that same byte. There is ground truth to check against:
+// the ccl probe put lv22 uid 13833's transition at exactly t=6,300.
+// Both halves, because the mask is per player (dp's State::portalLatch2).
+namespace portalseed {
+inline std::unordered_map<int, int> g_first;    // gravity-portal uid -> first tick, p1
+inline std::unordered_map<int, int> g_first2;   // ...and p2
+inline int g_calls = 0;   // a denominator for a zero -- see touchseed::g_calls
+inline void reset() { g_first.clear(); g_first2.clear(); g_calls = 0; }
+}

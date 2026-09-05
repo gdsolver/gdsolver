@@ -28,6 +28,25 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
                 ++touchseed::g_p2;
             }
         }
+        {
+            // Gravity portals (3 = InverseGravityPortal, 4 = the normal one),
+            // for dp's --anchor-state portal mask. See portalseed in sweep.hpp
+            // for why this hook may or may not be the right source -- the
+            // check is lv22 uid 13833, which the ccl probe put at t=6,300.
+            // Unconditional like the touch recorder beside it: carrying nothing
+            // must be indistinguishable from not being asked, and a map that is
+            // only filled when a cfg flag is on makes the flag part of the
+            // physics.
+            const int ty = (int)this->m_objectType;
+            if (ty == 3 || ty == 4) {
+                ++portalseed::g_calls;
+                auto* l = GJBaseGameLayer::get();
+                auto& m = (l && p == l->m_player1) ? portalseed::g_first
+                                                   : portalseed::g_first2;
+                if (m.find(this->m_uniqueID) == m.end())
+                    m[this->m_uniqueID] = (int)g_tick;
+            }
+        }
         if (g_cfg.padTrace) {
             const int ty = (int)this->m_objectType;
             if (ty == 8 || ty == 9 || ty == 10) {

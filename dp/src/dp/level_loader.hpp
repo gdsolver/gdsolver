@@ -1325,6 +1325,18 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                 }
                 p.gpBit = (int8_t)nGrav++;
             }
+        // --slopedbg: the uid -> bit map. Nothing else can report it, and
+        // without it a portalLatch mask is unreadable from outside: rebuilding
+        // the order by hand from the dump's type 3/4 rows sorted by cx gave a
+        // mapping that was off by one against GD's own activation ticks, and
+        // the mask then looked like a detection bug that was not there.
+        // The payload (--anchor-state portal=) is written in uids for the same
+        // reason -- the ordinal is this build's, the uid is the level's.
+        if (g_slopeDbg)
+            for (const Obj& p : L.portals)
+                if (p.gpBit >= 0)
+                    std::printf("gpbit bit=%d uid=%d type=%d cx=%.1f\n",
+                                (int)p.gpBit, p.uid, (int)p.type, p.cx);
     }
     std::sort(L.pads.begin(), L.pads.end(), byX);
     std::sort(L.orbs.begin(), L.orbs.end(), byX);
