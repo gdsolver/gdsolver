@@ -135,6 +135,17 @@ inline uint64_t keyOf(const State& s, long long t) {
            // ringHold too: two states that differ only in "has this hold
            // already spent its ring" answer the next press differently.
            ^ ((uint64_t)s.ringHold << 4)
+           // ...and `pressSpent`, which is the same question for EVERY consumer
+           // rather than rings alone, so two states that agree on ringHold can
+           // still answer the next ring differently (a grounded jump spent the
+           // press without touching a ring). Mixed like mode2/mini2 rather than
+           // taking a bit: gated on the difference, so every key where the two
+           // agree -- all of them until a grounded impulse happens under a held
+           // button -- stays bit-identical to before.
+           // pressSpent2 is left out for the same reason ringHold2 is: the second
+           // body's ring bookkeeping has never been in this key.
+           ^ ((s.pressSpent != s.ringHold)
+                  ? ((uint64_t)s.pressSpent * 0x9E3779B97F4A7C15ull) : 0)
            // In a dual, the second half is part of the state: two states that
            // agree on the first player but not the second are not the same
            // node.

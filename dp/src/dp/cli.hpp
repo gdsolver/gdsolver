@@ -121,6 +121,9 @@ inline int cliMain(int argc, char** argv) {
         // --no-ringmode: the pre-2026-09-04 ring gate (held fires in every
         // mode). A/B switch, see g_noRingMode.
         if (!std::strcmp(argv[i], "--no-ringmode")) g_noRingMode = true;
+        // --no-pressspent: the pre-2026-09-05 ring gate (only a RING spends the
+        // hold). A/B switch, see g_noPressSpent.
+        if (!std::strcmp(argv[i], "--no-pressspent")) g_noPressSpent = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;
@@ -2296,13 +2299,21 @@ inline int cliMain(int argc, char** argv) {
             // check cannot see.
             if ((g_seedDump >= 0 && t == (long long)g_seedDump)
                 || (g_seedEvery > 0 && t % (long long)g_seedEvery == 0)) {
+                // pressSpent is printed but NOT seeded: gdref has no column for
+                // GD's +0x986, so an anchor starts it at 0 ("this press has not
+                // been spent"). It joins ringHold in the hole the list at the top
+                // of this file names. The bias is one-sided and small -- a state
+                // anchored mid-hold can fire one ring GD would have refused --
+                // and it needs the button held ACROSS the anchor tick to bite.
                 std::printf("seed: t=%lld sizeof=%zu trig=0x%x trigT=%d "
                             "lockOff=%.4f rotSpent=0x%x rotChan=%d "
-                            "rotRev=0x%x rotStep=%.6f rotNeg=%d fireB=",
+                            "rotRev=0x%x rotStep=%.6f rotNeg=%d "
+                            "ringHold=%d pressSpent=%d fireB=",
                             t, sizeof(State), s.trig, (int)s.trigT,
                             (double)s.lockOff, s.rotSpent, (int)s.rotChan,
                             (unsigned)s.rotRev, (double)s.rotStep,
-                            (int)s.rotNeg);
+                            (int)s.rotNeg, (int)s.ringHold,
+                            (int)s.pressSpent);
                 for (int b = 0; b < 32; ++b)
                     if (s.fireB[b]) std::printf("%d:%u,", b, s.fireB[b]);
                 std::printf("\n");

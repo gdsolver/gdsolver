@@ -110,6 +110,13 @@ inline bool g_oldLatency = false;   // --old-latency
 // suite that reports the same numbers either way -- the two arms have to be one
 // build apart, not one rebuild apart.
 inline bool g_noRingMode = false;   // --no-ringmode
+// --no-pressspent: restore "a ring only asks whether a RING already spent this
+// hold" (the pre-2026-09-05 gate, `!s.ringHold`). GD's latch is +0x986, which
+// every consumer clears, so the grounded jump spends the press too. Exists for
+// the same reason as --no-ringmode: the change only ever REMOVES firings, and
+// on this corpus it removes exactly one, so the two arms have to be one build
+// apart rather than one rebuild apart to be told from "no change" at all.
+inline bool g_noPressSpent = false; // --no-pressspent
 // --old-slope: A/B escape hatch (same convention as --old-latency). Restores
 // the pre-2026-08-04 slope exit: ball = tap-anchored line / mini x0.625, and
 // NO ride-time ramp. See slopeExitVy / slopeRampFactor for why the new form

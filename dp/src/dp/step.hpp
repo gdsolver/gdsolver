@@ -2202,6 +2202,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // the model's resolution (the gd-shrinking-gap class). Per-run
             // fixup records are the only honest carrier for it.
             impulsedThisTick = true;
+            // The press is now SPENT. GD's updateJump clears +0x986 when it jumps
+            // (0x38bbef), and the ball's arm ends the same way, so a ring met later
+            // in the same hold finds the 0x98a mirror at 0 and does not fire. This
+            // branch is every grounded consumer at once -- the cube's jump, the
+            // ball's tap, the spider's flip. Written to `c`, read from `s` at the
+            // ring gate; the ordering note is on the field itself.
+            c.pressSpent = 1;
             if (isBall) {
                 // the tap flips gravity and drops toward the NEW floor; the
                 // player-frame velocity is expressed against the new sign, so
@@ -7676,6 +7683,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                     c.flip2 = c.flip ? 0 : 1;
                     c.grounded2 = 0;
                     c.ringHold2 = 0;
+                    // Same "no press behind it" as ringHold2, and the same unmeasured
+                    // edge: whether GD's fresh p2 inherits +0x986 from a press already
+                    // held at the split has no corpus instance either way.
+                    c.pressSpent2 = 0;
                     c.onSlope2 = 0;
                     c.slopeM2 = 0.f;
                     c.snapObj2 = nullptr;
@@ -8830,8 +8841,17 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                              && (c.mode == 1 || c.mode == 3
                                  || c.mode == 4 || c.mode == 7);
         const bool ringGate = ringFly ? (input && !s.jumpBuf) : (input != 0);
-        if (!input) c.ringHold = 0;   // released: the next press may ring again
-        if (ringGate && !s.ringHold) {
+        if (!input) {
+            c.ringHold = 0;      // released: the next press may ring again
+            c.pressSpent = 0;    // ...and GD's releaseButton clears +0x986 with it
+        }
+        // `!s.pressSpent` REPLACES the old `!s.ringHold` here and subsumes it: every
+        // site that set ringHold sets pressSpent too, and pressSpent is also set by
+        // the grounded impulse. ringHold keeps its other reader (the re-jump gate),
+        // which must NOT read pressSpent -- GD's cube gate is m_jumpBuffered alone
+        // and a held cube bounces repeatedly (calib_holdjump_robot: five times).
+        // `s.`, not `c.`: see the field's comment for lv14 t=1,859.
+        if (ringGate && !(g_noPressSpent ? s.ringHold : s.pressSpent)) {
             // Two orbs can sit on the SAME square, and then which one fires is
             // not a detail: lv14 x=16875 y=585 carries a yellow ring (id 36,
             // uid 4774) and a gravity ring (id 84, uid 4775) exactly on top of
@@ -9251,6 +9271,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 if (ob->type != 13) releasePin(true);
                 c.usedOrb = ob;
                 c.ringHold = 1;
+                c.pressSpent = 1;   // GD's ringJump spends the press (see the field)
                 // ringJump is the second of the two callers that write the
                 // ball's AIR step, and unlike the tap it does NOT move gravity
                 // first -- so the same `NOT (g XOR r)` computed against the
@@ -9973,6 +9994,7 @@ inline void swapHalves(State& s) {
     std::swap(s.grounded, s.grounded2);
     std::swap(s.flip, s.flip2);
     std::swap(s.ringHold, s.ringHold2);
+    std::swap(s.pressSpent, s.pressSpent2);
     std::swap(s.onSlope, s.onSlope2);
     std::swap(s.slopeT, s.slopeT2);
     std::swap(s.mode, s.mode2);

@@ -67,6 +67,23 @@ struct State {
     // went up where GD came down. Per-object memory alone cannot express this --
     // the second ring is a different object and was never used.
     uint8_t ringHold;
+    // "This press has already been spent" -- GD's +0x986, mirrored into +0x98a once
+    // per tick at 0x389f18 and tested by ringJump. `ringHold` is the same idea for
+    // rings ALONE; 0x986 is the shared latch of every consumer, and brief-022 named
+    // the gap ("nothing does for whatever consumed the press").
+    // Set by a ring firing and by the grounded impulse branch (the cube's jump, the
+    // ball's tap, the spider's flip -- GD's updateJump clears 0x986 at 0x38bbef when
+    // it jumps). Cleared on release, like GD's releaseButton.
+    // READ IT AS `s.pressSpent`, WRITE IT AS `c.pressSpent`, and do not "tidy" the
+    // read to `c.`: GD's pushButton walks m_touchedRings FIRST and returns before
+    // updateJump if a ring fires, so in GD a ring PREEMPTS the grounded jump on a
+    // shared tick. The model evaluates them in the opposite order, and reading the
+    // entering value is the only thing that reproduces GD's precedence. Measured on
+    // lv14 t=1,859, where a press rises on a grounded cube and a yellow orb (uid
+    // 541) is in reach on the same tick: GD fires the orb with b98a=1 and no jump
+    // runs at all (`vy=0.2160 -> -11.1800`, the whole change through the ring path).
+    // Reading `c.` here would delete that firing and lose GD's own y=225.049.
+    uint8_t pressSpent;
     // Riding a slope last tick, and the gradient it was riding. Leaving the
     // top is what launches the player (see slopeExitVy), so the model has to
     // remember that it WAS on one.
@@ -313,6 +330,7 @@ struct State {
     uint8_t freeHalf = 0;
     float y2, vy2, slopeM2, snapDist2;
     uint8_t grounded2, flip2, ringHold2, onSlope2;
+    uint8_t pressSpent2 = 0;   // second body's pressSpent (see pressSpent)
     uint8_t slopeT2 = 0;   // second body's ride counter (see slopeT)
     // The second body's own MODE and its own ceiling-ramp push-down counters.
     // `mode` and `ceilT`/`ceilM4` used to be shared outright ("shared fields
