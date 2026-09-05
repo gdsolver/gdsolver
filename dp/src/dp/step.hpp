@@ -640,20 +640,30 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
         // different mechanism and must not get this: its 14 firings replace vy
         // with the frame-carry value (5.193 / 6.457 / 7.8) and their ratios
         // scatter from 0.000 to 3.095.
-        // The mode gate is flipGravity's own -- ball, robot and spider do not
-        // halve. THE CORPUS IS SILENT ON IT HERE: all four same-frame firings
-        // are cube, so this path has no witness either way, and the binary
-        // decides rather than the corpus. Dropping the gate because nothing
-        // measures it is the error the corpus cannot witness: the first ball to
-        // turn on a same-frame 2900 would come out inverted against GD.
+        // NO MODE GATE. This first excluded ball / robot / spider, on a reading
+        // of the ledger's "the fly/bird/dart/swing toggles each halve in both
+        // directions (roll/robot/spider do not)". That sentence is about the
+        // MODE TOGGLES, not about flipGravity, and the function has no mode
+        // branch at all -- read at 0x39a1d0:
+        //   0x39a1e9  cmp byte [rcx+0x9bf], dl   ; the requested polarity
+        //   0x39a1ef  je  0x39a41f               ; unchanged -> early out
+        //   0x39a2cb  cmp byte [rbx+0x7e1], 0
+        //   0x39a2d2  jne 0x39a32f               ; set -> skip the halving
+        //   0x39a2d4  movsd xmm0, [rbx+0x9a0]
+        //   0x39a2dc  mulsd xmm0, [rip+0x288ab4] ; x 0.5
+        // Between the early-out and the multiply there is no test of any mode
+        // byte, so the halving is unconditional on mode; the two guards are the
+        // polarity actually changing and [+0x7e1], which is not modelled here
+        // and is not a mode (the mode flags live at +0x9b9..+0x9c4).
+        // The corpus could not have caught the mistake either way: all four
+        // same-frame firings are cube.
         // No double-halving guard against the portal pass's own `gravChanged`
         // halving (step.hpp:7628): applyRotation is called from the CLI tick
         // loop after stepOne, not from inside it, and the one firing that halves
         // has no portal on its tick (the objects at x=21,555 are the 2900 itself
         // and two force boxes). If a tick ever carries both, this is where to
         // look.
-        if (nflip >= 0 && !g_noRot2900Halve && (uint8_t)nflip != c.flip
-            && c.mode != 2 && c.mode != 5 && c.mode != 6)
+        if (nflip >= 0 && !g_noRot2900Halve && (uint8_t)nflip != c.flip)
             c.vy = (float)((double)c.vy * 0.5);
         if (nflip >= 0) c.flip = (uint8_t)nflip;
         return nf;
