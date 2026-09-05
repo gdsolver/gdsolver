@@ -219,6 +219,17 @@ inline bool g_noBoostLatch = false; // --no-boostlatch
 // byte-identical to the build before the change.
 inline bool g_noRingFirstTouch = false; // --no-ringfirsttouch
 
+// --no-padobb: a rotated PAD is judged against the player's own turned box (the
+// pre-2026-09-06 behaviour), instead of the axis-aligned player square GD
+// actually hands the activation. GD's activation path prints its player rect
+// itself -- `ccl:` on lv20 uid 7030 reads
+// prect=(10822.8096,138.3140,30.0000,30.0000), an AXIS-ALIGNED 30 x 30 (18 x 18
+// mini, 10 x 10 for mode 4) -- so the test is player AABB vs the object's true
+// oriented box, and the padedge rig confirms that shape three ways. See the site
+// in step.hpp. Kept as the A/B arm: with it the whole 22-level replay suite has
+// to be byte-identical to the build before the change.
+inline bool g_noPadObb = false;         // --no-padobb
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip

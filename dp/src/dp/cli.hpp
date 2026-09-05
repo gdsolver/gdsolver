@@ -163,6 +163,10 @@ inline int cliMain(int argc, char** argv) {
         // the one that was already in contact on the previous tick.
         if (!std::strcmp(argv[i], "--no-ringfirsttouch"))
             g_noRingFirstTouch = true;
+        // --no-padobb: a rotated pad's contact is tested against the player's
+        // TURNED box (the pre-2026-09-06 behaviour) rather than the
+        // axis-aligned square GD's activation path uses.
+        if (!std::strcmp(argv[i], "--no-padobb")) g_noPadObb = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
@@ -913,8 +917,15 @@ inline int cliMain(int argc, char** argv) {
             if (slot >= 4) break;
             if (std::fabs(x0 - o.cx) >= o.hw + sHalf + kPadReach) continue;
             if (std::fabs((double)init.y - o.cy) >= o.hh + sHalf) continue;
+            // The same shape the pad loop uses, or the seeder and the loop
+            // would disagree about what "already in contact" means for a
+            // rotated board -- see the padobb note at the loop's site in
+            // step.hpp. A type-8 pad's activation is judged with the player's
+            // AXIS-ALIGNED box, so the anchor asks the same question here.
+            const double sRotPad =
+                (!g_noPadObb && o.type == 8) ? 0.0 : (double)init.rot;
             if (o.oriented
-                && !orientedHit(o, x0, (double)init.y, sHalf, (double)init.rot))
+                && !orientedHit(o, x0, (double)init.y, sHalf, sRotPad))
                 continue;
             init.usedPad[slot++] = &o;
         }

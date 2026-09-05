@@ -9627,6 +9627,42 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         double pRotPad = (double)s.rot;
         if (s.mode == 0)
             pRotPad += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
+        // [2026-09-06] ...but the PLAYER's half of that test is AXIS-ALIGNED.
+        // Passing pRotPad above sends orientedHit down its obbSat branch, i.e.
+        // an OBB-vs-OBB test; GD's activation path uses the player's plain
+        // rect. It says so itself: the `ccl:` instrument prints the very rect
+        // GD hands the activation, and on lv20 uid 7030 (rot 29) it reads
+        //     prect=(10822.8096,138.3140,30.0000,30.0000)
+        // -- an axis-aligned 30 x 30 (18 x 18 mini, 10 x 10 for mode 4). So the
+        // shape is the player's AABB against the board's true oriented box,
+        // which is exactly orientedHit at pRot = 0: SAT over the object's two
+        // local axes plus the two world axes.
+        //
+        // The board's own shape is measured three ways on the padedge rig
+        // (data/rigs/padedge*.units.json, 2026-09-06; 78 units / 234 objects,
+        // nodeath, 0 deaths, and a second arm of 110 units for the sign):
+        //   rot=0 arms validate the method -- the boundary is the plain rect
+        //     inflated by the player half, and all three arms (scale 1.00 /
+        //     1.45 / 1.45-mini) land on their predicted intercepts;
+        //   rot=29: the firing x follows the height offset at slope
+        //     cot 29 = 1.804 (an AABB gives 0), and the flat-to-sloped break is
+        //     where the OBB's leading corner (-17.258, -6.251) leaves the
+        //     player's y band -- dy = 8.749 full / 2.749 mini, i.e. `dy - h <=
+        //     -6.251`, DERIVED and matching the sweep on both sizes. Reach =
+        //     corner height + player half = 26.32 / 20.32;
+        //   rot=-29 mirrors it: the corner moves to (-17.258, +6.251), the flat
+        //     region widens, and the residual slope becomes tan 29 = 0.554,
+        //     never cot -- so the sign of GD's rotation is fixed too.
+        // Activation carries no tick lag of its own: 39 rig samples at two
+        // speeds put residual/x-step uniformly in [0,1).
+        //
+        // Type 8 only -- that is the family the rig swept, and it is also the
+        // whole rotated population: of the corpus's 239 type-8 pads exactly 6
+        // are turned off a quarter turn (lv20 uid 6963/6964/7025/7026/7027/7030,
+        // all rot 29), and no type 9/10/34 pad is. `oriented` is only set off a
+        // quarter turn (level_loader.hpp:811), so at 0/90 the recorded rect IS
+        // the box and this line cannot move a single digit.
+        if (!g_noPadObb && pd->type == 8) pRotPad = 0.0;
         if (pd->oriented && !orientedHit(*pd, x, (double)c.y, pHalf, pRotPad))
             continue;
         // NO FOOT-SIDE TEST (2026-08-07). The rule below was live for four days
