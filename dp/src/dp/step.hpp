@@ -8458,14 +8458,19 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 //                     (centre 185.71 -> 195.000 = GD's y)
                 // Geometry continuous, only the mode changed, and the 9.29px
                 // lift is the whole of the family's dy -9.294.
-                // THE GATE IS NOT A MODE WHITELIST. "Which bodies collide with
-                // flat solids" is a question the model already answers, at the
-                // selector on line 1521 (`s.mode != 1 && s.mode != 3 && s.mode
-                // != 7`, with the wave taking its own branch at 1284) -- that
-                // selector reads the mode ENTERING the tick, which is exactly
-                // why a body that becomes a cube mid-tick never reaches its own
-                // landing loop. The condition below is that same predicate on
-                // the NEW mode, not a list fitted to two samples.
+                // WHY EVERY MODE. This first read line 1521's selector as "which
+                // bodies collide with flat solids" and excluded the flight modes
+                // on the strength of it. That was wrong twice over: 1521 answers
+                // only "which bodies use the landing loop at 2708", the flight
+                // modes seat through their own branch at 4045, and GD's UFO
+                // plainly rests on a floor -- lv17 t=15,730, where GD sits at
+                // y=195.000 (the 180 face plus the UFO's 15) on the portal tick
+                // while the model falls past 6.719px inside it.
+                // What 1521 does explain is the CAUSE: it selects on the mode
+                // ENTERING the tick, so a body that changes mid-tick reaches
+                // neither landing path, whichever one it would have used.
+                // So the seat runs for any new mode, and what varies is the
+                // slack -- see below.
                 // This is a compensation for the activation -> solid inversion,
                 // the fourth fossil of the same hole (the ramp branch above,
                 // `releasePin(undoSnap)`, and the teleport-only portal pass at
@@ -8482,9 +8487,19 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // lv8 t=9,966 is the tight one: +0.0015 above zero and GD
                 // still does not seat, so `<= 0` is the boundary the loop
                 // already uses and not a value fitted here.
-                const bool newBodyLands = (c.mode != 1 && c.mode != 3
-                                           && c.mode != 7 && c.mode != 4);
-                if (!g_noPortalSeat && !c.grounded && newBodyLands && K.near
+                // The slack GD widens the previous edge by is 10.0f (0x62307C)
+                // except for the modes in the [+0x9bb] set, which take 6.0f
+                // (0x391c48). The disassembly names that set "ship / bird / dart
+                // / swing / ball" -- ufo, wave and the ball included.
+                // BALL IS DELIBERATELY LEFT ON 10.0 HERE. It belongs in GD's 6.0
+                // set, and the model runs it through the 2708 loop's kLandTol
+                // instead, but that is a pre-existing disagreement of its own
+                // with its own acceptance; folding it in would put two variables
+                // in one regression.
+                const bool flySlack = (c.mode == 1 || c.mode == 3
+                                       || c.mode == 4 || c.mode == 7);
+                const double seatSlack = flySlack ? kShipLandTol : kLandTol;
+                if (!g_noPortalSeat && !c.grounded && K.near
                     && (double)c.vy * (c.flip ? -1.0 : 1.0) <= 0.0) {
                     const double gs = c.flip ? -1.0 : 1.0;
                     const Obj* best = nullptr;
@@ -8519,7 +8534,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                             ((double)s.y - gs * nh - face) * gs;
                         const double curFoot =
                             ((double)c.y - gs * nh - face) * gs;
-                        if (prevFoot < -kLandTol || curFoot > 0.0) continue;
+                        if (prevFoot < -seatSlack || curFoot > 0.0) continue;
                         if (!best || (face - bestFace) * gs > 0.0) {
                             best = o;
                             bestFace = face;
