@@ -2012,8 +2012,18 @@ def build_padedge() -> str:
     objs: list[str] = []
     x = 90.0
     for mini in (False, True):
+        # -29 is not a duplicate of +29: the outline's SIGN is what says which
+        # way the plate leans, and the +29 sweep alone cannot show it (every dy
+        # in it is positive, so both leanings put first contact on the same
+        # side). lv20's player falls VERTICALLY past the plate, where the lean
+        # decides which face it reaches first -- and the true OBB still overlaps
+        # two ticks before GD activates there, so the sign is exactly the term
+        # that is missing. If the slope flips with the sign of rot, GD's
+        # rotation runs the way this generator's math assumes and lv20 can be
+        # recomputed against it; if it does not, the contact shape is not simply
+        # the rotated plate.
         for rot, scale, dy_max in ((0.0, 1.0, 20.0), (0.0, 1.45, 22.0),
-                                   (29.0, 1.45, 30.0)):
+                                   (29.0, 1.45, 30.0), (-29.0, 1.45, 30.0)):
             dy = 0.0
             while dy <= dy_max:
                 u, x, meta = padedge_unit(x, rot, scale, mini, dy)
