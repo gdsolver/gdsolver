@@ -2033,6 +2033,35 @@ def build_padedge() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def build_padedge13() -> str:
+    """The same outline at speed 1.3, which is the one thing lv20 has and the
+    first rig did not.
+
+    The horizontal sweep put the activation delay in [0,1) ticks over 30 rot=0
+    samples, so the pad fires on the first tick of geometric contact -- but every
+    one of those units ran at 0.9, while `padtrace` reports spd=1.3 on the lv20
+    pad that fires two ticks late. Speed is therefore an uncontrolled difference
+    between the arm that shows no delay and the case that shows one, and it is
+    cheap to control: the x step goes 1.298 -> 1.949, so a delay measured in
+    TICKS stays put while one measured in PIXELS shrinks by a third.
+
+    Kept to the normal-size arms: mini adds a size axis that the 0.9 run already
+    settled (the two reaches differ by exactly 15-9).
+    """
+    objs: list[str] = []
+    x = 90.0
+    for rot, scale, dy_max in ((0.0, 1.0, 20.0), (29.0, 1.45, 30.0),
+                               (-29.0, 1.45, 30.0)):
+        dy = 0.0
+        while dy <= dy_max:
+            u, x, meta = padedge_unit(x, rot, scale, False, dy)
+            objs += u
+            meta["speed"] = 3
+            UNITS.append(meta)
+            dy += 2.0
+    return header(speed=3) + ";" + ";".join(objs) + ";"
+
+
 def crush_unit(x: float, gap: float, mode: str, mini: bool) -> tuple[list[str], float, dict]:
     u"""One crush corridor: a floor pillar (top 210) + a ceiling pillar
     (underside 210+gap).
@@ -4318,7 +4347,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "shortexit": build_shortexit, "edgeland": build_edgeland,
             "slopelandball": build_slopelandball,
             "ceilpush": build_ceilpush, "ceilpushball": build_ceilpushball,
-            "ceilpush8": build_ceilpush8, "padedge": build_padedge}
+            "ceilpush8": build_ceilpush8, "padedge": build_padedge, "padedge13": build_padedge13}
 
 
 def main() -> int:
@@ -4366,4 +4395,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
