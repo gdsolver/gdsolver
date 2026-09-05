@@ -203,6 +203,41 @@ struct State {
     // same way `dx` is, so states with different masks can never merge.
     uint32_t trig = 0;
     int32_t trigT = -1;
+    // Which of the level's gravity portals this state has already SPENT. GD
+    // latches one on first overlap, not on first firing, so a pass taken at
+    // the polarity the portal would set spends it even though flipGravity does
+    // nothing (measured, lv22 uid 13833: hasBeenActivated 0 -> 1 at t=6,300 on
+    // exactly such a pass, still 1 at t=6,327 where the player comes back
+    // flipped and GD refuses). The bit is Obj::gpBit.
+    // Carried per state for the same reason as `trig`: two states at one tick
+    // can disagree about which portals they have spent. Like `trig` it is NOT
+    // in keyOf -- the layer is partitioned by it, so states with different
+    // masks never merge.
+    // AN ANCHOR DOES NOT SEED THIS YET, and seedcheck says so out loud: lv12
+    // 4 ticks `whole=0x1/0x0 seeded=0x0/0x0`, lv22 5 ticks `whole=0x7/0x0`.
+    // The --anchor-state key is here (`owns=portal`, keys `portal`/`portal2`,
+    // uids) and nothing writes it: the payload producer is the mod's
+    // anchorPayload, which is behind Config::touchPayload and off by default.
+    // Why that is not the --rotqueue situation, where the same hole forced the
+    // whole mechanism to be opt-in. There the unseeded value is a LIE that
+    // invents work -- channel 0, nothing consumed, so the anchor re-fires every
+    // rotation the run already passed, and quick_regress lost tracking in 12 of
+    // lv22's sections. Here the unseeded value is 0 = "nothing spent", which is
+    // exactly the behaviour of the build before this field existed: an anchored
+    // section can only fail to INHERIT the refusal, never invent one. Measured,
+    // not argued -- quick_regress PASS with no level worse, and the whole-run
+    // arms move one level (lv22 6,375 -> 11,539 dead) with the other 21
+    // bit-identical.
+    // So the cost of the hole is that anchored instruments cannot SEE this
+    // rule, which is why it was measured on whole runs.
+    // PER HALF, like usedOrb/usedPad and unlike trig: the ccl probe printed
+    // hasBeenActivated() and hasBeenActivatedByPlayer() going up together, so
+    // lv22's single body cannot tell them apart -- but a shared flag would mean
+    // the second half of a dual can never fire a gravity portal the first half
+    // has crossed, and dual levels plainly do not behave that way. The
+    // by-player flag is the one a per-player refusal reads.
+    uint32_t portalLatch = 0;
+    uint32_t portalLatch2 = 0;
     // ...and the tick each individual box was entered on. `trigT` is the LAST
     // box only, which is what markTouched's own note says is not enough: the
     // switch band's per-box delay needs each punch's own tick, and the
@@ -551,7 +586,7 @@ struct State {
 // That happened the same day this assert was written (8f1ae6b added three
 // payload globals and reset none of them), so the two rules are siblings and
 // neither mechanism covers the other.
-static_assert(sizeof(State) == 336,
+static_assert(sizeof(State) == 344,
               "State changed size. If the new field ACCUMULATES over ticks, "
               "seed it in the --start anchor scan, print it in --seeddump, and "
               "run oneoff/py/seedcheck.py to zero before updating this. (This "

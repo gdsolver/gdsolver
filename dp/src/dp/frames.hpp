@@ -239,11 +239,17 @@ inline std::string g_anchorState;
 // for that one value -- a hybrid seed, and the opposite of what the refusal
 // says. Declaring ownership keeps "replaces wholesale" true WITHIN a
 // subsystem and leaves the others honestly alone.
-inline const char* const kAnchorKeys[] = {"owns", "touch"};
-// Which subsystems this payload claims. Only `touch` exists today; the lock
-// and the rotation queue keep their own seeding until someone measures a
-// reason to move them.
+inline const char* const kAnchorKeys[] = {"owns", "touch", "portal", "portal2"};
+// Which subsystems this payload claims. The lock and the rotation queue keep
+// their own seeding until someone measures a reason to move them.
 inline bool g_ownsTouch = false;
+// `owns=portal` -> State::portalLatch / portalLatch2 come from GD. The mask is
+// per player, so the subsystem takes TWO keys and claiming it requires both:
+// a single-player level writes `portal2=` empty, which says "p2 spent nothing"
+// out loud instead of leaving it to a default that means the same thing by
+// accident. Uids rather than bit indices, for the reason the touch payload
+// gives -- a bit index is this build's ordinal and a uid is the level's.
+inline bool g_ownsPortal = false;
 // --seed-partial-ok: run anyway when a key this build wants is absent, and
 // stamp the outcome so the result carries it. A warning on stderr does not
 // survive into the place results are compared.
@@ -287,6 +293,20 @@ inline std::vector<std::pair<int, int>> parseTouchPayload(const std::string& v) 
         if (colon == std::string::npos) continue;
         out.emplace_back(std::atoi(tok.substr(0, colon).c_str()),
                          std::atoi(tok.substr(colon + 1).c_str()));
+    }
+    return out;
+}
+// `uid,uid,uid` -> uids. The portal payload carries no tick: a spent portal is
+// spent, and unlike a touch box nothing downstream asks WHEN.
+inline std::vector<int> parseUidList(const std::string& v) {
+    std::vector<int> out;
+    size_t i = 0;
+    while (i < v.size()) {
+        size_t comma = v.find(',', i);
+        if (comma == std::string::npos) comma = v.size();
+        const std::string tok = v.substr(i, comma - i);
+        i = comma + 1;
+        if (!tok.empty()) out.push_back(std::atoi(tok.c_str()));
     }
     return out;
 }

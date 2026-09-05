@@ -1300,6 +1300,23 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     auto byX = [](const Obj& a, const Obj& b) { return a.cx < b.cx; };
     std::sort(L.objs.begin(), L.objs.end(), byX);
     std::sort(L.portals.begin(), L.portals.end(), byX);
+    // ...and number the gravity portals, AFTER the sort so the ordinal is a
+    // property of the dump rather than of the load order. See Obj::gpBit for
+    // what the bit means and how it was measured.
+    {
+        int nGrav = 0;
+        for (Obj& p : L.portals)
+            if (p.type == 4) {
+                if (nGrav >= 32) {
+                    std::fprintf(stderr,
+                                 "level has more than 32 gravity portals "
+                                 "(uid %d is the 33rd); State::portalLatch is a "
+                                 "uint32 and cannot hold it\n", p.uid);
+                    std::exit(2);
+                }
+                p.gpBit = (int8_t)nGrav++;
+            }
+    }
     std::sort(L.pads.begin(), L.pads.end(), byX);
     std::sort(L.orbs.begin(), L.orbs.end(), byX);
     std::sort(L.speeds.begin(), L.speeds.end(), byX);

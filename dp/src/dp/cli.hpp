@@ -133,6 +133,8 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--no-rot2900halve")) g_noRot2900Halve = true;
         // --no-slopeland5: ramp contact always lands. See g_noSlopeLand5.
         if (!std::strcmp(argv[i], "--no-slopeland5")) g_noSlopeLand5 = true;
+        // --no-portallatch: a gravity portal fires on every pass.
+        if (!std::strcmp(argv[i], "--no-portallatch")) g_noPortalLatch = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;
@@ -892,6 +894,7 @@ inline int cliMain(int argc, char** argv) {
     // set, including the boxes it named that this build has no bit for -- a
     // payload written against a wider window than this one's 32.
     std::vector<std::pair<int, int>> payloadTouch;
+    std::vector<int> payloadPortal, payloadPortal2;
     bool havePayload = false;
     if (!g_anchorState.empty()) {
         std::vector<std::pair<std::string, std::string>> kv;
@@ -904,14 +907,22 @@ inline int cliMain(int argc, char** argv) {
                         "build that carries what this one would drop\n");
             return 2;
         }
-        bool sawTouchKey = false;
+        bool sawTouchKey = false, sawPortalKey = false, sawPortal2Key = false;
         for (const auto& p : kv) {
             if (p.first == "owns") {
                 if (p.second.find("touch") != std::string::npos)
                     g_ownsTouch = true;
+                if (p.second.find("portal") != std::string::npos)
+                    g_ownsPortal = true;
             } else if (p.first == "touch") {
                 payloadTouch = parseTouchPayload(p.second);
                 sawTouchKey = true;
+            } else if (p.first == "portal") {
+                payloadPortal = parseUidList(p.second);
+                sawPortalKey = true;
+            } else if (p.first == "portal2") {
+                payloadPortal2 = parseUidList(p.second);
+                sawPortal2Key = true;
             }
         }
         havePayload = g_ownsTouch;
@@ -927,6 +938,13 @@ inline int cliMain(int argc, char** argv) {
         // seeding.
         std::string missing;
         if (g_ownsTouch && !sawTouchKey) missing = "touch";
+        // Both halves, because the mask is per player: a payload that claims
+        // the subsystem and names only p1 has left p2 to a default, which is
+        // the shape of degradation this refusal exists for.
+        if (g_ownsPortal && !sawPortalKey)
+            missing += (missing.empty() ? "" : " ") + std::string("portal");
+        if (g_ownsPortal && !sawPortal2Key)
+            missing += (missing.empty() ? "" : " ") + std::string("portal2");
         if (!missing.empty()) {
             if (!g_seedPartialOk) {
                 // Say WHY this is fatal rather than a warning: the payload
@@ -977,6 +995,31 @@ inline int cliMain(int argc, char** argv) {
         std::printf("seed payload: values are the state at t0; a first-tick "
                     "difference near one dx means the payload was written at "
                     "t0+1\n");
+    }
+    // WHICH GRAVITY PORTALS THE RUN HAD ALREADY SPENT before t0. Without this a
+    // state handed to --start starts with an empty mask and re-fires every
+    // portal the run has passed -- the same hole State::fireB, State::lockOff
+    // and the rotation queue each fell into, and the reason the queue is still
+    // opt-in. A portal is spent on OVERLAP, so the producer takes the passes
+    // out of gdref's x,y rather than out of the firings.
+    if (t0 > 0 && g_ownsPortal) {
+        int set = 0, unmapped = 0;
+        for (int half = 0; half < 2; ++half) {
+            const std::vector<int>& ids = half ? payloadPortal2 : payloadPortal;
+            uint32_t& mask = half ? init.portalLatch2 : init.portalLatch;
+            for (int uid : ids) {
+                int bit = -1;
+                for (const Obj& p : L.portals)
+                    if (p.uid == uid && p.gpBit >= 0) { bit = p.gpBit; break; }
+                if (bit < 0) { ++unmapped; continue; }
+                mask |= (uint32_t)1 << bit;
+                ++set;
+            }
+        }
+        std::printf("seed payload: %d gravity portals spent (0x%x/0x%x), %d "
+                    "named but not a gravity portal in this level\n",
+                    set, init.portalLatch, init.portalLatch2, unmapped);
+        std::printf("seed: portal=payload\n");
     }
     // The recording-derived seeding still runs even when a payload owns
     // `touch`, because it also seeds the LOCK -- a subsystem no payload claims
@@ -2317,12 +2360,13 @@ inline int cliMain(int argc, char** argv) {
                 std::printf("seed: t=%lld sizeof=%zu trig=0x%x trigT=%d "
                             "lockOff=%.4f rotSpent=0x%x rotChan=%d "
                             "rotRev=0x%x rotStep=%.6f rotNeg=%d "
-                            "ringHold=%d pressSpent=%d fireB=",
+                            "ringHold=%d pressSpent=%d portalLatch=0x%x/0x%x "
+                            "fireB=",
                             t, sizeof(State), s.trig, (int)s.trigT,
                             (double)s.lockOff, s.rotSpent, (int)s.rotChan,
                             (unsigned)s.rotRev, (double)s.rotStep,
                             (int)s.rotNeg, (int)s.ringHold,
-                            (int)s.pressSpent);
+                            (int)s.pressSpent, s.portalLatch, s.portalLatch2);
                 for (int b = 0; b < 32; ++b)
                     if (s.fireB[b]) std::printf("%d:%u,", b, s.fireB[b]);
                 std::printf("\n");
@@ -2567,6 +2611,16 @@ inline int cliMain(int argc, char** argv) {
         // ...and by REVERSE (id 2899) for the same reason again: a reversed
         // state's x runs the other way, so it cannot share a window with a
         // forward one. frame and rev are separate axes, so both go in the key.
+        // NOT by the spent-gravity-portal mask, though it is carried per state
+        // the same way `trig` is. What puts `trig` here is that it moves the
+        // GEOMETRY: two masks need two sets of object windows. A spent portal
+        // moves nothing -- both states see the same box, they only disagree
+        // about whether it still fires -- so the mask has no business in a key
+        // whose job is to choose windows, and an axis here would be paid for in
+        // parent steps: gidx deliberately hands every parent to every group
+        // (see the rebind note), so k masks in a layer means stepping each
+        // parent k times for k identical children. It goes in keyOf instead,
+        // where the separation is exactly as absolute and costs one xor.
         struct GKey {
             float dx; uint32_t trig; uint8_t frame; uint8_t rev;
             bool operator==(const GKey& o) const {

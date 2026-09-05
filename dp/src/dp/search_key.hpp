@@ -303,6 +303,20 @@ inline uint64_t keyOf(const State& s, long long t) {
                          * (uint64_t)(s.ceilT | ((uint32_t)s.ceilM4 << 8)))
                       : 0)
            ^ ((uint64_t)s.held << 1) ^ s.grounded;
+    // Which gravity portals this state has spent (State::portalLatch). Unlike
+    // `trig` this is not partitioned into the group -- a spent portal moves no
+    // geometry, so both states want the same windows -- and the separation has
+    // to happen here or two states that disagree about a portal ahead will
+    // merge and the survivor gets the wrong future.
+    // Zero until a gravity portal is actually crossed, and once crossed it is
+    // usually the SAME mask for every state in the layer: an xor by one
+    // constant is a bijection, so those layers keep their dedupe exactly. Only
+    // a layer that genuinely disagrees pays anything, which is the case the bit
+    // exists for. Levels with no gravity portals keep bit-identical keys.
+    if (s.portalLatch)
+        k ^= (uint64_t)s.portalLatch * 0xFF51AFD7ED558CCDull;
+    if (s.portalLatch2)
+        k ^= (uint64_t)s.portalLatch2 * 0xC4CEB9FE1A85EC53ull;
     // Per-box fire ticks, for the boxes whose chain is STILL MOVING.
     //
     // `trig` itself is not in the key -- the layer is partitioned by it, the

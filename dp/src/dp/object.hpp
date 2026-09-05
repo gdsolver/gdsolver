@@ -31,6 +31,19 @@ struct Obj {
     // Dropped onto the same column from above it lands on the top face and
     // stands there. Modelled as: landing yes, kill no.
     uint8_t oneway = 0;
+    // Which bit of State::portalLatch this gravity portal owns, or -1 for
+    // everything that is not one. GD latches a portal the first time the player
+    // OVERLAPS it -- not the first time it fires -- so a pass taken at the
+    // polarity the portal would set, where flipGravity is a no-op, still spends
+    // it. Measured on lv22 uid 13833 with the ccl probe: hasBeenActivated and
+    // hasBeenActivatedByPlayer are 0 through t=6,299, both 1 from t=6,300 (a
+    // no-op pass, flip already 0 for an id-10 portal), and still 1 at t=6,327
+    // where the player returns flipped and GD does nothing.
+    // The bit is the ordinal among the level's type-4 portals in L.portals
+    // order (sorted by cx), so it is stable for a given dump; the loader
+    // refuses a level with more than 32 of them by name rather than silently
+    // dropping the overflow. The corpus tops out at 20 in a level.
+    int8_t gpBit = -1;
     // Lives in L.dyn.objs (a moving object; its cx/cy/box are rewritten per
     // tick from the recording or the trigger definitions). Fixups do not
     // apply near one -- see nearDynObject in fixup.hpp.

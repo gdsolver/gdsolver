@@ -131,6 +131,10 @@ inline bool g_noForceOrder = false; // --no-forceorder
 // halve vy (the pre-2026-09-05 behaviour). GD reaches it through flipGravity,
 // whose mulsd 0.5 @0x39a2dc runs on any real polarity change.
 inline bool g_noRot2900Halve = false; // --no-rot2900halve
+// --no-portallatch: a gravity portal can fire on every pass (the
+// pre-2026-09-05 behaviour). GD latches it on the first OVERLAP, so the second
+// pass finds hasBeenActivated already up and does nothing.
+inline bool g_noPortalLatch = false; // --no-portallatch
 // The gravity-frame speed at or below which a ramp CONTACT becomes a LANDING.
 // GD's own: hitGround sets m_isOnGround only when s*v <= this (comisd against
 // the double @0x622E98); above it the caller restores the old vy (0x3907dd).

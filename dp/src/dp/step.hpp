@@ -7614,6 +7614,32 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             }
             continue;
         }
+        // GD LATCHES A GRAVITY PORTAL HERE -- the first tick it OVERLAPS, which
+        // is this line and not the firing below. Everything above is the
+        // overlap test (the x window, the oriented box, and the y gate that
+        // just `continue`d), so a portal reaching this point is one GD's
+        // activation pass has in hand.
+        // Measured with the ccl probe on lv22 uid 13833: hasBeenActivated and
+        // hasBeenActivatedByPlayer are both 0 through t=6,299 and both 1 from
+        // t=6,300 -- a pass the player takes ALREADY in the polarity the portal
+        // would set, so flipGravity is a no-op and the `changes` gate below
+        // would have skipped it entirely. Coming back at t=6,327 with the
+        // opposite polarity, GD does nothing: the latch is still up, the box
+        // still reads 25x75, and grpOff / grpOffT / the +0x740 claim are 0.
+        // Exclusion census over every gravity-portal overlap pass in the corpus
+        // (132 passes, the flip read at the tick BEFORE each pass so a firing on
+        // the pass's own first tick is not mistaken for the pre-state): 107
+        // fire, 25 do not, and exactly two fail to fire while the polarity
+        // differs -- lv22 uid 4360 (4,645..4,694) and uid 13833 (6,327..6,360).
+        // TYPE 4 ONLY. GD's flag is on GameObject, so presumably every portal
+        // carries one, but the corpus witnesses it on no other type, and those
+        // two rows are the whole of the evidence.
+        if (p->type == 4 && p->gpBit >= 0 && !g_noPortalLatch) {
+            const uint32_t bit = 1u << (unsigned)p->gpBit;
+            const bool spent = (s.portalLatch & bit) != 0;
+            c.portalLatch |= bit;
+            if (spent) continue;
+        }
         // [2026-08-21 r52] **A gravity portal right after a rotation-frame
         // change does not fire if the player was already inside it.** Changing
         // up on frame entry/exit is not the portal's job, but the `changes` gate
@@ -10269,6 +10295,7 @@ inline void swapHalves(State& s) {
     std::swap(s.ceilM4, s.ceilM42);
     std::swap(s.snapObj, s.snapObj2);
     std::swap(s.usedOrb, s.usedOrb2);
+    std::swap(s.portalLatch, s.portalLatch2);
     for (int i = 0; i < 4; ++i) std::swap(s.usedPad[i], s.usedPad2[i]);
 }
 
