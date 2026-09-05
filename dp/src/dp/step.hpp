@@ -4849,6 +4849,31 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                                 }
                             }
                         }
+                        // ...and THIS is the one that answers for a ball on a
+                        // floor ramp -- the other two stay silent, which is how
+                        // the three prints together name the branch. lv22
+                        // uid6949 (m=-0.5, x1=8850, dx=1.6143):
+                        //   t=6,679  r=8850.858  ok=1
+                        //   t=6,680  r=8852.473  ok=0
+                        // so the ride runs while the contact point r = cx - xoff
+                        // is inside x1 + one tick's movement, i.e. cx <= 8855.16
+                        // -- which is what the bisection saw (accepts 8854.40,
+                        // rejects 8856.01) after three hand-readings of the
+                        // source had produced three different wrong cutoffs.
+                        // GD leaves at t=6,682, r in (8854.09, 8855.70], and no
+                        // constant grace fits it because GD's continuing-contact
+                        // test has no x window at all: it ends when the extended
+                        // lower edge passes objMaxY, and this ramp is a MOVER
+                        // descending out from under the player.
+                        // `stick` is not the thing to widen -- it is already 1
+                        // on the rejecting tick and did not rescue it.
+                        if (g_slopeDbg)
+                            std::printf("slopeform t=%lld uid=%d mode=%d m=%.3f "
+                                        "cx=%.3f x0=%.1f x1=%.1f r=%.3f "
+                                        "stick=%d ok=%d  [rot-branch]\n",
+                                        (long long)K.t, sp->uid, (int)c.mode, m,
+                                        cx, x0, x1, r, stickToSlope ? 1 : 0,
+                                        ok ? 1 : 0);
                         return Smp{std::min(std::max(r, x0), x1), ok,
                                    r >= x0 && r <= x1};
                     }
@@ -4962,6 +4987,22 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                                     : (rcH >= x0 && rcH <= x1 + cornG))
                            : (rcH >= x0 && rcH <= x1))
                         : (cx + pH >= x0 && cx - pH <= x1);
+                    // --slopedbg: WHICH of the three forms answered, with its
+                    // inputs. The ball takes none of the shapes its comments
+                    // suggest -- it is not in `contactPt`, and the mode-2 block
+                    // below never runs on the floor side -- so on lv22 uid6949
+                    // the ride ends at a cx the source does not obviously
+                    // produce (accepts 8854.40, rejects 8856.01, x1 = 8850).
+                    // Reading it off the code by hand gave three different wrong
+                    // answers, so it prints instead.
+                    if (g_slopeDbg)
+                        std::printf("slopeform t=%lld uid=%d mode=%d m=%.3f "
+                                    "cx=%.3f x0=%.1f x1=%.1f pH=%.1f "
+                                    "centre=%d contactPt=%d rcH=%.3f "
+                                    "cornG=%.3f ok=%d\n",
+                                    (long long)K.t, sp->uid, (int)c.mode, m, cx,
+                                    x0, x1, pH, centre ? 1 : 0,
+                                    contactPt ? 1 : 0, rcH, cornG, ok ? 1 : 0);
                     // [r71b] The swing's xr is the contact point too (clamped).
                     // Kept at the centre clamp, the acquisition tick jumps 5.1px
                     // down to line(x0)-rotated distance (unit36: GD 273.881 =
@@ -4982,6 +5023,20 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                         double okLo = x0, okHi = x1;
                         if (!revB && m < 0) okHi = x1 - xoffB + 1.5;
                         else if (revB && m > 0) okLo = x0 + xoffB - 1.5;
+                        // --slopedbg: which numbers ended the ball's ride. The
+                        // window is the model's proxy for GD's continuing-contact
+                        // test, and reading the proxy off the source by hand got
+                        // the wrong answer: lv22 uid6949 (m=-0.5, x1=8850) has
+                        // xoff=3.541 so this reads okHi=8847.96, while the model
+                        // plainly accepts cx=8854.40. One of the inputs is not
+                        // what it looks like, and nothing printed them.
+                        if (g_slopeDbg)
+                            std::printf("slopeok t=%lld uid=%d m=%.3f cx=%.3f "
+                                        "x0=%.1f x1=%.1f xoff=%.3f rev=%d "
+                                        "okLo=%.3f okHi=%.3f ok=%d\n",
+                                        (long long)K.t, sp->uid, m, cx, x0, x1,
+                                        xoffB, revB ? 1 : 0, okLo, okHi,
+                                        (cx >= okLo && cx <= okHi) ? 1 : 0);
                         return Smp{std::min(std::max(cx, x0), x1),
                                    cx >= okLo && cx <= okHi,
                                    cx >= x0 && cx <= x1};
