@@ -172,6 +172,17 @@ inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
 // witness. The two agree everywhere except on the ENTRY side of a ramp.
 inline bool g_noSlopeSeat = false; // --no-slopeseat
 
+// --no-rampfirst: keep the model's own resolution order -- every solid
+// resolved before the ramp block runs, and never revisited -- instead of GD's
+// ramp-then-solid. GJBaseGameLayer::checkCollisions (0x2137f0) is two passes:
+// the bucket scan resolves slopes (type 0x19) and teleports (0x1c) in place,
+// while solids (type 0 / 0x15) and hazards are only pushed onto a list and
+// resolved afterwards through PlayerObject::collidedWithObject (0x214687), so
+// in GD a solid always sees the seat the ramp already wrote. See the rule at
+// the end of the slope block in step.hpp for the witness (lv16 t=4,142) and
+// for what it deliberately does not cover.
+inline bool g_noRampFirst = false; // --no-rampfirst
+
 // --no-slopenudge: a ramp contact keeps the pre-2026-09-06 velocity rules --
 // the gradient-signed +-2.0 writes at the three ceiling/ride sites, the ship's
 // kShipRampG ladder and the swing's walkIn0 one -- instead of GD's own

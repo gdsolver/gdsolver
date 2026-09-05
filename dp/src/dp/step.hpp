@@ -7642,6 +7642,91 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             }
             if (bestFace > -1e17) c.y = (float)(bestFace + pHalf);
         }
+        // -------------------------------------------------------------------
+        // [2026-09-06] **RAMP FIRST, THEN SOLID** -- GD's own order.
+        //
+        // GJBaseGameLayer::checkCollisions (0x2137f0) is TWO passes. The bucket
+        // scan fires portals/orbs/triggers in place and resolves slopes (type
+        // 0x19) and teleports (0x1c) THERE; solids (type 0 / 0x15) and hazards
+        // are only PUSHED onto a list in that scan and resolved afterwards, in
+        // the loop that calls PlayerObject::collidedWithObject (0x214687). So
+        // in GD a solid always sees the seat the ramp has already written, and
+        // a face that cuts that seat pushes the player back out of it.
+        //
+        // The model runs the two the other way round -- the per-mode solid
+        // loops, then this whole slope block -- and never revisits a solid, so
+        // a seat that climbs into a block simply keeps climbing.
+        //
+        // WITNESS lv16 t=4,142: a flipped ship hanging under floor ramp uid1468
+        // ((5790,435) 60x30, m=+0.5, line 420->450), its centre already past
+        // the ramp's high end x1=5820, and solid uid1480 ((5835,465) 30x30)
+        // whose bottom face 450 is that ramp rect's own top -- which is how GD
+        // builds these ceiling corridors.
+        //   gdref        435.000 = 450 - 15, held from 4,142 to 4,146
+        //   seat alone   435.402 436.209 437.016 437.823 438.631
+        //                (the extrapolated line, m*dx = +0.807 a tick)
+        // t=4,141 is untouched (434.594 against gdref's 434.595): there the
+        // seat does not reach the face at all.
+        //
+        // SHAPE, and what it deliberately does not cover. This is a PUSH-OUT
+        // and nothing else -- no landing, no grounding, no velocity, no kill,
+        // no hazard, no orb/pad, no one-way plate. The solid loops above keep
+        // all of that and keep running first; what is added is the second look
+        // GD takes at the same solid after the seat. It fires only where the
+        // SEAT ITSELF crossed the face on this tick (outside before, inside
+        // after), so a penetration the solid pass already declined to resolve
+        // stays that pass's business. That gate also bounds the correction: the
+        // result always lies between the pre-seat y and the seat, and with no
+        // seat there is no rule at all -- which is what makes
+        // `--no-slopeseat --no-rampfirst` the pre-2026-09-06 build byte for
+        // byte.
+        //
+        // CENSUS, over the 22 whole-run replays (measure-rampfirst-2026-09-06).
+        // 171 ticks put a solid and a ramp seat on the same player; 6 of them
+        // are a seat CROSSING a face and the other 165 are penetrations the
+        // player was already in before the seat ran -- which is the solid pass's
+        // business, and which the crossing gate leaves to it. Of the 6, one is
+        // vetoed (below) and 5 fire, all lv16 4,142-4,146, all to GD's own
+        // 435.000. Deepest penetration on a firing row: 3.63 px, i.e. inside
+        // GD's 6.0 flight reach-back, which is why the tolerance gates of
+        // collidedWithObjectInternal (6.0 flight / 10.0 ground, 0x391bc1 /
+        // 0x391c48) are not modelled here.
+        //
+        // slopeVetoesSolid is applied with the same arguments the two solid
+        // loops use, because it is a veto GD performs inside the solid
+        // resolution itself (0x392520 / 0x392a9b) and this is that resolution
+        // running a second time. It earns its place on the corpus's one other
+        // crossing row: lv16 t=6,316, a cube riding uid2580 down past solid
+        // uid2590's top face 150. The seat takes it from 165.707 to 164.900 and
+        // gdref goes to 164.8999 -- GD descends past the face -- so without the
+        // veto this rule would pin a tick that is exact today. (The `blockedByFlat`
+        // gate further up names the same tick for the same reason.)
+        if (!g_noRampFirst && K.near) {
+            const double preY = (double)yFreeBeforeSlope;
+            const double seatY = (double)c.y;
+            if (seatY != preY) {
+                const bool up = seatY > preY;
+                double lim = seatY;
+                for (const Obj* o : *K.near) {
+                    if (o->type != 0 || o->oneway) continue;
+                    if (std::fabs(x - o->cx) > o->hw + pHalf) continue;
+                    // the blocking face, expressed as the centre y at which the
+                    // player's box just touches it
+                    const double f = up ? (o->cy - o->hh - pHalf)
+                                        : (o->cy + o->hh + pHalf);
+                    if (up ? !(preY <= f && seatY > f)
+                           : !(preY >= f && seatY < f)) continue;
+                    // `faceIsTop`: pushed UP means the contact is with the
+                    // block's underside, pushed DOWN means with its top.
+                    if (slopeVetoesSolid(o, K.slopes, x, seatY, pHalf, pHalf,
+                                         !up, xPrev, (double)s.y,
+                                         c.slopeUidNow))
+                        continue;
+                    if (up ? (f < lim) : (f > lim)) lim = f;
+                }
+                if (lim != seatY) c.y = (float)lim;
+            }
+        }
         // Leaving the top launches. GD applies it like a pad: the y move for
         // this tick already happened with the old velocity.
         // Only an UPHILL exit launches; running off the bottom of a downhill

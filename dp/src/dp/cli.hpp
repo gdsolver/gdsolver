@@ -188,6 +188,11 @@ inline int cliMain(int argc, char** argv) {
         // instead of GD's extrapolated `line -/+ h/(2 cos t)` with the bounds on
         // the target y. See slopeSeatTarget in slopes.hpp.
         if (!std::strcmp(argv[i], "--no-slopeseat")) g_noSlopeSeat = true;
+        // --no-rampfirst: the model's own order (solids first, the ramp seat
+        // last and never revisited) instead of GD's ramp-then-solid. With
+        // --no-slopeseat as well the build reproduces the pre-2026-09-06
+        // behaviour byte for byte.
+        if (!std::strcmp(argv[i], "--no-rampfirst")) g_noRampFirst = true;
         // --spddbg: one line per speed-portal candidate per tick, plus the
         // window size, plus which of the three gates rejected it.
         if (!std::strcmp(argv[i], "--spddbg")) g_spdDbg = true;
