@@ -82,7 +82,16 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
                     snprintf(buf, sizeof(buf),
                         "padact: t=%lld id=%d uid=%d ty=%d o=(%.3f,%.3f) "
                         "p=(%.4f,%.4f) vy=%.4f used=%d orect=(%.4f,%.4f,%.4f,%.4f) "
-                        "prect=(%.4f,%.4f,%.4f,%.4f) rot=%.3f",
+                        // ...AND THE PLAYER'S OWN ROTATION. collisionCheckObjects
+                        // builds the player's OBB by turning its 30x30 square by
+                        // getRotation() (0x214ba1, via getObjectRotation
+                        // 0x3a0670) and runs a two-way SAT whenever the object
+                        // is oriented, so the axis-aligned `prect` above is NOT
+                        // the shape the gate uses off a quarter turn. Without
+                        // this field the padnorm rows were scored against a
+                        // square that GD never tested, and 13 of them looked
+                        // unexplainable.
+                        "prect=(%.4f,%.4f,%.4f,%.4f) rot=%.3f prot=%.3f",
                         (long long)g_tick, this->m_objectID, this->m_uniqueID,
                         ty, this->getPositionX(), this->getPositionY(),
                         p->getPositionX(), p->getPositionY(),
@@ -90,7 +99,7 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
                         this->m_activatedByPlayer1 ? 1 : 0,
                         r.origin.x, r.origin.y, r.size.width, r.size.height,
                         pr.origin.x, pr.origin.y, pr.size.width, pr.size.height,
-                        (float)this->getRotation());
+                        (float)this->getRotation(), (float)p->getRotation());
                     writeResult(buf);
                 }
             }
