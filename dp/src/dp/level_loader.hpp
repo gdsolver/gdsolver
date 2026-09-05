@@ -1307,9 +1307,9 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // BOTH gravity portals. type 3 is InverseGravityPortal (the blue one),
         // type 4 the normal one, and GD's hasBeenActivated / ...ByPlayer are
         // GameObject's own flags -- nothing about them is per portal kind. The
-        // corpus is not silent on this the way it first looked: lv16 uid 3450 is
-        // a type 3 crossed TWICE, which is what makes the extension testable
-        // rather than a courtesy.
+        // corpus has no witnessed type 3 double pass, though: lv16 uid 3450
+        // looked like one and is two HALVES of a dual, one pass each (GD's own
+        // record: p2 at t=8,014, p1 at t=8,061). See the note at the latch.
         // The budget is now tight. Counting both types, lv20 holds exactly 32
         // (12 + 20) -- the cap with nothing to spare, so the next level over the
         // line stops here instead of running.

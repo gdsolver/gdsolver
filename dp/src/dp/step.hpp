@@ -7631,12 +7631,22 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // the pass's own first tick is not mistaken for the pre-state): 107
         // fire, 25 do not, and exactly two fail to fire while the polarity
         // differs -- lv22 uid 4360 (4,645..4,694) and uid 13833 (6,327..6,360).
-        // BOTH GRAVITY PORTALS (type 4 normal, type 3 inverse). GD's flag is
-        // GameObject's, not a per-kind one, and the corpus does hold a type 3
-        // crossed twice (lv16 uid 3450), so this is measurable rather than
-        // assumed. Still only the gravity pair: no other portal kind has a
-        // second pass anywhere in these 22 levels, so widening further would
-        // change firings nothing has witnessed.
+        // BOTH GRAVITY PORTALS (type 4 normal, type 3 inverse). What carries
+        // this is that GD's flag is GameObject's own and not a per-kind thing
+        // (the ccl probe read it off the object), plus a tightening the corpus
+        // is able to judge and does not reject.
+        // NOT a witnessed double pass, and the retraction is worth keeping:
+        // lv16 uid 3450 was read as a type 3 crossed twice (runs at t=8,016 and
+        // t=8,062, the second with changes=1), and it is not. GD's own
+        // per-player record says p2 activated it at 8,014 and p1 at 8,061 --
+        // two halves, one pass each. The pass census counted portgate runs, and
+        // a portgate line does not say which half it belongs to, so on every
+        // dual level "the same portal twice" and "each half once" look
+        // identical. No level in this corpus is known to cross a gravity portal
+        // twice with the SAME body except lv22 uid 13833, which is type 4.
+        // Still only the gravity pair: nothing has measured a second pass of
+        // any other portal kind, so widening further would change firings on
+        // no evidence at all.
         if ((p->type == 3 || p->type == 4) && p->gpBit >= 0 && !g_noPortalLatch) {
             const uint32_t bit = 1u << (unsigned)p->gpBit;
             const bool spent = (s.portalLatch & bit) != 0;
