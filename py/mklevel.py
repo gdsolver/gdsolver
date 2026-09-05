@@ -2134,6 +2134,99 @@ def build_padfall() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def padnorm_unit(x: float, rot: float, mini: bool, off: float,
+                 y_plate: float = 150.0
+                 ) -> tuple[list[str], list[tuple[int, int]], float, dict]:
+    """One plate, met while falling, to read the pad gate's THICKNESS threshold.
+
+    padedge swept the plate's long axis and is blind to its thin direction by
+    construction; lv20's player falls, which is that direction, and the two
+    ticks nobody could explain turn out to live there. Measured at lv20 uid
+    7030: GD refuses at a normal-axis overlap of 4.197 and fires at 6.887, i.e.
+    the threshold on |d.v| is bracketed by [16.404, 19.094). Three candidates
+    sit inside and one witness cannot separate them:
+
+        15 * sec(theta)                          17.151 at 29 deg
+        player half + plate half-thickness       17.900, theta-independent
+        15*(|cos|+|sin|) - plate half-thickness   17.491 at 29 deg
+
+    Sweeping THETA separates them, since only the middle one is flat. The
+    corpus cannot: all six of lv20's rotated pads are at 29 degrees.
+
+    ONE plate per unit, not a curtain. padfall used a column -- the trick
+    orbair_unit uses for orbs -- and it failed, because an orb needs a press
+    while a pad fires on contact: the first plate's +16 launched the player into
+    the next one and the column became a ladder, 149 activations from 30 units.
+    With a single plate that cannot happen.
+
+    theta is kept off the quarter turns so the object takes the `oriented`
+    branch (level_loader.hpp:811). A theta=0 plate is a different branch AND,
+    at the geometry padfall happened to produce, does not measure the threshold
+    at all -- the player ran at the plate's own centre height, so the normal
+    overlap sat at its maximum for the whole pass and bounds the threshold only
+    from above. Those points are not controls for this.
+    """
+    oid, _ = PAD["yellow"]
+    p_half = 9.0 if mini else 15.0
+    objs: list[str] = []
+    y0 = GROUND_TOP + 15.0
+    objs.append(obj(MODE_PORTAL["cube"], x, y0))
+    objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID, y0))
+    x_ref = x + 8 * GRID
+    t = tick_at(x_ref)
+    objs.append(obj(oid, x_ref + off, y_plate, rot=rot, scale=1.45))
+    th = math.radians(rot)
+    c, s = abs(math.cos(th)), abs(math.sin(th))
+    sec = 1.0 / math.cos(th)
+    plate_half_t = 4.0 * 1.45 / 2.0
+    meta = {"x0": x, "rot": rot, "mini": int(mini), "off": off,
+            "p_half": p_half, "plate_cx": x_ref + off, "plate_cy": y_plate,
+            "plate_half_thick": plate_half_t, "t_press": t,
+            # written BEFORE the run: what each candidate predicts for the
+            # normal-axis threshold |d.v| at the firing tick
+            "cand_sec": p_half * sec,
+            "cand_sum": p_half + plate_half_t,
+            "cand_proj": p_half * (c + s) - plate_half_t}
+    return objs, [(t, 1), (t + 1, 0)], x_ref + 30 * GRID, meta
+
+
+def build_padnorm() -> str:
+    """Thickness-threshold rig: three rotations x two sizes x three drop points.
+
+    The three drop points are insurance, not an axis -- the jump's apex is only
+    ~67 px above the run line, so a plate at y=150 is met on the way down near
+    off=105, and neighbouring offsets cover any error in that estimate. Each is
+    its own unit with its own single plate, so a wasted one costs nothing and
+    cannot interfere with the others.
+    """
+    objs: list[str] = []
+    x = 90.0
+    # THE SLOW ARM IS THE ONE THAT DECIDES. A threshold is bracketed between the
+    # last tick that did not fire and the first that did, so the bracket's width
+    # is one tick of approach -- and at theta=29 two candidates sit 0.75 px apart
+    # (17.151 vs 17.900). A body falling at ~2 px/tick cannot separate them.
+    # Putting the plate just under the jump's apex makes the player arrive at
+    # ~0.2-0.3 px/tick, bracketing to well under half a pixel. The fast arm is a
+    # control: at 15 and 45 degrees those two candidates are 2.4 and 3.3 px
+    # apart, so it should split them alone, and the arms then check each other.
+    # Apex height differs by size, so each size gets its own plate heights.
+    GEOM = {False: {"fast": (150.0, (105.0, 115.0, 125.0)),
+                    "slow": (168.0, (60.0, 67.0, 74.0))},
+            True: {"fast": (130.0, (85.0, 95.0, 105.0)),
+                   "slow": (145.0, (48.0, 55.0, 62.0))}}
+    for mini in (False, True):
+        for rot in (15.0, 29.0, 45.0):
+            for arm in ("fast", "slow"):
+                y_plate, offs = GEOM[mini][arm]
+                for off in offs:
+                    u, pl, x, meta = padnorm_unit(x, rot, mini, off, y_plate)
+                    meta["arm"] = arm
+                    objs += u
+                    PLAN.extend(pl)
+                    UNITS.append(meta)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 def build_padedge13() -> str:
     """The same outline at speed 1.3, which is the one thing lv20 has and the
     first rig did not.
@@ -4448,7 +4541,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "shortexit": build_shortexit, "edgeland": build_edgeland,
             "slopelandball": build_slopelandball,
             "ceilpush": build_ceilpush, "ceilpushball": build_ceilpushball,
-            "ceilpush8": build_ceilpush8, "padedge": build_padedge, "padedge13": build_padedge13, "padfall": build_padfall}
+            "ceilpush8": build_ceilpush8, "padedge": build_padedge, "padedge13": build_padedge13, "padfall": build_padfall, "padnorm": build_padnorm}
 
 
 def main() -> int:
@@ -4496,6 +4589,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 
