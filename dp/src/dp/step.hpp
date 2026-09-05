@@ -8497,10 +8497,31 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                             continue;
                         const double face =
                             c.flip ? (o->cy - o->hh) : (o->cy + o->hh);
-                        // centre above the face, foot below it = the new body is
-                        // standing in the solid the old one passed through
+                        // How deep the new body's foot sits below the face. The
+                        // bound is the landing loop's own reach-back (`dHangL >=
+                        // -landTol`, kLandTol = 10, measured on the floor) and
+                        // NOT nh: allowing a full half-height would seat bodies
+                        // 10-15px inside a solid, which is the band GD hands to
+                        // the crush box (half 4.5), and nothing measured says it
+                        // seats there. Claiming to be "the new mode's landing
+                        // predicate" while carrying a different tolerance would
+                        // make this a new predicate instead.
+                        // The loop measures its reach-back from the PREVIOUS
+                        // foot, which a body that has just changed does not
+                        // have. GD says which one to use: the `ppre` rect on
+                        // the hbox line is taken immediately before
+                        // collidedWithObject resolves, and at lv11 t=15,505 it
+                        // reads y origin 170.71 -- the CURRENT foot (c.y 185.706
+                        // - 15), not the previous one (s.y 185.799 - 15 =
+                        // 170.80). So the bound goes on the current foot.
+                        // `groundedInvCeil`'s arm of the same test is moot here:
+                        // this branch already requires !c.grounded.
+                        const double pen =
+                            (face - ((double)c.y - gs * nh)) * gs;
+                        if (pen < 0.0 || pen > kLandTol) continue;
+                        // ...and the centre still has to be above the face: for
+                        // a mini body (nh 9) kLandTol alone does not imply it.
                         if (((double)c.y - face) * gs <= 0.0) continue;
-                        if (((double)c.y - gs * nh - face) * gs > 0.0) continue;
                         if (!best || (face - bestFace) * gs > 0.0) {
                             best = o;
                             bestFace = face;
