@@ -148,6 +148,10 @@ inline int cliMain(int argc, char** argv) {
         // rules (the gradient-signed +-2.0 writes) instead of GD's V3/V4/V5.
         if (!std::strcmp(argv[i], "--no-slopenudge"))
             g_noSlopeNudge = true;
+        // --no-mpushreach: the flight mover-catch seats at any penetration
+        // (the pre-2026-09-06 behaviour) instead of GD's speed-widened reach.
+        if (!std::strcmp(argv[i], "--no-mpushreach"))
+            g_noMpushReach = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;

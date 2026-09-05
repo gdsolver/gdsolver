@@ -169,6 +169,12 @@ inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
 // A/B arm: the whole 22-level replay suite has to be byte-identical with it.
 inline bool g_noSlopeNudge = false; // --no-slopenudge
 
+// --no-mpushreach: the flight loop's mover-catch (`fly/mpush`) seats at ANY
+// penetration, the pre-2026-09-06 behaviour, instead of GD's reach-back
+// `kShipLandTol + |dcy|/0.25` (see the site in step.hpp). Kept as the A/B arm:
+// the whole 22-level replay suite has to be byte-identical with it.
+inline bool g_noMpushReach = false; // --no-mpushreach
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip

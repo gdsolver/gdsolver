@@ -4077,9 +4077,77 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // centre is above the face**. Loosening these (dcy != 0 alone, or not
             // looking at prevFootP) raises families 19->22 (lv19 regresses 3
             // sections, lv21 1 section; new are ship 2 + UFO 2).
-            if (o->dcy * gsign > 0.0 && !c.grounded && xOver
+            // [2026-09-06] **The catch is a REACH-BACK, and it grows with the
+            // face's own speed.** The gates above are the geometry; GD also has
+            // a depth limit, and this branch had none -- it seated at any
+            // penetration. In PlayerObject::collidedWithObjectInternal the
+            // top-face block is entered only if
+            //     foot + tol >= objMaxY  ||  footPrev + tol >= objMaxY
+            //                                        (0x39249d / 0x3924a4)
+            //     tol = sign * (flight ? 6.0f : 10.0f)     (0x391bc1 / 0x391c48)
+            //         + sign * m_slopeHalfHeight  if m_wasOnSlope     (0x391c6d)
+            //         + sign * |objPos.y - objLastPos.y| / dt
+            //                     if the object moved TOWARD the player
+            //                                        (0x391db5-0x391dfb)
+            // with foot the POST-INTEGRATION, PRE-RESOLUTION rect bottom (= this
+            // branch's newFootP measured from the face) and dt = 0.25 frames per
+            // physics step (GJBaseGameLayer::update 0x237850 hands
+            // checkCollisions (frameSeconds*60)/nSteps). This is the flight loop,
+            // so the base is kShipLandTol = 6.0, and the mover term is the same
+            // `dcy / 0.25` the seat's velocity already uses below.
+            // **Nothing scales with the vehicle size** (0x391a70-0x393c21 reads
+            // m_vehicleSize zero times); the mini enters only through pHalf = 9.
+            //
+            // Witness -- lv20, a mini UFO rising inside solid uid 6225 whose top
+            // climbs 0.25 px/tick (the model's dcy 0.2562 -> tol 7.025):
+            //   dump t   objMaxY   free foot   penetration   GD
+            //    6,553   323.700    315.926      7.774       no pop  <- the defect
+            //    6,554   323.950    316.738      7.212       no pop
+            //    6,555   324.200    317.520      6.680       pop -> y = 333.200
+            // The three ticks bracket the constant to [6.680, 7.212) and 7.025
+            // is inside it; a bare 6.0 fires on none of them and kLandTol = 10.0
+            // on all three. The model used to seat on the FIRST of them and ran
+            // 8 px above GD from there to its death. The other corpus firing,
+            // lv19 t=21,572 (uid 15031, penetration 0.545, dcy 0.261), is deep
+            // inside the reach and is untouched.
+            // Measured in measure-solid-top-popout-predicate-2026-09-06.
+            //
+            // NOT modelled, each one a leaf:
+            //  * the `m_wasOnSlope -> + m_slopeHalfHeight` term. It cannot reach
+            //    THIS branch: the seat at 0x392546 is behind `!m_wasOnSlope`
+            //    (0x392508-0x392519), so a player that was on a ramp is refused
+            //    whatever the tol. The model has s.onSlope but no ramp half
+            //    height, and the widened tol would only matter for the OTHER
+            //    consumers of the top-face block, which are not this rule.
+            //  * the |dcy/dt| <= 5.0 cliff (0x391dd7, i.e. a face climbing faster
+            //    than 1.25 px/tick), which hands the contact to the ordinary
+            //    landing instead. Unwitnessed: the corpus's two firings are at
+            //    1.02 and 1.04.
+            //  * the half-step (GJBaseGameLayer::update l.385 halves dt on a tick
+            //    split by a button), which would double the mover term. Neither
+            //    witness tick has a press.
+            //  * the cube/ball/robot/spider side is untouched. Its mover contact
+            //    is the ride support test near the top of this function
+            //    (kSupportTol + |dcy|), a different rule; GD's base there is
+            //    10.0, not 6.0.
+            const bool mpushGeom = o->dcy * gsign > 0.0 && !c.grounded && xOver
                 && prevFootP < 0.0
-                && ((double)c.y - face) * gsign > 0.0 && newFootP < 0.0) {
+                && ((double)c.y - face) * gsign > 0.0 && newFootP < 0.0;
+            const double mpushTol =
+                kShipLandTol + std::fabs((double)o->dcy) / 0.25;
+            // GD's `foot + tol >= objMaxY || footPrev + tol >= objMaxY`, in the
+            // player frame where a foot below the face reads negative. For a
+            // RISING player the current foot is the higher of the two, so the
+            // previous-foot arm is slack here; it is kept because it is GD's,
+            // and it is what catches a falling player one tick early.
+            const bool mpushReach = g_noMpushReach
+                || newFootP >= -mpushTol || prevFootP >= -mpushTol;
+            if (g_slopeDbg && mpushGeom && !mpushReach)
+                std::printf("mpush-out-of-reach t=%lld uid=%d face=%.3f "
+                            "dcy=%.4f tol=%.3f prevFootP=%.3f newFootP=%.3f\n",
+                            (long long)K.t, o->uid, face, o->dcy, mpushTol,
+                            prevFootP, newFootP);
+            if (mpushGeom && mpushReach) {
                 if (g_slopeDbg)
                     std::printf("mpush t=%lld uid=%d ocy=%.3f ohh=%.3f face=%.3f "
                                 "dcy=%.4f pHalf=%.3f y %.3f->%.3f\n",
