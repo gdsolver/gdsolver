@@ -7619,10 +7619,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // window", so a portal that reaches this line and dies here looked
         // identical to one the window never let in (lv22 t=5,110).
         if (g_slopeDbg)
-            std::printf("portgate t=%lld uid=%d type=%d changes=%d gapY=%.3f "
+            std::printf("portgate half=%d t=%lld uid=%d type=%d changes=%d gapY=%.3f "
                         "y=%.3f pcy=%.3f phh=%.2f pHalf=%.1f flip=%d frame=%d "
                         "prot=%.3f orient=%d\n",
-                        (long long)K.t, p->uid, (int)p->type, changes ? 1 : 0,
+                        g_halfNow, (long long)K.t, p->uid, (int)p->type,
+                        changes ? 1 : 0,
                         gapY, (double)c.y, p->cy, p->hh, pHalfP,
                         (int)c.flip, (int)c.frame, pRotHere,
                         p->oriented ? 1 : 0);

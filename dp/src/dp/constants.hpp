@@ -135,6 +135,12 @@ inline bool g_noRot2900Halve = false; // --no-rot2900halve
 // pre-2026-09-05 behaviour). GD latches it on the first OVERLAP, so the second
 // pass finds hasBeenActivated already up and does nothing.
 inline bool g_noPortalLatch = false; // --no-portallatch
+// WHICH HALF stepOne is running, for the --slopedbg prints only. Nothing reads
+// it as physics. A per-tick diagnostic line cannot be counted on a dual level
+// without it: stepOne runs twice with swapHalves between, so a portal each half
+// passes ONCE looks exactly like one the same body passed twice, and reading it
+// the second way is what put a retracted witness into 283e8a4 (see 87049e5).
+inline int g_halfNow = 0;
 // --no-r52gravhold: drop r52 (a gravity portal right after a rotation-frame
 // change does not fire if the player was already inside it). The arm exists to
 // ask whether the portal latch has made r52 a fossil: r52 was measured on

@@ -159,6 +159,7 @@ inline void applyFixup(const State& s, int input, State& c, bool& dead,
 
 inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     bool d1 = false;
+    g_halfNow = 0;
     State c = stepOne(s, input, K, d1);
     if (!s.dual) {
         dead = d1;
@@ -193,7 +194,9 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     // supports, and this gate is the only cross-body read in stepOne.
     sb.grounded2 = c.grounded;
     bool d2 = false;
+    g_halfNow = 1;
     State cb = stepOne(sb, input, K, d2);
+    g_halfNow = 0;
     swapHalves(cb);
     // shared fields (x, speed, dual) come from the first half; the second half
     // only contributes its own body -- and `mode` / `mini` / the ceiling press
