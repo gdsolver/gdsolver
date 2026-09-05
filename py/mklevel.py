@@ -1934,6 +1934,95 @@ def build_orbedge3() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def padedge_unit(x: float, rot: float, scale: float, mini: bool, dy: float,
+                 kind: str = "yellow") -> tuple[list[str], float, dict]:
+    """One pass under a single pad, for the OUTLINE of the pad's contact shape.
+
+    lv20 uid 7030 (id 35, rot=29, scale 1.45) is activated by GD two ticks LATER
+    than either candidate rectangle predicts: the circumscribed box GD itself
+    prints as `orect`, and the true rotated plate (36.25 x 5.80). `ccl:` already
+    ruled out the alternatives -- the pad is a candidate every tick with act,
+    actP, claim and both group flags at 0 -- so what is left is the SHAPE used
+    by the call, and a shape is read off an outline rather than off two points.
+
+    The measured quantity is deliberately NOT "does it fire" and NOT "at which
+    tick": it is **the player x at which the pad fires**, swept against the pad's
+    height offset `dy`. A horizontal pass cannot separate the two rectangles by
+    fire/no-fire, because sweeping x drags the player through the plate's whole
+    extent and both boxes then have the same vertical reach. The x of FIRST
+    contact does separate them:
+
+      circumscribed box   x_fire = pad_cx - (bboxW/2 + pHalf), FLAT in dy
+      true rotated plate  x_fire slides with dy, slope cot(29 deg) = 1.804
+      rot = 0             the two coincide -> x_fire = pad_cx - (12.5*s + pHalf)
+
+    so the signature is a slope, not a constant, and rot=0 is the arm that says
+    whether the method itself is sound before any rot=29 number is believed.
+
+    No presses anywhere: a pad fires on contact, so this rig has no plan at all
+    and XMAP's tick/x drift cannot reach it.
+
+    The player runs on the ground, so its centre is fixed and `dy` alone moves
+    the pad. Negative dy would bury the pad in the ground, so the sweep takes the
+    upper half of the outline; the slope is what discriminates, and it is
+    symmetric. Firing launches the player +16, which is ~148 ticks and ~192 px of
+    x -- the unit is wider than that so it lands well before the next pad.
+    """
+    oid, _ = PAD[kind]
+    p_half = 9.0 if mini else 15.0
+    y_run = GROUND_TOP + p_half          # the grounded centre
+    objs: list[str] = []
+    y0 = GROUND_TOP + 15.0
+    objs.append(obj(MODE_PORTAL["cube"], x, y0))
+    objs.append(obj(SIZE_MINI if mini else SIZE_NORM, x + 2 * GRID, y0))
+    pad_cx = x + 10 * GRID
+    pad_cy = y_run + dy
+    objs.append(obj(oid, pad_cx, pad_cy, rot=rot, scale=scale))
+    # The three predictions, written into the unit table so the extraction side
+    # compares against numbers fixed BEFORE the run.
+    th = math.radians(rot)
+    c, s = abs(math.cos(th)), abs(math.sin(th))
+    w0, h0 = 25.0 * scale, 4.0 * scale
+    bbox_w = w0 * c + h0 * s
+    u = {"x0": x, "rot": rot, "scale": scale, "mini": int(mini), "dy": dy,
+         "pad_cx": pad_cx, "pad_cy": pad_cy, "p_half": p_half, "y_run": y_run,
+         "plate_w": w0, "plate_h": h0, "bbox_w": bbox_w,
+         "bbox_h": w0 * s + h0 * c,
+         # circumscribed-box model: flat in dy
+         "pred_bbox_x": pad_cx - (bbox_w / 2.0 + p_half)}
+    return objs, x + 24 * GRID, u
+
+
+def build_padedge() -> str:
+    """Outline sweep for the pad's contact shape (lv20 uid 7030's family).
+
+    Three shapes x two sizes x a dy sweep:
+      rot=0  scale=1.00  -- METHOD CHECK. The plate is the known 25x4, so both
+                            models agree and x_fire must be pad_cx - (12.5+15)
+                            exactly, flat in dy, with the boundary at dy=17.
+                            If this arm does not come out flat and at the
+                            predicted intercept, the instrument or the phase is
+                            wrong and no rot=29 number means anything.
+      rot=0  scale=1.45  -- separates SCALE from ROTATION (lv20's pads are both)
+      rot=29 scale=1.45  -- lv20's actual plate
+
+    dy stops past each shape's own predicted reach so the sweep contains the
+    boundary as well as the slope.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for mini in (False, True):
+        for rot, scale, dy_max in ((0.0, 1.0, 20.0), (0.0, 1.45, 22.0),
+                                   (29.0, 1.45, 30.0)):
+            dy = 0.0
+            while dy <= dy_max:
+                u, x, meta = padedge_unit(x, rot, scale, mini, dy)
+                objs += u
+                UNITS.append(meta)
+                dy += 2.0
+    return header() + ";" + ";".join(objs) + ";"
+
+
 def crush_unit(x: float, gap: float, mode: str, mini: bool) -> tuple[list[str], float, dict]:
     u"""One crush corridor: a floor pillar (top 210) + a ceiling pillar
     (underside 210+gap).
@@ -4219,7 +4308,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "shortexit": build_shortexit, "edgeland": build_edgeland,
             "slopelandball": build_slopelandball,
             "ceilpush": build_ceilpush, "ceilpushball": build_ceilpushball,
-            "ceilpush8": build_ceilpush8}
+            "ceilpush8": build_ceilpush8, "padedge": build_padedge}
 
 
 def main() -> int:
