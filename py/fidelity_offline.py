@@ -16,6 +16,14 @@ only valid against dumps taken from the plans it is replaying now.
 
     python py/fidelity_offline.py                # all 22
     python py/fidelity_offline.py 16 22          # two levels
+
+NUMBERS TAKEN THROUGH HERE BEFORE 747dadf ARE WRONG FOR lv22. Until that commit
+this called model_replay without whole_run, so --rotqueue never reached the
+solver, and lv22 came out with its first divergence at 6,315 -- 365 ticks early
+against the true 6,680 -- and the model stopped at 6,350 instead of 11,539. Any
+lv22 figure quoted from an earlier offline run is a different run's, and the
+divergence it names is not there. Other levels were unaffected (lv16 is
+identical across the fix, digit for digit).
 """
 from __future__ import annotations
 
