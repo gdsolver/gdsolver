@@ -141,6 +141,9 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--no-ceilseat")) g_noCeilSeat = true;
         // --no-dualflip: a dual's flip does not reach the partner.
         if (!std::strcmp(argv[i], "--no-slopeveto")) g_noSlopeVeto = true;
+        // --no-slopefreshrect: a fresh ramp contact skips GD's inset rect test.
+        if (!std::strcmp(argv[i], "--no-slopefreshrect"))
+            g_noSlopeFreshRect = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;

@@ -84,6 +84,7 @@ inline void resetInvocationState() {
     g_halfNow = 0;
     g_noCeilSeat = false;
     g_noSlopeVeto = false;
+    g_noSlopeFreshRect = false;
     g_noDualFlip = false;
     g_noR52GravHold = false;
     g_oldLatency = false;

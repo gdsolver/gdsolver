@@ -6668,8 +6668,86 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     }
                     if (flatSup) continue;
                 }
-                if (((double)c.y - top) * gs <= landAllow || seatTolOk
-                    || seatFromPreLand || stickHere || insideSolid) {
+                // **A FRESH CONTACT HAS TO REACH THE RAMP'S INSET RECT.**
+                // collidedWithSlopeInternal splits its reach test on
+                // m_wasOnSlope at 0x38fc0e. A CONTINUING contact takes the cheap
+                // edge test (0x38fc0e-0x38fc2c), which is untouched here; a NEW
+                // one takes a rectangle test against the OBJECT rect inset 1 px
+                // at the top and 1 px at the bottom, and returns from the whole
+                // routine when it fails:
+                //   0x38fc3c  h' = objRect.h - 2.0f   (2.0f @0x622E58)
+                //   0x38fc4a  y' = objRect.y + 1.0f   (1.0f @0x622C24)
+                //   0x38fc65  CCRect(objRect.x, y', objRect.w, h')
+                //   0x38fc73  playerRect.intersectsRect(that)
+                //   0x38fc7b  je 0x390b60             ; no overlap -> nothing
+                // Nothing is inset in x, and nothing on the player -- the
+                // opposite convention from the solid resolver, which insets the
+                // player. slopeWouldAcquire already carries these same three
+                // lines for the veto's bypass; this is the acquisition itself.
+                //
+                // Witness lv19 t=7,553 (cube, one tick after the wave->cube mode
+                // portal at 7,552). Ramp uid4991's rect is y[450,480], inset
+                // y[451,479]; the free y is 494.819, so the foot at 479.819 sits
+                // 0.182 px inside the bare rect and 0.819 px ABOVE the inset
+                // top. GD's `slp:` line is called on every tick of the approach
+                // with onSlope=0 and never moves y, while the model seated at
+                // 495.000 (`why=land`, allow=0.001) -- the level's first
+                // divergence.
+                //
+                // THE Y IS THE FREE ONE. GD's call gets the post-integration,
+                // pre-collision y, which is what yFreeBeforeSlope holds; `c.y`
+                // here has already been moved by whatever ran earlier in the
+                // tick, and feeding the seat's own output back in as its input
+                // is one of the two errors that sank the first attempt at this
+                // rule (retracted 2026-09-05, never committed -- it also read
+                // lv20 t=5,278 off a y lifted by a solid landing there and took
+                // that level's death from 15,124 to 5,348. `9c1a4f8` has since
+                // closed that solid's door, so the free y here IS GD's call-time
+                // y). [[gd-take-the-value-from-the-deciding-source]]
+                //
+                // "Fresh" is GD's own field: m_wasOnSlope is the PLAYER's flag
+                // carried from the previous tick, not a per-ramp one, so a
+                // hand-over between two ramps of a chain is a CONTINUING contact
+                // for this test and keeps the edge test. s.onSlope is the
+                // model's proxy for it.
+                //
+                // Necessary for the WHOLE gate, not only its `land` branch: the
+                // return at 0x38fc7b is ~180 instructions ahead of the
+                // acquisition gate at 0x38fea5, so every way in below it is
+                // downstream of the same return. `alt=` on the trace line below
+                // is exactly "one of the other four disjuncts would have taken
+                // this ramp anyway", i.e. the ticks on which this placement and
+                // a narrower one gating only `land` disagree: **1 of the 9,367
+                // refusals in the 22 replays**, lv19 t=14,850, a UFO whose foot
+                // sits exactly on ramp uid9716's rect top (270.000 against the
+                // inset 269.0) -- and 263 ticks past that level's first
+                // divergence, so it is evidence for neither. The witness itself
+                // comes in on `land` alone (its `slopecand` line reads
+                // inside=0, seatTolOk is false because the cube is rising, and
+                // stickHere cannot fire on a fresh contact). So the wide
+                // placement is written because the disassembly says so, not
+                // because a tick asked for it.
+                bool freshRectOk = true;
+                if (!g_noSlopeFreshRect && !s.onSlope) {
+                    const double ry0 = sp->cy - sp->hh;
+                    const double ry1 = sp->cy + sp->hh;
+                    const double py = (double)yFreeBeforeSlope;
+                    // closed-interval overlap, as cocos CCRect::intersectsRect
+                    freshRectOk = (x + pH >= x0) && (x - pH <= x1)
+                               && (py + pH >= ry0 + 1.0)
+                               && (py - pH <= ry1 - 1.0);
+                    if (!freshRectOk && g_slopeDbg)
+                        std::printf("sloperect t=%lld x=%.2f uid=%d yfree=%.3f "
+                                    "prect=[%.3f,%.3f] inset=[%.1f,%.1f] "
+                                    "alt=%d NO-FRESH-CONTACT\n",
+                                    (long long)K.t, x, sp->uid, py,
+                                    py - pH, py + pH, ry0 + 1.0, ry1 - 1.0,
+                                    (seatTolOk || seatFromPreLand || stickHere
+                                     || insideSolid) ? 1 : 0);
+                }
+                if (freshRectOk
+                    && (((double)c.y - top) * gs <= landAllow || seatTolOk
+                        || seatFromPreLand || stickHere || insideSolid)) {
                     // [2026-08-19] On the tick a downhill rider's centre crosses
                     // the slope rect's top edge (cy+hh), GD clamps **to there for
                     // exactly 1 tick** and returns to the line the next tick.

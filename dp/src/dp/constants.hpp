@@ -154,6 +154,14 @@ inline bool g_noCeilSeat = false; // --no-ceilseat
 // calib_slopeveto/2 and matches all 14 corpus ticks the hit-flag census found.
 inline bool g_noSlopeVeto = false; // --no-slopeveto
 
+// --no-slopefreshrect: a FRESH ramp contact is acquired without GD's inset-rect
+// reach test (the pre-2026-09-05 behaviour). collidedWithSlopeInternal splits on
+// m_wasOnSlope at 0x38fc0e and, for a new contact, intersects the player's rect
+// with the OBJECT rect inset 1 px top and bottom (0x38fc3c-0x38fc7b) before
+// anything else can run. See the site in step.hpp for the witness and the phase
+// rule; the same test is already spelled out in slopeWouldAcquire.
+inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip
