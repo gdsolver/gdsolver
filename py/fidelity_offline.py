@@ -62,8 +62,16 @@ def main() -> int:
             print(f"lv{lv:<3} no plan or no dump ({plan.name} / {dump.name})")
             missing += 1
             continue
+        # whole_run=True. This replays from t=0, which is the case
+        # whole_run_args exists for -- its docstring says the flags are "right
+        # for a run STARTING AT t=0 and wrong at an anchor", and fidelity_diff,
+        # the other entrance to the same path, already passes True. Leaving it
+        # False cost lv22 specifically: without --rotqueue the model stops at
+        # t=6,350 with two mismatched frame/gravity transitions, and with it
+        # t=6,315 agrees on both axes and the run reaches t=6,375. So every lv22
+        # number measured through this entrance was a different run's.
         trace, died, _ = F.model_replay(lv, plan, fid / f"off_lv{lv}",
-                                        Path(a.leveldp), False)
+                                        Path(a.leveldp), False, whole_run=True)
         # goal_x is a GD-session number and there is none here; gd_cut_tick's
         # fallback finds the frozen tail in the dump itself, which is the same
         # tick for a level the plan clears.
