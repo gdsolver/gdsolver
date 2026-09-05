@@ -759,15 +759,28 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // something other than a multiple of 90 (see Obj::oriented). Multiples
         // of 90 are left alone: there the bound IS the shape, so nothing that
         // already works can move.
-        // OFF BY DEFAULT (--oriented turns it on). The measurement behind it is
-        // right -- lv18's 51-degree portal really is 34x86 inside an 88x80
-        // bound, and GD really does fire it 48 px later than the bound says
-        // (two injected points, see orientedHit) -- but switching it on cost
-        // lv16, which was CLEARED and now dies at x=11,944 (and takes 93 min
-        // instead of 13). Something in lv16 NEEDS the wide bound, so the rule
-        // is incomplete, not merely unpolished: find out what lv16 fires on the
-        // bound before making this the default again. lv18 moved too (27,713 ->
-        // 27,388), so it is not a fix for that level on its own either.
+        // ON BY DEFAULT -- `g_oriented = true` at triggers.hpp:175, and
+        // `--no-oriented` is what turns it off.
+        // [2026-09-06] This comment said "OFF BY DEFAULT (--oriented turns it
+        // on)" long after the default had been flipped, and on 2026-09-06 it
+        // was read as current and became the premise of a brief: the model was
+        // said to be testing pads against the circumscribed bound, when in fact
+        // it was already using the real rotated box on BOTH sides -- the actual
+        // defect was that it passed rotation to the player's side too, where
+        // GD's own `prect` is axis-aligned. A one-line fix (`pRotPad = 0.0` for
+        // type 8) came out of re-reading the code rather than this comment.
+        // The history below is kept because it is still the reason the rule is
+        // called incomplete; only the default was wrong.
+        // WHEN A COMMENT NAMES A DEFAULT, THE DECLARATION IS THE SOURCE.
+        //
+        // The measurement behind it is right -- lv18's 51-degree portal really
+        // is 34x86 inside an 88x80 bound, and GD really does fire it 48 px
+        // later than the bound says (two injected points, see orientedHit) --
+        // but switching it on cost lv16, which was CLEARED and then died at
+        // x=11,944 (and took 93 min instead of 13). Something in lv16 NEEDED
+        // the wide bound, so the rule was incomplete rather than merely
+        // unpolished. lv18 moved too (27,713 -> 27,388), so it was not a fix
+        // for that level on its own either.
         // w0,h0 = GD's own m_width / m_height, i.e. the size BEFORE rotation.
         // Added to objrects 2026-08-04 for exactly this. Deriving it back out of
         // the bound and the angle was tried first and gave the SAME numbers
