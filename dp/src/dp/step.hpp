@@ -7656,10 +7656,39 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // the entry tick" regressed lv5/14/18/20/21. GD really does re-fire in
         // some situations). The test is the same geometry as the firing, at the
         // previous tick's position.
-        if ((p->type == 3 || p->type == 4) && s.frameChg
+        //
+        // [2026-09-05] DORMANT SINCE THE PORTAL LATCH, and kept anyway. This
+        // rule is a compensation for the latch that was missing: "a portal you
+        // were already inside does not fire" IS the latch, seen through lv22's
+        // keyhole -- it was measured on uid 13833 at t=6,323, which the latch
+        // now spends at 6,300. Counted with the r52hold print over all 22 whole
+        // runs: 0 holds with the latch on, 30 with `--no-portallatch` (lv22
+        // uid 4464, type 4, t=5,125..). The latch reaches every case the corpus
+        // has and gets there first, because it sits above this block.
+        // It is NOT provably dead, which is why deleting it needs a witness
+        // this corpus does not hold:
+        //   - type 3 is inside this test and outside the latch, and no level
+        //     here crosses a reverse portal twice
+        //   - the `s.frameChg` edge is exactly where the two can disagree. The
+        //     tick before a frame change was evaluated in the OLD frame, where
+        //     this portal may not have been a candidate at all and so left no
+        //     latch bit, while portalWasInsideAtPrev re-reads that position
+        //     through the NEW frame's mapping and can still say "inside".
+        // And removing it is a LOOSENING, which a corpus of fixed plans cannot
+        // judge (it only admits firings the plan never asked for), so the 22
+        // byte-identical traces are not evidence either. The r52hold print is
+        // the instrument that will say when this stops being dormant.
+        if (!g_noR52GravHold && (p->type == 3 || p->type == 4) && s.frameChg
             && s.frame == c.frame
             && portalWasInsideAtPrev(*p, xPrev, (double)s.y, pHalfP,
                                      pRotHere)) {
+            // Whether this rule still does any WORK is not answerable from the
+            // output: dropping it is a LOOSENING, and a loosening cannot show
+            // up in a corpus of fixed plans (it only lets in firings the plan
+            // never asked for). So say when the branch is taken.
+            if (g_slopeDbg)
+                std::printf("r52hold t=%lld uid=%d type=%d frame=%d\n",
+                            (long long)K.t, p->uid, (int)p->type, (int)c.frame);
             gravHoldOver = true;
             continue;
         }

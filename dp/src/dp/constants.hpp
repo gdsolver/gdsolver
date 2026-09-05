@@ -135,6 +135,13 @@ inline bool g_noRot2900Halve = false; // --no-rot2900halve
 // pre-2026-09-05 behaviour). GD latches it on the first OVERLAP, so the second
 // pass finds hasBeenActivated already up and does nothing.
 inline bool g_noPortalLatch = false; // --no-portallatch
+// --no-r52gravhold: drop r52 (a gravity portal right after a rotation-frame
+// change does not fire if the player was already inside it). The arm exists to
+// ask whether the portal latch has made r52 a fossil: r52 was measured on
+// lv22 t=6,323 uid 13833, which the latch now spends at t=6,300. It is not
+// SUBSUMED, though -- r52 also covers type 3, which the latch does not -- so
+// the question is empirical.
+inline bool g_noR52GravHold = false; // --no-r52gravhold
 // The gravity-frame speed at or below which a ramp CONTACT becomes a LANDING.
 // GD's own: hitGround sets m_isOnGround only when s*v <= this (comisd against
 // the double @0x622E98); above it the caller restores the old vy (0x3907dd).
