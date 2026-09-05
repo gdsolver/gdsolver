@@ -557,11 +557,19 @@ class $modify(PlayerObject) {
                 GameObject* cs = static_cast<GameObject*>(this->m_currentSlope);
                 char b[416];
                 snprintf(b, sizeof(b),
-                    "hbox: t=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
+                    // dt is the DUMP tick this row belongs to. The hooks run in
+                    // the collision pass and the recorder writes a tick later,
+                    // so a row at t lines up with the dump's t+1 -- checked both
+                    // ways (an hbox player rect's centre equals the dump y at
+                    // t+1; an slp's post-y likewise). Printed because adding the
+                    // 1 by hand got it wrong three times in one night, each time
+                    // producing a confident and wrong conclusion.
+                    "hbox: t=%lld dt=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
                     "arg=(%.2f,%.2f,%.2f,%.2f) objrect=(%.2f,%.2f,%.2f,%.2f) "
                     "player=(%.2f,%.2f,%.2f,%.2f) ppre=(%.2f,%.2f,%.2f,%.2f) "
                     "onslp=%d wasslp=%d curslp=%d",
-                    (long long)g_tick, who, obj->m_uniqueID, (int)obj->getType(),
+                    (long long)g_tick, (long long)g_tick + 1, who,
+                    obj->m_uniqueID, (int)obj->getType(),
                     r ? 1 : 0, this->m_vehicleSize,
                     rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
                     orr.origin.x, orr.origin.y, orr.size.width, orr.size.height,
@@ -616,12 +624,13 @@ class $modify(PlayerObject) {
         const unsigned char b985 = *(raw + 0x985);
         char b[416];
         snprintf(b, sizeof(b),
-                 "slp: t=%lld who=%s uid=%d id=%d forced=%d onSlope=%d up=%d top=%d "
+                 "slp: t=%lld dt=%lld who=%s uid=%d id=%d forced=%d onSlope=%d up=%d top=%d "
                  "y %.3f->%.3f "
                  "vy=%.3f rect=(%.2f,%.2f,%.2f,%.2f) rot=%.1f syAtX=%.3f "
                  "held=%d p986=%d p9b8=%d vyin=%.3f dvy=%.3f "
                  "b68c=%d b985=%d jb=%d",
-                 (long long)g_tick, who, obj->m_uniqueID, obj->m_objectID,
+                 (long long)g_tick, (long long)g_tick + 1, who,
+                 obj->m_uniqueID, obj->m_objectID,
                  forced ? 1 : 0, (int)this->m_isOnSlope,
                  (int)this->m_isUpsideDown, (int)this->m_isCurrentSlopeTop,
                  yBefore, this->getPositionY(), this->m_yVelocity,

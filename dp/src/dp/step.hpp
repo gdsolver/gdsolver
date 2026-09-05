@@ -4172,6 +4172,20 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const double prevFootL = ((double)s.y - gsL * pHalf - face) * gsL;
             const double newFootL = ((double)c.y - gsL * pHalf - face) * gsL;
             const double vpL = (double)c.vy * gsL;
+            // --dyndbg <uid>: the flight landing gate, printed whether or not it
+            // fires. The cube/ball loop has had `land?` for a while; this side
+            // had nothing, so a seat taken here could not be attributed to a
+            // site at all (lv20 t=6,553, a mini UFO onto the rising solid 6225).
+            if (g_dynDbg >= 0 && o->uid == g_dynDbg)
+                std::printf("flyland? t=%lld uid=%d pHalf=%.2f face=%.3f "
+                            "gsL=%.0f grounded=%d vpL=%.3f over=%d xOver=%d "
+                            "prevFoot=%.3f (tol %.2f) newFoot=%.3f -> %s\n",
+                            (long long)K.t, o->uid, pHalf, face, gsL,
+                            (int)c.grounded, vpL, (int)overtaking, (int)xOver,
+                            prevFootL, shipLandTol, newFootL,
+                            (!c.grounded && (vpL <= 0 || overtaking) && xOver
+                             && prevFootL >= -shipLandTol && newFootL <= 0)
+                                ? "LAND" : "no");
             if (!c.grounded && (vpL <= 0 || overtaking) && xOver
                 && prevFootL >= -shipLandTol && newFootL <= 0) {
                 // Used by the flight version of item 14 (seatFromPreLand). lv20
