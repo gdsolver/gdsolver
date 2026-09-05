@@ -324,20 +324,51 @@ class $modify(GJBaseGameLayer) {
             static int lines = 0;
             if (++lines <= 2000) {
                 int has = 0;
+                GameObject* found = nullptr;
                 const int n = (int)objects->size();
                 const int lim = objectCount < n ? objectCount : n;
                 for (int i = 0; i < lim; ++i) {
                     GameObject* o = (*objects)[i];
-                    if (o && o->m_uniqueID == g_cfg.watchUid) { has = 1; break; }
+                    if (o && o->m_uniqueID == g_cfg.watchUid) {
+                        has = 1; found = o; break;
+                    }
                 }
                 const auto prct = player->getObjectRect();
-                char b[224];
+                // ...and, when it IS in the list, the object's own rect and the
+                // state a refusal could come from. `has=1` alone cannot tell
+                // "the box is not what I think" from "the box matches and a
+                // latch is up": measured on lv22 uid 13833, GD carries it as a
+                // candidate for 34 ticks at up to the full 25px overlap with
+                // the polarity opposite to the portal's, and never fires. The
+                // corpus already refutes a narrower box (GD fires elsewhere at
+                // 0.045px) and a coordinate-convention shift (~1.6px cannot
+                // explain 25px), so what is left is state -- and this line is
+                // where to read it.
+                // m_hasBeenActivated / ...ByPlayer are the per-object latches
+                // the orbs' "once per run" also uses; the byte at +0x740 is the
+                // claim bit already read on the ring path (see orbcall).
+                char ob[192] = "";
+                if (found) {
+                    const auto orct = found->getObjectRect();
+                    snprintf(ob, sizeof(ob),
+                             " orect=(%.3f,%.3f,%.3f,%.3f) oid=%d otype=%d"
+                             " act=%d actP=%d grpOff=%d grpOffT=%d claim=%d",
+                             orct.origin.x, orct.origin.y,
+                             orct.size.width, orct.size.height,
+                             found->m_objectID, (int)found->getType(),
+                             found->hasBeenActivated() ? 1 : 0,
+                             found->hasBeenActivatedByPlayer(player) ? 1 : 0,
+                             (int)found->m_isGroupDisabled,
+                             (int)found->m_isGroupDisabledTemp,
+                             (int)*((unsigned char*)found + 0x740));
+                }
+                char b[448];
                 snprintf(b, sizeof(b),
                          "ccl: t=%lld n=%d has=%d "
-                         "prect=(%.3f,%.3f,%.3f,%.3f)",
+                         "prect=(%.3f,%.3f,%.3f,%.3f)%s",
                          (long long)g_tick, lim, has,
                          prct.origin.x, prct.origin.y,
-                         prct.size.width, prct.size.height);
+                         prct.size.width, prct.size.height, ob);
                 writeResult(b);
             }
         }
