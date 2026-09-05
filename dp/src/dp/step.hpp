@@ -5389,9 +5389,67 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                         && (!revU ? (rcU > x1 && x <= x1 + pH)
                                   : (rcU < x0 && x >= x0 - pH));
                     const bool winU = (rcU >= x0 && rcU <= x1) || contU;
+                    // [2026-09-05] **GD ACQUIRES FROM BELOW THE LINE, this does
+                    // not.** `c.y > limU` only ever acts once the player is
+                    // already through the ceiling; GD takes it while still under
+                    // it and LIFTS the player onto the line.
+                    // Witness lv19 t=5,465 (ship, sp0.9, ramp uid 3205): GD's y
+                    // is this model's OWN limU to three decimals for two ticks
+                    // (562.759, then 564.058) while the model is still 0.79 below
+                    // and flying on at vy 8.000. It only clamps at 5,467, 1.3 px
+                    // and two ticks late, which is lv19's first divergence.
+                    // The band and its width are GD's, not fitted: acquisition is
+                    // `s*y > s*targetY - tol_u`, and tol_u is 0 unless the mode is
+                    // a flight one AND the button is held, in which case it is 1
+                    // fresh / 2 continuing (m_wasOnSlope). There is no velocity
+                    // test on this side and +0xa1c is not read.
+                    // WHY THE PRESS IS THE WHOLE GATE HERE. Every tick in the
+                    // corpus where a band of 1.0 could newly seat a player was
+                    // tabulated -- 23 of them -- and the press separates them
+                    // perfectly: lv19 5,465 is the only one with the button down
+                    // and the only one where GD is on the line. The gap does not
+                    // discriminate at all; three of the 22 sit CLOSER to the line
+                    // (0.063, 0.424, 0.448) than the one real seat at 0.792.
+                    // NOT MODELLED: bVar22 and bVar9, the other two terms of GD's
+                    // band gate. Neither separates anything in this corpus (the
+                    // press already accounts for all 23), so they are left out
+                    // rather than guessed at.
+                    // FRESH vs CONTINUING is read off the previous tick's seat,
+                    // not off a flag. Setting State::onSlope from here was tried
+                    // and is wrong: that field drives the FLOOR ride machinery
+                    // (slopeM / slopeT / slopeUid and the exit launch), so a
+                    // ceiling seat marked with it produced a spurious
+                    // slopeExitVy -- lv19 first divergence 5,467 dvy +2.291 and
+                    // the level died at 5,568 having previously completed.
+                    // The block below already has the idiom: while stuck, s.y is
+                    // exactly the previous tick's line, which is what `freshU`
+                    // tests a few lines down. Same test, no new state.
+                    const bool flightU = (c.mode == 1 || c.mode == 3
+                                          || c.mode == 4 || c.mode == 7);
+                    const bool seatedPrevU =
+                        std::fabs((double)s.y - ceilLimAt(xPrev)) <= 0.001;
+                    const double tolU =
+                        (!g_noCeilSeat && flightU && input && !c.onSlope)
+                            ? (seatedPrevU ? 2.0 : 1.0)
+                            : 0.0;
                     if (inYU && winU
-                        && (double)c.y > limU) {
+                        && (double)c.y > limU - tolU) {
+                        // Reached from UNDER the line: the branch below is the
+                        // push-out, which assumes the player was through it.
+                        const bool seatU = ((double)c.y <= limU);
                         c.y = (float)limU;
+                        // GD's write on the underside is `vy := min(vy, 0)`
+                        // upright -- it cuts the climb and does not land (no
+                        // hitGround, so the +-5.0 gate is the floor's business).
+                        // lv19 5,465: vy 8.000 -> 0.000 on the seat tick, then
+                        // plain gravity -0.069 / -0.138 once the press ends.
+                        if (seatU) {
+                            if ((double)c.vy > 0.0) c.vy = 0;
+                            // ...and GD clears m_isOnGround / m_isOnGround2 on
+                            // the underside branch. It does NOT call hitGround,
+                            // so nothing here lands.
+                            c.grounded = 0;
+                        }
                         // r66: the release vy counts. **Downhill only (the line
                         // descends in the travel direction)**: on leaving the hang
                         // of a rising ceiling (slope/ceillim's hang) GD emits no

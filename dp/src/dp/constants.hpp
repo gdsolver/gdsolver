@@ -141,6 +141,11 @@ inline bool g_noPortalLatch = false; // --no-portallatch
 // passes ONCE looks exactly like one the same body passed twice, and reading it
 // the second way is what put a retracted witness into 283e8a4 (see 87049e5).
 inline int g_halfNow = 0;
+// --no-ceilseat: a ceiling ramp only ever pushes the player OUT of itself (the
+// pre-2026-09-05 behaviour), never acquires it from below. GD's underside gate
+// takes it while the player is still under the line, within tol_u, and lifts it
+// on. See the site in step.hpp for the band and why the press is the whole gate.
+inline bool g_noCeilSeat = false; // --no-ceilseat
 // --no-r52gravhold: drop r52 (a gravity portal right after a rotation-frame
 // change does not fire if the player was already inside it). The arm exists to
 // ask whether the portal latch has made r52 a fossil: r52 was measured on

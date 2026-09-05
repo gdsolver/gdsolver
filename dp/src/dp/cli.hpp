@@ -137,6 +137,8 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--no-portallatch")) g_noPortalLatch = true;
         // --no-r52gravhold: drop r52. See g_noR52GravHold.
         if (!std::strcmp(argv[i], "--no-r52gravhold")) g_noR52GravHold = true;
+        // --no-ceilseat: no acquisition from under a ceiling ramp.
+        if (!std::strcmp(argv[i], "--no-ceilseat")) g_noCeilSeat = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;
