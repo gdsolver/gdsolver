@@ -64,17 +64,33 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
                     // outside. If GD's rect is 24.58 wide or less, that single
                     // number explains why GD stays silent at t=17,406 and fires
                     // at t=17,407, with no new condition anywhere.
+                    // ...AND THE PLAYER'S OWN RECT ON THIS PATH. The pad gate has
+                    // two boxes and only one of them was ever printed, so a
+                    // disagreement could be charged to either. lv20's rotated pad
+                    // uid 7030 forced the question: GD reports no contact at
+                    // (10835.900,155.308) and fires at (10837.810,153.314), and
+                    // the square player half that separates those brackets to
+                    // [9.94, 11.89] -- neither the cube's 15.0 nor the mini's 9.0.
+                    // That is either a THIRD box on this path
+                    // ([[gd-player-box-per-purpose]]: the activate path takes the
+                    // one at vtable +0x490) or it is not a box question at all.
+                    // Printing the rect GD actually hands the call decides it
+                    // instead of bracketing it.
                     auto r = this->getObjectRect();
-                    char buf[288];
+                    auto pr = p->getObjectRect();
+                    char buf[384];
                     snprintf(buf, sizeof(buf),
                         "padact: t=%lld id=%d uid=%d ty=%d o=(%.3f,%.3f) "
-                        "p=(%.4f,%.4f) vy=%.4f used=%d orect=(%.4f,%.4f,%.4f,%.4f)",
+                        "p=(%.4f,%.4f) vy=%.4f used=%d orect=(%.4f,%.4f,%.4f,%.4f) "
+                        "prect=(%.4f,%.4f,%.4f,%.4f) rot=%.3f",
                         (long long)g_tick, this->m_objectID, this->m_uniqueID,
                         ty, this->getPositionX(), this->getPositionY(),
                         p->getPositionX(), p->getPositionY(),
                         (float)p->m_yVelocity,
                         this->m_activatedByPlayer1 ? 1 : 0,
-                        r.origin.x, r.origin.y, r.size.width, r.size.height);
+                        r.origin.x, r.origin.y, r.size.width, r.size.height,
+                        pr.origin.x, pr.origin.y, pr.size.width, pr.size.height,
+                        (float)this->getRotation());
                     writeResult(buf);
                 }
             }
