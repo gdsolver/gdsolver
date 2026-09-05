@@ -232,6 +232,76 @@ inline bool slopeWouldAcquire(const Obj* R, double px, double py, double pHalf,
     const double t = std::min(std::max(line - half, ry0 - pHalf), ry1);
     return t < py;
 }
+// ---------------------------------------------------------------------------
+// WHERE A RAMP SEATS THE PLAYER (collidedWithSlopeInternal, 2.2081).
+//
+//   line = GameObject::slopeYPos( getPosition().x )                0x38fd42-0x38fd53
+//   half = playerRect.h / (2 cos t),  t = atanf(objRect.h/objRect.w)
+//                                                                  0x38fcd2-0x38fcfa
+//   off  = bVar9 && !platformer ? m_vehicleSize[+0x9f0] * 20.0f : 0
+//                                                                  0x38fd2b-0x38fd34
+//   floor   (isTop==0): targetY = max( min(line + half - off, objMaxY + h/2 - off), objMinY )
+//                                                                  0x38fd73-0x38fdaf
+//   ceiling (isTop!=0): targetY = min( max(line - half + off, objMinY - h/2 + off), objMaxY )
+//                                                                  0x38fdb1-0x38fdf0
+//   setPosition( getPosition().x, targetY )                        0x39072c-0x39074a
+//
+// Two things the model used to get wrong and this fixes:
+//
+//  * `line` is `slopeYPos` at the player's **centre x**, and slopeYPos (0x1a13b0)
+//    has NO clamp to the ramp's x span -- it extrapolates past both ends. The
+//    model sampled the surface at an x CLAMPED into [x0,x1], which flattens the
+//    line at the ends;
+//  * the bounds are applied to **targetY**, not to the sample x.
+//
+// The two formulations are algebraically the same wherever the model's rotated
+// contact point stays inside the span: `pH + |m|*slopeXOffset(m,pH)` IS
+// `pH*sqrt(1+m*m) = pH/cos(atan|m|)` (tan(t/2) = (sqrt(1+m*m)-1)/|m|), and at
+// the FAR end the model's flat corner value line(x1)+-pH is exactly the y clamp
+// GD reaches there. They part company only on the ENTRY side, where GD keeps
+// following the extrapolated line towards objMaxY / objMinY and the model holds
+// the corner. Witness lv16 t=9,241 (flipped ship, ceiling ramp uid 4032, m=-0.5,
+// span [14070,14130], line 600->570): GD seats at
+//   600 - 0.5*(14055.4453-14070) - 15*sqrt(1.25) = 590.5068
+// (gdref y = 590.506836, then -0.807 = m*dx every tick as the centre advances),
+// while the model held the corner 600-15 = 585.000 for the whole approach.
+//
+// `ceiling` here is the sign the seat is written with -- the model's own `gs`,
+// which is what makes this identical to the old code in the span's interior. GD
+// selects the branch on `isTop` = m_slopeDirection in {1,3,5,6} alone; where the
+// model's ride side disagrees with slopeIsCeiling that is a separate (measured,
+// deliberate) rule and not this one's business.
+inline double slopeSeatTarget(const Obj* R, double px, double pHalf,
+                              bool ceiling, double off) {
+    const double x0 = R->cx - R->hw, x1 = R->cx + R->hw;
+    const double m = (R->sy1 - R->sy0) / (x1 - x0);
+    const double half = pHalf / std::cos(std::atan(std::fabs(m)));
+    const double line = R->sy0 + m * (px - x0);   // NOT clamped to [x0,x1]
+    const double oMin = R->cy - R->hh, oMax = R->cy + R->hh;
+    if (!ceiling)
+        return std::max(std::min(line + half - off, oMax + pHalf - off), oMin);
+    return std::min(std::max(line - half + off, oMin - pHalf + off), oMax);
+}
+// `bVar9` (0x38fd03-0x38fd3d), the one thing that makes `off` non-zero:
+// m_wasOnSlope AND this is a DIFFERENT object from m_currentSlope AND its
+// top-ness differs. The model's stand-ins are `s.onSlope` for m_wasOnSlope and
+// `s.slopeUidNow` for m_currentSlope; `m_vehicleSize` is 1.0 full / 0.6 mini
+// (gdref's `vsize` column has exactly those two values across the corpus), so
+// the offset is 20.0 / 12.0 px. UNWITNESSED: no corpus tick has bVar9 set (see
+// the census in measure-slopeseat-2026-09-06), so this arm is carried for the
+// DP's sake alone.
+inline double slopeSeatOff(const Obj* R, const std::vector<const Obj*>* slopes,
+                           int prevUid, bool wasOnSlope, bool mini) {
+    if (!wasOnSlope || !slopes || prevUid < 0 || prevUid == R->uid) return 0.0;
+    for (const Obj* pv : *slopes) {
+        if (pv->uid != prevUid) continue;
+        if (slopeIsCeiling(pv->slopeDir) == slopeIsCeiling(R->slopeDir))
+            return 0.0;
+        return mini ? 12.0 : 20.0;
+    }
+    return 0.0;
+}
+
 inline bool slopeVetoesSolid(const Obj* o, const std::vector<const Obj*>* slopes,
                              double px, double py, double pHalfW, double pHalfH,
                              bool faceIsTop, double prevX, double prevY,

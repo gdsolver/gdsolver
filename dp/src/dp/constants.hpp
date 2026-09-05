@@ -162,6 +162,16 @@ inline bool g_noSlopeVeto = false; // --no-slopeveto
 // rule; the same test is already spelled out in slopeWouldAcquire.
 inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
 
+// --no-slopeseat: a ramp seats the player at the surface sampled at an x
+// CLAMPED into the ramp's span, plus/minus a flat player half (the
+// pre-2026-09-06 behaviour). GD's own seat is
+// `slopeYPos(centreX) -/+ playerRect.h/(2 cos t)` -- the line EXTRAPOLATED past
+// the span, with the bounds applied to the TARGET y instead
+// (0x38fd42-0x38fdf0, re-evaluated on every acquiring tick 0x39072c) -- see
+// slopeSeatTarget in slopes.hpp for the formula, the RVAs and the lv16 t=9,241
+// witness. The two agree everywhere except on the ENTRY side of a ramp.
+inline bool g_noSlopeSeat = false; // --no-slopeseat
+
 // --no-slopenudge: a ramp contact keeps the pre-2026-09-06 velocity rules --
 // the gradient-signed +-2.0 writes at the three ceiling/ride sites, the ship's
 // kShipRampG ladder and the swing's walkIn0 one -- instead of GD's own

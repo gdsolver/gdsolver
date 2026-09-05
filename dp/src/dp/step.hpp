@@ -4771,6 +4771,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     ridesTop = ((double)s.y - topPrevUp) >= -kLandTol;
                 }
                 const double gs = ridesTop ? 1.0 : -1.0;
+                // GD's `off` (0x38fd2b-0x38fd34): 0 except on a slope SWITCH,
+                // where it shifts the target by m_vehicleSize * 20.0f. See
+                // slopeSeatOff in slopes.hpp for bVar9 and for why this arm has
+                // no corpus witness.
+                const double seatOff = g_noSlopeSeat
+                    ? 0.0
+                    : slopeSeatOff(sp, K.slopes,
+                                   s.onSlope ? (int)s.slopeUidNow : -1,
+                                   s.onSlope != 0, c.mini != 0);
                 // Downhill ramps hold the player up exactly the same way; the
                 // contact point is just on the other side of the box, because
                 // GD tilts the player the other way. lv18 x=3,615 is a 210->180
@@ -5354,11 +5363,23 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // shared edge, not a hazard twin (the twin sits on a
                 // DIFFERENT line 4 px off, so the y-continuity test rejects
                 // it as well). First match wins; ramps are sorted by x.
-                auto ceilLimAt = [&](double cx) {
+                // `gdSeat` picks GD's own target (slopeSeatTarget in slopes.hpp:
+                // the line at the UNCLAMPED centre x, minus the secant half,
+                // with the bounds on the target y) over the old x-clamped
+                // sample. The chain extension below is untouched by it: where
+                // the contact point has left this ramp's span and a contiguous
+                // neighbour of the same side continues the surface, GD's answer
+                // is that NEIGHBOUR's own target, which is what `ext` already
+                // computes -- this ramp's own target is capped at its objMinY
+                // there and would stop the descent (lv16 t=8,702, uid3741,
+                // GD 567.426 against this ramp's floor 584-15 = 569.000).
+                auto ceilLimSeat = [&](double cx, bool gdSeat) {
                     const double r = cx + (m > 0 ? -slopeXOffset(m, pH)
                                                  : slopeXOffset(m, pH));
                     const double rc = std::min(std::max(r, x0), x1);
-                    const double flat = sp->sy0 + m * (rc - x0) - pH;
+                    const double flat =
+                        gdSeat ? slopeSeatTarget(sp, cx, pH, true, seatOff)
+                               : sp->sy0 + m * (rc - x0) - pH;
                     // SHIP ONLY, like everything else measured here: letting
                     // the extension serve every mode moved lv19's UFO at
                     // t=14,799 onto a ceiling it never touches in GD (58 px,
@@ -5412,6 +5433,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         }
                     }
                     return flat;
+                };
+                auto ceilLimAt = [&](double cx) {
+                    return ceilLimSeat(cx, !g_noSlopeSeat);
                 };
                 // ...and a FLIPPED player meets that same ceiling from the other
                 // side. GD does not hang it under the line -- it pushes it OUT of
@@ -6492,14 +6516,32 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     (c.mode == 2 && gs < 0.0)
                     ? (pH + std::fabs(m) * slopeXOffset(m, pH))
                     : pH;
-                double top = sp->sy0 + m * (xr - x0) + gs * hangOff;
-                if (c.mode == 2 && gs < 0.0) {
-                    // The hang's low end is bounded by the **flat** at
-                    // line(end) - pH (lv16 t=13,116: 583.000 = sy1 - 9, not the
-                    // rotated amount 581.6).
-                    const double lowLine = (m < 0)
-                        ? (sp->sy0 + m * (x1 - x0)) : sp->sy0;
-                    top = std::max(top, lowLine - pH);
+                // [2026-09-06] GD's own seat: the line at the player's centre x,
+                // NOT clamped to the ramp's span, minus/plus the SECANT half
+                // playerRect.h/(2 cos t), with the bounds applied to the target
+                // y (slopeSeatTarget in slopes.hpp; 0x38fd42-0x38fdf0, written
+                // by setPosition 0x39074a on every acquiring tick). It is the
+                // same number as the line below wherever the rotated contact
+                // point stays inside the span -- `pH + |m|*slopeXOffset` IS
+                // pH*sec t, and the far end's flat corner IS the y clamp GD
+                // reaches there -- so only the ENTRY side moves. The mode-2
+                // hang's own `lowLine - pH` floor is that same clamp
+                // (objMinY - h/2) and is subsumed. Witness lv16 t=9,243, ceiling
+                // ramp uid4032: 585.000 (the corner) -> 588.893, which is
+                // gdref's y to the digit.
+                double top;
+                if (!g_noSlopeSeat) {
+                    top = slopeSeatTarget(sp, x, pH, gs < 0.0, seatOff);
+                } else {
+                    top = sp->sy0 + m * (xr - x0) + gs * hangOff;
+                    if (c.mode == 2 && gs < 0.0) {
+                        // The hang's low end is bounded by the **flat** at
+                        // line(end) - pH (lv16 t=13,116: 583.000 = sy1 - 9, not
+                        // the rotated amount 581.6).
+                        const double lowLine = (m < 0)
+                            ? (sp->sy0 + m * (x1 - x0)) : sp->sy0;
+                        top = std::max(top, lowLine - pH);
+                    }
                 }
                 // [r33] On a tick pushed out at the ridge, no ramp's seat drops
                 // below the apex height (measurements at pushOutSeat's declaration).
@@ -6598,7 +6640,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // extrapolated ride continuation (the new branch above), so it was
                 // removed (2026-08-19).
                 const double xrPrev = sampleAt(xPrev).xr;
-                const double prevTop = sp->sy0 + m * (xrPrev - x0) + gs * pH;
+                // ...and the previous tick's seat is the SAME formula one step
+                // back -- GD re-evaluates slopeYPos at the advanced centre x on
+                // every acquiring tick (0x39072c-0x39074a), which is where the
+                // measured -0.807 px/tick descent (m*dx) comes from.
+                const double prevTop = g_noSlopeSeat
+                    ? (sp->sy0 + m * (xrPrev - x0) + gs * pH)
+                    : slopeSeatTarget(sp, xPrev, pH, gs < 0.0, seatOff);
                 // Came from the wrong side? Normally not a ride -- but if the
                 // player is INSIDE the ramp's solid slice, GD lifts it out onto
                 // the surface rather than letting it through, and that is the
