@@ -7631,10 +7631,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // the pass's own first tick is not mistaken for the pre-state): 107
         // fire, 25 do not, and exactly two fail to fire while the polarity
         // differs -- lv22 uid 4360 (4,645..4,694) and uid 13833 (6,327..6,360).
-        // TYPE 4 ONLY. GD's flag is on GameObject, so presumably every portal
-        // carries one, but the corpus witnesses it on no other type, and those
-        // two rows are the whole of the evidence.
-        if (p->type == 4 && p->gpBit >= 0 && !g_noPortalLatch) {
+        // BOTH GRAVITY PORTALS (type 4 normal, type 3 inverse). GD's flag is
+        // GameObject's, not a per-kind one, and the corpus does hold a type 3
+        // crossed twice (lv16 uid 3450), so this is measurable rather than
+        // assumed. Still only the gravity pair: no other portal kind has a
+        // second pass anywhere in these 22 levels, so widening further would
+        // change firings nothing has witnessed.
+        if ((p->type == 3 || p->type == 4) && p->gpBit >= 0 && !g_noPortalLatch) {
             const uint32_t bit = 1u << (unsigned)p->gpBit;
             const bool spent = (s.portalLatch & bit) != 0;
             c.portalLatch |= bit;
