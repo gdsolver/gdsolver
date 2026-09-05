@@ -1145,8 +1145,21 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // snapObj and snapDistance (13.4615) and simply did not make the call, so it
     // ran exactly 1 px behind GD from t=1173 to the end of the level (18,700
     // ticks), which is the whole of lv21's x divergence.
-    // Kept separate from `landedThisTick` because `releasePin` clears that one,
-    // and GD's call happens whether or not a pad later undoes the landing.
+    // Kept separate from `landedThisTick` because `releasePin` clears that one
+    // on a slope release, where GD's snap call still happens.
+    // [2026-09-05 CORRECTED] This used to read "...whether or not a pad later
+    // undoes the landing", and that half was never measured: the lv21 t=1,172
+    // evidence above is a yellow ORB (11.180 = kOrbYellow), and an orb reaches
+    // releasePin by a different route (the orb loop's `if (ob->type != 13)`).
+    // The only pad case in the corpus says the opposite -- lv13 t=16,783, where
+    // gdref's snapuid stays 4973 across the tick and hbox reports hit=0 for the
+    // solid. GD never lands there at all: the activation pass runs before the
+    // solid pass, the pad has already set vy = -12.8, and collidedWithObject's
+    // inverted branch gates on `vy >= 0`. So releasePin now clears this flag too
+    // (see there), and a pad-undone landing runs no snap.
+    // The orb route at the type != 13 line reaches the same branch, so the same
+    // correction applies to it; the corpus has no instance of an orb undoing a
+    // landing that also matched a stair pattern.
     bool cubeLandedThisTick = false;
     // [2026-08-21 r84] The tick on which, mid-ride, the player moved onto a "step
     // deeper than the line". The ride ends there (on a tick with this flag set both
@@ -1192,13 +1205,47 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
     // by the hazard sweep below (which otherwise samples s.y -> c.y and kills
     // on anything in between).
     bool spiderWarpedThisTick = false;
-    auto releasePin = [&] {
+    // `undoSnap` is passed ONLY by the two impulse sites (the pad at the
+    // `pad wins` comment and the orb loop's `type != 13` line). The two slope
+    // releases pass false: this diff has no measurement covering them, and a
+    // release is not an activation reordering -- GD does land on the ramp and
+    // only leaves it afterwards, so there is no reason to think its snap call
+    // is skipped there. Clearing the flag for all four callers would have been
+    // an unmeasured claim about the slope path riding along with a measured one
+    // about the pad path.
+    auto releasePin = [&](bool undoSnap) {
         if (pinnedOnBlock) {
             c.y = prePinY;
             pinnedOnBlock = false;
         } else if (landedThisTick) {
             c.y = preLandY;
             landedThisTick = false;
+            // ...and the STAIR SNAP must not run either. GD does not undo a
+            // landing at all -- it never makes one. checkCollisions (0x2137f0)
+            // runs the activation pass (0x214412 / 0x21446e) BEFORE the solid
+            // pass (0x214687), so propellPlayer (0x39f850) has already written
+            // vy synchronously -- for lv13's mini yellow pad, sign * strength *
+            // 16.0 * 0.8 = exactly -12.8 -- and the solid pass then reads that.
+            // collidedWithObject's inverted branch gates on the sign alone:
+            //   0x392a60  movsd  xmm0, [r14+0x9a0]   ; m_yVelocity
+            //   0x392a69  comisd xmm0, xmm11         ; 0.0
+            //   0x392a6e  jae    0x392a9b            ; vy >= 0 lands, else no-op
+            // At -12.8 the jae falls through to the no-op exit and the call
+            // returns hit=0. There is NO minimum-overlap threshold (the 0.3
+            // inset belongs to the crush test) and the rect is built from
+            // getRealPosition, which does not read velocity -- so the 0.147 px
+            // overlap was never the discriminator.
+            // This undo is the model's way of replaying that ordering after the
+            // fact, and it was only half done: `landedThisTick` was cleared but
+            // `cubeLandedThisTick` was not, and the snap gate below reads the
+            // latter -- so the snap ran, matched a stair pattern, and wrote
+            // +1.0000 into c.xAbs that GD never wrote. lv13 t=16,783 is the
+            // whole of that level's remaining divergence: gdref's snapuid stays
+            // 4973 across the tick and hbox reports hit=0 for the solid 4987.
+            // Clearing it here also keeps snapObj/snapDist untouched, which
+            // matters -- rolling back only x would leave snapObj = 4987 and
+            // corrupt the NEXT tick's stair pattern match.
+            if (undoSnap) cubeLandedThisTick = false;
         }
     };
     // Did this tick consume a discrete impulse (cube jump / ball flip / UFO
@@ -6999,7 +7046,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // GD 135.000 -> 134.9514 while the model stayed at 135.000. That
             // 0.0486 rode the whole arc and made the landing at t=290 one tick
             // late, which is where lv19's 2,818 divergent ticks start.
-            releasePin();
+            releasePin(false);
         }
         // [2026-08-19] **The downhill release stamps the face's velocity.** The
         // counterpart of the uphill launch: on the downhill release tick GD
@@ -7030,7 +7077,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
             // same as the uphill launch above: the slope machinery sets the
             // velocity-limit exemption (State::boost)
             if (c.mode == 7) c.boost = 1;
-            releasePin();
+            releasePin(false);
         }
         // Ride counter for the exit ramp above: 0 on the contact tick,
         // +1 per riding tick, saturated at 24 (factor is 1.0 from there on).
@@ -8690,7 +8737,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
         // the pad wins: undo the landing snap -- and for a player that was
         // already resting on the block, keep the tick's gravity step in y for
         // the same reason (GD never put it back). See `pinnedOnBlock`.
-        releasePin();
+        releasePin(true);
     }
     // Release each remembered pad once the player is clear of it IN X. Leaving
     // in y is NOT enough, which is what a gravity-pad corridor shows: lv14
@@ -9201,7 +9248,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead) {
                 // Without this the model left
                 // the block 0.0486 px low, which is what put lv20's t=11,800
                 // segment a tick early into the landing at t=12,033.
-                if (ob->type != 13) releasePin();
+                if (ob->type != 13) releasePin(true);
                 c.usedOrb = ob;
                 c.ringHold = 1;
                 // ringJump is the second of the two callers that write the
