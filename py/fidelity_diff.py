@@ -15,6 +15,10 @@ Assumptions and etiquette:
     blockinput=1), except that NO notrace=1 IS SET (dump.csv is needed).
   - the comparison uses gdmcp.data.diff_trace as it is (do not build a second
     implementation).
+  - the headline row is one number for both halves of a dual and for all three
+    of dy/dvy/dx, so it cannot show an improvement to one half alone. A second
+    table under it counts each quantity of each half separately; read that one
+    when judging whether a change helped (see PER_HALF_NOTE).
   - on levels with moving geometry the model looks at static geometry unless
     `--groups` is given, so the result becomes "nothing but divergences" and is
     meaningless. Levels with no existing recording are reported as NO-GROUPS,
@@ -75,6 +79,12 @@ class Result:
     worker: int = 0
     seconds: float = 0.0
     rows: list = field(default_factory=list)
+    # diff_trace's per_half block: {"p1"|"p2": {"dy"|"dvy"|"dx":
+    # {"n": over tol, "first": tick|None, "cmp": ticks compared}}}.
+    # n_div above is one number for both halves and all three quantities, so a
+    # change that helps p1 only cannot move it (see PER_HALF_NOTE). Additive:
+    # every field above keeps its name and its meaning.
+    per_half: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         d = {k: v for k, v in self.__dict__.items() if k != "rows"}
@@ -259,6 +269,7 @@ def run_level(level: int, worker_id: int, a) -> Result:
         out.seconds = time.time() - t0
         return out
     out.model_ticks, out.gd_ticks = d["model_ticks"], d["gd_ticks"]
+    out.per_half = d.get("per_half", {})
     rows = d["rows"]
     out.n_div = len(rows)
     out.rows = rows[:8]
@@ -270,6 +281,50 @@ def run_level(level: int, worker_id: int, a) -> Result:
         out.dy, out.dvy = r0[8], r0[9]
     out.seconds = time.time() - t0
     return out
+
+
+PER_HALF_NOTE = (
+    "per-half divergent ticks: each quantity tested against tol ON ITS OWN, so a\n"
+    "change that helps one half shows here even when 'div ticks' above cannot\n"
+    "move. On 2026-09-05 a slope-seat change cut player 1's divergent ticks in\n"
+    "lv16 from 885 to 329 and the summary row (first_t=9241 n_div=1139 dy=3.0336\n"
+    "dvy=0.661) did not move by a digit, because n_div is max(|dx|,|dy|,|dvy|,\n"
+    "|dy2|,|dvy2|) > tol and p2 held the maximum up; the session nearly reported\n"
+    "'lv16 did not change'. cell = <ticks over tol>@<first such tick>, '0' when\n"
+    "the quantity was compared and agreed, 'n/a' when it was never compared (no\n"
+    "second player, or the dump predates the column) -- never 0 for missing data.\n"
+    "p2 dx compares the model's single x (its trace has no x2) against GD's p2x.")
+
+# Column order of the per-half block. Half first so the eye groups by player.
+PER_HALF_COLS = [(h, q) for h in ("p1", "p2") for q in ("dy", "dvy", "dx")]
+
+
+def per_half_cell(per_half: dict, half: str, quant: str) -> str:
+    """One cell: "<n>@<first>", "0", or "n/a" when the quantity was never compared.
+
+    cmp == 0 is the only thing that produces n/a, and it means the tick loop never
+    reached a tick where this half's quantity existed on both sides. A level with
+    no dual therefore reads n/a for every p2 column instead of a 0 that would look
+    like agreement -- the exact confusion these columns exist to remove.
+    """
+    e = (per_half or {}).get(half, {}).get(quant)
+    if not e or not e.get("cmp"):
+        return "n/a"
+    return f"{e['n']}@{e['first']}" if e["n"] else "0"
+
+
+def format_per_half_table(results: list[Result], tol: float) -> str:
+    hdr = f"{'lv':<6}" + "".join(f"{h + ' ' + q:<13}" for h, q in PER_HALF_COLS)
+    lines = [f"per-half divergence (tol={tol}, per quantity)", hdr, "-" * len(hdr)]
+    for r in sorted(results, key=lambda r: r.level):
+        if r.status != "OK":
+            lines.append(f"lv{r.level:<4}{r.status}")
+            continue
+        cells = "".join(f"{per_half_cell(r.per_half, h, q):<13}"
+                        for h, q in PER_HALF_COLS)
+        lines.append(f"lv{r.level:<4}{cells}")
+    lines.append(PER_HALF_NOTE)
+    return "\n".join(lines)
 
 
 def format_table(results: list[Result], tol: float) -> str:
@@ -348,6 +403,8 @@ def main(argv=None) -> int:
     table = format_table(results, a.tol)
     print()
     print(table)
+    print()
+    print(format_per_half_table(results, a.tol))
     print(f"--- {len(results)} levels in {elapsed:.1f}s "
           f"({'with' if a.with_fixups else 'without'} fixups) ---")
     if a.json_out:

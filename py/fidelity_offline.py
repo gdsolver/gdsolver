@@ -47,6 +47,10 @@ def main() -> int:
     fid = Path(a.dumps)
     levels = a.levels or list(range(1, 23))
     missing = 0
+    # Collected only to render fidelity_diff's per-half block below. This half of
+    # the instrument was blind in the same way the main table was: "div ticks" is
+    # one number for both players and three quantities (see F.PER_HALF_NOTE).
+    per: list[F.Result] = []
     print(f"fidelity (model side only, dumps from {fid}, tol={a.tol})")
     print(f"{'lv':<5}{'first div t=':<15}{'x=':<11}{'mode':<8}{'dy':<9}"
           f"{'dvy':<9}{'div ticks':<11}{'model/cut':<14}note")
@@ -69,6 +73,7 @@ def main() -> int:
             print(f"lv{lv:<5}ERROR {d['error']}")
             continue
         rows = d["rows"]
+        per.append(F.Result(level=lv, per_half=d.get("per_half", {})))
         note = f"model died t={died}" if died >= 0 else ""
         mc = f"{d['model_ticks']}/{cut if cut else d['gd_ticks']}"
         if rows:
@@ -79,6 +84,9 @@ def main() -> int:
             print(f"lv{lv:<3}  {'(no divergence)':<13}{'':<11}{'':<8}{'':<9}{'':<9}"
                   f"{0:<11}{mc:<14}{note}")
     print("model/cut = ticks the model replayed / the tick the GD side is cut at")
+    if per:
+        print()
+        print(F.format_per_half_table(per, a.tol))
     return 1 if missing else 0
 
 

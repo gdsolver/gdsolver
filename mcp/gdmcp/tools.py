@@ -213,6 +213,12 @@ def gd_diff(trace_file: str, t0: int = 0, t1: int | None = None,
     something; lowering it to 0.001 picks up even float rounding.
     If they still match yet only GD finishes first, that is not a divergence - suspect
     A KILL TEST THE MODEL IS NOT APPLYING (hazard shape, clearance).
+
+    `rows` are gated on the MAXIMUM of |dx|,|dy|,|dvy|,|dy2|,|dvy2|, so one number
+    stands for both halves and three quantities and an improvement to one half
+    alone cannot move it. `per_half` counts each quantity of each half against tol
+    on its own; a p2 entry with cmp=0 means there was no second player to compare
+    (read it as n/a, never as agreement).
     """
     return D.diff_trace(Path(trace_file), _need().data / "dump.csv",
                         t0, t1, tol, limit)

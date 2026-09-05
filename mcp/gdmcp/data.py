@@ -228,6 +228,30 @@ def _best_attempt_rows(path: Path) -> dict[int, dict]:
     return max(per.values(), key=len)
 
 
+PER_HALF_QUANTS = ("dy", "dvy", "dx")
+
+
+def _empty_per_half() -> dict:
+    """One accumulator per (half, quantity): count, first tick, ticks compared.
+
+    `cmp` is the honest half of this: it counts the ticks at which the quantity
+    could be compared AT ALL. n=0 with cmp>0 means "measured, and it agreed";
+    n=0 with cmp=0 means "never measured", which the callers must print as n/a
+    rather than 0. Telling the two apart is exactly what this field is for.
+    """
+    return {half: {q: {"n": 0, "first": None, "cmp": 0} for q in PER_HALF_QUANTS}
+            for half in ("p1", "p2")}
+
+
+def _bump(acc: dict, half: str, quant: str, value: float, tol: float, t: int) -> None:
+    e = acc[half][quant]
+    e["cmp"] += 1
+    if abs(value) > tol:
+        e["n"] += 1
+        if e["first"] is None:
+            e["first"] = t
+
+
 def diff_trace(trace_path: Path, dump_path: Path, t0: int = 0,
                t1: int | None = None, tol: float = 0.3,
                limit: int = 8) -> dict:
@@ -242,6 +266,19 @@ def diff_trace(trace_path: Path, dump_path: Path, t0: int = 0,
     tol is a tolerance in px (and the same number for vy). The default 0.3 is the
     yardstick for "a divergence that means something"; lowering it to 0.001 picks up
     even float rounding (which is occasionally needed too).
+
+    `rows` (and with them first_divergence, and every count taken from len(rows))
+    are gated on max(|dx|,|dy|,|dvy|,|dy2|,|dvy2|) > tol -- ONE number standing for
+    two players and three quantities. A change that improves one half only is
+    invisible in it: on 2026-09-05 a slope-seat change cut player 1's divergent
+    ticks in lv16 from 885 to 329 (counted straight off the GD dump) while the
+    reported row -- first_t=9241 n_div=1139 dy=3.0336 dvy=0.661 -- did not move by
+    a single digit, because p2 went on diverging at the same ticks and held the
+    maximum up; the session nearly recorded "lv16 did not change". "No row moved"
+    is evidence that nothing broke. It is not evidence that nothing improved.
+
+    `per_half` therefore counts each quantity of each half against tol ON ITS OWN.
+    It is purely additive: nothing above it changed meaning or name.
     """
     if not trace_path.exists():
         return {"error": f"no {trace_path}"}
@@ -261,6 +298,13 @@ def diff_trace(trace_path: Path, dump_path: Path, t0: int = 0,
                          "trace of a different run"}
     rows = []
     first = None
+    per_half = _empty_per_half()
+    # `limit` used to break out of the loop. It now only stops APPENDING, so the
+    # per_half counts stay complete for callers that pass a small limit (the MCP
+    # tool passes 8). rows, first_divergence and every existing field are byte
+    # identical either way -- the loop simply keeps walking ticks it no longer
+    # records.
+    capped = False
     for t in common:
         if t < t0 or (t1 is not None and t > t1):
             continue
@@ -271,6 +315,9 @@ def diff_trace(trace_path: Path, dump_path: Path, t0: int = 0,
             dv = float(m["vy"]) - float(g["yvel"])
         except (KeyError, ValueError, TypeError):
             continue
+        _bump(per_half, "p1", "dy", dy, tol, t)
+        _bump(per_half, "p1", "dvy", dv, tol, t)
+        _bump(per_half, "p1", "dx", dx, tol, t)
         # The second player. The culprit behind a whole session of misdiagnosing
         # "p1 matches exactly and yet only GD dies" late in lv16 (it was p2 that died).
         # Compare only when both sides have the columns.
@@ -281,10 +328,29 @@ def diff_trace(trace_path: Path, dump_path: Path, t0: int = 0,
                 dv2 = float(m["vy2"]) - float(g["p2vy"])
             except (KeyError, ValueError, TypeError):
                 dy2 = dv2 = 0.0
+            else:
+                # Only reached when BOTH sides said dual=1 and both parsed, so a
+                # tick counted here is a tick where a second player really existed
+                # on both sides. On a level with no dual the loop never gets here
+                # and every p2 cmp stays 0 -> the callers print n/a, not 0.
+                _bump(per_half, "p2", "dy", dy2, tol, t)
+                _bump(per_half, "p2", "dvy", dv2, tol, t)
+                # The model carries ONE x for the pair (its trace has no x2), so
+                # this compares that single x against GD's second half. It is a
+                # real measurement of the model's shared-x assumption, not a
+                # p2-specific model value. Dumps older than the p2x column simply
+                # leave cmp at 0 and the column reads n/a.
+                try:
+                    _bump(per_half, "p2", "dx",
+                          float(m["x"]) - float(g["p2x"]), tol, t)
+                except (KeyError, ValueError, TypeError):
+                    pass
         if max(abs(dx), abs(dy), abs(dv), abs(dy2), abs(dv2)) <= tol:
             continue
         if first is None:
             first = t
+        if capped:
+            continue
         rows.append([t, round(float(g["x"]), 3),
                      round(float(g["y"]), 3), round(float(g["yvel"]), 4),
                      g.get("mode", ""), g.get("vsize", ""),
@@ -292,12 +358,12 @@ def diff_trace(trace_path: Path, dump_path: Path, t0: int = 0,
                      round(dy, 4), round(dv, 4), round(dx, 4),
                      round(dy2, 4), round(dv2, 4)])
         if len(rows) >= limit:
-            break
+            capped = True
     out = {"model_ticks": len(model), "gd_ticks": len(gd),
            "common": len(common), "tol": tol,
            "cols": ["tick", "x", "gd_y", "gd_vy", "gd_mode", "vsize",
                     "m_y", "m_vy", "dy", "dvy", "dx", "dy2", "dvy2"],
-           "rows": rows}
+           "rows": rows, "per_half": per_half}
     if first is None:
         out["verdict"] = (f"agree within a tolerance of {tol} "
                           f"({len(common)} ticks in common). If GD is the only "
