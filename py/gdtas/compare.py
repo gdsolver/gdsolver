@@ -125,12 +125,19 @@ MODEL = "model"    # a trace written by leveldp (*.trace.csv)
 COLUMNS: dict[tuple[str, Half], dict[str, str]] = {
     (GD, Half.P1): {"y": "y", "vy": "yvel", "x": "x", "mode": "mode",
                     "vsize": "vsize", "speed": "speed", "gravity": "upsideDown",
-                    "ground": "onGround", "dual": "dual"},
+                    "ground": "onGround", "dual": "dual", "rot": "rot"},
+    # No `rot` for p2 on either side: neither the dump nor the trace carries
+    # the partner's sprite angle. Absent here means `column()` raises and the
+    # caller finds out at the door, which is the point of the table.
     (GD, Half.P2): {"y": "p2y", "vy": "p2vy", "x": "p2x", "mode": "p2mode",
                     "vsize": "p2vsize", "speed": "speed", "gravity": "p2up",
                     "ground": "p2ground", "dual": "dual"},
+    # `rot` is raw and the two sides use different branches of the circle (GD's
+    # lv20 column runs to -418 where the model's runs to +135), so subtracting
+    # them is meaningless without reducing mod 90 first -- see gdtas.padgate.
     (MODEL, Half.P1): {"y": "y", "vy": "vy", "x": "x", "mode": "mode",
-                       "ground": "grounded", "act": "act", "dual": "dual"},
+                       "ground": "grounded", "act": "act", "dual": "dual",
+                       "rot": "rot", "rotneg": "rotneg"},
     (MODEL, Half.P2): {"y": "y2", "vy": "vy2", "mode": "mode2",
                        "ground": "grounded2", "dual": "dual"},
 }
