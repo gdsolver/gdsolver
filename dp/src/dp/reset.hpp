@@ -87,6 +87,7 @@ inline void resetInvocationState() {
     g_noSlopeFreshRect = false;
     g_noSlopeSeat = false;
     g_noUfoLandTol = false;
+    g_noPadSpinPre = false;
     g_noUfoRampFlap = false;
     g_noRideLandLaunch = false;
     g_noRampFirst = false;
