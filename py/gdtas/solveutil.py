@@ -45,6 +45,30 @@ MODE_ID = {"ship": 1, "ball": 2, "ufo": 3, "wave": 4, "robot": 5, "spider": 6,
 # The flying modes keep onGround set while airborne (it is sticky), so a
 # grounded test there needs onGround2 and vy ~ 0 as well. The cube family's
 # flag can be believed as it stands.
+#
+# [2026-09-07] THIS SET IS INCOMPLETE BY ITS OWN DESCRIPTION: swing is a flying
+# mode and is measured sticky, and it is not here. Share of grounded ticks with
+# the body plainly moving (|yvel| > 1.0), from GD's dumps alone:
+#
+#     wave 87.0 / 91.5   ufo 74.7   ship 53.6 / 33.4   SWING 31.7   <- in
+#     ---- the break, about 8x ----                                    FLYING?
+#     cube 3.9 / 0.0     ball 3.0 / 0.0   robot 0.0   spider 0.1 / 0.1   no
+#
+# so spider does NOT belong here (0.1% is the landing tick itself, which every
+# non-sticky mode shows -- that is why the floor is not 0), and swing DOES.
+#
+# Deliberately not added yet. Adding a mode TIGHTENS grounded_of, so it moves
+# anchor seeds and is visible to quick_regress, the fixcensus sections and
+# deathref -- it needs an A/B arm, not an edit. The reach is at most 2 seeds in
+# the corpus: anchors land in swing 8 times of 1,138 and 6 of those are swing
+# FLIPPED, which never grounds in these levels (0 of 1,197 ticks) and so seeds
+# grounded=0 either way. Two caveats on that number: swing occurs only on lv22,
+# so both figures rest on one level; and whether flipped swing CANNOT ground or
+# merely did not here is unsettled -- it has 21 ticks at |vy| < 0.01 with the
+# flag never set, but a swing's arc apex also reads as |vy| ~ 0, so that does
+# not separate "structurally never" from "not in this corpus". If a level
+# grounds a flipped swing, the reach-2 number expires.
+# See notes/measure-onground-stickiness-per-mode-2026-09-07.
 FLYING = (1, 3, 4)
 
 # The types the model actually collides with or reads. If any of them carries a
