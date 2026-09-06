@@ -20,12 +20,27 @@ neither commit's acceptance table could show it.
 
 Below, Q1 is green and Q2 is red, on the same six numbers.
 
-WHAT THIS CANNOT PROVE. gdtas.padgate is a TRANSCRIPTION of the C++; nothing
-here executes dp/. So Q1 is a statement about the RULE (this reading of GD's
-predicate reproduces GD's answers), not about the shipped implementation, and
-it would stay green if the C++ were edited to disagree with it. The guard
-against that is `check_transcription`, which fingerprints the copied code and
-refuses when it moves -- a stale-transcription alarm, not a proof.
+WHAT THIS CANNOT PROVE -- and what now can. gdtas.padgate is a TRANSCRIPTION of
+the C++, so Q1 is a statement about the RULE (this reading of GD's predicate
+reproduces GD's answers), not about the shipped implementation, and on its own
+it would stay green if the C++ were edited to disagree with it.
+`check_transcription` fingerprints the copied code and refuses when it moves,
+which is a stale-transcription alarm rather than a proof.
+
+TestAgainstTheShippedPredicate closes that for the SAT itself: it runs the real
+orientedHit through `leveldp --eval-padgate` on 4,000 cases and compares.
+
+THE TRANSCRIPTION STAYS, for four things the exe cannot give:
+  * `obb_sat_margin` returns MARGINS IN PX; the C++ returns a bool, and
+    test_margins_match_the_table_pinned_in_constants_hpp asserts on the pinned
+    px values.
+  * `gate()` is step.hpp's pad WINDOW and the SAT; --eval-padgate exposes
+    orientedHit alone, which has no PAD_REACH and no strict-`<` window.
+  * `sat_angle` (Q2) transcribes step.hpp's angle PHASE, a different site the
+    predicate never sees.
+  * a checkout with no built exe still runs everything but the differential.
+So `check_transcription` also stays: it is now belt-and-braces for the SAT's
+arithmetic, and still the only guard on the three parts above.
 
 Q2 needs no transcription at all: it is two angle series against each other.
 
