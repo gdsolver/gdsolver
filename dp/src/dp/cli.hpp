@@ -206,6 +206,9 @@ inline int cliMain(int argc, char** argv) {
         // only off a ride that became a landing.
         if (!std::strcmp(argv[i], "--no-ridelandlaunch"))
             g_noRideLandLaunch = true;
+        // --no-ballcorng: the ball's hang window keeps the constant 1.5 grace
+        // on its exit end instead of one tick's movement |useDx|.
+        if (!std::strcmp(argv[i], "--no-ballcorng")) g_noBallCornG = true;
         // --no-rampfirst: the model's own order (solids first, the ramp seat
         // last and never revisited) instead of GD's ramp-then-solid. With
         // --no-slopeseat as well the build reproduces the pre-2026-09-06

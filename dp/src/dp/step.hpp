@@ -5222,8 +5222,39 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // the top side's max clamp).
                         const bool revB = ((double)K.dxF < 0.0 || s.rev != 0);
                         const double xoffB = slopeXOffset(m, pH);
+                        // [2026-09-06] The exit grace is ONE TICK'S MOVEMENT,
+                        // not the constant 1.5 -- the conclusion r74 reached on
+                        // the rig and applied to the ship (r68/r74) and the
+                        // swing (r71c/r74) on 2026-08-21, leaving the ball's
+                        // 1.5 behind. Two corpus witnesses now bracket the
+                        // grace `G` (measured against `x1 - xoff`) from
+                        // opposite sides, and they have no constant in common:
+                        //   lv17 t=18,571/18,572  full ball, uid9160 m=-1,
+                        //     x1=24,120, xoff 6.213, dx 1.29825. Last riding
+                        //     cx 24,113.838, first dropped cx 24,115.137
+                        //     => 0.051 <= G < 1.350
+                        //   lv16 t=13,116/13,117  mini ball, uid6592 m=-1,
+                        //     x1=19,872, xoff 3.728, dx 1.614258. Last riding
+                        //     cx 19,869.660, first dropped cx 19,871.273
+                        //     => 1.388 <= G < 3.001
+                        // |useDx| gives 1.298250 and 1.614258, inside both. The
+                        // brackets are 1 tick of dx wide because a sweep is
+                        // what produced them, so this is not "1.5 was nearly
+                        // right": lv17's tick sits in the (dx, 1.5] gap r74
+                        // names, and the model rode the corner one tick longer
+                        // than GD (GD fires at 18,572 with ramp factor 16/24,
+                        // the model at 18,573 with 17/24, and the model's y at
+                        // 18,573, 225.0290222, is GD's y at 18,572 to every
+                        // digit gdref records).
+                        // The reverse mirror below is deliberately NOT
+                        // converted: `revB && m > 0` has ZERO witnesses in the
+                        // whole 22-level corpus (a census of all 1,714 ball
+                        // `slopeok` decisions), so changing it would be a
+                        // symmetry argument carried untested. It stays at the
+                        // 1.5 it was measured under.
+                        const double graceB = g_noBallCornG ? 1.5 : cornG;
                         double okLo = x0, okHi = x1;
-                        if (!revB && m < 0) okHi = x1 - xoffB + 1.5;
+                        if (!revB && m < 0) okHi = x1 - xoffB + graceB;
                         else if (revB && m > 0) okLo = x0 + xoffB - 1.5;
                         // --slopedbg: which numbers ended the ball's ride. The
                         // window is the model's proxy for GD's continuing-contact

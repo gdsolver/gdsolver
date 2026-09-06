@@ -91,6 +91,7 @@ inline void resetInvocationState() {
     g_noUfoRampFlap = false;
     g_noRideLandLaunch = false;
     g_noRampFirst = false;
+    g_noBallCornG = false;
     g_noSlopeNudge = false;
     g_noMpushReach = false;
     g_noBoostLatch = false;

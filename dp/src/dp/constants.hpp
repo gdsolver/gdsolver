@@ -297,6 +297,24 @@ inline bool g_noRingFirstTouch = false; // --no-ringfirsttouch
 // to be byte-identical to the build before the change.
 inline bool g_noPadObb = false;         // --no-padobb
 
+// --no-ballcorng: the BALL's hang window keeps the constant 1.5 grace on its
+// exit end (the pre-2026-09-06 behaviour) instead of one tick's movement
+// |useDx|, which is what the ship (r68/r74) and the swing (r71c/r74) already
+// use. Two witnesses bracket the grace from opposite sides and leave no
+// constant available:
+//   lv17 t=18,571/18,572  full ball,  m=-1, x1=24,120, xoff 6.213, dx 1.29825
+//                         last ride cx 24,113.838 / first drop 24,115.137
+//                         => 0.051 <= G < 1.350
+//   lv16 t=13,116/13,117  mini ball,  m=-1, x1=19,872, xoff 3.728, dx 1.614258
+//                         last ride cx 19,869.660 / first drop 19,871.273
+//                         => 1.388 <= G < 3.001
+// The two intervals are disjoint, and |useDx| lands inside both, so these two
+// ticks do not merely permit a dx-proportional grace, they require one. The
+// reverse-travel mirror (okLo) is NOT converted: it has zero witnesses in the
+// whole corpus, and an untested arm is better left where it was measured to be
+// harmless. See the site in step.hpp.
+inline bool g_noBallCornG = false;      // --no-ballcorng
+
 // --no-padspinpre: a pad's same-tick rotation step turns toward the gravity at
 // the END of the tick (the pre-2026-09-06 behaviour) instead of the gravity at
 // the moment GD called runNormalRotation. Only a GRAVITY pad can tell the two
