@@ -433,6 +433,49 @@ def grounded_of(mode: int, on_ground: str, on_ground2: str, yvel: str) -> int:
     that is a separate measurement.
     See notes/measure-ground-letter-verdicts-2026-09-07.
 
+    THAT SEPARATE MEASUREMENT WAS DONE, 2026-09-07, and it says DO NOT BUILD THE
+    THIRD PREDICATE. Reach, over the population this function actually seeds --
+    the 1,116 anchor seeds of quick_regress / fixcensus, of which it calls 860
+    not-grounded -- arbitrated by the same pin, from GD's dumps and the levels'
+    own tables, no model and no anchor:
+
+        (a) resting against a ceiling     1 seed of 1,116   (lv2 t=12,600)
+        (b) carried by a moving surface   0 seeds of 1,116
+
+    The one is an upright ship whose top face holds 0.00000 px to the underside
+    of a block for 25 ticks, with onGround=1 and onGround2=0. THE ZERO FOR (b)
+    IS THE SAMPLING'S, NOT THE WORLD'S: carried rides exist (lv19 21,401-21,413
+    on group 108, and 21,560-21,572 on group 109 at 0.26162 px/tick, matched to
+    the trigger table) but they run 4-13 ticks against a 400-tick grid -- the
+    nearest seed to the first is t=21,400, two ticks BEFORE contact and
+    genuinely in free flight. Over all 455,396 ticks there are 934 false-negative
+    ticks in 17 runs (0.21%), so a 400-spaced grid expects 2.34 hits and got 1.
+    (a) and (b) overlap only partly and are two numbers, not one: lv19's group
+    108 ride is both, but 734 of the 934 are a STATIC ceiling pin, and lv19
+    21,560-21,572 is carried on a rising FLOOR with both flags set.
+
+    The reach is not the only reason. Split those 934 by the clause that rejects
+    them: 64.0% by onGround2 (onGround set, onGround2 clear), 33.5% with BOTH
+    FLAGS 0 -- GD reports no contact at all, so nothing standing on these flags
+    can reach them -- and 2.5% by |yvel| alone with both flags set. A perfect
+    floor/ceiling discriminator tops out at 64%. And there is no cheap one:
+    snapuid/snapdist are stale (lv22 t=5,000/5,400/6,200, three different modes
+    1,200 ticks apart, all carry snapuid 4620 and snapdist -23.9521484), gy1/gy2
+    are the ground/ceiling LAYERS rather than object faces, platXVel is
+    m_platformerXVelocity. The surface has to be computed -- geometry at seed
+    time, not another column to read.
+
+    AND THE MECHANISM ABOVE IS GRAVITY-RELATIVE, NOT WORLD-RELATIVE. onGround2
+    marks a contact on the body's OWN down side. A flipped body cannot rest on a
+    world floor, and of the 14,227 corpus ticks that are flipped and vertically
+    still across t-1/t/t+1, 14,217 (99.9%) have onGround2 = 1 -- resting against
+    a world CEILING with the flag set. Both ceilings in the n=3 above are
+    UPRIGHT bodies, so "0 for a ceiling" holds for the body's own ceiling only.
+    The same census closes the other side: the whole corpus holds exactly 567
+    upright still ticks with onGround=1 and onGround2=0, and they are one ride --
+    lv2 12,281-12,847, the ride the single seed above sits in.
+    See notes/measure-ground-false-negatives-2026-09-07.
+
     Corroborated from the other direction by the column-phase audit
     (notes/measure-dump-column-phases-2026-09-06), which swept d = -3..+3 over
     379,480 ticks in the same kind of window and found d=0 the strict minimum
