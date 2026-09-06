@@ -81,6 +81,7 @@ import csv
 import json
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -471,6 +472,64 @@ def rot_anchor_args(level: int, t0: int) -> list[str]:
     return extra
 
 
+_PADHIST: dict[tuple, object] = {}
+_PADHIST_LOCK = threading.Lock()
+# Set by either instrument's --no-spentpad. Module-level because fixcensus
+# builds its section arguments through this module's helpers rather than
+# through its own copy of them; one flag, both tools, one meaning.
+NO_SPENTPAD = False
+
+
+def pad_anchor_args(level: int, t0: int, gd: dict | None = None) -> list[str]:
+    """Give a section anchor the pads the run had already fired before t0.
+
+    THE SAME SHAPE AS --spentrot ABOVE, and for the same reason: GD's
+    activatedByPlayer latch is permanent for the attempt, `State::usedPad` is
+    the model's copy of it, and `--start` carries no pointer table. Without
+    this a section anchored between a pad's two contact runs fires it again,
+    which GD never does -- measured on lv18 t0=18,200, where uid 12805 fires a
+    second time at 18,216 and `edvy` closes exactly on kPadBlueVy (+15.810).
+    Corpus-wide there are 18 such re-entries (lv13/14/18/21, all gravity pads);
+    GD takes the second run in 0 of them and so does the WHOLE-RUN model, so
+    every one of them was a false red in this harness and in fixcensus.
+
+    The uids come from gdtas.padhistory, which replays the pad loop over the
+    reference rather than testing boxes -- overlap is the gravity PORTAL's
+    rule, and a gravity PAD met with the wrong gravity is not consumed. Which
+    of the named pads can still matter at t0 is decided by dp (the x window and
+    the four slots are its rules); this side only says what was fired.
+
+    Levels with no pad at all, and any level whose objrects dump is missing,
+    get an empty list = bit-identical to before.
+
+    `gd` is A recording of that level to read the history out of -- the one the
+    caller has already read, saving a 2.3MB csv, or a DIFFERENT one: deathref
+    anchors on its own truncated run, which is the same worldline as gdref only
+    up to the cut. So the cache is keyed on the recording and not on the level;
+    keying it on the level alone would hand truncation B the pads of truncation
+    A and be invisible, because both answers are plausible lists of uids.
+    """
+    rows = gd if gd is not None else read_ref(level)
+    key = (level, len(rows), max(rows) if rows else -1)
+    with _PADHIST_LOCK:
+        if key not in _PADHIST:
+            from gdtas import padhistory
+            objr = LEVEL_DATA / f"objrects_lv{level}.txt"
+            pads = padhistory.read_pads(objr) if objr.exists() else []
+            _PADHIST[key] = padhistory.walk(pads, rows) if pads else None
+        w = _PADHIST[key]
+    if w is None:
+        return []
+    from gdtas.padhistory import spent_uids
+    spent = spent_uids(w, t0)
+    if not spent:
+        return []
+    args = ["--spentpad", ",".join(str(u) for u in spent)]
+    if NO_SPENTPAD:
+        args.append("--no-spentpad")
+    return args
+
+
 _BANDTRACK: dict[int, list[str]] = {}
 
 
@@ -554,6 +613,7 @@ def seg_jobs(level: int, a) -> tuple[dict, list]:
                 args += ["--startband", f"{r['pmin']},{r['pmax']}"]
             args += band_track_args(level, gd)
             args += rot_anchor_args(level, t)
+            args += pad_anchor_args(level, t, gd)
             jobs.append({"level": level, "t0": t, "args": args,
                          "t1": min(t + a.seg_len, cut),
                          "trace": tmp / f"seg_lv{level}_{t}.trace.csv"})
@@ -862,11 +922,17 @@ def main(argv=None) -> int:
     ap.add_argument("--seg-slack", type=int, default=0,
                     help="tolerance per section, in ticks. 0 = report a section "
                          "that tracked even one tick less")
+    ap.add_argument("--no-spentpad", action="store_true",
+                    help="the A/B arm: still name the pads the run had fired "
+                         "before each anchor, but tell the solver to ignore "
+                         "them (pre-2026-09-06 seeding)")
     ap.add_argument("--pool", nargs="+", type=int,
                     default=[90, 91, 92, 93, 94, 95])
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     ap.add_argument("--timeout-minutes", type=float, default=6.0)
     a = ap.parse_args(argv)
+    global NO_SPENTPAD
+    NO_SPENTPAD = bool(a.no_spentpad)
 
     # REJECT --bless ON A RESTRICTED RUN AT THE DOOR. bless REPLACES
     # `all_base[key]` WHOLESALE with "the rows of the levels that ran this

@@ -438,6 +438,33 @@ inline bool loadRotQueue(const std::string& path) {
 // driver derives it from the gframe transitions (t<t0) in the GD dump and
 // passes it in.
 inline std::vector<int> g_spentRot;
+// --spentpad uid,uid,...: the uids of the PADS this run had already fired
+// before the anchor. The same hole one shape down: GD's activatedByPlayer latch
+// is permanent for the attempt (collisionCheckObjects drops a latched object at
+// the vf560 test, before any shape test), the model keeps it in
+// State::usedPad, and --start cannot carry a pointer table. The seeding that
+// was there read the boxes the player OVERLAPS at t0, which catches a contact
+// still in progress and nothing else; a pad fired earlier and stepped off comes
+// back live, and the anchored arm fires it a second time where GD never does.
+//
+// Measured on lv18 x~25,000, a six blue-pad zig-zag the player re-enters about
+// 32 ticks after each first contact: anchoring at t0=18,200 lands between uid
+// 12805's two contact runs (18,184 and 18,216-217), the fresh anchor re-fires
+// it at 18,216 and edvy closes exactly on kPadBlueVy (0.215 - (-15.595) =
+// +15.810). Corpus-wide: 502 static pads, 18 re-entries (lv13/14/18/21, all id
+// 67 / type 10), GD fires the second run 0 of 18 and the WHOLE-RUN model 0 of
+// 18 -- so this is an instrument defect and not a physics one, and the only
+// thing that may move is an anchored comparison.
+//
+// The producer walks the recording rather than the geometry (py/gdtas/
+// padhistory.py). Overlap is the portal latch's rule and NOT a pad's: the blue
+// pad's polarity gate in step.hpp runs BEFORE `c.usedPad[slot] = pd`, so a
+// gravity pad met with the wrong gravity is neither fired nor consumed, and
+// seeding it would suppress a firing GD performs.
+inline std::vector<int> g_spentPad;
+// A/B switch (--no-spentpad): ignore the list above, i.e. seed only from the
+// boxes overlapped at t0, which is what every build before 2026-09-06 did.
+inline bool g_spentPadSeed = true;
 // A/B switch that turns off the reverse-run toggle (a 2900 of the same frame)
 // (--norevtoggle).
 inline bool g_revToggle = true;

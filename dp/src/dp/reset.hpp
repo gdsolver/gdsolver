@@ -163,6 +163,8 @@ inline void resetInvocationState() {
     g_seedPartialOk = false;
     g_seedPartial.clear();
     g_spentRot.clear();
+    g_spentPad.clear();
+    g_spentPadSeed = true;
     g_revToggle = true;
     g_ctrlWin.clear();
     g_winRePushJump.clear();

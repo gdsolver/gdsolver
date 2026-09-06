@@ -121,6 +121,10 @@ def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
     a += groups_args(plan)
     a += ctrlwin_args(lv)
     a += qr.rot_anchor_args(lv, t0)
+    # ...and the pads the run had already fired before t0 (the same producer
+    # quick_regress uses, so the two instruments anchor identically). Without
+    # it every re-entered pad in lv13/14/18/21 shows up here as a family.
+    a += qr.pad_anchor_args(lv, t0, gd)
     subprocess.run(a, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return eval_trace(lv, t0, span, Path(str(base) + ".trace.csv"), gd, eps)
 
@@ -141,11 +145,16 @@ def main(argv=None) -> int:
     ap.add_argument("--family", default=None)
     ap.add_argument("--no-waivers", action="store_true",
                     help="ignore the waivers for known outliers and print the raw numbers")
+    ap.add_argument("--no-spentpad", action="store_true",
+                    help="the A/B arm: still name the pads the run had fired "
+                         "before each anchor, but tell the solver to ignore "
+                         "them (pre-2026-09-06 seeding)")
     ap.add_argument("--json", default="", dest="json_out",
                     help="write the divergences themselves (with their ticks) "
                          "to this file -- brief-017's section list needs WHERE "
                          "they are, which the family baseline does not carry")
     a = ap.parse_args(argv)
+    qr.NO_SPENTPAD = bool(a.no_spentpad)
     # reject --bless on a restricted run at the door (same reasoning as
     # quick_regress: the baseline file replaces the census of every level
     # wholesale, so a bless with --levels narrowed erases the families of the

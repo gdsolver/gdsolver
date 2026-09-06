@@ -94,6 +94,11 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--seedevery")) g_seedEvery = std::atoi(argv[i + 1]);
         // --p2touch: count touch boxes the second player enters (diagnostic).
         if (!std::strcmp(argv[i], "--p2touch")) g_p2Touch = true;
+        // --no-spentpad: the A/B arm for --spentpad (frames.hpp). The list is
+        // still parsed and still reported, so the two arms differ in the
+        // seeding alone and not in what the caller passed. Valueless, so it
+        // belongs in THIS loop -- the one below stops at argc-1.
+        if (!std::strcmp(argv[i], "--no-spentpad")) g_spentPadSeed = false;
         // --anchor-state / --seed-partial-ok: the anchor payload (frames.hpp).
         if (!std::strcmp(argv[i], "--anchor-state")) g_anchorState = argv[i + 1];
         if (!std::strcmp(argv[i], "--seed-partial-ok")) g_seedPartialOk = true;
@@ -330,6 +335,17 @@ inline int cliMain(int argc, char** argv) {
                 p = c + 1;
             }
         }
+        // --spentpad uid,uid,...: pads already fired before the anchor
+        // (history at g_spentPad's declaration). Applied at the anchor's pad
+        // seeding, after loadLevel.
+        if (!std::strcmp(argv[i], "--spentpad")) {
+            for (const char* p = argv[i + 1]; *p; ) {
+                g_spentPad.push_back(std::atoi(p));
+                const char* c = std::strchr(p, ',');
+                if (!c) break;
+                p = c + 1;
+            }
+        }
         if (!std::strcmp(argv[i], "--dyndbg")) g_dynDbg = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--triggers")) trigPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--objgroups")) grpPath = argv[i + 1];
@@ -561,9 +577,14 @@ inline int cliMain(int argc, char** argv) {
             // Worse than a wasted record: those 45 go back in through --fixups
             // and overwrite correct physics next to the wall.
             // Same family as the documented snapObj gap, and the same list still
-            // has holes -- dashing / dashSlope / ringHold / usedPad / usedOrb
-            // are all still dropped by a re-anchor. lv21 holds one dash for 300+
+            // has holes -- dashing / dashSlope / ringHold / usedOrb are all
+            // still dropped by a re-anchor. lv21 holds one dash for 300+
             // ticks, so that one will bite next.
+            // `usedPad` came off that list on 2026-09-06: the overlap rule below
+            // covers a contact still in progress and --spentpad covers the pads
+            // fired earlier in the attempt (g_spentPad's declaration). usedOrb
+            // has no such producer -- an orb is consumed by a PRESS, so the
+            // recording's x,y cannot say which ones were taken.
             // Callers passing 15 fields still work: a[15] stays 0, which is what
             // every non-robot anchor wants anyway.
             // 17th/18th = DASH state (dashing, dashSlope). Same family as the
@@ -917,11 +938,10 @@ inline int cliMain(int argc, char** argv) {
                          startSnapUid);
     }
     // [2026-08-19] The anchor cannot carry CONSUMED PADS either (same family
-    // of hole as rHover/dash/snapObj). A pad is consumed unconditionally on
-    // contact (note in stepOne's pad loop) and does not re-fire while the
-    // contact lasts. If the player's box at t0 overlaps a pad's firing box,
-    // that contact began before t0 and GD has already fired it -- start with
-    // it consumed.
+    // of hole as rHover/dash/snapObj). A pad is consumed on contact (note in
+    // stepOne's pad loop) and does not re-fire while the contact lasts. If the
+    // player's box at t0 overlaps a pad's firing box, that contact began before
+    // t0 and GD has already fired it -- start with it consumed.
     // Measured on lv17 t=14,601: GD had fired the yellow pad uid7254
     // (18,943,152) at t=14,577, yet the section anchor at t0=14,600 re-fired
     // it for vy=16 (census m4/orbnear/in1, edvy +10.807).
@@ -956,6 +976,71 @@ inline int cliMain(int argc, char** argv) {
                 && !orientedHit(o, x0, (double)init.y, sHalf, sRotPad))
                 continue;
             init.usedPad[slot++] = &o;
+        }
+        // ...AND THE PADS THE RUN FIRED EARLIER AND STEPPED OFF (--spentpad,
+        // history at g_spentPad's declaration). The block above only ever
+        // catches a contact still in progress at t0, because it asks a question
+        // about the CURRENT position. GD's latch is permanent for the attempt,
+        // so a pad fired thirty ticks ago is just as dead -- and lv18's
+        // x~25,000 zig-zag walks straight back into six of them.
+        //
+        // The two are kept apart rather than merged. The overlap rule needs no
+        // caller and works for anyone who passes only --start -- the repair
+        // loop's own anchors, an MCP probe, any hand-built section -- while the
+        // list is the recording talking, and is only there when someone has
+        // read a recording. Its one witness, lv17 t=14,601, is covered by both.
+        //
+        // THE X WINDOW IS DECIDED HERE and not by the producer, because it is
+        // this side's rule: `usedPad` is released on x alone (the release loop
+        // at the end of stepOne's pad section) and there are four slots for a
+        // level with up to 82 pads, so "which of the fired pads can still
+        // matter" has to be answered with the same expression the release uses.
+        //
+        // A PAD CARRIED BY MOVING GEOMETRY IS NOT SEEDED, and is counted
+        // separately rather than folded into "unknown", which has to keep its
+        // own meaning (a stale dump, the wrong level). Such a pad lives in
+        // L.dyn.objs, where `cx` is its position at load time and not at t0 --
+        // the x window below would be measured against the wrong place, and
+        // the producer's own contact test has the same problem. Measured over
+        // quick_regress's 1,116 sections: 406 named uids land here, all of them
+        // on lv19/20/21/22, which are exactly the levels with grouped pads
+        // (16/15/2/2 of them). lv1-18 name none.
+        if (g_spentPadSeed && !g_spentPad.empty()) {
+            int seeded = 0, gone = 0, unknown = 0, overflow = 0, carried = 0;
+            for (int su : g_spentPad) {
+                const Obj* pad = nullptr;
+                for (const Obj& o : L.pads)
+                    if (o.uid == su) { pad = &o; break; }
+                if (!pad) {
+                    bool moving = false;
+                    for (const Obj& o : L.dyn.objs)
+                        if (o.uid == su) { moving = true; break; }
+                    (moving ? carried : unknown) += 1;
+                    continue;
+                }
+                if (std::fabs(x0 - pad->cx) >= pad->hw + sHalf + kPadReach) {
+                    ++gone;      // released before t0 anyway -- see the release
+                    continue;
+                }
+                bool have = false;
+                for (int i = 0; i < slot; ++i)
+                    if (init.usedPad[i] == pad) { have = true; break; }
+                if (have) continue;             // the overlap rule got it first
+                if (slot >= 4) { ++overflow; continue; }
+                init.usedPad[slot++] = pad;
+                ++seeded;
+            }
+            // Reported, not silent: "nothing happened" is this block's failure
+            // mode, and a caller whose uids name no pad of this level (a stale
+            // dump, the wrong level) would otherwise look exactly like a caller
+            // with nothing to seed.
+            std::printf("spentpad: %d/%zu pads pre-fired (%d already outside "
+                        "the x window, %d carried by moving geometry, %d not a "
+                        "pad in this level)\n",
+                        seeded, g_spentPad.size(), gone, carried, unknown);
+            if (overflow)
+                std::printf("spentpad: %d DROPPED - all four usedPad slots are "
+                            "taken at t0\n", overflow);
         }
     }
     // A re-anchored solve starts mid-level, where the doors the earlier part of

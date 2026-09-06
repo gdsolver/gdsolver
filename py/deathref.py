@@ -91,7 +91,8 @@ from gdtas.solveutil import (copy_held_file, has_grouped_colliders,  # noqa: E40
                              rot2900s, spent2900_from_dump)
 from gdtas.worker import run_session                               # noqa: E402
 from fidelity_diff import busy_worker_ids, groups_args             # noqa: E402
-from quick_regress import REF, REF_COLS, start_fields              # noqa: E402
+from quick_regress import (REF, REF_COLS, pad_anchor_args,         # noqa: E402
+                           start_fields)
 
 DEATHS = REF / "deaths"
 INDEX = DEATHS / "index.json"
@@ -596,6 +597,11 @@ def run_model(out: dict, lv: int, trunc: int, t0: int, gd: dict, full: Path,
         spent = spent2900_from_dump(ref_csv, -1, t0, rots)
         if spent:
             args += ["--spentrot", ",".join(str(u) for u in spent)]
+    # ...and the pads this reference's own run had fired before t0. THIS
+    # reference's, not gdref's: a truncated plan follows the full one only up
+    # to the cut, and the anchor sits past it. pad_anchor_args keys its cache
+    # on the recording for exactly that reason.
+    args += pad_anchor_args(lv, t0, gd)
 
     # stderr is folded into stdout, not discarded: leveldp reports a rejected
     # argument there (`startband: 90,90 is not a readable f,c pair` -- a band
