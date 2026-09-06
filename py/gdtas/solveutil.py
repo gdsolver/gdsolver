@@ -383,6 +383,56 @@ def grounded_of(mode: int, on_ground: str, on_ground2: str, yvel: str) -> int:
     the filter's.
     See notes/measure-onground-phase-offset-2026-09-06.
 
+    WHICH OF THOSE THREE NAMES IS RIGHT was measured on 2026-09-07 from GD's
+    dump against the level's own trigger table -- no model and no anchor, so a
+    section's first-divergence caveat does not reach the verdicts. The test is
+    a pin: compute the surface the player would be resting on and ask whether
+    the offset from the player's face to it is CONSTANT across ticks (rigid
+    contact) or closing every tick (still flying). No threshold had to be
+    chosen; the two answers come out 2.8e-5 px and ~0.9 px/tick apart. Note the
+    `gdg` letter reads GD's row at t-1 -- that row, not the record's tick, is
+    what the verdict is about.
+
+        lv16 19,103  FLYING. The offset to the m=0.5 ceiling ramp (uid 9662,
+                     extrapolated past its span) is closing at 0.886 px/tick;
+                     the ship seats two ticks later at 19,105 and only then
+                     locks, at 10.0623 = 9/cos(atan 0.5) -- the secant rule,
+                     which re-derives the mini half of 9.0 on its own.
+                     `onGround` had been 1 for 168 ticks and 162 px of powered
+                     climb.                                  -> gdg0 is right.
+        lv19 21,401  RESTING, and it is the contact tick itself: vy is cut
+                     from +4.372 to 0 in one tick, and the player's top face
+                     pins to the underside of a descending group-108 slab at
+                     9.00065 px, constant to 2e-5 over 15 ticks (the two
+                     excursions of +0.01085 are each undone the next tick).
+                     The slab falls at 0.2505927 px/tick -- trigger 14317,
+                     240 px over 3.99054 s -- against an observed 0.250595,
+                     and no other group in the level is within 0.01 of that
+                     rate. 9.0007 = 15 x 0.6.                -> gdg1 is right.
+        lv20 22,014  FLYING (rising at vy 4.162, still 0.38 px/tick from the
+                     platform), and 22,015 IS the seating tick: the offset to
+                     the eased group-54 platform (uid 18643) drops to exactly
+                     15.00000 and holds for the four ticks `onGround2` is set,
+                     then breaks when the ufo leaves. -> gdg0/gdgo1 is right.
+
+    So NEITHER definition is right everywhere -- two for corroborated, one for
+    raw -- and the split has a mechanism: on these three sites `onGround2`
+    tracks a FLOOR contact only. It is 0 for both ceiling contacts (lv19
+    21,401, and lv16's own ramp ride at 19,106-19,109, where GD holds a rigid
+    0.5-gradient ride with `onGround` AND `onGround2` both 0) and 1 for the one
+    floor seating. n = 3: this is the mechanism the verdicts suggest, not a
+    swept rule. The conjunction therefore has two named false negatives -- a
+    body resting against a CEILING, and a body CARRIED by a moving surface
+    (lv19 21,402-21,415 rides with vy pinned near -1, so the |yvel| clause
+    rejects it as well).
+    That is not a reason to drop the conjunction and not a reason to switch the
+    default either way: at all three sites the raw flag is stale by 168, 50 and
+    23 ticks, so where it agrees it agrees by accident, and switching to
+    corroborated would lose lv19 21,401. What the three verdicts argue for, if
+    anything, is a third predicate that can tell a floor from a ceiling -- and
+    that is a separate measurement.
+    See notes/measure-ground-letter-verdicts-2026-09-07.
+
     Corroborated from the other direction by the column-phase audit
     (notes/measure-dump-column-phases-2026-09-06), which swept d = -3..+3 over
     379,480 ticks in the same kind of window and found d=0 the strict minimum
