@@ -60,15 +60,41 @@ SOURCES, all on disk, no game:
                        7,280..7,320 (checked over that whole span whenever the
                        dump is present). Taken from the deciding column, not
                        from a comment that names the tick.
-    the model's angle  build/fidelity/{fid,abnew}_lv20.trace.csv, `rot` and
-                       `rotneg` of row t-1 (see padgate.sat_angle on the
-                       phase). The two files differ at t=7,295 by exactly one
-                       spin step's SIGN -- 128.1656 stepping to +129.8963 in
-                       one and to -126.4348 in the other -- which is the single
-                       expression 351f9de changed. The arms are named here by
-                       that sign and NOT by the commit: the attribution rests
-                       on the two files' timestamps straddling it, and neither
-                       trace records the argv it was produced with.
+    the model's angle  `rot` and `rotneg` of row t-1 (see padgate.sat_angle on
+                       the phase), from ONE TRACE PER ARM. The arms are named
+                       by the SIGN of the cube's same-tick pad spin at t=7,295
+                       -- 128.1656 stepping to +129.8963 in one and to
+                       -126.4348 in the other, the single expression 351f9de
+                       changed -- and NOT by a commit.
+                         spin_minus  build/fidelity/off_lv20.trace.csv, from
+                           `python py/fidelity_offline.py 20` at b545b96. It
+                           carries a `.prov.json` (df64259's sidecar), so the
+                           binary is named by sha256 (482,816 B,
+                           0b9d0b01ecb285bf...) and the argv is on record:
+                           `--replay --triggers --objgroups --obb` and four
+                           `--groups`, with extra.died = 15,125.
+                           gdtas.compare.require_replay_flags ACCEPTS it, which
+                           is what rules out "a mover level replayed without
+                           --groups" by record instead of by memory.
+                         spin_plus   build/fidelity/fid_lv20.trace.csv
+                           (2026-09-06 08:49). It predates the sidecar and has
+                           none, so its argv is UNKNOWN -- not vouched for, and
+                           not accused either. What can be said about it is
+                           checked here instead: its own `yvel` turns to +16 at
+                           7,296, which is the tick the transcription gives for
+                           its column, so the arm and the trace are one
+                           world-line (test_each_arm_agrees_with_its_own_trace).
+
+RE-PINNED 2026-09-06 (b545b96). The spin_minus rows below used to come from
+build/fidelity/abnew_lv20.trace.csv, and THAT TRACE FIRES uid 7030 AT 7,296:
+its own `yvel` turns upward at 7,297. The transcription run over its `rot`
+column returned 7,298, so the pinned FIRST_FIRE was a number obtained by
+applying the model's angle rule to a column belonging to a run that had already
+taken the pad two ticks earlier -- a foreign world-line. The headline survives
+(the shipped build really does hand the SAT +3.484 deg at 7,296 and really does
+fire at 7,298), but the margins from 7,297 on were another run's: +1.043 at
+7,298 where this build gives +0.262. Nothing downstream may be accepted against
+a pin like that, which is why this file moved first.
 
 CROSS-CHECK. The pinned `flat` and `gd` margin rows are the table already
 written into dp/src/dp/constants.hpp above `g_noPadPlayerRot`, and the `pre`
@@ -90,9 +116,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import padgate
-from gdtas.compare import (GD, MODEL, Difference, Half, MODEL_MINUS_GD,
-                           Provenance, Series, Window, check_coverage,
-                           conditions_of, difference, fidelity_dir, read_table,
+from gdtas.compare import (GD, MODEL, MOVING_GEOMETRY_FLAGS, Difference, Half,
+                           MODEL_MINUS_GD, Provenance, Series, Window,
+                           check_coverage, conditions_of, difference,
+                           fidelity_dir, read_table, require_replay_flags,
                            series)
 from gdtas.padgate import (Board, PLAYER_HALF_FULL, aabb_conjunct,
                            angle_error_mod90, gate, mod90, obb_sat_margin,
@@ -152,14 +179,19 @@ GD_MODE, GD_VSIZE = "cube", 1.0       # so pHalf is 15 and the spin step 1.7308
 # differs between them -- "SPIN_PLUS" is the pre-351f9de behaviour (the gravity
 # at the END of the tick), "SPIN_MINUS" is the shipped one (the gravity the
 # pad's own call saw). Derived as sat_angle(trace.rot[t-1], trace.rotneg[t-1]).
+#
+# spin_minus re-pinned at b545b96 from off_lv20.trace.csv (see the docstring).
+# 7,295 and 7,296 are unchanged to the digit -- the two traces are the same run
+# until the older one fires -- and 7,297 moved by 6e-6, which is one build's
+# float32 `rot` against another's, not a mechanism.
 MODEL_ANGLE = {
     7295: dict(spin_plus=129.8963271, spin_minus=129.8963271),
     7296: dict(spin_plus=131.627101, spin_minus=128.1655608),
-    7297: dict(spin_plus=129.8963365, spin_minus=126.43478870000001),
-    7298: dict(spin_plus=131.6271104, spin_minus=128.16556260000002),
-    7299: dict(spin_plus=133.3578844, spin_minus=129.8963365),
-    7300: dict(spin_plus=135.0886583, spin_minus=131.6271104),
-    7301: dict(spin_plus=136.8194322, spin_minus=133.3578844),
+    7297: dict(spin_plus=129.8963365, spin_minus=126.4347945),
+    7298: dict(spin_plus=131.6271104, spin_minus=124.7040282),
+    7299: dict(spin_plus=133.3578844, spin_minus=122.9732561),
+    7300: dict(spin_plus=135.0886583, spin_minus=124.7040224),
+    7301: dict(spin_plus=136.8194322, spin_minus=126.43478870000001),
 }
 
 # The tightest SAT axis for uid 7030, px, > 0 == contact. Recomputed here from
@@ -168,7 +200,11 @@ MODEL_ANGLE = {
 #   gd         GD's own rotation column
 #   flat       pRot = 0, the axis-aligned square (a874728 / --no-padplayerrot)
 #   spin_plus  the model's angle before 351f9de
-#   spin_minus the model's angle after it (shipped at 6a3c721)
+#   spin_minus the model's angle after it (shipped at b545b96)
+# The spin_minus rows from 7,297 on are the RE-PIN: 7,298 reads +0.262 where
+# the abnew-derived fixture read +1.043. The verdict does not move (both are
+# > 0), which is why this was invisible until the traces were asked which tick
+# they themselves fired on.
 MARGIN = {
     7295: dict(gd=-1.4861672460155688, flat=-1.1761857780209724,
                spin_plus=-0.7308194430079773, spin_minus=-0.7308194430079773,
@@ -177,24 +213,35 @@ MARGIN = {
                spin_plus=0.29175313265397307, spin_minus=-0.4267213173153763,
                aabb=True),
     7297: dict(gd=-0.9129105616716622, flat=2.5696182219790202,
-               spin_plus=0.6543850630175747, spin_minus=-0.09580973613312693,
+               spin_plus=0.6543850630175747, spin_minus=-0.09580842694477099,
                aabb=True),
     7298: dict(gd=-0.5846073396290912, flat=4.237133290576107,
-               spin_plus=1.76196971166695, spin_minus=1.0434937884318884,
+               spin_plus=1.76196971166695, spin_minus=0.26226776013692543,
                aabb=True),
     7299: dict(gd=0.6423154402096714, flat=5.035999113089954,
-               spin_plus=2.895712567831513, spin_minus=2.2096110648989082,
+               spin_plus=2.895712567831513, spin_minus=0.6478692397947761,
                aabb=True),
     7300: dict(gd=-2.995830803637922, flat=0.9843928414130936,
-               spin_plus=-0.8376696983618572, spin_minus=-1.4907707374960637,
+               spin_plus=-0.8376696983618572, spin_minus=-2.990474049027256,
                aabb=True),
     7301: dict(gd=-6.606432470372546, flat=-3.024694667820903,
-               spin_plus=-4.545476569476644, spin_minus=-5.1649812130793435,
+               spin_plus=-4.545476569476644, spin_minus=-6.60127751516265,
                aabb=False),
 }
 
 # The tick each arm first takes uid 7030, both conjuncts.
+#
+# For the two arms that have a trace this is ALSO the tick that trace itself
+# fires on -- its own `yvel` turning to +16 -- and that equality is asserted,
+# not assumed (test_each_arm_agrees_with_its_own_trace). It is the check the
+# old spin_minus pin failed: 7,298 here against 7,296 in the trace the numbers
+# were read from.
 FIRST_FIRE = {"gd": 7299, "flat": 7296, "spin_plus": 7296, "spin_minus": 7298}
+
+# The tick each arm's own trace takes the pad on, read from that trace's `vy`
+# column over 7,280..7,320 and nothing else. `gd` and `flat` have no trace:
+# `gd` is the dump (GD_ACTIVATION_TICK) and `flat` is a hypothetical angle.
+TRACE_OWN_FIRE = {"spin_plus": 7296, "spin_minus": 7298}
 
 # Rows where the geometry says contact at GD's own inputs and GD does NOT
 # activate. They are not a failure of the shape rule: step.hpp's loop skips a
@@ -466,7 +513,19 @@ def _objrects_path() -> Path:
 
 
 # The two model traces the arms were read from. Working files, untracked.
-TRACE = {"spin_plus": "fid_lv20.trace.csv", "spin_minus": "abnew_lv20.trace.csv"}
+#
+# `flags` says what gdtas.compare must be able to prove about the trace before
+# its numbers are believed. spin_minus is the arm commit acceptance leans on,
+# so it is required to carry a sidecar naming the moving-geometry flags;
+# spin_plus predates the sidecar entirely, and demanding one of it would turn a
+# historical arm red for a reason that has nothing to do with what it pins.
+# Unknown is not the same as bad -- that distinction is require_replay_flags's
+# whole purpose -- so the older arm is instead held to the check both arms can
+# meet: it must fire where its own trace fires.
+TRACE = {
+    "spin_plus": dict(name="fid_lv20.trace.csv", flags=()),
+    "spin_minus": dict(name="off_lv20.trace.csv", flags=MOVING_GEOMETRY_FLAGS),
+}
 
 
 class TestFixtureStillMatchesTheFiles(unittest.TestCase):
@@ -519,29 +578,61 @@ class TestFixtureStillMatchesTheFiles(unittest.TestCase):
         for uid in UIDS:
             self.assertEqual(live[uid], board(uid), f"uid {uid}")
 
+    def test_each_arm_agrees_with_its_own_trace(self):
+        """THE RE-PIN'S OWN GUARD, and the one check the old fixture failed.
+
+        An arm is a column read out of one model run. If that run took the pad
+        on a different tick from the one the transcription gives for its column,
+        then the two are not the same world-line and every margin from the
+        firing on belongs to a run nobody is describing. abnew_lv20.trace.csv
+        fires at 7,296 and was pinned as 7,298; the numbers looked ordinary and
+        the verdict did not move, so nothing else here could see it.
+
+        Read from the trace's own `vy`, over the same 7,280..7,320 span the GD
+        side is checked over, and not from a comment naming the tick.
+        """
+        for arm, spec in TRACE.items():
+            p = fidelity_dir() / spec["name"]
+            if not p.exists():
+                self.skipTest(f"no {p}")
+            model = read_table(p, MODEL)
+            wide = Window(7280, 7320)
+            check_coverage(model, wide)
+            vy = series(model, "vy", Half.P1, wide)
+            own = [t for t, v in vy.values.items() if abs(abs(v) - 16.0) < 1e-9]
+            self.assertEqual(own, [TRACE_OWN_FIRE[arm]],
+                             f"{arm}: {spec['name']} fires on {own}")
+            self.assertEqual(own[0], FIRST_FIRE[arm], (
+                f"{arm}: the fixture says the arm first takes uid 7030 at "
+                f"{FIRST_FIRE[arm]}, but {spec['name']} -- the trace those rows "
+                f"were read from -- fires at {own[0]}. Two world-lines"))
+
     def test_model_angles_match_the_traces(self):
         """...and the difference is built with gdtas.compare, so it carries its
         direction, its half and the conditions it was taken under."""
         gd = read_table(_dump_path(), GD)
-        for arm, name in TRACE.items():
-            p = fidelity_dir() / name
+        for arm, spec in TRACE.items():
+            p = fidelity_dir() / spec["name"]
             if not p.exists():
                 self.skipTest(f"no {p}")
             model = read_table(p, MODEL)
             # The window starts one tick early: the gate at t reads row t-1.
             check_coverage(model, Window(WINDOW.t0 - 1, WINDOW.t1))
-            # A mover level replayed without --groups dies at t=1,157 and looks
-            # byte-identical as far as it got. Neither trace records its argv,
-            # so the provenance guard cannot be used; what CAN be said is that
-            # this one reached the window and agrees with GD's x and y up to
-            # the model's own divergence at 7,296.
+            # A mover level replayed without --groups dies early and looks
+            # byte-identical as far as it got. For the arm that carries a
+            # sidecar that is settled by record; for the one that predates the
+            # sidecar it stays UNKNOWN, and what can still be said is that it
+            # reached the window and agrees with GD's x and y up to the model's
+            # own divergence at 7,296.
+            if spec["flags"]:
+                require_replay_flags(model, spec["flags"])
             for t in range(WINDOW.t0 - 5, 7297):
                 self.assertAlmostEqual(float(model.row(t)["x"]),
                                        float(gd.row(t)["x"]), delta=2e-3,
-                                       msg=f"{name} x t={t}")
+                                       msg=f"{spec['name']} x t={t}")
                 self.assertAlmostEqual(float(model.row(t)["y"]),
                                        float(gd.row(t)["y"]), delta=2e-3,
-                                       msg=f"{name} y t={t}")
+                                       msg=f"{spec['name']} y t={t}")
             derived = {}
             for t in WINDOW.ticks():
                 prev = model.row(t - 1)
