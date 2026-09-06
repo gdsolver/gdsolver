@@ -227,10 +227,16 @@ def grounded_of(mode: int, on_ground: str, on_ground2: str, yvel: str) -> int:
     two sides agree on y to 0.001 px across +-10 ticks -- so a flag difference
     there is a write-position difference by construction, not physics:
 
-        cube  482 + 92 agree, 0 differ      ship    9 + 2 agree, 6 + 2 differ
-        ball   33 + 24 agree, 0 differ      ufo     1 agree,     4 differ
-        robot  20 +  3 agree, 0 differ      wave    3 agree,    35 differ
-                                            spider  6 agree,     1 differ
+    upright + flipped, agreeing / differing:
+
+        cube  482 + 92 agree, 0 + 0 differ  ship    9 + 2 agree, 6 + 2 differ
+        ball   33 + 24 agree, 0 + 0 differ  ufo     1 + - agree, 4 + - differ
+        robot  20 +  3 agree, 0 + 0 differ  wave    3 + - agree, 35 + - differ
+                                            spider  6 + 6 agree, 0 + 1 differ
+
+    so spider's UPRIGHT rows are clean and only its flipped ones differ, and ufo
+    and wave were sampled upright only. A dash is no samples, which is not the
+    same as agreement -- do not read those cells as verified.
 
     Trusting `on_ground` alone would seed the anchor one tick early in exactly
     those modes. Requiring `on_ground2` and a near-zero yvel as well delays the
