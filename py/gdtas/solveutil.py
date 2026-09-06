@@ -220,34 +220,36 @@ def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
 def grounded_of(mode: int, on_ground: str, on_ground2: str, yvel: str) -> int:
     """GD's ground state as the model means it, from a dump row.
 
-    THE FLIGHT CONJUNCTION IS LOAD-BEARING, not belt-and-braces, and it is the
-    only thing standing between the anchor and a mode-specific phase error.
-    Measured 2026-09-06: GD's `onGround` and the model's `grounded` do NOT name
-    the same tick in ship, UFO, wave or spider. Counted on windows where the
-    two sides agree on y to 0.001 px across +-10 ticks -- so a flag difference
-    there is a write-position difference by construction, not physics:
+    THE FLIGHT CONJUNCTION IS LOAD-BEARING, not belt-and-braces: GD's
+    `onGround` and the model's `grounded` DO NOT MEAN THE SAME THING in ship,
+    UFO, wave and spider, and this is what converts one into the other.
 
-    upright + flipped, agreeing / differing:
+    They are NOT out of phase -- an earlier version of this comment said they
+    were and it was wrong. Measured over model 0->1 landings inside windows
+    where the two sides agree on y to 0.001 px across +-10 ticks, asking at what
+    shift d GD makes the same 0->1 transition:
 
-        cube  482 + 92 agree, 0 + 0 differ  ship    9 + 2 agree, 6 + 2 differ
-        ball   33 + 24 agree, 0 + 0 differ  ufo     1 + - agree, 4 + - differ
-        robot  20 +  3 agree, 0 + 0 differ  wave    3 + - agree, 35 + - differ
-                                            spider  6 + 6 agree, 0 + 1 differ
+        d = 0                      682
+        d != 0 (any shift, +-5)      0
+        GD never transitions        48
 
-    so spider's UPRIGHT rows are clean and only its flipped ones differ, and ufo
-    and wave were sampled upright only. A dash is no samples, which is not the
-    same as agreement -- do not read those cells as verified.
+    Not one disagreement is explained by a shift. In all 48 GD's flag is
+    ALREADY 1 and stays 1, so GD calls the player grounded in states the model
+    does not -- a wider predicate, not a shifted one. A separate audit puts the
+    raw-versus-corroborated gap at 48,564 of 455,396 gdref ticks (10.7%),
+    concentrated in exactly these modes: ship 31.1%, ufo 49.8%, wave 44.1%,
+    spider 6.6%, cube at or under 0.1%.
 
-    Trusting `on_ground` alone would seed the anchor one tick early in exactly
-    those modes. Requiring `on_ground2` and a near-zero yvel as well delays the
-    flag to the tick the model would call a landing, which is why every
-    anchored instrument (quick_regress, fixcensus sections, deathref) is
-    unaffected by the offset.
+    Requiring `on_ground2` and a near-zero yvel narrows GD's looser flag to the
+    model's meaning. Do not simplify this to `on_ground == "1"` for flight: the
+    redundancy IS the conversion, and without it the anchor would be seeded
+    grounded for a body GD considers grounded and the model does not.
 
-    Do not simplify this to `on_ground == "1"` for flight. The redundancy is the
-    correction. `gdtas.solveutil.cause_of` does NOT apply it -- it reads the raw
-    column -- which is why family signatures carrying a `gdg`/`gdgo` component
-    in those four modes may be signed by the offset rather than by physics.
+    `gdtas.solveutil.cause_of` does NOT apply it -- it reads the raw column --
+    so family signatures carrying a `gdg`/`gdgo` component in those modes can
+    be signed by the definitional gap rather than by physics. Two are: lv16
+    t=19,104 and lv19 t=21,422 both go `g0/gdg1` -> `g0/gdg0` when the
+    corroborated flag is substituted.
     See notes/measure-onground-phase-offset-2026-09-06.
     """
     if mode in FLYING:
