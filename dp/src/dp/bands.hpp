@@ -151,6 +151,14 @@ inline bool bandTrackIsCamera() {
 // where the band is evaluated (= the anchor).
 inline double g_bandK = 0.0;
 inline bool g_slopeDbg = false;  // --slopedbg: one line per ramp acquisition
+// --dcydbg: one line every time a SURFACE'S OWN SPEED is stamped into vy as
+// `dcy / 0.25`, tagged with which of the four sites did it. Separate from
+// --slopedbg only because that one prints per ramp tick and buries these.
+// This measures REACH -- how many ticks in the corpus each site actually
+// decides -- which is the number that says whether a rule about one of them is
+// worth anything. Counting it off whole-run traces does not work: past a
+// level's first divergence the model is on its own timeline.
+inline bool g_dcyDbg = false;
 inline bool g_bandDbg = false;   // --banddbg: one line per wave tick near the band ceiling
 // --spddbg: one line per SPEED PORTAL CANDIDATE per tick, naming the gate that
 // rejected it. The three gates (x overlap / oriented hit / y gap) each `continue`

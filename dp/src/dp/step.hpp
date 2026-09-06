@@ -3498,6 +3498,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // floor is bit-identical.
         bool flyRide = false;
         double flyRideFace = 0.0, flyRideGap = 0.0, flyRideDcy = 0.0;
+        int flyRideUid = -1;              // --dcydbg only: names the surface
         if (groundedNow && (s.flip || s.y > (floorY + pHalf) + 0.5)) {
             bool sup = false;
             for (const Obj* o : *K.near) {
@@ -3521,6 +3522,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         flyRideGap = gap;
                         flyRideFace = face;
                         flyRideDcy = (double)o->dcy;
+                        flyRideUid = o->uid;
                     }
                 }
             }
@@ -3900,7 +3902,18 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // the `s.vy == 0` gate on the hold above.
             if (groundedNow && flyRide) {
                 const double newFoot = (double)c.y - gsign * pHalf;
-                if ((newFoot - flyRideFace) * gsign <= 0.0) {
+                const bool caught = (newFoot - flyRideFace) * gsign <= 0.0;
+                const double floorVelD = flyRideDcy / 0.25;
+                if (g_dcyDbg)
+                    std::printf("dcystamp site=flyride t=%lld uid=%d dcy=%.4f "
+                                "stamp=%.4f vy=%.4f took=%d caught=%d "
+                                "foot=%.4f face=%.4f\n",
+                                (long long)K.t, flyRideUid, flyRideDcy,
+                                floorVelD, (double)c.vy,
+                                (caught && (double)c.vy * gsign
+                                 < floorVelD * gsign) ? 1 : 0,
+                                caught ? 1 : 0, newFoot, flyRideFace);
+                if (caught) {
                     c.y = (float)(flyRideFace + gsign * pHalf);
                     c.grounded = 1;
                     const double floorVel = flyRideDcy / 0.25;
@@ -4233,6 +4246,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // dcy 0.151 -> 0.604) GD leaves vy 6.742 alone. A fast player keeps
                 // its own velocity even when pushed out.
                 const double surfVp = (double)o->dcy * gsign / 0.25;
+                if (g_dcyDbg)
+                    std::printf("dcystamp site=mpush t=%lld uid=%d dcy=%.4f "
+                                "stamp=%.4f vy=%.4f took=%d\n",
+                                (long long)K.t, o->uid, o->dcy, surfVp * gsign,
+                                (double)c.vy,
+                                surfVp > (double)c.vy * gsign ? 1 : 0);
                 if (surfVp > (double)c.vy * gsign) {
                     c.vy = (float)(surfVp * gsign);
                     CLAMP0O("fly/mpush", o);
@@ -4337,6 +4356,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // (= dcy/0.25), y glued to the lift again. See the
                     // carried-state catch in the flight integration above.
                     const double fv = (double)o->dcy / 0.25;
+                    if (g_dcyDbg)
+                        std::printf("dcystamp site=floorcatch t=%lld uid=%d "
+                                    "dcy=%.4f stamp=%.4f vy=%.4f took=%d\n",
+                                    (long long)K.t, o->uid, o->dcy, fv,
+                                    (double)c.vy,
+                                    (double)c.vy * gsL < fv * gsL ? 1 : 0);
                     if ((double)c.vy * gsL < fv * gsL)
                         c.vy = (float)fv;
                 }
@@ -4467,6 +4492,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // dcy 1.961 against GD's vy 7.845 is 0.25000.
                 const bool flyMode = (c.mode == 1 || c.mode == 3
                                       || c.mode == 4 || c.mode == 7);
+                if (g_dcyDbg)
+                    std::printf("dcystamp site=ceilpin t=%lld uid=%d dcy=%.4f "
+                                "stamp=%.4f vy=%.4f took=%d\n",
+                                (long long)K.t, o->uid, o->dcy,
+                                (double)o->dcy / 0.25, (double)c.vy,
+                                (flyMode && o->dcy != 0.0) ? 1 : 0);
                 if (flyMode && o->dcy != 0.0)
                     c.vy = (float)((double)o->dcy / 0.25);
                 else

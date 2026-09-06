@@ -194,6 +194,7 @@ inline int cliMain(int argc, char** argv) {
         // as an answer ("the model never even looks at this object").
         if (!std::strcmp(argv[i], "--banddbg")) g_bandDbg = true;
         if (!std::strcmp(argv[i], "--slopedbg")) g_slopeDbg = true;
+        if (!std::strcmp(argv[i], "--dcydbg")) g_dcyDbg = true;
         // --no-slopeseat: the pre-2026-09-06 slope seat (surface sampled at an
         // x clamped into the ramp's span, plus/minus a flat player half)
         // instead of GD's extrapolated `line -/+ h/(2 cos t)` with the bounds on

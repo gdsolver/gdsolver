@@ -61,6 +61,7 @@ inline void resetInvocationState() {
     g_bandTrackCam = -1;
     g_bandK = 0.0;
     g_slopeDbg = false;
+    g_dcyDbg = false;
     g_bandDbg = false;
     g_spdDbg = false;
     g_shipCeilSet = false;
