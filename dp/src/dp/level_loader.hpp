@@ -765,12 +765,17 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // on)" long after the default had been flipped, and on 2026-09-06 it
         // was read as current and became the premise of a brief: the model was
         // said to be testing pads against the circumscribed bound, when in fact
-        // it was already using the real rotated box on BOTH sides -- the actual
-        // defect was that it passed rotation to the player's side too, where
-        // GD's own `prect` is axis-aligned. A one-line fix (`pRotPad = 0.0` for
-        // type 8) came out of re-reading the code rather than this comment.
-        // The history below is kept because it is still the reason the rule is
-        // called incomplete; only the default was wrong.
+        // it was already using the real rotated box on BOTH sides.
+        // [2026-09-06, later the same day] What that re-reading then concluded
+        // -- that the defect was passing a rotation to the PLAYER's side, and
+        // the fix `pRotPad = 0.0` for type 8 -- is itself RETRACTED. GD's
+        // activation runs two conjuncts and only the first one is axis-aligned;
+        // `prect` is that first conjunct, and an instrument printing it cannot
+        // see the angle the second one turns the square by. See
+        // g_noPadPlayerRot in constants.hpp for the disassembly and the
+        // witness. Only the default was wrong in the paragraph above; the
+        // history below is kept because it is still the reason the rule is
+        // called incomplete.
         // WHEN A COMMENT NAMES A DEFAULT, THE DECLARATION IS THE SOURCE.
         //
         // The measurement behind it is right -- lv18's 51-degree portal really

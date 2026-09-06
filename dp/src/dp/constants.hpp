@@ -286,15 +286,10 @@ inline bool g_noBoostLatch = false; // --no-boostlatch
 // byte-identical to the build before the change.
 inline bool g_noRingFirstTouch = false; // --no-ringfirsttouch
 
-// --no-padobb: a rotated PAD is judged against the player's own turned box (the
-// pre-2026-09-06 behaviour), instead of the axis-aligned player square GD
-// actually hands the activation. GD's activation path prints its player rect
-// itself -- `ccl:` on lv20 uid 7030 reads
-// prect=(10822.8096,138.3140,30.0000,30.0000), an AXIS-ALIGNED 30 x 30 (18 x 18
-// mini, 10 x 10 for mode 4) -- so the test is player AABB vs the object's true
-// oriented box, and the padedge rig confirms that shape three ways. See the site
-// in step.hpp. Kept as the A/B arm: with it the whole 22-level replay suite has
-// to be byte-identical to the build before the change.
+// --no-padobb: a rotated PAD is judged against the raw player rotation, with no
+// override at all (the pre-2026-09-06 behaviour). It is the OUTER arm of the
+// three; g_noPadPlayerRot below wins over it, so passing both reproduces the
+// build that shipped the axis-aligned player square. See the site in step.hpp.
 inline bool g_noPadObb = false;         // --no-padobb
 
 // --no-ballcorng: the BALL's hang window keeps the constant 1.5 grace on its
@@ -321,6 +316,82 @@ inline bool g_noBallCornG = false;      // --no-ballcorng
 // apart, since nothing else moves the gravity within the tick. See the site in
 // step.hpp for the 116 witnesses and the two samples in the comment there.
 inline bool g_noPadSpinPre = false;     // --no-padspinpre
+
+// --no-padplayerrot: a rotated PAD's activation is judged with the player square
+// forced AXIS-ALIGNED (the 2026-09-06 behaviour, commit a874728), instead of
+// turned by the player's own rotation.
+//
+// GD's gate, read out of `GJBaseGameLayer::collisionCheckObjects` (2.2081 win
+// 0x214960; lab note measure-pad-activation-shape-2026-09-06), reaches
+// `activatedByPlayer` (vt +0x558, via bumpPlayer 0x2179d0, its only call site)
+// for a type-8 pad iff BOTH of
+//    inclusive AABB overlap of player->getObjectRect() and obj->getObjectRect()
+//                                                            0x214b09-0x214b56
+//    and, when obj->m_isOriented [+0x2e8],
+//        overlaps1Way(objOBB, plOBB) && overlaps1Way(plOBB, objOBB)
+//                                          0x214b5e / 0x214bb0 / 0x214bbf
+// where the player's OBB is a 30 x 30 square TURNED BY `player->getRotation()`
+// (PlayerObject::getObjectRotation 0x3a0670 = CCNode vt+0x158), rebuilt from the
+// live position inside the object loop (0x214b95/0x214ba1; setPosition dirties
+// it every tick at 0x39c676). There is no radius, tolerance, depth or velocity
+// term in the gate: the player's angle is the only input to it that moves.
+//
+// a874728 forced that angle to 0 because the mod's `ccl:` hook prints an
+// axis-aligned 30 x 30 `prect`. That rect is real, but it is the AABB conjunct
+// (`player->getObjectRect()`, taken once at 0x2149b8) -- NOT the shape the SAT
+// uses. `PlayerObject::getOrientedBox` (0x3a0650) never sets the player's own
+// m_isOriented, which is exactly why `prect` reads 30 x 30 while the cube spins
+// and why every instrument that prints only the rect is blind to the rotation.
+//
+// The witness is lv20's uid 7030 (id 35, (10835.9,133.5), rot 29, ohw 18.1253 /
+// ohh 2.9000). Re-scoring the two-way SAT at GD's OWN x,y and rotation column
+// for dump ticks 7,295..7,301 (margin, px, > 0 = contact):
+//     t       7295    7296    7297    7298    7299    7300    7301
+//   pRot=0   -1.176  +0.672  +2.570  +4.237  +5.036  +0.984  -3.025
+//   GD rot   -1.486  -1.213  -0.913  -0.585  +0.642  -2.996  -6.606
+// The turned square first passes at **7,299, which is GD's own activation
+// tick**; the axis-aligned one passes at 7,296, three ticks early, and that is
+// lv20's whole-run first divergence before this change. After it, at the
+// MODEL's own angle rather than GD's, the firing lands on 7,298 and the
+// divergence moves 7,296 -> 7,298 (see the site in step.hpp for the tick that
+// is left, which is a rotation-sign leaf and not this shape).
+//
+// SCOPED TO THE MODES WHOSE ANGLE THE MODEL TRACKS -- see padPlayerRotMode.
+// Kept as the A/B arm: with it the whole 22-level replay suite has to be
+// byte-identical to the build before the change.
+inline bool g_noPadPlayerRot = false;   // --no-padplayerrot
+
+// Which modes may hand the pad gate the player's real rotation.
+//
+// GD turns the player's square in EVERY mode; this list is a hedge against the
+// MODEL's own rotation, not against GD's. Handing the SAT an angle the model
+// does not track would make the test worse than the axis-aligned square it
+// replaces, so the list is derived, not chosen:
+//
+//   * `State::rot` is written in exactly four places -- the wave's easing
+//     (step.hpp, `kWaveRotK`), the mode-portal edge table, the cube's spin and
+//     the ship's bank, and the ball's `rotStep`. The rotation block itself is
+//     `if (c.mode == 0) ... else if (c.mode == 1) ... else if (c.mode == 2)`,
+//     plus the wave inside its own branch. So modes 3 (ufo), 5 (robot), 6
+//     (spider) and 7 (swing) carry rot == 0 for their whole life (the edge
+//     table writes 0 on entry for every mode but cube and ball, and nothing
+//     advances it), and for them this list cannot change a single digit
+//     whichever way it is written.
+//   * Of the four modes that DO carry an angle, the rate census over the whole
+//     corpus (415,581 ticks, |d rot/tick| error > 0.01 deg) reads cube 3.7% /
+//     ship 13.8% / wave 21.1% / **ball 70.3%** -- and the ball's number is
+//     categorical rather than a coefficient error: its air rate is a stake only
+//     `flipGravity` and `ringJump` write and the model does not carry one, so a
+//     ball that left the ground off a step or a pad is turning at a rate that
+//     is simply not GD's. Sweeping the threshold from 0.001 to 1.0 leaves the
+//     ball at 70.3% (categorical) while ship and wave collapse (boundary).
+//
+// So the only load-bearing exclusion is the BALL. UNWITNESSED EITHER WAY: all
+// 21 corpus contact rows against a rotated pad are mode 0, full size (census
+// below), so nothing here is measured -- it is the shape of the hedge.
+inline bool padPlayerRotMode(uint8_t mode) {
+    return mode == 0 || mode == 1 || mode == 4;   // cube / ship / wave
+}
 
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).

@@ -9722,16 +9722,33 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         double pRotPad = (double)s.rot;
         if (s.mode == 0)
             pRotPad += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
-        // [2026-09-06] ...but the PLAYER's half of that test is AXIS-ALIGNED.
-        // Passing pRotPad above sends orientedHit down its obbSat branch, i.e.
-        // an OBB-vs-OBB test; GD's activation path uses the player's plain
-        // rect. It says so itself: the `ccl:` instrument prints the very rect
-        // GD hands the activation, and on lv20 uid 7030 (rot 29) it reads
+        // [2026-09-06 morning, RETRACTED THE SAME DAY -- kept because the
+        // evidence for it was real and the next reader will meet it again]
+        // "...but the PLAYER's half of that test is AXIS-ALIGNED", on the
+        // strength of the `ccl:` instrument, which prints the very rect GD hands
+        // the activation and on lv20 uid 7030 (rot 29) reads
         //     prect=(10822.8096,138.3140,30.0000,30.0000)
-        // -- an axis-aligned 30 x 30 (18 x 18 mini, 10 x 10 for mode 4). So the
-        // shape is the player's AABB against the board's true oriented box,
-        // which is exactly orientedHit at pRot = 0: SAT over the object's two
-        // local axes plus the two world axes.
+        // -- an axis-aligned 30 x 30. The rect is real; the inference is not.
+        // That rect is the AABB CONJUNCT (`player->getObjectRect()`, taken once
+        // at 0x2149b8, before the object loop). The SAT two lines later builds a
+        // SECOND shape from the same player -- `PlayerObject::getOrientedBox`
+        // (0x3a0650) at 0x214ba1 -- and that one is turned by
+        // `player->getRotation()`. It reads 30 x 30 in `prect` for the same
+        // reason it always will: `getOrientedBox` is an override that, unlike
+        // GameObject's, never sets the player's own `m_isOriented`, so
+        // `getObjectRect()` stays the plain centred rect however the cube spins.
+        // AN INSTRUMENT THAT PRINTS ONLY THE RECT CANNOT SEE THE ROTATION.
+        //
+        // GD's gate is BOTH conjuncts (RVAs and the full chain at
+        // g_noPadPlayerRot in constants.hpp):
+        //   AABB( player rect ) n AABB( obj->getObjectRect() )  0x214b09-0x214b56
+        //   and, when the object is m_isOriented, the two-way SAT of the two
+        //   OBBs                              0x214b5e / 0x214bb0 / 0x214bbf
+        // The two lines above ARE the first conjunct: `pd->hw,hh` is objrects'
+        // getObjectRect, which for an oriented object is getBoundingRect of its
+        // OBB (0x1978a2) -- and `ohw*|rc| + ohh*|rs|` reproduces it exactly
+        // (17.2588 / 11.3236 for lv20's boards). So the AABB half is present and
+        // stays; what changes below is only the angle the SAT half is given.
         //
         // The board's own shape is measured three ways on the padedge rig
         // (data/rigs/padedge*.units.json, 2026-09-06; 78 units / 234 objects,
@@ -9755,9 +9772,44 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // whole rotated population: of the corpus's 239 type-8 pads exactly 6
         // are turned off a quarter turn (lv20 uid 6963/6964/7025/7026/7027/7030,
         // all rot 29), and no type 9/10/34 pad is. `oriented` is only set off a
-        // quarter turn (level_loader.hpp:811), so at 0/90 the recorded rect IS
-        // the box and this line cannot move a single digit.
-        if (!g_noPadObb && pd->type == 8) pRotPad = 0.0;
+        // quarter turn (level_loader.hpp:824), so at 0/90 the recorded rect IS
+        // the box and this line cannot move a single digit. Scoping it to type 8
+        // is also what keeps the ~40 rotated PORTALS of the corpus out of this:
+        // their fire ticks already agree with GD and nothing here touches them.
+        //
+        // THREE ARMS, and --no-padplayerrot wins over --no-padobb so that the
+        // two of them together reproduce the build this landed on:
+        //   (default)                the player's real rotation, mode-gated
+        //   --no-padplayerrot        the axis-aligned square (a874728)
+        //   --no-padobb              the raw angle, no mode gate (pre-a874728)
+        //   both                     the axis-aligned square (a874728)
+        if (pd->type == 8) {
+            if (g_noPadPlayerRot) pRotPad = 0.0;
+            else if (g_noPadObb) { /* raw pRotPad, ungated */ }
+            else if (!padPlayerRotMode(s.mode)) pRotPad = 0.0;
+        }
+        // WHAT THIS DOES AND DOES NOT FIX, stated where the next reader will
+        // look. lv20's whole-run first divergence is uid 7030 firing early
+        // against GD's 7,299. The turned square refuses that contact on 7,296
+        // and 7,297 and takes it on 7,298, so the divergence moves 7,296 ->
+        // 7,298 (179 -> 176 divergent ticks). ONE tick early is what is left.
+        //
+        // [2026-09-06, rebased onto 05c3a5d] Written first against ec948e9,
+        // where this paragraph read "it STAYS at 7,296" -- true there, false
+        // here, and the difference is 351f9de. That commit turns a pad's
+        // same-tick spin toward the gravity its call saw, and on this pad it
+        // moves the model's cube angle at 7,295 from 39.90 deg mod 90 (6.9 deg
+        // of error, enough to carry the turned square over a 2.9 px-thick
+        // board anyway) to 36.43 against GD's 36.41. This rule needs a right
+        // angle to feed it; on its own it changed nothing at all.
+        //
+        // The last tick is a THIRD quantity, not the shape and not `rot`: the
+        // model's rot column tracks GD's to 0.023 deg through 7,292..7,297,
+        // but the one-step advance two lines above moves the OPPOSITE way to
+        // it (`rotNeg` is 1 while the column itself is stepping -1.7308), so
+        // the angle handed to the SAT sits two steps ahead of GD's -- 38.166
+        // against 34.681 on 7,296. Correcting that sign is a separate leaf and
+        // is NOT attempted here.
         if (pd->oriented && !orientedHit(*pd, x, (double)c.y, pHalf, pRotPad))
             continue;
         // NO FOOT-SIDE TEST (2026-08-07). The rule below was live for four days

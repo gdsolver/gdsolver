@@ -97,6 +97,7 @@ inline void resetInvocationState() {
     g_noBoostLatch = false;
     g_noRingFirstTouch = false;
     g_noPadObb = false;
+    g_noPadPlayerRot = false;
     g_noDualFlip = false;
     g_noR52GravHold = false;
     g_oldLatency = false;
