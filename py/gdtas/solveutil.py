@@ -218,6 +218,32 @@ def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
 
 
 def grounded_of(mode: int, on_ground: str, on_ground2: str, yvel: str) -> int:
+    """GD's ground state as the model means it, from a dump row.
+
+    THE FLIGHT CONJUNCTION IS LOAD-BEARING, not belt-and-braces, and it is the
+    only thing standing between the anchor and a mode-specific phase error.
+    Measured 2026-09-06: GD's `onGround` and the model's `grounded` do NOT name
+    the same tick in ship, UFO, wave or spider. Counted on windows where the
+    two sides agree on y to 0.001 px across +-10 ticks -- so a flag difference
+    there is a write-position difference by construction, not physics:
+
+        cube  482 + 92 agree, 0 differ      ship    9 + 2 agree, 6 + 2 differ
+        ball   33 + 24 agree, 0 differ      ufo     1 agree,     4 differ
+        robot  20 +  3 agree, 0 differ      wave    3 agree,    35 differ
+                                            spider  6 agree,     1 differ
+
+    Trusting `on_ground` alone would seed the anchor one tick early in exactly
+    those modes. Requiring `on_ground2` and a near-zero yvel as well delays the
+    flag to the tick the model would call a landing, which is why every
+    anchored instrument (quick_regress, fixcensus sections, deathref) is
+    unaffected by the offset.
+
+    Do not simplify this to `on_ground == "1"` for flight. The redundancy is the
+    correction. `gdtas.solveutil.cause_of` does NOT apply it -- it reads the raw
+    column -- which is why family signatures carrying a `gdg`/`gdgo` component
+    in those four modes may be signed by the offset rather than by physics.
+    See notes/measure-onground-phase-offset-2026-09-06.
+    """
     if mode in FLYING:
         return 1 if (on_ground == "1" and on_ground2 == "1"
                      and abs(float(yvel)) < 0.01) else 0
