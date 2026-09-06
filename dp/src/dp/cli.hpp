@@ -192,6 +192,9 @@ inline int cliMain(int argc, char** argv) {
         // instead of GD's extrapolated `line -/+ h/(2 cos t)` with the bounds on
         // the target y. See slopeSeatTarget in slopes.hpp.
         if (!std::strcmp(argv[i], "--no-slopeseat")) g_noSlopeSeat = true;
+        // --no-ufolandtol: the UFO keeps the unmeasured 6.0 floor allowance
+        // instead of GD's own 1 fresh / 2 continuing.
+        if (!std::strcmp(argv[i], "--no-ufolandtol")) g_noUfoLandTol = true;
         // --no-rampfirst: the model's own order (solids first, the ramp seat
         // last and never revisited) instead of GD's ramp-then-solid. With
         // --no-slopeseat as well the build reproduces the pre-2026-09-06

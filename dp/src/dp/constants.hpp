@@ -172,6 +172,31 @@ inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
 // witness. The two agree everywhere except on the ENTRY side of a ramp.
 inline bool g_noSlopeSeat = false; // --no-slopeseat
 
+// --no-ufolandtol: the UFO keeps kShipLandTol (6.0) as its floor acquisition
+// allowance, the pre-2026-09-06 behaviour. That 6.0 was never measured -- the
+// site's own comment said so ("kShipLandTol (6.0) stays for the UFO, whose own
+// acquisition has NOT BEEN MEASURED this way"), the ship having been measured
+// down to 0.001 while the UFO was left alone.
+//
+// GD's floor gate is `acquire <=> s*targetY > s*y - (extraTol ? tol : 0)`
+// (@0x38fea5) and its only widths are 0 / 1 fresh / 2 continuing, selected by
+// extraTol and m_wasOnSlope. 6.0 is not among them at any setting.
+//
+// Witness lv19 t=14,587 (UFO, uid 9522): targetY 315.928 against a free y of
+// 317.298, so gap = 1.370. GD refuses -- `315.928 > 316.298` is false -- and
+// seats a tick later once the line rises to meet the player. The model admits
+// it through the main test (1.370 <= 6.0) and pulls the player 1.370 px DOWN
+// onto a line it has not reached, one tick early. The 1.370 also settles which
+// width is live: 2.0 would admit it, so fresh/continuing is load-bearing here.
+//
+// The corpus reach was counted before the change: of 3,424 UFO rows, 1,612
+// carry the 6.0, and the rows this narrows are 4 -- of which exactly ONE is
+// actually seated (the witness). No changed row is admitted by another
+// disjunct, so nothing keeps its seat by a second path, and no UFO row anywhere
+// has a gap in (0, 1.0], which is the only interval where "assume the band
+// applies" and "clamp to zero" could have disagreed.
+inline bool g_noUfoLandTol = false; // --no-ufolandtol
+
 // --no-rampfirst: keep the model's own resolution order -- every solid
 // resolved before the ramp block runs, and never revisited -- instead of GD's
 // ramp-then-solid. GJBaseGameLayer::checkCollisions (0x2137f0) is two passes:

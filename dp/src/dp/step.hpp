@@ -6781,9 +6781,19 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // that a switch here could select between.
                 // kShipLandTol (6.0) stays for the UFO, whose own acquisition
                 // has not been measured this way.
+                // The UFO's 6.0 is the one width here that was never measured --
+                // the comment above says so in as many words. GD's floor gate
+                // has no 6.0 at any setting: its widths are 0 / 1 fresh / 2
+                // continuing (@0x38fea5), and `m_wasOnSlope` picks between the
+                // last two. `s.onSlope` is this model's proxy for that flag --
+                // the previous tick's seat, not this tick's, which is the
+                // distinction the fresh-rect site spells out at 6979-6983.
+                // lv19 t=14,587 is the missing measurement: see g_noUfoLandTol.
+                const double ufoAllow = g_noUfoLandTol ? kShipLandTol
+                                                       : (s.onSlope ? 2.0 : 1.0);
                 const double landAllow =
                     (ridesTop && (c.mode == 1 || c.mode == 3) && !ufoRising)
-                        ? (c.mode == 1 ? 0.001 : kShipLandTol)
+                        ? (c.mode == 1 ? 0.001 : ufoAllow)
                         : 0.001;
                 // The stick must stay CONTINUOUS. It bypasses the acquisition
                 // test entirely, so with several ramps stacked in the same x
