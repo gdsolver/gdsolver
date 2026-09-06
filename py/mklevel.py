@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Generator for custom calibration maps.
 
 WHY THEY EXIST: the 22 official levels do not yield samples of the physics
@@ -1466,6 +1466,83 @@ def build_rampjump() -> str:
                               "mini": int(mini), "ramps": 3, "bury": 0.0,
                               "press_x": x_press, "press_t": t})
     return header() + ";" + ";".join(objs) + ";"
+
+
+def build_ufojump(speed: int = 0) -> str:
+    u"""Rig for the bonus a UFO gets when it flaps WHILE STILL ON A FLOOR RAMP.
+
+    build_rampjump above says "cube and robot only", and gives reasons for the
+    ball and the spider -- but not for the UFO, which was simply never added.
+    The consequence is recorded at step.hpp:7814-7825: the UFO's "plain jump,
+    no launch" was measured on the ceilhold rig, whose 4 UFO cells all press
+    while HUNG FLIPPED FROM A CEILING ramp. The floor side has never been swept
+    for a UFO, and the model's on-ramp bonus (kSlopeJumpBonus) never fires for
+    one -- all 47 firings in lv19 are cube or robot.
+
+    The corpus has exactly ONE instance, lv19 t=14,620, where GD gives 8.000
+    against the model's plain 6.871. One instance cannot choose between
+
+        no bonus      6.871 everywhere                (what the model does)
+        cube row      0.25 * slopeExitVy(|m|, cube) * rampFactor, cap 0.4x
+        UFO row       the same with the UFO's own exit row
+        assignment    8.000 regardless of anything
+
+    so it is deliberately NOT part of this rig. The rig decides the law; 14,620
+    is then out-of-sample verification. Folding it in would put us back on the
+    single fitted point.
+
+    Cells:
+      2 CONTROLS -- press on the flat run-up, before the ramps. These must come
+        back 6.871 (normal) and 6.648 (mini), the values ceilhold and lv12
+        already pin. If they do not, nothing else in the rig is usable.
+      12 SWEEP -- |m| in {1, 0.5, 2} x {normal, mini} x {1 ramp, 3 ramps}.
+        The gradient separates the two "row" hypotheses from each other and
+        from the assignment; the ramp count varies the ride time, and so the
+        ramp factor, which only the two row hypotheses depend on (3 ramps
+        saturate it at 1.0, 1 ramp does not).
+
+    Press and release 3 ticks later, as rampjump does, so a held re-flap cannot
+    leak into the next unit -- and a UFO in particular flaps once per EDGE.
+    Two passes, like rampjump: build, dump, rebuild with --xmap.
+    """
+    objs: list[str] = []
+    x = 90.0
+    objs += floor_run(0, PAVE_X)
+    for mini in (False, True):
+        x0 = x
+        # the press lands on the flat run-up: 8 cells of it precede the ramps
+        x_press = x + 4 * GRID
+        u, x = ramp_unit(x, "ufo", 1.0, mini, 3, 0.0)
+        objs += u
+        t = tick_at(x_press)
+        PLAN.append((t, 1))
+        PLAN.append((t + 3, 0))
+        UNITS.append({"x0": x0, "x1": x, "mode": "ufo", "m": 1.0,
+                      "mini": int(mini), "ramps": 3, "bury": 0.0,
+                      "press_x": x_press, "press_t": t, "cell": "control"})
+    for m in (1.0, 0.5, 2.0):
+        for mini in (False, True):
+            for n_ramps in (1, 3):
+                x0 = x
+                _oid, _rot, _fx, _fy, w, _h = RAMP[m]
+                x_ramp0 = x + 8 * GRID
+                x_press = x_ramp0 + n_ramps * w * 0.70
+                u, x = ramp_unit(x, "ufo", m, mini, n_ramps, 0.0)
+                objs += u
+                t = tick_at(x_press)
+                PLAN.append((t, 1))
+                PLAN.append((t + 3, 0))
+                UNITS.append({"x0": x0, "x1": x, "mode": "ufo", "m": m,
+                              "mini": int(mini), "ramps": n_ramps,
+                              "bury": 0.0, "press_x": x_press,
+                              "press_t": t, "cell": "sweep",
+                              "speed": speed})
+    # The whole rig runs at one speed (kA4 is a level setting), so the speed
+    # axis is a second BUILD rather than more cells. lv19 t=14,620's own speed
+    # is 1.1 = kA4 2, and without a cell there the 8.722-vs-8.000 gap is
+    # confounded: "the law is wrong" and "the conditions differ" cannot be told
+    # apart. `ufojump` is the default speed, `ufojump_sp` matches lv19.
+    return header(speed=speed) + ";" + ";".join(objs) + ";"
 
 
 def build_orbs() -> str:
@@ -4522,7 +4599,8 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
     "ceilrampdual": build_ceilrampdual, "wavein": build_wavein,
     "ridemode": build_ridemode, "ridemodedual": build_ridemodedual,
     "ridedrop": build_ridedrop,
-    "rampjump": build_rampjump,
+    "rampjump": build_rampjump, "ufojump": build_ufojump,
+    "ufojump_sp": lambda: build_ufojump(speed=2),
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
             "holdjump_cube": lambda: build_holdjump("cube"),
@@ -4589,6 +4667,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

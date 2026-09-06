@@ -197,6 +197,31 @@ inline bool g_noSlopeSeat = false; // --no-slopeseat
 // applies" and "clamp to zero" could have disagreed.
 inline bool g_noUfoLandTol = false; // --no-ufolandtol
 
+// A NORMAL-SIZE UFO that flaps while seated on a floor ramp leaves at this
+// value instead of its plain 6.871. Measured on the calibration rig
+// `calib_ufojump` (14 cells, Wine worker 99): the two control cells, pressing
+// on the flat run-up, return 6.8710 and 6.6480 exactly, and every one of the
+// six normal sweep cells returns 8.0000 -- at |m| 0.5, 1 and 2, and at both 1
+// and 3 ramps. So it is an ASSIGNMENT, not a bonus added to the jump:
+//   * gradient does not enter it (three gradients, one value),
+//   * ride time does not enter it (ramp factor 0.674 vs 1.000, same value),
+//     which refutes every slopeRampFactor-shaped hypothesis outright,
+//   * and it is not the cube's on-ramp bonus (kSlopeJumpBonus), whose |m| ratio
+//     is 1.4192 where the measured ratio is 1.0000.
+// The bonus this implies, 1.129, is well under the 0.4x cap (2.748), so the cap
+// is not what flattens it.
+//
+// MINI IS DELIBERATELY NOT FIXED and stays wrong. The same rig gives a mini
+// 9.3680 at |m| 1 and 2 and 8.1470 at |m| 0.5, against the model's unchanged
+// 6.6480. Two rules fit those three points equally well -- a threshold at
+// |m| >= 1, and the ramp's width -- and they cannot be told apart, because the
+// 22 levels contain exactly three slope shapes ((30,30), (30,60), (60,30)), in
+// which |m| >= 1 <=> w = 30 without exception. Separating them needs a 60x60 or
+// a 30x15 slope, i.e. an object these levels never use. Guessing between the
+// two would put a width rule into the model under a gradient's name.
+inline bool g_noUfoRampFlap = false; // --no-uforampflap
+constexpr double kUfoRampFlap = 8.0;
+
 // --no-rampfirst: keep the model's own resolution order -- every solid
 // resolved before the ramp block runs, and never revisited -- instead of GD's
 // ramp-then-solid. GJBaseGameLayer::checkCollisions (0x2137f0) is two passes:

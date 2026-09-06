@@ -199,6 +199,9 @@ inline int cliMain(int argc, char** argv) {
         // --no-ufolandtol: the UFO keeps the unmeasured 6.0 floor allowance
         // instead of GD's own 1 fresh / 2 continuing.
         if (!std::strcmp(argv[i], "--no-ufolandtol")) g_noUfoLandTol = true;
+        // --no-uforampflap: a normal UFO flapping off a floor ramp keeps its
+        // plain 6.871 instead of the rig's measured 8.000.
+        if (!std::strcmp(argv[i], "--no-uforampflap")) g_noUfoRampFlap = true;
         // --no-rampfirst: the model's own order (solids first, the ramp seat
         // last and never revisited) instead of GD's ramp-then-solid. With
         // --no-slopeseat as well the build reproduces the pre-2026-09-06

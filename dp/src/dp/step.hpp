@@ -3825,7 +3825,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const double fbAcc = g_forceBoxes.empty()
                 ? 0.0 : forceBoxAcc(modX, modY, pHalf,
                                      forceUnitFor(s.mode, useDx)) * gdSign;
-            const double vpNew = qVy(
+            double vpNew = qVy(
                 (isUfo ? gdapprox::UfoModel::stepVy(
                             vp, act, ufoParamsFor(useDx, c.mini, K), thrFlip,
                             boostNow)
@@ -3833,6 +3833,28 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             vp, act, shipParamsFor(useDx, c.mini, K), thrFlip,
                             boostNow))
                 + fbAcc);
+            // A normal UFO flapping off a floor ramp leaves at kUfoRampFlap,
+            // not at its plain flap -- see the constant for the rig and for why
+            // mini is left wrong.
+            //
+            // THE GATE IS THE PREVIOUS TICK'S SEAT, and that matters. `onSlope`
+            // is cleared at the top of every tick and re-established by the
+            // slope block, so on the flap tick itself it is 0 even for a player
+            // that has been riding for 24 ticks -- gating on it would fire
+            // never. `s.onSlope` is the carried value, and it is also what
+            // separates riding from flying past: of the 25 UFO flap edges in
+            // the corpus whose x lies inside a slope's span, exactly ONE has
+            // s.onSlope set (lv19 t=14,620, slopeT 24, entry vy 0.000). The
+            // other 24 are arcs crossing over a ramp with entry vy 2.2..6.5,
+            // and GD gives every one of them the plain flap -- they are correct
+            // today and must not move. A geometric gate would have changed all
+            // 25 and broken 24 of them.
+            //
+            // Force boxes are excluded rather than guessed: the rig had none,
+            // so what GD does when a push and this assignment meet is unmeasured.
+            if (!g_noUfoRampFlap && isUfo && act && s.onSlope && !c.mini
+                && fbAcc == 0.0)
+                vpNew = kUfoRampFlap;
             c.vy = (float)(vpNew * gsign);
             c.y = (float)((double)s.y + kYScale * (double)c.vy);
             yFree = c.y;
