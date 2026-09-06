@@ -243,10 +243,25 @@ def one_session(levels: list[int], wid: int, budget: float, extra: list[str],
     t0 = time.time()
     wipe(wid)
     levels_arg = "levels=" + ",".join(str(l) for l in levels)
+    # Per-level wall clock. The log carries no timestamps of its own, so the
+    # only clock is this side: run_session re-reads the whole result.txt about
+    # once a second and hands it to `progress`, and a level starts at the first
+    # poll its own `suite: level=` marker is visible in.
+    #
+    # Resolution is that poll interval widened by however long the write sits
+    # in a buffer -- bounded by the ~10s heartbeat the stall detector already
+    # depends on. That is fit for the ONE question this column is asked, "did
+    # any level come near the cap", and NOT fit for comparing two runs by.
+    seen_at: dict[int, float] = {}
+
+    def _stamp(txt: str) -> None:
+        for m in SUITE_MARK.finditer(txt):
+            seen_at.setdefault(int(m.group(1)), time.time() - t0)
+
     try:
         r = run_session(wid, CFG + extra + [levels_arg], timeout_s=budget,
                         stall_s=STALL_S, mod_file=mod_file,
-                        done_marker=SUITE_DONE)
+                        done_marker=SUITE_DONE, progress=_stamp)
     except Exception as e:                      # noqa: BLE001  a worker that will not start
         return [{"lv": lv, "cleared": False, "why": f"ERROR {e}", "iters": 0,
                  "deepest_t": -1, "deepest_x": -1.0, "fx": 0, "record": "?",
@@ -263,7 +278,22 @@ def one_session(levels: list[int], wid: int, budget: float, extra: list[str],
     # Only the LAST section can have been cut off by the wall clock; the earlier
     # ones ended by themselves or the suite would never have moved on.
     last_lv = sections[-1][0] if sections else None
-    wall_each = (time.time() - t0) / max(1, len(sections))
+    total = time.time() - t0
+    wall_each = total / max(1, len(sections))
+    order = [lv for lv, _ in sections]
+
+    def _wall(lv: int) -> float:
+        """Seconds this level held the game: its own marker to the next one's
+        (the last level's end is the run's). Falls back to the even share when
+        the stamp is missing, so a level is never reported as 0s just because
+        the callback never fired."""
+        if lv not in seen_at:
+            return wall_each
+        i = order.index(lv) if lv in order else -1
+        nxt = order[i + 1] if 0 <= i < len(order) - 1 else None
+        end = total if nxt is None else seen_at.get(nxt, total)
+        return max(0.0, end - seen_at[lv])
+
     results = []
     for lv in levels:
         sec = seen.get(lv)
@@ -280,9 +310,10 @@ def one_session(levels: list[int], wid: int, budget: float, extra: list[str],
             pass
         out = read_result(sec, timed_out and lv == last_lv)
         out["lv"] = lv
-        # Per-level wall clock is not separable from one launch, and it is never
-        # compared anyway (see the note at the top). Report the share.
-        out["wall"] = wall_each
+        # Measured from the marker stamps above, not the even share. The share
+        # made every level look average, which is exactly the shape that hides
+        # a single level sitting near the cap.
+        out["wall"] = _wall(lv)
         results.append(out)
     return results
 
@@ -360,7 +391,8 @@ def report(results: list[dict], base: dict, a) -> int:
                            f"{iter_cap(r['lv'], base)}")
         kind = "CLEARED" if r["cleared"] else \
             ("TIMEOUT" if r.get("timeout") else r["why"])
-        print(f"lv{r['lv']:<3} {kind:<40}iters={r['iters']:<4}{mark}")
+        print(f"lv{r['lv']:<3} {kind:<40}iters={r['iters']:<4}"
+              f"{r.get('wall', 0.0):>6.0f}s{mark}")
         if r.get("timeout"):
             # A level over its clock is a signal, not a mystery, and everything
             # the morning needs is already on disk. Print where, and the three
@@ -394,6 +426,30 @@ def report(results: list[dict], base: dict, a) -> int:
                   f"nothing about the gate")
         elif r["record"] != "none" and not r["record"].startswith("none"):
             bad.append(f"lv{r['lv']}: RECORD GATE LEAKED ({r['record']})")
+
+    # Which level was expensive, and did anything come near its clock. The
+    # ruling "re-run a level that came near the cap on its own" needs a name to
+    # act on, and reading it off 22 printed numbers by eye is how it stopped
+    # being executed at all.
+    #
+    # NOTE the two arrangements cap DIFFERENT things. Per level (--pool) there
+    # is a real per-level cap and `wallcap` carries it. In --one-session the
+    # budget is multiplied out into a cap on the WHOLE suite, so no per-level
+    # cap exists there and "near the cap" is not a question that arrangement can
+    # answer -- the most expensive level is still worth naming.
+    timed = [r for r in results if r.get("wall")]
+    if timed:
+        top = max(timed, key=lambda r: r["wall"])
+        print(f"\nwall clock: {sum(r['wall'] for r in timed) / 60.0:.0f} min "
+              f"total, dearest lv{top['lv']} at {top['wall']:.0f}s")
+        near = [r for r in timed
+                if r.get("wallcap") and r["wall"] >= 0.8 * r["wallcap"]]
+        if near:
+            print("  near the per-level cap -- re-run each on its own: "
+                  + ", ".join(f"lv{r['lv']} ({r['wall']:.0f}s of "
+                              f"{r['wallcap']:.0f}s)" for r in near))
+        elif not any(r.get("wallcap") for r in timed):
+            print("  (one session: the cap is on the suite, not per level)")
 
     # Count the result lines. A worker that hung or crashed reports nothing at
     # all, so a short run must never read as a clean one. (A suite fills in the
