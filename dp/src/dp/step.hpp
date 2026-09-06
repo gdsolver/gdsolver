@@ -3905,9 +3905,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 const bool caught = (newFoot - flyRideFace) * gsign <= 0.0;
                 const double floorVelD = flyRideDcy / 0.25;
                 if (g_dcyDbg)
-                    std::printf("dcystamp site=flyride t=%lld uid=%d dcy=%.4f "
-                                "stamp=%.4f vy=%.4f took=%d caught=%d "
-                                "foot=%.4f face=%.4f\n",
+                    std::printf("dcystamp site=flyride t=%lld uid=%d dcy=%.17g "
+                                "stamp=%.17g vy=%.9f took=%d caught=%d "
+                                "foot=%.9f face=%.9f\n",
                                 (long long)K.t, flyRideUid, flyRideDcy,
                                 floorVelD, (double)c.vy,
                                 (caught && (double)c.vy * gsign
@@ -4247,8 +4247,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // its own velocity even when pushed out.
                 const double surfVp = (double)o->dcy * gsign / 0.25;
                 if (g_dcyDbg)
-                    std::printf("dcystamp site=mpush t=%lld uid=%d dcy=%.4f "
-                                "stamp=%.4f vy=%.4f took=%d\n",
+                    std::printf("dcystamp site=mpush t=%lld uid=%d dcy=%.17g "
+                                "stamp=%.17g vy=%.9f took=%d\n",
                                 (long long)K.t, o->uid, o->dcy, surfVp * gsign,
                                 (double)c.vy,
                                 surfVp > (double)c.vy * gsign ? 1 : 0);
@@ -4358,7 +4358,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     const double fv = (double)o->dcy / 0.25;
                     if (g_dcyDbg)
                         std::printf("dcystamp site=floorcatch t=%lld uid=%d "
-                                    "dcy=%.4f stamp=%.4f vy=%.4f took=%d\n",
+                                    "dcy=%.17g stamp=%.17g vy=%.9f took=%d\n",
                                     (long long)K.t, o->uid, o->dcy, fv,
                                     (double)c.vy,
                                     (double)c.vy * gsL < fv * gsL ? 1 : 0);
@@ -4493,8 +4493,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 const bool flyMode = (c.mode == 1 || c.mode == 3
                                       || c.mode == 4 || c.mode == 7);
                 if (g_dcyDbg)
-                    std::printf("dcystamp site=ceilpin t=%lld uid=%d dcy=%.4f "
-                                "stamp=%.4f vy=%.4f took=%d\n",
+                    std::printf("dcystamp site=ceilpin t=%lld uid=%d dcy=%.17g "
+                                "stamp=%.17g vy=%.9f took=%d\n",
                                 (long long)K.t, o->uid, o->dcy,
                                 (double)o->dcy / 0.25, (double)c.vy,
                                 (flyMode && o->dcy != 0.0) ? 1 : 0);

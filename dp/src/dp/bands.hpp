@@ -158,6 +158,13 @@ inline bool g_slopeDbg = false;  // --slopedbg: one line per ramp acquisition
 // decides -- which is the number that says whether a rule about one of them is
 // worth anything. Counting it off whole-run traces does not work: past a
 // level's first divergence the model is on its own timeline.
+//
+// `dcy` and the stamped value print at FULL precision (%.17g), deliberately and
+// not for tidiness. Whether dcy is a round 0.25 -- and so whether dividing by
+// 0.25 lands on a round 1.0 -- is itself the claim being argued at the lv19
+// 21,4xx sites, and at 4 decimals both -0.250040 and -0.249996 print as
+// `-0.2500`, manufacturing the very roundness that was supposed to be the
+// finding. Do not narrow these back.
 inline bool g_dcyDbg = false;
 inline bool g_bandDbg = false;   // --banddbg: one line per wave tick near the band ceiling
 // --spddbg: one line per SPEED PORTAL CANDIDATE per tick, naming the gate that
