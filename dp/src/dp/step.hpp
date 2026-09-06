@@ -4498,6 +4498,23 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 (long long)K.t, o->uid, o->dcy,
                                 (double)o->dcy / 0.25, (double)c.vy,
                                 (flyMode && o->dcy != 0.0) ? 1 : 0);
+                // [2026-09-06] **GD holds this pin for FOUR ticks; the model
+                // enters here once.** Its dump at lv19 t=21,401 -- the tick the
+                // pin is established -- reads yvel exactly 0, then -1.000 for
+                // 21,402..21,405, and the model has no decision on those four.
+                // Shifting the phase alone (write 0 on the contact tick, stamp
+                // after) was implemented and reverted: it makes 21,401 exact
+                // and then FREE-FALLS, dvy +0.919 and +1.000 at 21,402/21,403
+                // against the old arm's -0.085 and +0.042. quick_regress read
+                // that as an improvement (lv19 tracked 22003 -> 22004, and the
+                // only changed line in 22 levels), because `tracked` is a
+                // y-based summary and absorbs a vy regression -- the per-tick
+                // column is what decides.
+                // The real fix is to make the pin PERSIST, which needs a State
+                // bit and therefore a serial cold. Reach was counted on the vy
+                // column first: 3 ticks on lv19 (4 counting 21,402), ZERO on
+                // lv20, and this site decides on no other level, so that is the
+                // whole corpus. Not worth the cold. Left as a leaf.
                 if (flyMode && o->dcy != 0.0)
                     c.vy = (float)((double)o->dcy / 0.25);
                 else
@@ -8009,6 +8026,26 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         else if (!c.onSlope && s.onSlope && !rampWindowHere
                  && (g_noRideLandLaunch || s.rideLanded)
                  && !impulsedThisTick) {
+            // **NO slopeRampFactor HERE, and this is measured, not an
+            // oversight.** The uphill launch above scales by the ride's length
+            // and the structure of GD invites the same conclusion for this
+            // branch: collidedWithSlopeInternal deposits the slope impulse in
+            // [0x9b4] (0x390a82 / 0x390ae8) and both consumers -- updateJump
+            // 0x38bd27 and postCollision 0x38d869 -- apply the ramp before
+            // writing vy. Reasoning from that alone says the downhill release
+            // needs it too. The corpus says otherwise: of the SIX downhill
+            // releases in 22 levels, two sit under the ramp's 24-tick knee and
+            // GD pays neither of them.
+            //   lv18 t=13,663  ride 1 tick  ramp would give 0.4 x 6.457 = 2.583
+            //                               GD emits the full -6.457
+            //   lv16 t=4,147   ride 21      ramp would give 0.875 x 3.2285
+            //                               GD emits the full +3.229
+            // Ride lengths read from GD's own columns, not the model's counter
+            // (onGround turns 1 exactly one tick before 13,663; the run of
+            // yvel==0 before 4,147 is exactly 21). So adding the ramp here
+            // breaks two rows that are currently exact. The asymmetry is the
+            // mechanism: the ramp scales an IMPULSE, and this branch stamps a
+            // carried face velocity (dcy/0.25), which is not one.
             c.vy = (float)(mTravel * std::fabs((double)K.dxF) / 0.25);
             c.grounded = 0;
             // same as the uphill launch above: the slope machinery sets the
