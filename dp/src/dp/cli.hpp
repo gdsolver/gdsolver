@@ -43,6 +43,66 @@ inline int cliMain(int argc, char** argv) {
     // state, and only the mod ever runs two solves in one process -- see dp/reset.hpp for what
     // that was costing and how it was measured.
     resetInvocationState();
+    // --eval-padgate: evaluate orientedHit() -- the SHIPPED pad predicate the
+    // step.hpp pad loop calls -- on cases read from stdin, and exit. No level,
+    // no search.
+    //
+    // It exists because py/gdtas/padgate.py is a TRANSCRIPTION of that function,
+    // so py/test_leaf_padgate.py's Q1 ("does the predicate return GD's answer?")
+    // is green whatever the C++ says: editing object.hpp to disagree with the
+    // copy leaves the test passing. `check_transcription` only notices that the
+    // copied text moved, which is a staleness alarm, not a proof. Feeding the
+    // same cases through here compares the copy against the real thing.
+    //
+    // The object's rc/rs are taken RAW rather than derived from a rotation,
+    // because deriving them here would be a second transcription of the loader
+    // and would put the thing under test on both sides of the comparison.
+    //
+    // `--eval-padgate <cases.txt>`: one case per line, 13 comma- or
+    // space-separated numbers
+    //   cx,cy,hw,hh,ohw,ohh,rc,rs,oriented,px,py,half,prot
+    // stdout: one line per case, `hit=0` or `hit=1`, in order. A line that does
+    // not parse gets `hit=?` rather than being skipped, so the caller can never
+    // silently line up N inputs against fewer outputs. Blank lines are ignored.
+    //
+    // A FILE rather than stdin: agent harnesses commonly run with stdin on the
+    // null device, and a stdin interface then reads as "the mode is broken"
+    // while actually being untestable. A path is testable everywhere.
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--eval-padgate")) continue;
+        if (i + 1 >= argc) {
+            std::printf("--eval-padgate needs a case file\n");
+            return 2;
+        }
+        std::FILE* f = std::fopen(argv[i + 1], "r");
+        if (!f) {
+            std::printf("--eval-padgate: cannot read %s\n", argv[i + 1]);
+            return 2;
+        }
+        char buf[512];
+        while (std::fgets(buf, sizeof buf, f)) {
+            std::string line(buf);
+            bool blank = true;
+            for (char& ch : line) {
+                if (ch == ',') ch = ' ';
+                else if (!std::isspace((unsigned char)ch)) blank = false;
+            }
+            if (blank) continue;
+            std::istringstream is(line);
+            double v[13];
+            int n = 0;
+            while (n < 13 && (is >> v[n])) ++n;
+            if (n < 13) { std::printf("hit=?\n"); continue; }
+            Obj o{};
+            o.cx = v[0];  o.cy = v[1];  o.hw = v[2];  o.hh = v[3];
+            o.ohw = v[4]; o.ohh = v[5]; o.rc = v[6];  o.rs = v[7];
+            o.oriented = (v[8] != 0.0);
+            std::printf("hit=%d\n",
+                        orientedHit(o, v[9], v[10], v[11], v[12]) ? 1 : 0);
+        }
+        std::fclose(f);
+        return 0;
+    }
     if (argc < 2) {
         std::printf("usage: leveldp <objrects.csv> [--out plan.txt]\n");
         return 2;

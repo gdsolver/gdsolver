@@ -64,7 +64,11 @@ constants.hpp is rounded to three decimals, which is why that is the tolerance.
 from __future__ import annotations
 
 import csv
+import math
+import random
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -78,7 +82,7 @@ from gdtas.compare import (GD, MODEL, Difference, Half, MODEL_MINUS_GD,
 from gdtas.padgate import (Board, PLAYER_HALF_FULL, aabb_conjunct,
                            angle_error_mod90, gate, mod90, obb_sat_margin,
                            read_objrects, sat_angle)
-from gdtas.paths import LEVEL_DATA, REPO
+from gdtas.paths import LEVEL_DATA, LEVELDP_EXE, REPO
 
 # ------------------------------------------------------------------ fixture
 # Pinned 2026-09-06 at 6a3c721. Every value below was read off the file named
@@ -217,6 +221,86 @@ class TestTranscriptionIsCurrent(unittest.TestCase):
         self.assertEqual(stale, [], "\n  ".join(
             ["the C++ this leaf was copied from has changed. Re-read it, "
              "re-run this file, and re-pin PINNED_FINGERPRINTS:"] + stale))
+
+
+class TestAgainstTheShippedPredicate(unittest.TestCase):
+    """Run the SHIPPED orientedHit and this file's copy on the same cases.
+
+    TestTranscriptionIsCurrent only notices that the copied TEXT moved, so it
+    is a staleness alarm and not a proof: edit object.hpp's arithmetic without
+    touching the spans it fingerprints and every other test here stays green,
+    because they all run the Python copy. `leveldp --eval-padgate` evaluates
+    the real function, which is what makes this file a test OF THE SHIPPED CODE
+    rather than of its transcription.
+
+    Compared pair: an oriented board with a non-zero player rotation, where
+    orientedHit returns obbSat directly (object.hpp:198-201) and
+    obb_sat_margin > 0 is that same four-axis test. NOT gate(), which also
+    applies step.hpp's pad window (PAD_REACH, strict `<`) that orientedHit does
+    not have.
+    """
+
+    CASES = 4000
+
+    def _cases(self):
+        rnd = random.Random(20260906)
+        for _ in range(self.CASES):
+            th = rnd.uniform(-math.pi, math.pi)
+            ohw = rnd.choice([15.0, 22.5, 30.0, 5.0])
+            ohh = rnd.choice([15.0, 7.5, 30.0])
+            cx, cy = rnd.uniform(-50, 50), rnd.uniform(-50, 50)
+            half = rnd.choice([15.0, 9.0])
+            # Clustered on the board: a sweep that is almost always a miss
+            # agrees trivially and says nothing about the boundary.
+            px = cx + rnd.uniform(-1.6, 1.6) * (ohw + half)
+            py = cy + rnd.uniform(-1.6, 1.6) * (ohh + half)
+            prot = rnd.uniform(-360.0, 360.0)
+            while abs(prot) < 1e-9:          # pRot == 0 takes a different arm
+                prot = rnd.uniform(-360.0, 360.0)
+            yield (cx, cy, ohw, ohh, ohw, ohh,
+                   math.cos(-th), math.sin(-th), 1.0, px, py, half, prot)
+
+    def test_the_copy_and_the_shipped_function_agree(self):
+        exe = Path(LEVELDP_EXE)
+        if not exe.exists():
+            self.skipTest("no leveldp at %s (geode build / cmake --build)" % exe)
+        rows = list(self._cases())
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "cases.txt"
+            p.write_text("".join(",".join("%.17g" % x for x in r) + "\n"
+                                 for r in rows), encoding="ascii")
+            r = subprocess.run([str(exe), "--eval-padgate", str(p)],
+                               stdout=subprocess.PIPE, text=True, timeout=300)
+        got = [ln.strip() for ln in r.stdout.splitlines()
+               if ln.startswith("hit=")]
+        # One result per case, or the two sides are not lined up at all and any
+        # comparison below would be against the wrong rows.
+        self.assertEqual(len(got), len(rows),
+                         "leveldp returned %d results for %d cases"
+                         % (len(got), len(rows)))
+
+        class _B:
+            pass
+
+        bad, closest, hits = [], None, 0
+        for row, out in zip(rows, got):
+            b = _B()
+            (b.cx, b.cy, _hw, _hh, b.ohw, b.ohh, b.rc, b.rs,
+             _o, px, py, half, prot) = row
+            m = padgate.obb_sat_margin(b, px, py, half, prot)
+            closest = abs(m) if closest is None else min(closest, abs(m))
+            cpp = out == "hit=1"
+            hits += cpp
+            if (m > 0) != cpp:
+                bad.append((row, m, out))
+        # Both answers have to occur, or "they agree" is the trivial agreement
+        # of two functions that always say no.
+        self.assertTrue(0 < hits < len(rows),
+                        "degenerate sweep: %d hits of %d" % (hits, len(rows)))
+        self.assertEqual(bad[:3], [], (
+            "the shipped orientedHit disagrees with gdtas.padgate on %d of %d "
+            "cases (closest case to the boundary: %.3g px). The copy is stale "
+            "or wrong -- re-read object.hpp." % (len(bad), len(rows), closest)))
 
 
 class TestBoardFromObjrects(unittest.TestCase):
