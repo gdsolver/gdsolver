@@ -29,10 +29,14 @@ What it enforces
                   each is a refusal naming what is missing. Silently
                   intersecting two tick sets is how a 4.6% replay passes for a
                   whole level.
-    provenance    A model trace can carry the argv it was produced with, and
-                  `require_replay_flags` refuses one that is missing the flags
-                  a level needs. An unrecorded provenance is a refusal too:
-                  not knowing is not the same as knowing it was fine.
+    provenance    A model trace carries the argv it was produced with, the
+                  binary that produced it and the identity of every input file
+                  that binary read (`write_provenance`, called by the
+                  producer). `require_replay_flags` refuses one that is missing
+                  the flags a level needs. An unrecorded provenance is a
+                  refusal too, with a different message: not knowing is not the
+                  same as knowing it was fine, and a trace written before this
+                  existed must not read as guilty.
 
     raw           Nothing here rounds. `Difference` holds the floats as read.
                   Rendering is `format_difference`, a separate call, and its
@@ -57,9 +61,12 @@ What it does NOT cover
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import math
 import os
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -177,6 +184,23 @@ def fidelity_dir() -> Path:
 
 # ---------------------------------------------------------------- provenance
 
+# The sidecar a producer writes beside its output: `<output>.prov.json`.
+#
+# The name of a plain-text `<output>.argv.txt` was written down here first and
+# never written by anything. It is still read (LEGACY_SUFFIX below), but a line
+# per argument cannot carry the other two thirds of "how was this made" -- which
+# binary, and which input files -- so the recorded form is JSON. The repository
+# already keeps its structured records that way (data/cold_baseline.json,
+# gdref/cut.json, worker.json) and already names companion files
+# `<base>.<suffix>` (.trace.csv, .groups.txt, .fixups.txt), so this invents
+# neither half of the convention.
+PROV_SUFFIX = ".prov.json"
+LEGACY_SUFFIX = ".argv.txt"
+PROV_SCHEMA = "gdsolver.provenance/1"
+
+_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
+
+
 @dataclass(frozen=True)
 class Provenance:
     """How a table came to exist: the file, what wrote it, and with which argv.
@@ -184,37 +208,210 @@ class Provenance:
     `argv` is None when nobody recorded it. That is not the same as "no flags
     were needed": `require_replay_flags` refuses an unrecorded provenance,
     because the whole failure being guarded against is invisible in the data.
+    `record` is the whole sidecar when there was one -- the binary, the inputs,
+    and `stale` when it describes a file that has since been rewritten.
     """
 
     path: Path
     kind: str
     argv: tuple[str, ...] | None = None
+    record: dict | None = field(default=None, compare=False)
 
     def has_flag(self, flag: str) -> bool:
         return self.argv is not None and flag in self.argv
 
+    @property
+    def binary(self) -> dict | None:
+        return (self.record or {}).get("binary")
+
+    @property
+    def inputs(self) -> tuple[dict, ...]:
+        return tuple((self.record or {}).get("inputs") or ())
+
+    @property
+    def stale(self) -> str | None:
+        return (self.record or {}).get("stale")
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _cached_sha256(path: Path) -> str:
+    """Digest keyed on (path, size, mtime_ns). The binary is hashed once a build."""
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    if key not in _DIGEST_CACHE:
+        _DIGEST_CACHE[key] = _sha256(path)
+    return _DIGEST_CACHE[key]
+
+
+def _is_file(s: str) -> bool:
+    """Is this argv element the name of a file? Never raises.
+
+    An argv carries values as well as paths (`--start` is 26 comma-separated
+    fields, `--startband` a pair). Asking the filesystem about those must not
+    take the run down, so every way a path can be malformed answers "no".
+    """
+    try:
+        return Path(s).is_file()
+    except (OSError, ValueError):
+        return False
+
+
+def file_identity(path: Path | str, *, digest: bool = False) -> dict:
+    """path / size / mtime of one file, and its sha256 when asked.
+
+    Size and mtime identify an input well enough to notice a stale dump; the
+    binary gets the digest as well, because "which exe was measured" has been
+    wrong here three times and mtime alone does not survive a rebuild that
+    produces the same bytes.
+    """
+    p = Path(path)
+    if not _is_file(str(p)):
+        # named but not there. Recorded as such: "the exe this ran with is
+        # gone" is a fact about the run, and better than no line at all.
+        return {"path": str(p), "size": None, "mtime": None, "missing": True}
+    st = p.stat()
+    out = {"path": str(p), "size": st.st_size,
+           "mtime": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(st.st_mtime)),
+           "mtime_epoch": round(st.st_mtime, 3)}
+    if digest:
+        out["sha256"] = _cached_sha256(p)
+    return out
+
+
+def write_provenance(output: Path | str, argv, *, produced_by: str,
+                     binary: Path | str | None = None, inputs=None,
+                     extra: dict | None = None) -> Path:
+    """Record how `output` was made, in `<output>.prov.json`. Returns the sidecar.
+
+    argv        the command line as it was actually run, argv[0] first. Not
+                "the flags this producer usually passes" -- the list handed to
+                subprocess, so that a flag added by a condition is recorded by
+                the condition having been true.
+    binary      defaults to argv[0]; recorded with its digest.
+    inputs      defaults to every later argv element that names an existing
+                file. Derived rather than listed, so a producer that grows a
+                new input records it without this call being edited.
+    extra       whatever the producer knows and argv does not (exit code, the
+                level, the tick a replay died at).
+
+    Raises OSError if the sidecar cannot be written; a producer that would
+    rather lose the attribution than the run catches it and says so.
+    """
+    out = Path(output)
+    argv = [str(a) for a in argv]
+    if binary is None and argv and _is_file(argv[0]):
+        binary = argv[0]
+    if inputs is None:
+        seen, inputs = set(), []
+        for a in argv[1:]:
+            if a in seen or a.startswith("-"):
+                continue
+            if _is_file(a):
+                seen.add(a)
+                inputs.append(Path(a))
+    rec = {
+        "schema": PROV_SCHEMA,
+        "produced_by": produced_by,
+        "produced_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "argv": argv,
+        "binary": file_identity(binary, digest=True) if binary else None,
+        "inputs": [file_identity(p) for p in inputs],
+        "output": file_identity(out, digest=True) if out.exists() else None,
+    }
+    if extra:
+        rec["extra"] = extra
+    sidecar = Path(str(out) + PROV_SUFFIX)
+    sidecar.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    return sidecar
+
 
 def read_argv_sidecar(path: Path | str) -> tuple[str, ...] | None:
-    """Read `<path>.argv.txt` (one argument per line) if a producer wrote one.
+    """Read the legacy `<path>.argv.txt` (one argument per line), if one exists.
 
-    Nothing in the repository writes this file yet. It exists so that a
-    producer can start recording its argv without every reader changing, and
-    so that `require_replay_flags` has somewhere to look before it refuses.
+    Superseded by `<path>.prov.json`; kept because it was the published name
+    and a hand-written one should keep working.
     """
-    p = Path(str(path) + ".argv.txt")
+    p = Path(str(path) + LEGACY_SUFFIX)
     if not p.exists():
         return None
     return tuple(l for l in p.read_text(encoding="utf-8").splitlines() if l)
 
 
+def _stale_reason(rec: dict, out: Path) -> str | None:
+    """Why this sidecar does not describe the file it sits beside, or None.
+
+    A sidecar outlives its output: the producer is run again with different
+    flags, or by hand, and the .json from the run before is still there
+    claiming the flags of a run that no longer exists. That is worse than no
+    provenance, so it is refused rather than believed.
+    """
+    o = rec.get("output")
+    if not out.exists():
+        return None                      # nothing to contradict
+    if not isinstance(o, dict):
+        # written for a run that produced no output (the exe failed), and a
+        # file has since appeared under that name. The argv in it is somebody
+        # else's.
+        return "the sidecar was written for a run that produced no output"
+    size = out.stat().st_size
+    if o.get("size") is not None and o["size"] != size:
+        return f"the sidecar was written for {o['size']} bytes, the file is {size}"
+    want = o.get("sha256")
+    if want and want != _sha256(out):
+        return "the file has been rewritten since the sidecar was written"
+    return None
+
+
+def read_provenance(path: Path | str, kind: str,
+                    argv: tuple[str, ...] | None = None) -> Provenance:
+    """Provenance for one output: the caller's argv, else the sidecar, else none.
+
+    A stale sidecar yields `argv=None` -- unknown, not trusted -- and the
+    reason travels in `record["stale"]` so the refusal can say which of the
+    two it is.
+    """
+    p = Path(path)
+    if argv is not None:
+        return Provenance(p, kind, tuple(argv))
+    sidecar = Path(str(p) + PROV_SUFFIX)
+    if sidecar.exists():
+        try:
+            rec = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return Provenance(p, kind, None, {"stale": f"unreadable sidecar: {e}"})
+        stale = _stale_reason(rec, p)
+        if stale:
+            return Provenance(p, kind, None, dict(rec, stale=stale))
+        got = rec.get("argv")
+        return Provenance(p, kind, tuple(got) if got is not None else None, rec)
+    return Provenance(p, kind, read_argv_sidecar(p))
+
+
 def require_replay_flags(table: "Table", flags=MOVING_GEOMETRY_FLAGS) -> None:
-    """Refuse a model trace produced without the flags this comparison needs."""
+    """Refuse a model trace produced without the flags this comparison needs.
+
+    Three outcomes, and the difference between the last two is the whole
+    reason the sidecar exists: the flags are there; the argv says one is
+    missing (name it); or nobody recorded the argv, which is a refusal with a
+    different message, because a trace from before this existed is unknown,
+    not guilty.
+    """
     prov = table.provenance
     if prov.argv is None:
+        why = (f"the sidecar does not describe this file ({prov.stale})"
+               if prov.stale else
+               "the argv it was replayed with was not recorded")
         raise ProvenanceMissing(
-            f"{prov.path.name}: the argv it was replayed with was not recorded, "
-            f"so it cannot be shown to carry {', '.join(flags)}. A run missing "
-            f"one of those dies early and looks byte-identical as far as it got")
+            f"{prov.path.name}: {why}, so it cannot be shown to carry "
+            f"{', '.join(flags)}. A run missing one of those dies early and "
+            f"looks byte-identical as far as it got")
     missing = [f for f in flags if f not in prov.argv]
     if missing:
         raise ProvenanceMissing(
@@ -278,9 +475,8 @@ def read_table(path: Path | str, kind: str, argv: tuple[str, ...] | None = None
         raise Incomplete(
             f"{p}: {len(dupes)} repeated ticks (first {dupes[0]}). More than "
             f"one attempt in one file -- split them before comparing")
-    if argv is None:
-        argv = read_argv_sidecar(p)
-    return Table(rows=rows, columns=cols, provenance=Provenance(p, kind, argv))
+    return Table(rows=rows, columns=cols,
+                 provenance=read_provenance(p, kind, argv))
 
 
 def column(kind: str, half: Half, quantity: str) -> str:

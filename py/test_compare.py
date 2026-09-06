@@ -17,6 +17,8 @@ number that was measured at the time.
     case 5  truncation    a 250-tick window delivered as 29 rows
     case 6  a dropped tick in the middle of a hand-built table
     case 9  a mover level whose replay stops at 1,157 of 23,672 ticks
+    case 9b the sidecar the producer now writes, and the three verdicts it
+            makes possible: flags present / flag missing by name / not recorded
 
 Cases 7 and 8 are judgement and are not pinned -- see gdtas.compare's docstring.
 
@@ -36,11 +38,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas.compare import (GD, MODEL, ConditionMismatch, Difference, Direction,
                            GD_MINUS_MODEL, Half, HalfMismatch, Incomplete,
-                           MODEL_MINUS_GD, MOVING_GEOMETRY_FLAGS,
-                           ProvenanceMissing, Provenance, Table, Window,
-                           compare, conditions_of, difference,
+                           MODEL_MINUS_GD, MOVING_GEOMETRY_FLAGS, PROV_SCHEMA,
+                           PROV_SUFFIX, ProvenanceMissing, Provenance, Table,
+                           Window, compare, conditions_of, difference,
                            fidelity_dir, format_difference, read_table,
-                           require_replay_flags, series)
+                           require_replay_flags, series, write_provenance)
 
 FID = fidelity_dir()
 
@@ -332,6 +334,163 @@ class Case9MoverReplay(unittest.TestCase):
         require_replay_flags(with_all)          # no raise
         for f in MOVING_GEOMETRY_FLAGS:
             self.assertTrue(with_all.provenance.has_flag(f))
+
+
+class Case9bProvenanceSidecar(unittest.TestCase):
+    """The producer's half of case 9: a trace that says how it was made.
+
+    No GD and no leveldp here -- the sidecar is written by
+    `gdtas.compare.write_provenance`, so a fake argv over real files on disk
+    exercises the same code the replay uses. The demonstration that the flag
+    it names is the flag that killed the run is in the commit message; these
+    tests pin the mechanism.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.d = Path(self.tmp.name)
+        self.exe = self.d / "leveldp.exe"
+        self.exe.write_bytes(b"MZ not really an exe")
+        self.objrects = self.d / "objrects_lv20.txt"
+        self.objrects.write_text("1,0,0\n", encoding="utf-8")
+        self.groups = self.d / "plan.txt.groups.txt"
+        self.groups.write_text("g\n", encoding="utf-8")
+        self.trace = self.d / "t_lv20.trace.csv"
+        self.trace.write_text("tick,y,vy\n1,10,0\n2,11,0\n", encoding="utf-8")
+
+    def argv(self, with_groups: bool) -> list[str]:
+        a = [str(self.exe), str(self.objrects), "--replay", str(self.d / "plan.txt"),
+             "--out", str(self.d / "t_lv20")]
+        if with_groups:
+            a += ["--groups", str(self.groups)]
+        return a
+
+    def table(self) -> Table:
+        return read_table(self.trace, MODEL)
+
+    def test_the_sidecar_records_argv_the_binary_and_every_input(self):
+        import json
+        sc = write_provenance(self.trace, self.argv(True), produced_by="a test")
+        self.assertEqual(sc, Path(str(self.trace) + PROV_SUFFIX))
+        rec = json.loads(sc.read_text(encoding="utf-8"))
+        self.assertEqual(rec["schema"], PROV_SCHEMA)
+        self.assertEqual(rec["argv"], self.argv(True))
+        # the binary: path, size, mtime, and a digest that survives a rebuild
+        self.assertEqual(rec["binary"]["path"], str(self.exe))
+        self.assertEqual(rec["binary"]["size"], self.exe.stat().st_size)
+        self.assertTrue(rec["binary"]["mtime"])
+        self.assertEqual(len(rec["binary"]["sha256"]), 64)
+        # the inputs: every argv element that names a file, and not the exe
+        names = [Path(i["path"]).name for i in rec["inputs"]]
+        self.assertEqual(names, ["objrects_lv20.txt", "plan.txt.groups.txt"])
+        for i in rec["inputs"]:
+            self.assertEqual(i["size"], Path(i["path"]).stat().st_size)
+            self.assertTrue(i["mtime"])
+        self.assertNotIn("leveldp.exe", names)
+        # --out names a base, not a file, and --replay names a plan that does
+        # not exist in this fixture: neither is recorded as an input that was read
+        self.assertNotIn("plan.txt", names)
+
+    def test_a_value_that_looks_like_a_path_is_not_recorded_as_a_file(self):
+        """--start is 26 comma-separated floats. Asking the filesystem about
+        that must answer 'not a file' rather than take the run down."""
+        import json
+        argv = self.argv(True) + ["--start", "1,2.5,3,cube,0" * 4,
+                                  "--startband", "10.5,90.25"]
+        rec = json.loads(write_provenance(self.trace, argv, produced_by="a test")
+                         .read_text(encoding="utf-8"))
+        self.assertEqual([Path(i["path"]).name for i in rec["inputs"]],
+                         ["objrects_lv20.txt", "plan.txt.groups.txt"])
+
+    def test_the_flag_that_is_there_is_accepted(self):
+        write_provenance(self.trace, self.argv(True), produced_by="a test")
+        t = self.table()
+        self.assertEqual(t.provenance.argv, tuple(self.argv(True)))
+        require_replay_flags(t, ("--groups",))                 # no raise
+        self.assertTrue(t.provenance.has_flag("--groups"))
+        self.assertEqual(len(t.provenance.inputs), 2)
+
+    def test_the_flag_that_is_missing_is_named(self):
+        write_provenance(self.trace, self.argv(False), produced_by="a test")
+        with self.assertRaises(ProvenanceMissing) as cm:
+            require_replay_flags(self.table(), ("--groups",))
+        msg = str(cm.exception)
+        self.assertIn("replayed without --groups", msg)
+        # and it is NOT the refusal an unrecorded trace gets: the two are
+        # different findings and the message has to say which one this is
+        self.assertNotIn("was not recorded", msg)
+
+    def test_no_sidecar_is_unknown_and_not_the_same_refusal(self):
+        """Every trace on disk today predates this. They must read as UNKNOWN --
+        conflating that with 'the flag was absent' makes them all look guilty."""
+        t = self.table()
+        self.assertIsNone(t.provenance.argv)
+        self.assertIsNone(t.provenance.binary)
+        self.assertEqual(t.provenance.inputs, ())
+        with self.assertRaises(ProvenanceMissing) as cm:
+            require_replay_flags(t, ("--groups",))
+        msg = str(cm.exception)
+        self.assertIn("was not recorded", msg)
+        self.assertNotIn("replayed without", msg)
+
+    def test_a_sidecar_left_behind_by_an_earlier_run_is_refused_not_believed(self):
+        """The producer is run again by hand with different flags; the .json
+        from the run before is still there claiming the flags of a run that no
+        longer exists. Worse than nothing, so it does not count as recorded."""
+        write_provenance(self.trace, self.argv(True), produced_by="a test")
+        require_replay_flags(self.table(), ("--groups",))       # fresh: accepted
+        self.trace.write_text("tick,y,vy\n1,10,0\n2,99,0\n", encoding="utf-8")
+        t = self.table()
+        self.assertIsNone(t.provenance.argv)
+        self.assertIn("rewritten", t.provenance.stale)
+        with self.assertRaises(ProvenanceMissing) as cm:
+            require_replay_flags(t, ("--groups",))
+        self.assertIn("does not describe this file", str(cm.exception))
+
+    def test_a_sidecar_for_a_file_of_another_size_is_refused_by_size(self):
+        write_provenance(self.trace, self.argv(True), produced_by="a test")
+        self.trace.write_text("tick,y,vy\n1,10,0\n", encoding="utf-8")
+        t = self.table()
+        self.assertIsNone(t.provenance.argv)
+        self.assertIn("bytes", t.provenance.stale)
+
+    def test_a_sidecar_from_a_run_that_produced_nothing_does_not_adopt_a_later_file(self):
+        """leveldp fails, the sidecar is written anyway, and something else
+        later writes a trace under that name. The argv in the sidecar is
+        somebody else's, so it is not evidence about this file."""
+        missing = self.d / "gone_lv20.trace.csv"
+        write_provenance(missing, self.argv(True), produced_by="a test")
+        missing.write_text("tick,y,vy\n1,10,0\n", encoding="utf-8")
+        t = read_table(missing, MODEL)
+        self.assertIsNone(t.provenance.argv)
+        self.assertIn("produced no output", t.provenance.stale)
+        with self.assertRaises(ProvenanceMissing):
+            require_replay_flags(t, ("--groups",))
+
+    def test_the_legacy_argv_sidecar_still_works(self):
+        """`<trace>.argv.txt` was the published name before this. A hand-written
+        one keeps being read."""
+        Path(str(self.trace) + ".argv.txt").write_text(
+            "\n".join(self.argv(True)) + "\n", encoding="utf-8")
+        t = self.table()
+        self.assertEqual(t.provenance.argv, tuple(self.argv(True)))
+        require_replay_flags(t, ("--groups",))                 # no raise
+
+    def test_recording_provenance_does_not_touch_the_trace(self):
+        """A sidecar is a second file. The data it describes must not move --
+        an instrument's output has to stay comparable across this change."""
+        before = self.trace.read_bytes()
+        write_provenance(self.trace, self.argv(True), produced_by="a test")
+        self.assertEqual(self.trace.read_bytes(), before)
+
+    def test_the_callers_argv_still_wins_over_any_sidecar(self):
+        write_provenance(self.trace, self.argv(False), produced_by="a test")
+        stated = ("leveldp", "--groups", "g.txt")
+        t = read_table(self.trace, MODEL, argv=stated)
+        self.assertEqual(t.provenance.argv, stated)
+        require_replay_flags(t, ("--groups",))                 # no raise
 
 
 class NotCovered(unittest.TestCase):

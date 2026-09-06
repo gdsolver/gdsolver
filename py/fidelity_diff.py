@@ -22,7 +22,14 @@ Assumptions and etiquette:
   - on levels with moving geometry the model looks at static geometry unless
     `--groups` is given, so the result becomes "nothing but divergences" and is
     meaningless. Levels with no existing recording are reported as NO-GROUPS,
-    their result treated as invalid rather than quietly passed.
+    their result treated as invalid rather than quietly passed. That guard is
+    in run_level, so it protects THIS instrument's own runs and nothing else:
+    model_replay is called directly by quick_regress, fidelity_offline and by
+    hand, and there the flags are whatever the lab tree happened to hold.
+  - every model_replay writes `<trace>.prov.json` beside its trace: the argv it
+    actually ran, the exe (path/size/mtime/sha256) and every input file it read.
+    A reader that needs a flag asks gdtas.compare.require_replay_flags rather
+    than assuming; a trace with no sidecar is refused as UNKNOWN, not as bad.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ _PY = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PY))
 sys.path.insert(0, str(_PY.parent / "mcp"))     # where gdmcp.data.diff_trace lives
 
+from gdtas.compare import write_provenance
 from gdtas.solveutil import copy_held_file, has_grouped_colliders
 from gdmcp.data import diff_trace
 from gdtas import plan as P
@@ -161,10 +169,39 @@ def model_replay(level: int, plan_out: Path, out_base: Path, leveldp: Path,
     fx = Path(str(plan_out) + ".fixups.txt")
     if with_fixups and fx.exists():
         args += ["--fixups", str(fx)]
-    r = subprocess.run([str(leveldp)] + args, stdout=subprocess.PIPE, text=True,
-                       errors="replace")
+    argv = [str(leveldp)] + args
+    r = subprocess.run(argv, stdout=subprocess.PIPE, text=True, errors="replace")
     m = re.search(r"REPLAY: model DIED at t=(\d+)", r.stdout)
-    return Path(str(out_base) + ".trace.csv"), (int(m.group(1)) if m else -1), r.stdout
+    trace = Path(str(out_base) + ".trace.csv")
+    died = int(m.group(1)) if m else -1
+    record_provenance(trace, argv, level=level, died=died,
+                      exit_code=r.returncode, whole_run=whole_run,
+                      with_fixups=with_fixups)
+    return trace, died, r.stdout
+
+
+def record_provenance(trace: Path, argv: list[str], **extra) -> None:
+    """Write `<trace>.prov.json` beside the trace: this argv, this exe, these inputs.
+
+    EVERY flag above is conditional -- on a file existing in the lab tree, on
+    the level number, on a caller's boolean -- so which of them a given trace
+    ran with is a fact about the machine at that moment and cannot be
+    reconstructed later from the code. Without this, a replay that dropped
+    --groups leaves a trace that is byte-identical to a correct one for as far
+    as it got (measured on lv20: identical for 5,370 of its 5,740 rows, then
+    dead at 5,739 where the full run reaches 15,125) and the instruments report
+    it as a divergence at t=5,379 -- a plausible model defect at x=7,877, and a
+    day spent on it. One such row went into a commit message on 2026-09-06 and
+    could not be attributed afterwards, because the trace carried no argv.
+
+    A failure to write is reported and does not take the measurement down: the
+    trace is still a trace, it is just back to being unattributable.
+    """
+    try:
+        write_provenance(trace, argv, produced_by="py/fidelity_diff.py:model_replay",
+                         extra=extra)
+    except OSError as e:                                          # noqa: BLE001
+        print(f"provenance not recorded for {trace.name}: {e}", file=sys.stderr)
 
 
 def gd_replay(worker_id: int, level: int, plan_out: Path, dump_dst: Path,
