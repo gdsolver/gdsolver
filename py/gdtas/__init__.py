@@ -6,4 +6,4 @@ never reaches the other.
 """
 
 __all__ = ["paths", "results", "plan", "worker", "provision", "memory",
-           "gdsave", "window", "observe"]
+           "gdsave", "window", "observe", "compare"]
