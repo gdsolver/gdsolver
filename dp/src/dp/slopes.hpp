@@ -266,6 +266,25 @@ inline bool slopeWouldAcquire(const Obj* R, double px, double py, double pHalf,
 // (gdref y = 590.506836, then -0.807 = m*dx every tick as the centre advances),
 // while the model held the corner 600-15 = 585.000 for the whole approach.
 //
+// [2026-09-06] **THE TWO HALVES OF THAT CONTRAST ARE TWO TICKS APART.** Both
+// numbers are real and both are the player's y, which is why every "is this the
+// right quantity" check passes and the comparison is still wrong:
+//   GD's 590.506836 is its y at t=9,241, the tick GD grounds.
+//   The model's 585.000 is its y at t=9,243, the tick the MODEL grounds.
+// Measured on the anchored 9,000 segment, both seat arms: 585.000 is genuine --
+// --no-slopeseat realises it, og=1, at 9,243 -- but "for the whole approach" is
+// false in BOTH arms, which are airborne at ~593.5 with og=0 and onslope=0
+// through 9,238..9,242. It is one tick, the model's landing tick, not a ride.
+//
+// What that leaves: slopeSeatTarget fixed the seat VALUE. The shipped arm gives
+// 588.8925781 at 9,243 against gdref's 588.892578 at that SAME tick, and stays
+// digit-for-digit after. The defect at 9,241 is therefore timing alone -- GD
+// grounds two ticks earlier -- and nothing about the seat is wrong.
+//
+// Read this before using the block above to justify an entry-side rule: the
+// entry-side comparison it draws cannot be read as "the model rides the corner
+// while GD rides the line", because on this witness the model is not riding.
+//
 // `ceiling` here is the sign the seat is written with -- the model's own `gs`,
 // which is what makes this identical to the old code in the span's interior. GD
 // selects the branch on `isTop` = m_slopeDirection in {1,3,5,6} alone; where the
