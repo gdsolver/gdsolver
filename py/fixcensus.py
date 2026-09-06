@@ -19,6 +19,11 @@ DIVERGENCE ON THE VERIFIED CORPUS, and the sets of families mostly overlap.
     python py/fixcensus.py --levels 10 19      # narrow down
     python py/fixcensus.py --family <cause>    # print real examples of that family
     python py/fixcensus.py --leveldp <exe>     # A/B against a differential build
+    python py/fixcensus.py --gd-ground corroborated
+                                               # sign the gdg letters with
+                                               # grounded_of instead of the raw
+                                               # onGround column (same
+                                               # divergences, some other names)
 """
 from __future__ import annotations
 
@@ -34,7 +39,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import census_waivers                             # noqa: E402  known outliers
-from gdtas.solveutil import MODE_ID, cause_of    # noqa: E402  recorder's classification
+from gdtas.solveutil import (GD_GROUND_CORROBORATED, GD_GROUND_RAW, MODE_ID,
+                             cause_of)            # noqa: E402  recorder's classification
 from gdtas.paths import LEVELDP_EXE               # noqa: E402
 import quick_regress as qr  # noqa: E402  rot_anchor_args (one-shot history of 2900)
 from quick_regress import (DATA, LEVEL_DATA, REF, ctrlwin_args, groups_args,
@@ -43,7 +49,8 @@ from quick_regress import (DATA, LEVEL_DATA, REF, ctrlwin_args, groups_args,
 
 
 def eval_trace(lv: int, t0: int, span: int, trace: Path,
-               gd: dict[int, dict], eps: float) -> list[dict]:
+               gd: dict[int, dict], eps: float,
+               gd_ground: str = GD_GROUND_RAW) -> list[dict]:
     """Return THE FIRST DIVERGENCE from an already replayed trace (does not replay).
 
     Same stance as the recorder: a divergence is read as "the transition delta
@@ -82,18 +89,21 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
         # GD's has to come from the same row. GD's values on the way out are
         # passed separately and surface as gdgo/gdmo when they differ -- see
         # cause_of's docstring for the four families the old mismatch misread.
-        # THE ROW IS RIGHT; THE COLUMN IS RAW. `onGround` goes in untranslated,
-        # while quick_regress.start_fields -- reading the very same reference --
-        # puts it through grounded_of first. The two are not the same predicate
-        # (grounded_of's docstring has the per-mode gap and the two families
-        # that flip when the corroborated flag is substituted), so what a
-        # census record means by `gdg1` in ship/ufo/wave is "GD's flag was
-        # set", not "GD was resting". Neither choice is wrong; the key just has
-        # to be read as the one it is.
+        # THE ROW IS RIGHT; THE COLUMN IS RAW BY DEFAULT. `onGround` goes in
+        # untranslated, while quick_regress.start_fields -- reading the very
+        # same reference -- puts it through grounded_of first. The two are not
+        # the same predicate (grounded_of's docstring has the per-mode gap), so
+        # what a census record means by `gdg1` in ship/ufo/wave is "GD's flag
+        # was set", not "GD was resting". Neither choice is wrong; the key just
+        # has to be read as the one it is -- and `--gd-ground corroborated`
+        # hands the whole row over so the other one can be read off the same
+        # sections. The rows go in either way; only the flag decides which of
+        # them cause_of looks at.
         cause = cause_of(m0, m1, g0.get("onGround", "?"),
                          MODE_ID.get(g0.get("mode", ""), -1),
                          g1.get("onGround", "?"),
-                         MODE_ID.get(g1.get("mode", ""), -1))
+                         MODE_ID.get(g1.get("mode", ""), -1),
+                         gd_ground=gd_ground, gd_row=g0, gd_row_out=g1)
         out.append({"lv": lv, "t": t, "x": round(float(m0[1]), 1),
                     "cause": cause, "in": m1[10] if len(m1) > 10 else "?",
                     "edy": round(edy, 4), "edvy": round(edvy, 4)})
@@ -102,7 +112,7 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
 
 
 def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
-                eps: float) -> list[dict]:
+                eps: float, gd_ground: str = GD_GROUND_RAW) -> list[dict]:
     """Anchor one section from the real GD state, replay it, hand it to eval_trace."""
     plan = plan_of(lv, str(DATA / "solution_lv{}_dp.txt"))
     gd = read_ref(lv)
@@ -134,7 +144,8 @@ def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
     # it every re-entered pad in lv13/14/18/21 shows up here as a family.
     a += qr.pad_anchor_args(lv, t0, gd)
     subprocess.run(a, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return eval_trace(lv, t0, span, Path(str(base) + ".trace.csv"), gd, eps)
+    return eval_trace(lv, t0, span, Path(str(base) + ".trace.csv"), gd, eps,
+                      gd_ground)
 
 
 def main(argv=None) -> int:
@@ -153,6 +164,18 @@ def main(argv=None) -> int:
     ap.add_argument("--family", default=None)
     ap.add_argument("--no-waivers", action="store_true",
                     help="ignore the waivers for known outliers and print the raw numbers")
+    ap.add_argument("--gd-ground", choices=[GD_GROUND_RAW,
+                                            GD_GROUND_CORROBORATED],
+                    default=GD_GROUND_RAW,
+                    help="which definition of 'GD was grounded' the gdg/gdgo "
+                         "letters of a family key are minted from. raw (the "
+                         "default, and what the blessed baseline is named by) "
+                         "is the dump's onGround column; corroborated puts the "
+                         "same row through gdtas.solveutil.grounded_of, which "
+                         "in ship/ufo/wave also demands onGround2 and a "
+                         "near-zero yvel. The A/B answers 'is this family "
+                         "signed by physics or by the raw column's looseness?' "
+                         "-- it moves NO divergence, only the names")
     ap.add_argument("--no-spentpad", action="store_true",
                     help="the A/B arm: still name the pads the run had fired "
                          "before each anchor, but tell the solver to ignore "
@@ -171,6 +194,15 @@ def main(argv=None) -> int:
         print("--bless is only accepted on a full 22-level run "
               "(blessing a --levels subset erases the families of every level "
               "that did not run)")
+        return 2
+    # ...and only in the naming the baseline is in. The corroborated arm spells
+    # some keys differently, so blessing from it would rewrite the baseline in
+    # the other definition without saying so, and every later comparison would
+    # be against names nothing else mints.
+    if a.bless and a.gd_ground != GD_GROUND_RAW:
+        print(f"--bless is only accepted with --gd-ground {GD_GROUND_RAW} "
+              f"(the baseline's family names are minted from the raw column; "
+              f"blessing a {a.gd_ground} run would silently rename them)")
         return 2
     tmp = Path(a.tmp)
     tmp.mkdir(parents=True, exist_ok=True)
@@ -195,7 +227,7 @@ def main(argv=None) -> int:
     found: list[dict] = []
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         futs = [ex.submit(seg_diverge, lv, t, a.seg_len, Path(a.leveldp),
-                          tmp, a.eps) for lv, t in jobs]
+                          tmp, a.eps, a.gd_ground) for lv, t in jobs]
         for f in futs:
             found += f.result()
 

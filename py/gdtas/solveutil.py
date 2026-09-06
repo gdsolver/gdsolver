@@ -71,6 +71,45 @@ MODE_ID = {"ship": 1, "ball": 2, "ufo": 3, "wave": 4, "robot": 5, "spider": 6,
 # See notes/measure-onground-stickiness-per-mode-2026-09-07.
 FLYING = (1, 3, 4)
 
+# The two definitions of "GD was grounded" that `cause_of` can sign a family
+# with. RAW is the dump's `onGround` column as it stands, and is the default
+# because it is what every census key in data/gdref/fixcensus.json was minted
+# from; CORROBORATED puts the same row through `grounded_of` first, which is
+# what every anchor built from the same recording already uses.
+# THESE ARE DIFFERENT PREDICATES, NOT THE SAME ONE AT DIFFERENT TIMES -- the
+# measurement that settled that is in `grounded_of`'s docstring. The switch
+# exists so the question "is this family signed by physics or by the raw
+# column's looseness?" can be asked without changing what the baseline means.
+GD_GROUND_RAW = "raw"
+GD_GROUND_CORROBORATED = "corroborated"
+
+
+def _ground_letter(raw: str, mode: int, gd_row: dict | None,
+                   gd_ground: str) -> str:
+    """The digit a `gdg` / `gdgo` component carries, under one definition.
+
+    RAW hands back the column untouched, so the default path through `cause_of`
+    is the identity and every existing key keeps its spelling. CORROBORATED
+    re-derives it with `grounded_of` from the SAME dump row, which needs
+    `onGround2` and `yvel` as well -- hence the row rather than the one column.
+
+    A row that cannot be translated mints `?`, deliberately: falling back to the
+    raw digit would make an untranslatable row indistinguishable from a
+    genuinely raw-agreeing one, and the census would report a zero difference
+    that came from the instrument rather than from the world. (Measured
+    2026-09-07 over fixcensus's 20 divergences: 40 rows, 0 untranslatable, so
+    the `?` branch is unexercised on today's corpus rather than untested policy.)
+    """
+    if gd_ground == GD_GROUND_RAW:
+        return raw
+    if gd_row is None:
+        return "?"
+    try:
+        return str(grounded_of(mode, gd_row.get("onGround", "0"),
+                               gd_row.get("onGround2", "0"), gd_row["yvel"]))
+    except (KeyError, ValueError, TypeError):
+        return "?"
+
 # The types the model actually collides with or reads. If any of them carries a
 # group id, the level has geometry that moves.
 _COLLIDER_TYPES = {"0", "2", "47", "25", "3", "4", "5", "6", "16", "17", "18",
@@ -150,7 +189,9 @@ def has_grouped_colliders(path) -> bool:
 # nothing in this tree.
 def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
              gd_mode: int = -1, gd_grounded_out: str | None = None,
-             gd_mode_out: int | None = None) -> str:
+             gd_mode_out: int | None = None, *,
+             gd_ground: str = GD_GROUND_RAW, gd_row: dict | None = None,
+             gd_row_out: dict | None = None) -> str:
     """One signature for what the model was DOING across this transition.
 
     **The key that groups by cause rather than by point.** If many records share
@@ -172,6 +213,16 @@ def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
     signature and is how that family was found. `gdgo` keeps that -- and states
     it as what it is, a transition of GD's own, rather than as an artefact of
     comparing two different rows.
+
+    **WHICH DEFINITION OF GROUNDED THE `gdg` LETTERS COME FROM IS A SWITCH.**
+    `gd_ground=GD_GROUND_RAW` (the default, and today's behaviour exactly) mints
+    them from `gd_grounded` / `gd_grounded_out` as passed, i.e. from the dump's
+    raw `onGround`. `gd_ground=GD_GROUND_CORROBORATED` re-derives them with
+    `grounded_of`, which needs the whole row, so `gd_row` / `gd_row_out` must be
+    passed with it. The default is load-bearing: every key in the blessed census
+    baseline was minted raw, so changing it would rename every family at once.
+    The switch is there to answer whether a family is signed by physics or by
+    the raw column's looseness, not to replace one with the other.
     """
     if len(row) < 18:
         return "notrace"          # an old trace (the columns are not there)
@@ -180,22 +231,34 @@ def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
     # share a signature. Measured on lv20: m1/mini1/g0/air was 47 of 59 records
     # with an 11.8 px spread in dy -- the mark of two causes mixed, not one.
     #
-    # `gdg` IS THE RAW COLUMN, NOT grounded_of(). fixcensus.eval_trace passes
-    # `g0.get("onGround")` straight through, while every anchor built from the
-    # same recording is translated by grounded_of first, and the two mean
-    # different things in ship / ufo / wave / spider -- the per-mode gap, and
-    # the two families that change when the corroborated flag is substituted,
-    # are in grounded_of's docstring below. Read here rather than there because
-    # this is where the letter is minted: `gdg1` on a flying-mode record means
-    # "GD's contact flag was set", not "GD was resting on something", and about
-    # a third of ship's records carry it for a body in free flight.
-    # NOT CHANGED: the key is what the family baseline is named by, and
-    # renaming it moves every family at once.
-    parts = [f"m{row[4]}", f"mini{row[16]}", f"g{row[5]}", f"gdg{gd_grounded}"]
+    # `gdg` IS THE RAW COLUMN BY DEFAULT, NOT grounded_of(). fixcensus.eval_trace
+    # passes `g0.get("onGround")` straight through, while every anchor built from
+    # the same recording is translated by grounded_of first, and the two mean
+    # different things in ship / ufo / wave / spider -- the per-mode gap is in
+    # grounded_of's docstring below. Read here rather than there because this is
+    # where the letter is minted: `gdg1` on a flying-mode record means "GD's
+    # contact flag was set", not "GD was resting on something", and about a third
+    # of ship's records carry it for a body in free flight.
+    # THE DEFAULT DOES NOT CHANGE: the key is what the family baseline is named
+    # by, and renaming it moves every family at once. `gd_ground` opens the other
+    # definition for an A/B, and the two letters below are the whole of it.
+    if gd_ground not in (GD_GROUND_RAW, GD_GROUND_CORROBORATED):
+        raise ValueError(f"gd_ground must be {GD_GROUND_RAW!r} or "
+                         f"{GD_GROUND_CORROBORATED!r}, not {gd_ground!r}")
+    g_in = _ground_letter(gd_grounded, gd_mode, gd_row, gd_ground)
+    parts = [f"m{row[4]}", f"mini{row[16]}", f"g{row[5]}", f"gdg{g_in}"]
     # ...and GD's own within-tick transition of it, when there is one. This is
-    # what carries "GD seated on this tick" (see the docstring).
-    if gd_grounded_out is not None and gd_grounded_out != gd_grounded:
-        parts.append(f"gdgo{gd_grounded_out}")
+    # what carries "GD seated on this tick" (see the docstring). Both ends go
+    # through the same definition, so the comparison stays like-for-like -- the
+    # out row is translated with the out row's OWN mode, because a tick that
+    # crosses a portal has GD in two of them.
+    if gd_grounded_out is not None:
+        g_out = _ground_letter(
+            gd_grounded_out,
+            gd_mode_out if gd_mode_out is not None else gd_mode,
+            gd_row_out, gd_ground)
+        if g_out != g_in:
+            parts.append(f"gdgo{g_out}")
     # **A tick where GD's MODE differs is a different cause.** Portal boundaries
     # are a known +/-1 tick class, and there the two are running different
     # physics. Mixed in, it reads as "the mini ship's integration error"
@@ -291,11 +354,33 @@ def grounded_of(mode: int, on_ground: str, on_ground2: str, yvel: str) -> int:
     redundancy IS the conversion, and without it the anchor would be seeded
     grounded for a body GD considers grounded and the model does not.
 
-    `gdtas.solveutil.cause_of` does NOT apply it -- it reads the raw column --
-    so family signatures carrying a `gdg`/`gdgo` component in those modes can
-    be signed by the definitional gap rather than by physics. Two are: lv16
-    t=19,104 and lv19 t=21,422 both go `g0/gdg1` -> `g0/gdg0` when the
-    corroborated flag is substituted.
+    `gdtas.solveutil.cause_of` does NOT apply it by default -- it reads the raw
+    column -- so family signatures carrying a `gdg`/`gdgo` component in those
+    modes can be signed by the definitional gap rather than by physics. Pass
+    `gd_ground=GD_GROUND_CORROBORATED` (fixcensus: `--gd-ground corroborated`)
+    to sign them with this function instead and see which ones move.
+
+    MEASURED ON fixcensus's OWN POPULATION, 2026-09-07, all 22 levels / 1,116
+    sections / 20 divergences, both arms on the same leveldp: the headline does
+    NOT move -- 20 divergences and 19 families either way, and the one family
+    holding two records holds the same two. Three signatures are RENAMED, all
+    three in a flying mode, and no two families merge:
+
+        lv16 t=19,104 mini ship upright  g0/gdg1       -> g0/gdg0
+        lv19 t=21,402 mini ship upright  g0/gdg1       -> g0/gdg0
+        lv20 t=22,015 full ufo  upright  g0/gdg1       -> g0/gdg0/gdgo1
+
+    The third is the interesting one and was not predicted: GD's raw flag is 1
+    on both rows, so raw sees no transition, while corroborated goes 0 -> 1
+    because `onGround2` goes 0 -> 1 and yvel lands on exactly 0. Under the
+    corroborated definition that tick IS a GD seating event, and the raw column
+    hides it. So `g0/gdg0/gdgo1` -- the same-tick portal seat's signature --
+    goes from 2 families to 3, while the literal `g0/gdg1` goes from 4 to 1;
+    the survivor is lv19 t=22,602, robot, which grounded_of does not narrow.
+    Of the 40 GD rows behind those 20 records, 15 are in a flying mode, 25 are
+    not, and none of the 25 widened (grounded_of's non-flying branch also
+    accepts yvel == 0, which no such row had) -- that zero is the world's, not
+    the filter's.
     See notes/measure-onground-phase-offset-2026-09-06.
 
     Corroborated from the other direction by the column-phase audit
