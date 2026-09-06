@@ -183,8 +183,25 @@ def main(argv=None) -> int:
             found += f.result()
 
     if a.family:
-        rows = [d for d in found if d["cause"] == a.family]
+        # THE TABLE'S SPELLING AND THIS ONE WERE DIFFERENT KEYS. census_report
+        # renders `cause + "/in" + act`, while the match here was against the
+        # raw `cause`, which never carries the suffix -- so a family name copied
+        # out of the table could not match, and the only symptom was a bare
+        # "family <name>: 0" with no warning. Read as "that family is gone" it
+        # is the same silent zero twice over: once for a query that missed, once
+        # for a world that does not contain it. Accept either spelling, and when
+        # neither hits, say whether the suffix was the reason.
+        rows = [d for d in found
+                if a.family in (d["cause"], f"{d['cause']}/in{d['in']}")]
         print(f"family {a.family}: {len(rows)}")
+        if not rows and "/in" in a.family:
+            stem, _, tail = a.family.rpartition("/in")
+            if tail.isdigit():
+                alt = [d for d in found if d["cause"] == stem]
+                if alt:
+                    print(f"  (0 as written; without the trailing /in{tail} it "
+                          f"matches {len(alt)} -- both spellings are accepted, "
+                          f"so this one is genuinely absent for that `in` value)")
         for d in sorted(rows, key=lambda d: (d["lv"], d["t"])):
             print(f"  lv{d['lv']:<2} t={d['t']:<6} x={d['x']:<10} "
                   f"in={d['in']} edy={d['edy']:<9} edvy={d['edvy']}")
