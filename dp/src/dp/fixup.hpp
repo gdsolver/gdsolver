@@ -231,6 +231,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     c.ringHold2 = cb.ringHold2; c.onSlope2 = cb.onSlope2;
     c.pressSpent2 = cb.pressSpent2;
     c.slopeT2 = cb.slopeT2;
+    c.rideLanded2 = cb.rideLanded2;
     // ...and the second body's velocity-limit exemption (State::boost2, added
     // 2026-09-06 with swapHalves). The third of the three sites the SIZE note
     // above is about: without this line p2's latch is written inside its own

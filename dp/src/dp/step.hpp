@@ -6037,6 +6037,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             // next tick and fell back onto the ramp (dy 46px).
                             if (!impulsedThisTick) {
                                 c.grounded = 1;
+                                // grounded here IS the landing, so the ride
+                                // carries it (State::rideLanded). Setting the
+                                // flag only at the main seat left this path
+                                // writing onSlope with rideLanded clear, and
+                                // the exit then refused a launch GD makes --
+                                // lv16 t=13,117, mini ball, GD -5.179.
+                                c.rideLanded = 1;
                                 c.onSlope = 1;
                                 c.slopeM = (float)m;
                                 // the ramp the ride began on (State::slopeUid0)
@@ -7170,6 +7177,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             rTop, top);
                             c.y = (float)rTop;
                             c.vy = 0; c.grounded = 1;
+                            c.rideLanded = 1;   // as above: grounded is the landing
                             c.onSlope = 1; c.slopeM = (float)m;
                             c.slopeUid0 = s.onSlope ? s.slopeUid0 : sp->uid;
                     c.slopeUidNow = sp->uid;
@@ -7575,6 +7583,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // too is limited to the push-out case.
                     if (rideLands && !(flipForRide && ridesTop)) c.grounded = 1;
                     else if (rideLands) rodeFlipped = true;
+                    // Record the landing for the launch to read on the way out
+                    // (State::rideLanded). It has to be remembered here rather
+                    // than reconstructed at the exit: `grounded` misses the
+                    // flipped-on-a-top case one line above, which is a landing
+                    // GD does launch from (lv16 t=8,875 -> 8,913). Carried
+                    // through a chain of ramps the same way slopeUid0 is, so a
+                    // seam does not look like a fresh unlanded contact.
+                    c.rideLanded = (uint8_t)((s.onSlope && s.rideLanded)
+                                             || rideLands);
                     c.onSlope = 1;
                     c.slopeM = (float)m;
                     c.slopeUid0 = s.onSlope ? s.slopeUid0 : sp->uid;
@@ -7865,6 +7882,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // The rig's cells are all flip=1, so the evidence covers the c.flip side
         // only.
         if (!c.onSlope && s.onSlope && uphillExit && !rampWindowHere
+            && (g_noRideLandLaunch || s.rideLanded)
             && !(impulsedThisTick && (c.mode == 3 || c.flip))) {
             // ...and the SIGN follows the same ride side as uphillExit above: a
             // launch throws the player off the surface it climbed, so a flipped
@@ -7919,7 +7937,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // release (collision phase) is overwritten by the button afterwards.
         // Removing the gate exposed itself at once: lv16's tracking
         // 17,872->17,427, lv21 -1, families +4 (all in1).
+        // ...and the release needs the ride to have LANDED for the same reason
+        // the launch above does: both come out of the ride, and a contact that
+        // never landed has no ride to leave. Without this the tightening above
+        // merely hands lv19 t=14,643 to this branch -- suppressing the launch
+        // moved the model from -2.156 to +1.424 against GD, because control fell
+        // through to here and stamped mTravel*dx/0.25 = 6.457 instead.
+        // ([[gd-tightening-a-clamp-hands-it-over]])
         else if (!c.onSlope && s.onSlope && !rampWindowHere
+                 && (g_noRideLandLaunch || s.rideLanded)
                  && !impulsedThisTick) {
             c.vy = (float)(mTravel * std::fabs((double)K.dxF) / 0.25);
             c.grounded = 0;
@@ -11286,6 +11312,7 @@ inline void swapHalves(State& s) {
     std::swap(s.boost, s.boost2);
     std::swap(s.onSlope, s.onSlope2);
     std::swap(s.slopeT, s.slopeT2);
+    std::swap(s.rideLanded, s.rideLanded2);
     std::swap(s.mode, s.mode2);
     std::swap(s.mini, s.mini2);
     // ...and WHICH RAMP each half is riding. slopeUid0/slopeUidNow were left behind, so the

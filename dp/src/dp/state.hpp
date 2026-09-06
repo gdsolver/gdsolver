@@ -96,6 +96,26 @@ struct State {
     // 24 = 0.1 s at 240 ticks/s, past which the factor is 1.0 and further
     // counting cannot change anything.
     uint8_t slopeT = 0;
+    // Did THIS ride ever become a landing? GD's exit launch comes out of the
+    // ride, and a contact that never landed has no ride to launch from --
+    // measured at lv19 t=14,633, where the UFO meets the ramp at svy +6.323,
+    // fails GD's |vy| <= 5.0 hitGround gate, and GD flies straight on while the
+    // model launches on leaving at 14,643.
+    //
+    // NOT the same as `grounded`, and the difference is load-bearing: the seat
+    // sets grounded only `if (rideLands && !(flipForRide && ridesTop))`, so a
+    // FLIPPED rider on a floor ramp's top lands without ever setting it. lv16
+    // t=8,875 is exactly that (enters at svy -0.051, lands, grounded stays 0)
+    // and GD does launch it at 8,913 -- gating the launch on `grounded` would
+    // have deleted a launch GD makes.
+    //
+    // It has to be remembered across ticks because the landing happens at the
+    // ride's start and the launch reads it at the ride's end. Recomputing at the
+    // exit tick from that tick's own velocity agrees on all 40 rides in the
+    // corpus -- none of them crosses 5.0 mid-ride -- but the DP generates entry
+    // velocities the corpus never contains, and there the proxy and the
+    // mechanism part company where no replay instrument can see it.
+    uint8_t rideLanded = 0;
     float slopeM;
     // Ticks since gravity last flipped, saturated at 24 -- the same 0.1 s at
     // 240 ticks/s as slopeT above, and read the same way: GD stamps the time in
@@ -373,6 +393,7 @@ struct State {
     uint8_t grounded2, flip2, ringHold2, onSlope2;
     uint8_t pressSpent2 = 0;   // second body's pressSpent (see pressSpent)
     uint8_t slopeT2 = 0;   // second body's ride counter (see slopeT)
+    uint8_t rideLanded2 = 0;  // second body's landing record (see rideLanded)
     // The second body's own velocity-limit exemption (see boost). It became a
     // per-half quantity on 2026-09-06, when the flag stopped being swing-only:
     // the corpus' one witness is a DUAL ship (lv16 t=8,913, where both halves

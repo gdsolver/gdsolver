@@ -202,6 +202,10 @@ inline int cliMain(int argc, char** argv) {
         // --no-uforampflap: a normal UFO flapping off a floor ramp keeps its
         // plain 6.871 instead of the rig's measured 8.000.
         if (!std::strcmp(argv[i], "--no-uforampflap")) g_noUfoRampFlap = true;
+        // --no-ridelandlaunch: the slope-exit launch fires off any contact, not
+        // only off a ride that became a landing.
+        if (!std::strcmp(argv[i], "--no-ridelandlaunch"))
+            g_noRideLandLaunch = true;
         // --no-rampfirst: the model's own order (solids first, the ramp seat
         // last and never revisited) instead of GD's ramp-then-solid. With
         // --no-slopeseat as well the build reproduces the pre-2026-09-06
@@ -1621,7 +1625,8 @@ inline int cliMain(int argc, char** argv) {
     // slopeRampFactor(14 + 1) instead of (24 + 1), because p2 had only been able to
     // count the 15 ticks since the anchor. That 0.466 is the whole of the section.
     auto rideAtAnchor = [&](uint8_t grounded, uint8_t flip, float y,
-                            uint8_t& onSlope, float& slopeM, uint8_t& slopeT) {
+                            uint8_t& onSlope, float& slopeM, uint8_t& slopeT,
+                            uint8_t& rideLanded) {
         if (!grounded) return;
         const double pH = init.mini ? kMiniHalf : kCubeHalf;
         for (const Obj& sp : L.slopes) {
@@ -1653,14 +1658,40 @@ inline int cliMain(int argc, char** argv) {
             // land -- and over-launches on a shorter one; the loop's own GD
             // replay catches that case.
             slopeT = 24;
+            // ...and the ride counts as LANDED, for the same reason slopeT is
+            // saturated here: `--start` does not carry it, and 0 is not the
+            // neutral value -- it means "never landed", which suppresses the
+            // exit launch and release (State::rideLanded). An anchor taken
+            // mid-ride would then leave the ramp with no launch at all, and
+            // every anchored section that starts on a ramp would diverge from
+            // the whole-run replay of the same plan. Caught exactly that way:
+            // quick_regress lv16 lost 2 sections (t=5,400 went 400 -> 1 ticks)
+            // while the whole-run A/B was byte-identical on all 21 other levels.
+            // 1 is the pre-change behaviour, so an unseeded anchor behaves as it
+            // always did and the loop's own GD replay judges the rest.
+            // ([[gd-unseeded-field-safe-when-zero-is-old-behaviour]] -- here 0
+            // IS a lie, so the default has to be 1.)
+            rideLanded = 1;
             break;
         }
     };
     rideAtAnchor(init.grounded, init.flip, init.y,
-                 init.onSlope, init.slopeM, init.slopeT);
+                 init.onSlope, init.slopeM, init.slopeT, init.rideLanded);
     if (init.dual)
         rideAtAnchor(init.grounded2, init.flip2, init.y2,
-                     init.onSlope2, init.slopeM2, init.slopeT2);
+                     init.onSlope2, init.slopeM2, init.slopeT2,
+                     init.rideLanded2);
+    // ...and the same default for a ride that reached the anchor by any other
+    // route. rideAtAnchor only reconstructs one for a GROUNDED body, but the
+    // seat sets grounded only when the landing is not a flipped rider on a
+    // ramp's top -- so a hanging ride arrives here with onSlope set and
+    // grounded clear, and rideAtAnchor never sees it. Seeding only inside that
+    // lambda left lv16 t=13,000 short (264 -> 117 ticks) with quick_regress
+    // still red after the first attempt. An anchor cannot know whether the ride
+    // landed, and 0 means "it did not", so every anchored ride takes the
+    // pre-change behaviour and the loop's GD replay judges it.
+    if (init.onSlope) init.rideLanded = 1;
+    if (init.dual && init.onSlope2) init.rideLanded2 = 1;
     const double goalX = L.maxX + 60.0;
     // 120 px = 4 blocks of slack above the highest surface, so a legitimate
     // arc over the top of the level is still allowed

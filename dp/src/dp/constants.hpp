@@ -220,6 +220,23 @@ inline bool g_noUfoLandTol = false; // --no-ufolandtol
 // a 30x15 slope, i.e. an object these levels never use. Guessing between the
 // two would put a width rule into the model under a gradient's name.
 inline bool g_noUfoRampFlap = false; // --no-uforampflap
+
+// --no-ridelandlaunch: the slope-exit launch fires off any CONTACT, the
+// pre-2026-09-06 behaviour, instead of only off a ride that became a landing.
+// GD's launch comes out of the ride; a contact that never landed has no ride to
+// launch from. Witness lv19 t=14,633: the UFO meets the ramp at svy +6.323,
+// fails the |vy| <= 5.0 hitGround gate (which this model already implements at
+// the seat, keeping vy and leaving grounded clear), GD flies straight on, and
+// the model launches anyway on leaving at 14,643 -- -2.156 that then persists
+// exactly, the signature of one velocity overwrite.
+//
+// The gate is State::rideLanded and NOT `grounded`: the seat sets grounded only
+// `if (rideLands && !(flipForRide && ridesTop))`, so a flipped rider on a floor
+// ramp's top lands without it. Gating on grounded would change 2 rows and break
+// lv16 t=8,913, whose launch GD makes and whose model value already matches.
+// With rideLanded the reach is one row, and lv16 8,913 and lv17 18,573 both
+// keep theirs.
+inline bool g_noRideLandLaunch = false; // --no-ridelandlaunch
 constexpr double kUfoRampFlap = 8.0;
 
 // --no-rampfirst: keep the model's own resolution order -- every solid

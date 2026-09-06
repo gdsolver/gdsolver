@@ -246,6 +246,19 @@ inline uint64_t keyOf(const State& s, long long t) {
            // (in practice riders at the same x almost always share it).
            ^ (s.onSlope ? ((uint64_t)s.slopeT << 47) : 0)
            ^ ((s.dual && s.onSlope2) ? ((uint64_t)s.slopeT2 << 12) : 0)
+           // ...and whether the ride LANDED, for the same reason the counter is
+           // here: it decides whether leaving the ramp launches at all (see
+           // State::rideLanded), so two riders alike in (x, y, vy) but unlike in
+           // this are not interchangeable. Folding them would let the search
+           // plan a launch off a ride that never landed. Gated on onSlope so
+           // every non-riding key stays bit-identical, and one bit wide.
+           // Carried as a distinct constant rather than a bit position: bit 46
+           // already belongs to bandFloor above, and an XOR into occupied bits
+           // can cancel, quietly folding two states the key is meant to keep
+           // apart. pFlap below uses the same idiom for the same reason.
+           ^ ((s.onSlope && s.rideLanded) ? 0xD1B54A32D192ED03ull : 0)
+           ^ ((s.dual && s.onSlope2 && s.rideLanded2)
+                  ? 0xA24BAED4963EE407ull : 0)
            // The flap buffered on the portal's tick (State::pFlap). Same (y,vy)
            // but different behaviour next tick, so it goes in the key.
            ^ (s.pFlap ? 0x9E3779B97F4A7C15ull : 0)
