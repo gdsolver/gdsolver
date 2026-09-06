@@ -255,6 +255,13 @@ inline bool g_noRingFirstTouch = false; // --no-ringfirsttouch
 // to be byte-identical to the build before the change.
 inline bool g_noPadObb = false;         // --no-padobb
 
+// --no-padspinpre: a pad's same-tick rotation step turns toward the gravity at
+// the END of the tick (the pre-2026-09-06 behaviour) instead of the gravity at
+// the moment GD called runNormalRotation. Only a GRAVITY pad can tell the two
+// apart, since nothing else moves the gravity within the tick. See the site in
+// step.hpp for the 116 witnesses and the two samples in the comment there.
+inline bool g_noPadSpinPre = false;     // --no-padspinpre
+
 // --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
 // each half re-derived the flip inside its own stepOne, one integration late).
 inline bool g_noDualFlip = false; // --no-dualflip

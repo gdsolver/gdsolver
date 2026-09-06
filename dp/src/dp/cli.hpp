@@ -167,6 +167,10 @@ inline int cliMain(int argc, char** argv) {
         // TURNED box (the pre-2026-09-06 behaviour) rather than the
         // axis-aligned square GD's activation path uses.
         if (!std::strcmp(argv[i], "--no-padobb")) g_noPadObb = true;
+        // --no-padspinpre: a pad's same-tick rotation step turns toward the
+        // END-of-tick gravity (the pre-2026-09-06 behaviour) instead of the
+        // gravity at the moment of the call. See g_noPadSpinPre.
+        if (!std::strcmp(argv[i], "--no-padspinpre")) g_noPadSpinPre = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;

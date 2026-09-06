@@ -1162,6 +1162,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // ...and whether that call came from a PAD, which additionally turns the
     // sprite one full step on the tick itself (measurements at the use site).
     bool rotPadSpin = false;
+    // ...and the gravity that pad's call saw. Its own, not rotWriteFlip's: a
+    // ring or orb later in the same tick overwrites rotWriteFlip (the assignment
+    // inside applyOrb), and the pad's step has to keep the value from its own
+    // call. The two never differ in this corpus -- 0 of the 289 pad ticks the 22
+    // replays take -- so this is a guard, not a measured effect.
+    uint8_t rotPadFlip = 0;
     // ...and the sign written is "the gravity **at the moment of the call**".
     // Inside ringJump the call site comes after the green ring's (29) flip
     // (0x3993bf) and before the gravity orb's (13) flip (0x399608). The
@@ -9780,6 +9786,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // which a ring or an orb does not. See the spin block near the end of
         // the cube branch for the five measurements that separate them.
         rotPadSpin = true;
+        // That step turns toward THIS gravity -- the one the call saw, which for
+        // a gravity pad is the value from before the flip a few lines below.
+        rotPadFlip = c.flip;
         if (pd->type == 10) {
             // the gravity pad scales too -- this branch was missed on the first
             // pass. Measured on lv11 t=4722 (pad at x[6110.5,6135.5]): GD came
@@ -10623,11 +10632,65 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // The SIGN THE CALL LEAVES BEHIND is a third quantity and is unchanged
         // (c.rotNeg = rotWriteFlip, above): at t=727 GD steps + here and then
         // runs at -1.731 from the next tick.
-        // UNDER-DETERMINED: both pad samples are at flip=0, so "toward the
-        // current gravity" and "always positive" fit them equally. A pad taken
-        // in flipped gravity is what would tell them apart.
+        // [2026-09-06] ...toward the gravity **at the moment of the call**, not
+        // the gravity at the end of the tick. Only a GRAVITY pad can tell those
+        // apart, because only it moves the gravity inside the tick, and the two
+        // pads measured above are a yellow and a pink one. Every sample:
+        //
+        //   lv22 t=1,170  yellow pad  flip 0 -> 0   GD +1.731   NOT decisive
+        //   lv22 t=1,484  pink pad    flip 0 -> 0   GD +1.731   NOT decisive
+        //   lv18 t=18,202 gravity pad flip 0 -> 1   GD +1.731   decisive
+        //   lv18 t=18,221 gravity pad flip 1 -> 0   GD -1.731   decisive
+        //
+        // The first two rows cannot separate "at the call" from "at the end of
+        // the tick" -- those are the same value when the gravity does not move --
+        // and they equally fit "always positive". Only the lv18 pair discards
+        // anything, and only the second of them refutes "always positive".
+        // (fid_lv18.dump.csv, rot and upsideDown, GD's own numbers: rot goes
+        // 162.713806 -> 164.444580 on 18,202 with upsideDown going 0 -> 1, and
+        // 188.885406 -> 187.154633 on 18,221 with upsideDown going 1 -> 0.)
+        //
+        // Two witnesses would be thin, so the same question was put to the whole
+        // corpus by exclusion: replay all 22 levels, take every tick that reaches
+        // this branch with the gravity moving inside it, and score the three
+        // candidates against GD's own rot column, up to each level's first
+        // divergence. 116 witnesses in nine levels (lv10 15, lv11 13, lv12 7,
+        // lv13 17, lv14 15, lv15 7, lv18 22, lv19 2, lv21 18):
+        //
+        //   gravity at the call  116 / 116
+        //   gravity at end of tick 0 / 116     <- what this line used to read
+        //   always positive       63 / 116
+        //
+        // and GD's own upsideDown column agrees with the model's before/after
+        // gravity on all 116, so the rows are the ticks they claim to be.
+        //
+        // REACH: 126 ticks in ten levels take this branch with the gravity moving
+        // (the 116 above plus 10 past a first divergence, which the dump can no
+        // longer score). Only `rot` moves: the whole 22-level replay is
+        // byte-identical elsewhere, lv1/2/3/4/5/6/7/8/9/16/20/22 down to the
+        // byte, and every first-divergence tick unchanged.
+        //
+        // This matches what the binary does: `propellPlayer` (which calls
+        // runNormalRotation, and whose signed impulse is the `mult` operand)
+        // runs BEFORE `flipGravity` in collisionCheckObjects' case 10 -- the
+        // pseudocode at the pad gate above -- and runNormalRotation writes the
+        // rate from `m_isUpsideDown` as it stands at that instant. It is the same
+        // write that leaves the sign behind for the next tick, which is why
+        // rotWriteFlip a few lines up already captures it at the same point.
+        //
+        // STILL NOT SEPARATED: the rate runNormalRotation writes is
+        // `sign(180 . rev . vert . timeMod . mult)`, and `propellPlayer` hands it
+        // the pad's SIGNED velocity as `mult` (win 0x39f955, the call itself at
+        // propellPlayer+0x10a), so the sign is not a function of the gravity
+        // alone -- steps of -1.7308 at up=0 do occur. "The gravity at the call"
+        // and "that gravity XOR the impulse's sign" therefore predict the same
+        // thing on every pad here, because every gravity pad in the corpus is one
+        // the player can legally take, which ties the two together. Separating
+        // them needs a rig: a floor-facing pad taken in flipped gravity. Until
+        // then this is written as the gravity, not the impulse.
         const bool spinNow = rotPadSpin || (!c.grounded && !s.grounded);
-        const uint8_t spinSign = rotPadSpin ? c.flip : rotSignNow;
+        const uint8_t spinSign =
+            rotPadSpin ? (g_noPadSpinPre ? c.flip : rotPadFlip) : rotSignNow;
         // THE BASE IS c.rot, NOT s.rot, and every law below has to agree. A mode
         // portal earlier in this same tick may already have written the angle
         // (the edge table at the `c.mode = wantMode` site), and `State c = s` at
