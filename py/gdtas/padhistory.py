@@ -148,12 +148,19 @@ def read_pads(objrects_path: Path | str) -> list[Pad]:
 class Walk:
     """The result of one pass over a recording."""
 
-    fired: dict[int, list[int]]     # pad uid -> the ticks it was consumed on
+    fired: dict[int, list[int]]     # pad uid -> the ticks it was CONSUMED on
     ticks: int = 0                  # rows the walk actually decided
     skipped_jump: int = 0           # ticks refused as a teleport / warp
     gravity_mismatch: int = 0       # ticks whose simulated gravity did not check out
     contacts: int = 0               # gate-passing contacts seen
-    refused_polarity: int = 0       # contacts a gravity pad's polarity gate refused
+    # Contacts a gravity pad's polarity gate refused, counted only for pads NOT
+    # already latched. Before the one-consumption-per-contact latch this also
+    # counted every continuing tick of a contact whose pad had already fired --
+    # flipping at t makes the polarity wrong at t+1, so a held contact fell here
+    # every tick. On the 22-level corpus that is 286 of 914 gate-passing
+    # contacts before and 72 after, with `contacts` itself unchanged at 914.
+    # A figure quoted from a run before 2026-09-06 18:3x means the old sense.
+    refused_polarity: int = 0
 
 
 def walk(pads: list[Pad], gd: dict[int, dict], t_end: int | None = None) -> Walk:
@@ -168,6 +175,7 @@ def walk(pads: list[Pad], gd: dict[int, dict], t_end: int | None = None) -> Walk
     # level's whole population: 22 levels x 20,000 ticks x 80 pads is minutes.
     cxs = [p.cx for p in pads]
     span = max(p.board.hw for p in pads) + max(_HALF_DEFAULT) + PAD_REACH
+    latched: set[int] = set()      # consumed and still being touched
     ticks = sorted(t for t in gd if t_end is None or t <= t_end)
     for t in ticks:
         r = gd[t]
@@ -192,6 +200,7 @@ def walk(pads: list[Pad], gd: dict[int, dict], t_end: int | None = None) -> Walk
         grav_here: list[int] = []
         lo = bisect.bisect_left(cxs, x - span)
         hi = bisect.bisect_right(cxs, x + span)
+        touching: set[int] = set()
         for p in pads[lo:hi]:
             # The x window is the same expression the loop's release uses, so
             # a pad the player is nowhere near costs one comparison.
@@ -200,6 +209,24 @@ def walk(pads: list[Pad], gd: dict[int, dict], t_end: int | None = None) -> Walk
             if not gate(p.board, x, y, half, rot):
                 continue
             out.contacts += 1
+            touching.add(p.uid)
+            # ONE CONSUMPTION PER CONTACT. Without this a contact lasting N
+            # ticks put N entries in `fired`, so the field held the ticks the
+            # pad was TOUCHED on while its name and this function's docstring
+            # both said consumed. Measured before the fix: 224 consecutive
+            # pairs across the corpus, every one of them exactly 1 tick apart,
+            # i.e. every "second firing" was the same contact continuing.
+            #
+            # Gravity pads never showed it, which is why it survived: flipping
+            # at t changes `up`, so at t+1 the polarity gate refuses them and
+            # they fall to refused_polarity. The 224 are types 8/9/34, which
+            # have no polarity gate to hide behind.
+            #
+            # The uid SET is unchanged, so spent_uids and --spentpad are
+            # behaviour-preserving; what changes is that `fired`'s tick lists
+            # now mean what they are called.
+            if p.uid in latched:
+                continue
             if p.type == 10:
                 if up != (1 if obj_facing_down(p.rot, p.flip_y) else 0):
                     out.refused_polarity += 1
@@ -209,6 +236,13 @@ def walk(pads: list[Pad], gd: dict[int, dict], t_end: int | None = None) -> Walk
                     flipped = True
                 grav_here.append(p.uid)
             out.fired.setdefault(p.uid, []).append(t)
+            latched.add(p.uid)
+        # A pad the player has left is armed again. GD skips a latched pad
+        # BEFORE the shape test, so it cannot notice the contact ending; the
+        # latch is cleared for it by the collision system. Re-testing here is
+        # the same release one tick later at worst, and it is what lets this
+        # walk tell a second contact from a continuing one at all.
+        latched &= touching
         # The verdict column's own test: if the recording's gravity at the end
         # of this tick is not what the walk just produced, something the walk
         # does not model moved it (a gravity portal fires before the pad loop
@@ -219,6 +253,10 @@ def walk(pads: list[Pad], gd: dict[int, dict], t_end: int | None = None) -> Walk
                 out.fired[uid].pop()
                 if not out.fired[uid]:
                     del out.fired[uid]
+                # ...and un-latch it, or a pad whose firing was just rolled
+                # back stays armed-as-spent for the rest of the contact and
+                # can never be recorded at all.
+                latched.discard(uid)
     return out
 
 
