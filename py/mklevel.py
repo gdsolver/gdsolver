@@ -1545,6 +1545,59 @@ def build_ufojump(speed: int = 0) -> str:
     return header(speed=speed) + ";" + ";".join(objs) + ";"
 
 
+def build_ufoexit() -> str:
+    u"""Does a UFO get a slope-exit launch on the FLOOR side? Rig says yes/no.
+
+    build_ramps is the exit-launch rig and its own note says why the UFO is not
+    in it: "The flight modes (ship/UFO/wave) need input, so they get their own
+    rig." That rig was never written. So the UFO's exit has no measurement on
+    the floor side, exactly as its on-ramp flap had none until `calib_ufojump`.
+
+    lv19 t=14,643 is the corpus' single witness and it says GD does not launch:
+    the model ends the ride and overwrites vy 5.162 -> 2.877, while GD takes one
+    plain gravity step, 5.162 - 0.129 = 5.033, and flies on. The -2.156 then
+    persists exactly, which is the signature of one velocity overwrite and not
+    of a continuing mechanism.
+
+    THIS RIG MEASURES AN ABSENCE, so it carries two separate proofs:
+      * the two CUBE control cells prove the rig can see an exit at all. Their
+        expected value is computed from slopeExitVy with this rig's own inputs,
+        NOT recalled from calib_ramps -- that rig's geometry is not this one, and
+        a remembered number would let "roughly right" pass.
+      * a cube riding proves nothing about a UFO riding: hitboxes and seating
+        conditions differ per mode. So each UFO cell must show the riding
+        signature in its own right for the ticks before the exit -- onGround
+        held, y following the line, vy stepping -0.129 (mini -0.152). A cell
+        without that signature is a cell where the UFO never sat down, and its
+        silence means nothing; it gets thrown away, not read as "no launch".
+
+    Zero input throughout, like build_ramps, so there are no press ticks to
+    drift and no two-pass rebuild. ramps=3 only: `calib_ufojump` established that
+    ride time does not enter the UFO's on-ramp value at all (factor 0.674 against
+    1.000, same result), so a second ride length would cost cells and decide
+    nothing.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for mini in (False, True):
+        x0 = x
+        u, x = ramp_unit(x, "cube", 1.0, mini, 3, 0.0)
+        objs += u
+        UNITS.append({"x0": x0, "x1": x, "mode": "cube", "m": 1.0,
+                      "mini": int(mini), "ramps": 3, "bury": 0.0,
+                      "cell": "control"})
+    for m in (1.0, 0.5, 2.0):
+        for mini in (False, True):
+            x0 = x
+            u, x = ramp_unit(x, "ufo", m, mini, 3, 0.0)
+            objs += u
+            UNITS.append({"x0": x0, "x1": x, "mode": "ufo", "m": m,
+                          "mini": int(mini), "ramps": 3, "bury": 0.0,
+                          "cell": "sweep"})
+    objs += floor_run(0, PAVE_X)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 def build_orbs() -> str:
     """Orb calibration rig. Ground modes x orb kinds x normal/mini.
 
@@ -4601,6 +4654,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
     "ridedrop": build_ridedrop,
     "rampjump": build_rampjump, "ufojump": build_ufojump,
     "ufojump_sp": lambda: build_ufojump(speed=2),
+    "ufoexit": build_ufoexit,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,
             "holdjump_cube": lambda: build_holdjump("cube"),

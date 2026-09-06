@@ -1,0 +1,82 @@
+[
+ {
+  "x0": 90.0,
+  "x1": 1200.0,
+  "mode": "cube",
+  "m": 1.0,
+  "mini": 0,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "control"
+ },
+ {
+  "x0": 1200.0,
+  "x1": 2310.0,
+  "mode": "cube",
+  "m": 1.0,
+  "mini": 1,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "control"
+ },
+ {
+  "x0": 2310.0,
+  "x1": 3420.0,
+  "mode": "ufo",
+  "m": 1.0,
+  "mini": 0,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "sweep"
+ },
+ {
+  "x0": 3420.0,
+  "x1": 4530.0,
+  "mode": "ufo",
+  "m": 1.0,
+  "mini": 1,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "sweep"
+ },
+ {
+  "x0": 4530.0,
+  "x1": 5730.0,
+  "mode": "ufo",
+  "m": 0.5,
+  "mini": 0,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "sweep"
+ },
+ {
+  "x0": 5730.0,
+  "x1": 6930.0,
+  "mode": "ufo",
+  "m": 0.5,
+  "mini": 1,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "sweep"
+ },
+ {
+  "x0": 6930.0,
+  "x1": 8040.0,
+  "mode": "ufo",
+  "m": 2.0,
+  "mini": 0,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "sweep"
+ },
+ {
+  "x0": 8040.0,
+  "x1": 9150.0,
+  "mode": "ufo",
+  "m": 2.0,
+  "mini": 1,
+  "ramps": 3,
+  "bury": 0.0,
+  "cell": "sweep"
+ }
+]
