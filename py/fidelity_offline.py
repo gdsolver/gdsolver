@@ -17,6 +17,17 @@ only valid against dumps taken from the plans it is replaying now.
     python py/fidelity_offline.py                # all 22
     python py/fidelity_offline.py 16 22          # two levels
 
+A SECOND ARM, under one switched rule, is the same command with a name of its
+own and the flag appended -- and, because it goes through model_replay, it gets
+a sidecar saying so:
+
+    python py/fidelity_offline.py 20 --out-prefix satrot --extra-flag=--no-satrotraw
+
+The `=` is not decoration: `--extra-flag --no-satrotraw` is read by argparse as
+an option, not as its value. The trace lands beside the default one
+(build/fidelity/satrot_lv20.trace.csv) rather than overwriting it, so the two
+arms can be compared afterwards.
+
 NUMBERS TAKEN THROUGH HERE BEFORE 747dadf ARE WRONG FOR lv22. Until that commit
 this called model_replay without whole_run, so --rotqueue never reached the
 solver, and lv22 came out with its first divergence at 6,315 -- 365 ticks early
@@ -50,6 +61,13 @@ def main() -> int:
                     help="path to the plan; {} is replaced by the level number")
     ap.add_argument("--tol", type=float, default=0.3)
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
+    ap.add_argument("--out-prefix", default="off",
+                    help="trace basename, <prefix>_lv<N> (default: off)")
+    ap.add_argument("--extra-flag", action="append", default=[],
+                    metavar="FLAG",
+                    help="extra leveldp flag, repeatable; write it as "
+                         "--extra-flag=--no-satrotraw, or argparse reads the "
+                         "value as an option of its own")
     a = ap.parse_args()
 
     fid = Path(a.dumps)
@@ -60,6 +78,8 @@ def main() -> int:
     # one number for both players and three quantities (see F.PER_HALF_NOTE).
     per: list[F.Result] = []
     print(f"fidelity (model side only, dumps from {fid}, tol={a.tol})")
+    if a.extra_flag:
+        print(f"extra leveldp flags: {' '.join(a.extra_flag)}")
     print(f"{'lv':<5}{'first div t=':<15}{'x=':<11}{'mode':<8}{'dy':<9}"
           f"{'dvy':<9}{'div ticks':<11}{'model/cut':<14}note")
     print("-" * 92)
@@ -78,8 +98,9 @@ def main() -> int:
         # t=6,350 with two mismatched frame/gravity transitions, and with it
         # t=6,315 agrees on both axes and the run reaches t=6,375. So every lv22
         # number measured through this entrance was a different run's.
-        trace, died, _ = F.model_replay(lv, plan, fid / f"off_lv{lv}",
-                                        Path(a.leveldp), False, whole_run=True)
+        trace, died, _ = F.model_replay(lv, plan, fid / f"{a.out_prefix}_lv{lv}",
+                                        Path(a.leveldp), False, whole_run=True,
+                                        extra_flags=a.extra_flag)
         # goal_x is a GD-session number and there is none here; gd_cut_tick's
         # fallback finds the frozen tail in the dump itself, which is the same
         # tick for a level the plan clears.

@@ -609,15 +609,29 @@ TRACE = {
     "raw": dict(name="off_lv20.trace.csv", flags=MOVING_GEOMETRY_FLAGS),
 }
 
-# satrot_lv20.trace.csv is not written by a standing instrument. Make it with
-# off_lv20's own recorded argv plus the one flag, which is also how it was made
-# here -- the sidecar of the trace beside it says exactly what to repeat:
+# build/fidelity is a working directory and neither trace is tracked, so a
+# clean checkout has to make them both. They come out of one command twice: the
+# second arm is the first one's argv plus the one flag, and because it goes
+# through fidelity_diff.model_replay it gets a sidecar that SAYS so.
 #
-#   python py/fidelity_offline.py 20          # -> off_lv20.trace.csv + sidecar
-#   <that sidecar's argv, with --out ...satrot_lv20 and --no-satrotraw appended>
+#   python py/fidelity_offline.py 20
+#       -> build/fidelity/off_lv20.trace.csv     (the `raw` arm)  + sidecar
+#   python py/fidelity_offline.py 20 --out-prefix satrot --extra-flag=--no-satrotraw
+#       -> build/fidelity/satrot_lv20.trace.csv  (`spin_minus`)   + sidecar
 #
-# `flags` above then refuses it if the flag is missing, which is the point:
-# without it the file is the OTHER arm and every row would be believed anyway.
+# Write the flag with `=`. `--extra-flag --no-satrotraw` is read by argparse as
+# an option of its own, not as the value. `--out-prefix` puts the second arm
+# beside the first rather than over it, which is what lets them be compared.
+#
+# `flags` above then refuses the file if --no-satrotraw is missing from its
+# sidecar, which is the point: without the flag the file is the OTHER arm and
+# every row would be believed anyway. Until 2026-09-06 model_replay took no
+# extra flags, so the second line could only be a hand-assembled argv -- which
+# writes no sidecar, so `flags` could never accept what it produced, and the two
+# tests below that read this trace skipped on every machine but the one this
+# file was written on. `--extra-flag` is what closed that; the trace it makes
+# was byte-identical to that hand-assembled one when the two were compared
+# (2026-09-06, leveldp sha256 f726579f).
 
 
 class TestFixtureStillMatchesTheFiles(unittest.TestCase):

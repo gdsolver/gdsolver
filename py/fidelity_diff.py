@@ -148,12 +148,23 @@ def whole_run_args(level: int) -> list[str]:
 
 def model_replay(level: int, plan_out: Path, out_base: Path, leveldp: Path,
                  with_fixups: bool,
-                 whole_run: bool = False) -> tuple[Path, int, str]:
+                 whole_run: bool = False,
+                 extra_flags=()) -> tuple[Path, int, str]:
     """Replay the plan with leveldp to build .trace.csv. (trace, tick of death, raw log).
 
     `whole_run` selects the flags that are only right from t=0 (see
     whole_run_args). It defaults to False because quick_regress calls this for
     ANCHORED sections, where those flags are actively wrong.
+
+    `extra_flags` are appended last, after everything assembled above. They
+    exist so that a differential arm -- the same plan and the same inputs under
+    one switched rule, e.g. `--no-satrotraw` -- can be produced THROUGH THIS
+    FUNCTION and therefore with a sidecar. Assembling that argv by hand instead
+    leaves a trace nothing can attribute, and gdtas.compare.require_replay_flags
+    then cannot tell the switched arm from the unswitched one: they differ in a
+    flag and in nothing else, which is precisely what only the argv records.
+    They are not filtered or interpreted here; whatever is passed lands in argv
+    and so in the sidecar.
     """
     objrects = LEVEL_DATA / f"objrects_lv{level}.txt"
     args = [str(objrects), "--replay", str(plan_out), "--out", str(out_base)]
@@ -169,6 +180,7 @@ def model_replay(level: int, plan_out: Path, out_base: Path, leveldp: Path,
     fx = Path(str(plan_out) + ".fixups.txt")
     if with_fixups and fx.exists():
         args += ["--fixups", str(fx)]
+    args += [str(f) for f in extra_flags]
     argv = [str(leveldp)] + args
     r = subprocess.run(argv, stdout=subprocess.PIPE, text=True, errors="replace")
     m = re.search(r"REPLAY: model DIED at t=(\d+)", r.stdout)
