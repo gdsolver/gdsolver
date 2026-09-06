@@ -279,6 +279,20 @@ def diff_trace(trace_path: Path, dump_path: Path, t0: int = 0,
 
     `per_half` therefore counts each quantity of each half against tol ON ITS OWN.
     It is purely additive: nothing above it changed meaning or name.
+
+    PHASE. The join is `model[t]` against `gd[t]`, and both rows are written at
+    the end of their tick: the mod's dump row comes last in processCommands
+    ("after the player's physics is settled", hooks_gamelayer.cpp), leveldp's
+    trace row last in the replay loop. Measured 2026-09-06 over 379,480 ticks
+    where the two sides agree to 0.001 across +/-10 ticks: x, y and vy match at
+    d=0 in all 16 (mode, flipped) regimes and disagree at every other shift
+    (d=+/-1 costs 8,000 to 190,000 ticks), so the three quantities THIS
+    function compares are aligned and the join is not off by a tick.
+    The p2 pair is weaker. `dual`, `p2y`, `p2vy` and `p2x` all take d=0 as the
+    minimum, but the sample is 2,331 ticks of one level's dual span, and the
+    windows are built from p1's x/y/vy alone -- p2 is not constrained by them,
+    so a residual on p2y/p2vy is more likely p2 really diverging than a phase
+    fact. Nothing here has been shown about p2's phase.
     """
     if not trace_path.exists():
         return {"error": f"no {trace_path}"}

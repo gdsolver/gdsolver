@@ -102,6 +102,22 @@ BASELINE = REF / "baseline.json"
 # reads, the second half is what building --start needs (the same columns
 # an anchor is built from a GD dump row).
 # The raw dump is 2.5MB on lv20; trimmed it comes to less than half that
+#
+# WHAT THE TRIM DROPS IS A FACT ABOUT EVERY ANCHORED INSTRUMENT. `trim_dump`
+# writes with extrasaction="ignore", so a column missing from this list is
+# missing from data/gdref no matter what the mod emits. `p2mode`, `p2vsize`
+# and `p2x` are missing, and all three are read downstream: start_fields
+# (fields 25/26) and gdtas.compare's (GD, P2) column map. start_fields
+# therefore resolves them to -1 = "not told" on EVERY gdref row, and the
+# reach is every instrument that anchors from read_ref -- quick_regress's own
+# sections, fixcensus, deathref, reach_check and secqueue, five in all.
+# Verified 2026-09-06 against the recorded header of gdref/lv1.csv, and by
+# eligible=0 for those three across 1,116 anchored sections.
+# It is inert on the official corpus (measured on the whole-run dumps, which do
+# carry them: 2,331 dual ticks, p2mode and p2vsize never differ from p1's) --
+# but the comment at the emitting site reads as though only a reference
+# recorded before 2026-08-28 would fall back to -1, and that is not what
+# decides it. This list is.
 REF_COLS = ["attempt", "tick", "x", "y", "yvel", "mode", "vsize",
             "dual", "p2y", "p2vy", "p2up", "p2ground", "p2ground2",
             "upsideDown", "onGround", "onGround2", "speed", "pmin", "pmax",
@@ -362,6 +378,13 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
     # the old comment claimed: measured on the rig `dualmode`, 3,471 consecutive
     # with the modes apart and 4,676 with the sizes. The official corpus never
     # does it (lv16's whole cold run agrees on both), so this is inert here.
+    # [2026-09-06] AND IN PRACTICE THESE TWO BRANCHES NEVER RUN. gdref has no
+    # p2mode / p2vsize column at all -- REF_COLS does not list them and
+    # trim_dump ignores extras -- so `r.get("p2mode")` is None on every
+    # reference row and both fall to -1 regardless of when it was recorded.
+    # Every caller of start_fields anchors from read_ref, so that is all five
+    # of them. The columns still do their job in a whole-run comparison, whose
+    # GD side is the untrimmed dump; they are simply unreachable from here.
     m2 = MODE_ID[r["p2mode"]] if du and r.get("p2mode") in MODE_ID else -1
     mn2 = -1
     if du and r.get("p2vsize") not in (None, ""):

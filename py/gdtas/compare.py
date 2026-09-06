@@ -184,6 +184,63 @@ MODEL = "model"    # a trace written by leveldp (*.trace.csv)
 # Columns, per source kind and half. A quantity absent for a half is absent
 # here rather than guessed: `column()` raises, and the caller finds out at the
 # door instead of comparing whatever the fallback happened to be.
+#
+# PHASE. This table pairs a GD column with a model column; it does not say the
+# two are written at the same point in the tick, and until 2026-09-06 nothing
+# did. Two columns had been caught late -- the dump's `onSlope` is phase-blind
+# because checkCollisions zeroes it at the top of every tick, and `onGround`
+# was read as phase-offset from `grounded` on the strength of a per-mode
+# breakdown. That second one was wrong, and how it was wrong is the reusable
+# part:
+#
+#   `A is already 1 while B goes 0->1` reads just as naturally as "A fires
+#   early" as it does as "A is looser", and ONE SHIFT SWEEP DECIDES between
+#   them. Disagreement concentrated in particular modes is NOT evidence for
+#   the offset reading -- a mode-dependent predicate WIDTH produces exactly
+#   the same shape, and here it was the width.
+#
+# What was measured on 2026-09-06, over 379,480 ticks inside zero-divergence
+# windows (|dx|,|dy|,|dvy| <= 0.001 across +/-10 ticks, so the two sides are on
+# one trajectory and a residual column difference can only be a write position
+# or a difference of meaning), leveldp 19:41 f726579f against gdref and
+# build/fidelity. "Aligned" below means the shift scan put d=0 at a strict
+# minimum; where a residual is named it survives every shift and is therefore
+# about what the columns MEAN:
+#
+#   y / vy / x        aligned, 0 disagreeing ticks at d=0 in all 16 regimes
+#                     (this is the window's own definition -- it is the proof
+#                     that the check CAN return "aligned", not an independent
+#                     result)
+#   mode              aligned, 0 at d=0; all 111 transitions at delta 0
+#   gravity           aligned, 0 at d=0; all 649 transitions at delta 0. NOTE
+#                     the gframe=3 inversion has to be applied first (the same
+#                     statement `gdUpOf` makes) or every frame-3 tick reads as
+#                     a mismatch
+#   vsize             aligned in 12 regimes, no power in 4 (the column never
+#                     moves there); all 49 transitions at delta 0
+#   dual              aligned in 5, no power in 11
+#   ground            aligned, and the residual is a DIFFERENT PREDICATE. d=0
+#                     is the minimum in every regime and no shift buys back
+#                     what is left. The census that first reported offsets in
+#                     ship/ufo/wave/spider re-ran the question as a shift sweep
+#                     and retracted it: of its own disagreements, 682 sit at
+#                     d=0, none at any other shift, and in the remaining 48
+#                     GD's flag is already 1 and stays 1. GD calls the player
+#                     grounded in states the model does not -- see
+#                     gdtas.solveutil.grounded_of, which is the conversion.
+#   rot               aligned for cube/ship/wave/robot (d=0 a dramatic
+#                     minimum). The huge residual in ball/ufo/swing is the
+#                     known unimplemented player rotation, not a phase fact
+#   speed             UNVERIFIED: 8 of 16 regimes have no power and the rest
+#                     carry a residual the shift cannot touch. `speed` and the
+#                     model's `dx` are related by a mapping that is not pinned,
+#                     so phase and mapping cannot be told apart here
+#
+# The blind spot of all of the above: a zero-divergence window only exists
+# where the model is already right. lv20 contributes 37% of its ticks, lv22
+# 51%, lv19 51%. A phase defect that is itself a cause of divergence is
+# precisely what this cannot witness. Details and the per-regime tables are in
+# the lab note measure-dump-column-phases-2026-09-06.
 COLUMNS: dict[tuple[str, Half], dict[str, str]] = {
     (GD, Half.P1): {"y": "y", "vy": "yvel", "x": "x", "mode": "mode",
                     "vsize": "vsize", "speed": "speed", "gravity": "upsideDown",
@@ -191,6 +248,15 @@ COLUMNS: dict[tuple[str, Half], dict[str, str]] = {
     # No `rot` for p2 on either side: neither the dump nor the trace carries
     # the partner's sprite angle. Absent here means `column()` raises and the
     # caller finds out at the door, which is the point of the table.
+    # THREE OF THESE ARE NOT IN gdref. quick_regress.REF_COLS trims the dump to
+    # 24 columns on the way into data/gdref, and `p2mode`, `p2vsize` and `p2x`
+    # are not among them -- so a comparison whose GD side is a gdref row cannot
+    # reach them at all, whatever the mod emits. Only build/fidelity's
+    # fid_lv*.dump.csv (the raw 37-column dump) carries them. Measured
+    # 2026-09-06: eligible=0 for all three over 1,116 anchored sections, and
+    # 2,331 ticks each on the whole-run dumps, where p2mode and p2vsize never
+    # move (so they are unverified, not verified) and p2x is aligned at d=0
+    # with all 2,331 ticks disagreeing at every other shift.
     (GD, Half.P2): {"y": "p2y", "vy": "p2vy", "x": "p2x", "mode": "p2mode",
                     "vsize": "p2vsize", "speed": "speed", "gravity": "p2up",
                     "ground": "p2ground", "dual": "dual"},

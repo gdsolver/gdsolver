@@ -114,6 +114,16 @@ def has_grouped_colliders(path) -> bool:
 # Trace columns, for cause_of:
 #   0 tick 1 x 2 y 3 vy 4 mode 5 grounded 6 dual 7 y2 8 vy2 9 flip2 10 act
 #   11 onslope 12 slopem 13 slopet 14 bandf 15 bandc 16 mini 17 held 18 dx
+#
+# THESE ARE THE MODEL'S COLUMNS. In particular column 11 is leveldp's
+# `s.onSlope`, not GD's: the dump has no onSlope field (the mod's 37-column
+# header does not carry one, and GD's flag surfaces only in the `slp:` log
+# lines of hooks_player.cpp). So the known fact that GD's onSlope is
+# phase-blind -- checkCollisions zeroes it at the top of every tick -- has no
+# consumer in any GD-vs-model comparison; a 2026-09-06 sweep of py/ and mcp/
+# found `onslope` read here and nowhere else. Worth knowing before treating it
+# as a live hazard: it is a hazard for anyone reading the log line, and for
+# nothing in this tree.
 def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
              gd_mode: int = -1, gd_grounded_out: str | None = None,
              gd_mode_out: int | None = None) -> str:
@@ -145,6 +155,18 @@ def cause_of(row: list, nxt: list | None = None, gd_grounded: str = "?",
     # this "integration error in free flight" and "the model missed a contact"
     # share a signature. Measured on lv20: m1/mini1/g0/air was 47 of 59 records
     # with an 11.8 px spread in dy -- the mark of two causes mixed, not one.
+    #
+    # `gdg` IS THE RAW COLUMN, NOT grounded_of(). fixcensus.eval_trace passes
+    # `g0.get("onGround")` straight through, while every anchor built from the
+    # same recording is translated by grounded_of first, and the two mean
+    # different things in ship / ufo / wave / spider -- the per-mode gap, and
+    # the two families that change when the corroborated flag is substituted,
+    # are in grounded_of's docstring below. Read here rather than there because
+    # this is where the letter is minted: `gdg1` on a flying-mode record means
+    # "GD's contact flag was set", not "GD was resting on something", and about
+    # a third of ship's records carry it for a body in free flight.
+    # NOT CHANGED: the key is what the family baseline is named by, and
+    # renaming it moves every family at once.
     parts = [f"m{row[4]}", f"mini{row[16]}", f"g{row[5]}", f"gdg{gd_grounded}"]
     # ...and GD's own within-tick transition of it, when there is one. This is
     # what carries "GD seated on this tick" (see the docstring).
@@ -251,6 +273,13 @@ def grounded_of(mode: int, on_ground: str, on_ground2: str, yvel: str) -> int:
     t=19,104 and lv19 t=21,422 both go `g0/gdg1` -> `g0/gdg0` when the
     corroborated flag is substituted.
     See notes/measure-onground-phase-offset-2026-09-06.
+
+    Corroborated from the other direction by the column-phase audit
+    (notes/measure-dump-column-phases-2026-09-06), which swept d = -3..+3 over
+    379,480 ticks in the same kind of window and found d=0 the strict minimum
+    in all 16 (mode, flipped) regimes -- for the raw column, for `onGround2`,
+    and for this function's output alike. Two instruments, opposite starting
+    assumptions, no shift in either.
     """
     if mode in FLYING:
         return 1 if (on_ground == "1" and on_ground2 == "1"

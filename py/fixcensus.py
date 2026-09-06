@@ -82,6 +82,14 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
         # GD's has to come from the same row. GD's values on the way out are
         # passed separately and surface as gdgo/gdmo when they differ -- see
         # cause_of's docstring for the four families the old mismatch misread.
+        # THE ROW IS RIGHT; THE COLUMN IS RAW. `onGround` goes in untranslated,
+        # while quick_regress.start_fields -- reading the very same reference --
+        # puts it through grounded_of first. The two are not the same predicate
+        # (grounded_of's docstring has the per-mode gap and the two families
+        # that flip when the corroborated flag is substituted), so what a
+        # census record means by `gdg1` in ship/ufo/wave is "GD's flag was
+        # set", not "GD was resting". Neither choice is wrong; the key just has
+        # to be read as the one it is.
         cause = cause_of(m0, m1, g0.get("onGround", "?"),
                          MODE_ID.get(g0.get("mode", ""), -1),
                          g1.get("onGround", "?"),
