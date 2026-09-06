@@ -1946,8 +1946,17 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // `s.rot` is the previous tick's rotation in both places.
         const double pHalfE = (c.mode == 4 && c.mini) ? kWaveContactHalfMini
                                                       : pHalf;
+        // [2026-09-06] The one-step advance is deleted here as well; the
+        // mechanism is at the pad site and the measurement in constants.hpp
+        // (g_noSatRotRaw, which is the switch that puts it back). What the
+        // corpus decides at THIS site is small and it is not a first fire: of
+        // the oriented gravity portals a cube reaches, lv16's uid 3448 (type 4)
+        // answers the same either way and is a no-op anyway (`upsideDown` is 0
+        // across 8,008..8,020), and lv16's uid 3450 (type 3) fires first on
+        // 8,062 either way -- the arms part only on the TAIL of the contact,
+        // 8,072 against 8,073.
         double pRotE = (double)s.rot;
-        if (s.mode == 0)
+        if (g_noSatRotRaw && s.mode == 0)
             pRotE += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
         bool gravPortalThisTick = false;
         const Obj* gravPortalP = nullptr;
@@ -8272,13 +8281,31 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // is really 34: firing on the bound made the model a cube 48 px early,
         // it flew over the ramp that kills GD's wave, and the DP returned SOLVED
         // on a plan GD kills at x=27,713. See Obj::oriented / orientedHit.
-        // ...at the rotation GD has on THIS tick. `s.rot` is where the previous
-        // tick ended and the model applies its own step later (the block by the
-        // stair snap), so the portal looks one step back: measured on lv22,
-        // s.rot sits 1.706 deg past GD's value for the same tick and one step
-        // back matches it to 0.025 deg.
+        // ...at the rotation the state carries, `s.rot`, which is where the
+        // previous tick ended.
+        //
+        // [2026-09-06] THE ONE-STEP ADVANCE IS DELETED HERE TOO (the pad site's
+        // comment has the mechanism; `--no-satrotraw` restores it). All four
+        // sites carried one expression and they move together.
+        //
+        // WHAT THE PARAGRAPH ABOVE USED TO SAY, AND WHY IT IS NOT SIMPLY GONE:
+        // it read "the portal looks one step back: measured on lv22, s.rot sits
+        // 1.706 deg past GD's value for the same tick and one step back matches
+        // it to 0.025 deg". That measurement CANNOT BE RE-DERIVED from the
+        // corpus as it stands: objrects_lv22.txt (2026-09-04) has 1,173 oriented
+        // objects and NOT ONE of them is a pad, a portal or a speed object --
+        // they are type 2 / 7, one non-speed type-20 and one type-37 dash ring,
+        // none of which reaches this line. So whatever was measured, it was not
+        // an lv22 object that passes through here, and the sentence cannot be
+        // checked. It is recorded rather than deleted because "the evidence for
+        // this line is not reproducible" is itself the finding; if a witness for
+        // it turns up, it belongs here with the level and the tick named.
+        // Note also that the two comments that justified this expression
+        // disagreed with each other -- this one said the portal looks one step
+        // BACK, the pad site said one step FORWARD -- for one shared line of
+        // code, which is the shape of a rule nobody could re-measure.
         double pRotHere = (double)s.rot;
-        if (s.mode == 0)
+        if (g_noSatRotRaw && s.mode == 0)
             pRotHere += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
         // --slopedbg: make "passed the x window but rejected by the OBB" visible.
         // Without this it cannot be told apart from "never entered the window"
@@ -9782,13 +9809,23 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         //   (|ly| = 24.32, outside the rotated box's threshold ohh + r = 22.39)
         // The bounding rect is stage 1 of GD's own two-stage test, so the two
         // lines above stay.
-        // The player's rotation is passed too (same promise as the portals:
-        // `s.rot` is the end of the previous tick, so one step advanced is GD's
-        // angle for this tick). An axis-aligned projection (pRot=0) is still 1
-        // tick early: on uid7030 above, |ly|=19.08 passes against the threshold
-        // 22.39.
+        // The player's rotation is passed too, AS IT STANDS: `s.rot` is the end
+        // of the previous tick and that is what the gate is given. An
+        // axis-aligned projection (pRot=0) is 1 tick early: on uid7030 above,
+        // |ly|=19.08 passes against the threshold 22.39.
+        //
+        // [2026-09-06] THE ONE-STEP ADVANCE THAT USED TO SIT HERE IS DELETED --
+        // `--no-satrotraw` puts it back, and constants.hpp carries the whole
+        // measurement. In one line: it read
+        //     pRotPad += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
+        // while the cube's rotation law 1,100 lines below writes
+        //     c.rot += (spinSign ? -rate : rate),  spinSign = s.rotNeg
+        // -- the same field with the opposite mapping, so the advance subtracted
+        // the step the law was about to add and the SAT was handed an angle TWO
+        // steps off GD's (38.166 against 34.681 on lv20 t=7,296, the +3.484 the
+        // paragraph below used to end on).
         double pRotPad = (double)s.rot;
-        if (s.mode == 0)
+        if (g_noSatRotRaw && s.mode == 0)
             pRotPad += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
         // [2026-09-06 morning, RETRACTED THE SAME DAY -- kept because the
         // evidence for it was real and the next reader will meet it again]
@@ -9871,13 +9908,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // board anyway) to 36.43 against GD's 36.41. This rule needs a right
         // angle to feed it; on its own it changed nothing at all.
         //
-        // The last tick is a THIRD quantity, not the shape and not `rot`: the
-        // model's rot column tracks GD's to 0.023 deg through 7,292..7,297,
-        // but the one-step advance two lines above moves the OPPOSITE way to
-        // it (`rotNeg` is 1 while the column itself is stepping -1.7308), so
-        // the angle handed to the SAT sits two steps ahead of GD's -- 38.166
-        // against 34.681 on 7,296. Correcting that sign is a separate leaf and
-        // is NOT attempted here.
+        // The last tick was a THIRD quantity, not the shape and not `rot`: the
+        // model's rot column tracks GD's to 0.023 deg through 7,292..7,297, and
+        // it was the one-step advance above -- moving the OPPOSITE way to the
+        // column's own step -- that put the SAT's angle two steps ahead of GD's.
+        // [2026-09-06] That leaf is now taken: the advance is deleted and this
+        // pad fires at 7,299, which is GD's own tick. lv20's first divergence
+        // moves off it; the level still dies later (fixcensus lists four other
+        // lv20 divergences), so this is one tick, not the level.
         if (pd->oriented && !orientedHit(*pd, x, (double)c.y, pHalf, pRotPad))
             continue;
         // NO FOOT-SIDE TEST (2026-08-07). The rule below was live for four days
@@ -11218,9 +11256,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // model hit 1 tick early with the start-of-tick y + an unrotated
             // box, and census `m4/.../gdm3/sp0.7` edy +0.252 remained to the
             // end. Same formula as the portal pass's pRotHere.
+            // [2026-09-06] ...minus the one-step advance, deleted at all four
+            // sites that carried it (the pad site has the mechanism,
+            // constants.hpp's g_noSatRotRaw the measurement and the switch).
+            // No oriented speed portal in the corpus separates the two arms:
+            // lv18's uid 14054 is the one a cube reaches and it fires on the
+            // same tick either way, so this site is undecided by the corpus and
+            // moves because all four carry one expression, not on a witness.
             if (sp->oriented) {
                 double pRotSp = (double)s.rot;
-                if (s.mode == 0)
+                if (g_noSatRotRaw && s.mode == 0)
                     pRotSp += (s.rotNeg ? 1.0 : -1.0)
                               * (s.mini ? 2.25 : 1.7307692);
                 const bool hit = orientedHit(*sp, x, (double)c.y, pHalfSp,

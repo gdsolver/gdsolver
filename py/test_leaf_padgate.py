@@ -8,6 +8,16 @@
     Q1  Given GD's OWN inputs, does the predicate return GD's answer?
     Q2  Given the same situation, do the MODEL's inputs equal GD's?
 
+Q2 IS GREEN NOW, and it was red for one line of arithmetic. Until 2026-09-06
+the four oriented-contact sites in step.hpp advanced `s.rot` by one spin step
+signed by `s.rotNeg` before the SAT, while the cube's own rotation law adds a
+step signed by THE SAME FIELD the other way -- so the advance subtracted the
+step the law was about to add. Deleting it (`g_noSatRotRaw`, and
+`--no-satrotraw` puts it back) moves this pad's firing 7,298 -> 7,299, which
+is GD's own tick. The `raw` arm below is that build; `spin_minus` is the same
+binary under `--no-satrotraw`, so the two differ in the rule and in nothing
+else.
+
 Every other instrument in this repository asks one question -- "does the whole
 replay change" -- and a leaf that is RIGHT BUT STARVED reads exactly like a
 leaf that is WRONG. That is not hypothetical. On 2026-09-06 the shape rule for
@@ -18,7 +28,9 @@ its acceptance table said so. Rebased onto a base that HAS 351f9de the same
 rule moves lv20's firing 7,296 -> 7,298. The pair was order-dependent, and
 neither commit's acceptance table could show it.
 
-Below, Q1 is green and Q2 is red, on the same six numbers.
+Below, Q1 is green on the same six numbers, and Q2 is green for the shipped
+build (`raw`) and red for the two arms that came before it -- kept, because a
+green arm with nothing beside it says nothing about what was wrong.
 
 WHAT THIS CANNOT PROVE -- and what now can. gdtas.padgate is a TRANSCRIPTION of
 the C++, so Q1 is a statement about the RULE (this reading of GD's predicate
@@ -61,29 +73,39 @@ SOURCES, all on disk, no game:
                        dump is present). Taken from the deciding column, not
                        from a comment that names the tick.
     the model's angle  `rot` and `rotneg` of row t-1 (see padgate.sat_angle on
-                       the phase), from ONE TRACE PER ARM. The arms are named
-                       by the SIGN of the cube's same-tick pad spin at t=7,295
-                       -- 128.1656 stepping to +129.8963 in one and to
-                       -126.4348 in the other, the single expression 351f9de
-                       changed -- and NOT by a commit.
-                         spin_minus  build/fidelity/off_lv20.trace.csv, from
-                           `python py/fidelity_offline.py 20` at b545b96. It
-                           carries a `.prov.json` (df64259's sidecar), so the
-                           binary is named by sha256 (482,816 B,
-                           0b9d0b01ecb285bf...) and the argv is on record:
-                           `--replay --triggers --objgroups --obb` and four
-                           `--groups`, with extra.died = 15,125.
+                       the phase), from ONE TRACE PER ARM, each read under the
+                       rule ITS OWN BUILD applies (ARM_ADVANCE).
+                         raw         build/fidelity/off_lv20.trace.csv, from
+                           `python py/fidelity_offline.py 20` on the shipped
+                           build. No advance. It carries a `.prov.json`
+                           (df64259's sidecar), so the binary is named by
+                           sha256 and the argv is on record: `--replay
+                           --triggers --objgroups --obb` and four `--groups`,
+                           with extra.died = 15,125.
                            gdtas.compare.require_replay_flags ACCEPTS it, which
                            is what rules out "a mover level replayed without
                            --groups" by record instead of by memory.
+                         spin_minus  build/fidelity/satrot_lv20.trace.csv --
+                           the SAME binary and the same argv plus
+                           `--no-satrotraw`, so it is the pre-2026-09-06 angle
+                           and nothing else. Sidecar likewise. Byte-identical
+                           to the whole-replay trace of the build before the
+                           advance was deleted, on all 22 levels.
                          spin_plus   build/fidelity/fid_lv20.trace.csv
-                           (2026-09-06 08:49). It predates the sidecar and has
-                           none, so its argv is UNKNOWN -- not vouched for, and
-                           not accused either. What can be said about it is
-                           checked here instead: its own `yvel` turns to +16 at
-                           7,296, which is the tick the transcription gives for
-                           its column, so the arm and the trace are one
-                           world-line (test_each_arm_agrees_with_its_own_trace).
+                           (2026-09-06 08:49), the pre-351f9de behaviour. It
+                           predates the sidecar and has none, so its argv is
+                           UNKNOWN -- not vouched for, and not accused either.
+                           What can be said about it is checked here instead:
+                           its own `yvel` turns to +16 at 7,296, which is the
+                           tick the transcription gives for its column, so the
+                           arm and the trace are one world-line
+                           (test_each_arm_agrees_with_its_own_trace).
+                       `spin_plus`/`spin_minus` are named by the SIGN of the
+                       cube's same-tick pad spin at t=7,295 -- 128.1656
+                       stepping to +129.8963 in one and to -126.4348 in the
+                       other, the single expression 351f9de changed -- and NOT
+                       by a commit. `raw` names the OTHER axis, the advance,
+                       and shares the minus sign with `spin_minus`.
 
 RE-PINNED 2026-09-06 (b545b96). The spin_minus rows below used to come from
 build/fidelity/abnew_lv20.trace.csv, and THAT TRACE FIRES uid 7030 AT 7,296:
@@ -180,19 +202,27 @@ GD_MODE, GD_VSIZE = "cube", 1.0       # so pHalf is 15 and the spin step 1.7308
 # at the END of the tick), "SPIN_MINUS" is the shipped one (the gravity the
 # pad's own call saw). Derived as sat_angle(trace.rot[t-1], trace.rotneg[t-1]).
 #
-# spin_minus re-pinned at b545b96 from off_lv20.trace.csv (see the docstring).
-# 7,295 and 7,296 are unchanged to the digit -- the two traces are the same run
-# until the older one fires -- and 7,297 moved by 6e-6, which is one build's
-# float32 `rot` against another's, not a mechanism.
+# spin_minus re-pinned at b545b96 (see the docstring); `raw` added when the
+# advance was deleted. Both come off the same binary, so their difference is
+# the rule and nothing else -- and the difference is one whole spin step at
+# every tick, which is what a sign inversion against a step of that size looks
+# like.
 MODEL_ANGLE = {
-    7295: dict(spin_plus=129.8963271, spin_minus=129.8963271),
-    7296: dict(spin_plus=131.627101, spin_minus=128.1655608),
-    7297: dict(spin_plus=129.8963365, spin_minus=126.4347945),
-    7298: dict(spin_plus=131.6271104, spin_minus=124.7040282),
-    7299: dict(spin_plus=133.3578844, spin_minus=122.9732561),
-    7300: dict(spin_plus=135.0886583, spin_minus=124.7040224),
-    7301: dict(spin_plus=136.8194322, spin_minus=126.43478870000001),
+    7295: dict(spin_plus=129.8963271, spin_minus=129.8963271, raw=128.1655579),
+    7296: dict(spin_plus=131.627101, spin_minus=128.1655608, raw=126.4347916),
+    7297: dict(spin_plus=129.8963365, spin_minus=126.4347945, raw=124.7040253),
+    7298: dict(spin_plus=131.6271104, spin_minus=124.7040282, raw=122.973259),
+    7299: dict(spin_plus=133.3578844, spin_minus=122.9732561, raw=121.2424927),
+    7300: dict(spin_plus=135.0886583, spin_minus=124.7040224, raw=122.973259),
+    7301: dict(spin_plus=136.8194322, spin_minus=126.43478870000001,
+               raw=124.7040253),
 }
+
+# Which arm's build applies the one-step advance -- padgate.sat_angle's
+# `advance`, the C++ site's `g_noSatRotRaw`. Reading a trace under the other
+# build's rule is the same class of error as reading it off another run
+# entirely, so it is a table and not a default.
+ARM_ADVANCE = {"spin_plus": True, "spin_minus": True, "raw": False}
 
 # The tightest SAT axis for uid 7030, px, > 0 == contact. Recomputed here from
 # the raw columns; `gd` and `flat` reproduce constants.hpp's pinned table and
@@ -200,33 +230,36 @@ MODEL_ANGLE = {
 #   gd         GD's own rotation column
 #   flat       pRot = 0, the axis-aligned square (a874728 / --no-padplayerrot)
 #   spin_plus  the model's angle before 351f9de
-#   spin_minus the model's angle after it (shipped at b545b96)
+#   spin_minus after it, still advancing one step (--no-satrotraw)
+#   raw        after the advance was deleted -- the shipped build
 # The spin_minus rows from 7,297 on are the RE-PIN: 7,298 reads +0.262 where
 # the abnew-derived fixture read +1.043. The verdict does not move (both are
 # > 0), which is why this was invisible until the traces were asked which tick
 # they themselves fired on.
+# `raw` is the only model arm whose sign column matches `gd`'s row for row:
+# refuse, refuse, refuse, refuse, TAKE at 7,299, refuse, refuse.
 MARGIN = {
     7295: dict(gd=-1.4861672460155688, flat=-1.1761857780209724,
                spin_plus=-0.7308194430079773, spin_minus=-0.7308194430079773,
-               aabb=False),
+               raw=-1.09806996435821, aabb=False),
     7296: dict(gd=-1.2133050700625923, flat=0.6724162219790273,
                spin_plus=0.29175313265397307, spin_minus=-0.4267213173153763,
-               aabb=True),
+               raw=-0.8096636177591314, aabb=True),
     7297: dict(gd=-0.9129105616716622, flat=2.5696182219790202,
                spin_plus=0.6543850630175747, spin_minus=-0.09580842694477099,
-               aabb=True),
+               raw=-0.4940930992311259, aabb=True),
     7298: dict(gd=-0.5846073396290912, flat=4.237133290576107,
                spin_plus=1.76196971166695, spin_minus=0.26226776013692543,
-               aabb=True),
+               raw=-0.15099587793251246, aabb=True),
     7299: dict(gd=0.6423154402096714, flat=5.035999113089954,
                spin_plus=2.895712567831513, spin_minus=0.6478692397947761,
-               aabb=True),
+               raw=0.22000511880159834, aabb=True),
     7300: dict(gd=-2.995830803637922, flat=0.9843928414130936,
                spin_plus=-0.8376696983618572, spin_minus=-2.990474049027256,
-               aabb=True),
+               raw=-3.403736327095526, aabb=True),
     7301: dict(gd=-6.606432470372546, flat=-3.024694667820903,
                spin_plus=-4.545476569476644, spin_minus=-6.60127751516265,
-               aabb=False),
+               raw=-6.999560878260649, aabb=False),
 }
 
 # The tick each arm first takes uid 7030, both conjuncts.
@@ -236,12 +269,13 @@ MARGIN = {
 # not assumed (test_each_arm_agrees_with_its_own_trace). It is the check the
 # old spin_minus pin failed: 7,298 here against 7,296 in the trace the numbers
 # were read from.
-FIRST_FIRE = {"gd": 7299, "flat": 7296, "spin_plus": 7296, "spin_minus": 7298}
+FIRST_FIRE = {"gd": 7299, "flat": 7296, "spin_plus": 7296, "spin_minus": 7298,
+              "raw": 7299}
 
 # The tick each arm's own trace takes the pad on, read from that trace's `vy`
 # column over 7,280..7,320 and nothing else. `gd` and `flat` have no trace:
 # `gd` is the dump (GD_ACTIVATION_TICK) and `flat` is a hypothetical angle.
-TRACE_OWN_FIRE = {"spin_plus": 7296, "spin_minus": 7298}
+TRACE_OWN_FIRE = {"spin_plus": 7296, "spin_minus": 7298, "raw": 7299}
 
 # Rows where the geometry says contact at GD's own inputs and GD does NOT
 # activate. They are not a failure of the shape rule: step.hpp's loop skips a
@@ -268,6 +302,7 @@ ARMS = {
     "flat": lambda t: 0.0,
     "spin_plus": lambda t: MODEL_ANGLE[t]["spin_plus"],
     "spin_minus": lambda t: MODEL_ANGLE[t]["spin_minus"],
+    "raw": lambda t: MODEL_ANGLE[t]["raw"],
 }
 
 
@@ -438,15 +473,59 @@ class TestQ1RuleAtGDsOwnInputs(unittest.TestCase):
 class TestQ2InputsAgainstGDs(unittest.TestCase):
     """Given the same situation, do the model's inputs equal GD's?"""
 
-    def test_the_shipped_angle_is_wrong_by_two_spin_steps(self):
-        """Q2, RED. At 7,296 the model hands the SAT 38.166 deg where GD's own
-        column reads 34.681: +3.484, which is 2 x 1.7308 (the one-step advance
-        pointing the opposite way to the column's own step) plus 0.023 of
-        column drift. The rule is right; its input is not."""
+    def test_the_advancing_angle_is_wrong_by_two_spin_steps(self):
+        """Q2 AS IT WAS, RED. With the advance (--no-satrotraw) the model hands
+        the SAT 38.166 deg at 7,296 where GD's own column reads 34.681: +3.484,
+        which is 2 x 1.7308 -- the advance pointing the opposite way to the
+        column's own step -- plus 0.023 of column drift. The rule was right;
+        its input was not."""
         err = angle_error_mod90(MODEL_ANGLE[7296]["spin_minus"],
                                 GD_ROWS[7296]["rot"])
         self.assertAlmostEqual(err, 3.484, delta=TOL)
         self.assertAlmostEqual(err, 2 * padgate.CUBE_SPIN_STEP, delta=0.03)
+
+    def test_deleting_the_advance_leaves_only_the_column_drift(self):
+        """Q2 NOW, GREEN. Without the advance the angle handed to the SAT IS
+        the model's `rot` column, which tracks GD's to 0.023 deg -- 0.006 px at
+        the local slope (0.243 px/deg), against margins of 0.15 and 0.22 px.
+
+        MIND WHICH GD ROW. The gate at tick t reads row t-1 on both sides, so
+        the honest comparison is against GD's rot at t-1; held against GD's row
+        for t it reads 1.754, and that 1.7308 is PHASE, not error. Both are
+        asserted, because reading the second as an error is the mistake the
+        deleted advance was built out of.
+
+        The step is not halved or re-signed, it is gone: the two arms differ by
+        exactly one 1.7308 -- up to 7,298, and that bound is the point. They
+        are one binary on one world-line until the advancing arm takes the pad,
+        and after that their `rot` columns belong to two different runs. 7,299's
+        gap reads 1.730763, six microdegrees off a step, because it is a
+        subtraction across that parting."""
+        self.assertAlmostEqual(
+            angle_error_mod90(MODEL_ANGLE[7296]["raw"], GD_ROWS[7295]["rot"]),
+            0.023, delta=TOL)
+        self.assertAlmostEqual(
+            angle_error_mod90(MODEL_ANGLE[7296]["raw"], GD_ROWS[7296]["rot"]),
+            padgate.CUBE_SPIN_STEP + 0.023, delta=TOL)
+        for t in range(WINDOW.t0, TRACE_OWN_FIRE["spin_minus"] + 1):
+            self.assertAlmostEqual(
+                abs(MODEL_ANGLE[t]["spin_minus"] - MODEL_ANGLE[t]["raw"]),
+                padgate.CUBE_SPIN_STEP, places=6, msg=f"t={t}")
+
+    def test_the_shipped_arm_fires_on_gds_own_tick(self):
+        """THE POINT OF THE CHANGE, stated as the pad's own answer rather than
+        as an error metric. The census of median |angle error| ranks the
+        LAW-SIGNED advance best and it fires this pad on no tick at all -- at
+        7,299 GD's rotation has already reversed through the pad's own
+        runNormalRotation, and the extrapolation lands inside the only refusal
+        notch (27.051..30.375 deg). Deleting the advance is what reproduces
+        GD, and it does so with margin on both sides: -0.151 px at 7,298 and
+        +0.220 px at 7,299."""
+        b = board(PAD)
+        self.assertEqual(fire_ticks(b, ARMS["raw"]), [GD_ACTIVATION_TICK])
+        self.assertEqual(fire_ticks(b, ARMS["gd"]), [GD_ACTIVATION_TICK])
+        self.assertLess(MARGIN[7298]["raw"], 0.0)
+        self.assertGreater(MARGIN[7299]["raw"], 0.0)
 
     def test_before_351f9de_the_error_was_twice_that(self):
         err = angle_error_mod90(MODEL_ANGLE[7296]["spin_plus"],
@@ -477,9 +556,10 @@ class TestQ2InputsAgainstGDs(unittest.TestCase):
         self.assertEqual(starved, [7296, 7297, 7298, 7299])
 
     def test_fixing_the_input_is_what_makes_the_rule_bite(self):
-        """...and with the input fixed the same rule moves the firing 7,296 ->
-        7,298, which is the number step.hpp claims at the site. One tick of
-        error is left, and it is the residual angle above, not the shape."""
+        """...and with 351f9de's input fixed the same rule moved the firing
+        7,296 -> 7,298. One tick of error was left there, and it was the
+        residual angle above and not the shape -- which is what the arm below
+        goes on to remove."""
         b = board(PAD)
         fed = fire_ticks(b, ARMS["spin_minus"])
         self.assertEqual(fed[0], 7298)
@@ -524,8 +604,20 @@ def _objrects_path() -> Path:
 # meet: it must fire where its own trace fires.
 TRACE = {
     "spin_plus": dict(name="fid_lv20.trace.csv", flags=()),
-    "spin_minus": dict(name="off_lv20.trace.csv", flags=MOVING_GEOMETRY_FLAGS),
+    "spin_minus": dict(name="satrot_lv20.trace.csv",
+                       flags=MOVING_GEOMETRY_FLAGS + ("--no-satrotraw",)),
+    "raw": dict(name="off_lv20.trace.csv", flags=MOVING_GEOMETRY_FLAGS),
 }
+
+# satrot_lv20.trace.csv is not written by a standing instrument. Make it with
+# off_lv20's own recorded argv plus the one flag, which is also how it was made
+# here -- the sidecar of the trace beside it says exactly what to repeat:
+#
+#   python py/fidelity_offline.py 20          # -> off_lv20.trace.csv + sidecar
+#   <that sidecar's argv, with --out ...satrot_lv20 and --no-satrotraw appended>
+#
+# `flags` above then refuses it if the flag is missing, which is the point:
+# without it the file is the OTHER arm and every row would be believed anyway.
 
 
 class TestFixtureStillMatchesTheFiles(unittest.TestCase):
@@ -636,7 +728,11 @@ class TestFixtureStillMatchesTheFiles(unittest.TestCase):
             derived = {}
             for t in WINDOW.ticks():
                 prev = model.row(t - 1)
-                derived[t] = sat_angle(float(prev["rot"]), int(prev["rotneg"]))
+                # ...under the rule THIS arm's build applies. Reading a trace
+                # with the other build's `advance` gives a column no run ever
+                # had, which is how a leaf comes to describe nothing.
+                derived[t] = sat_angle(float(prev["rot"]), int(prev["rotneg"]),
+                                       advance=ARM_ADVANCE[arm])
                 self.assertAlmostEqual(derived[t], MODEL_ANGLE[t][arm],
                                        places=6, msg=f"{arm} t={t}")
             gd_ang = series(gd, "rot", Half.P1, WINDOW)
@@ -680,14 +776,16 @@ def show() -> None:
           f"ohw={b.ohw:.4f} ohh={b.ohh:.4f} k={b.scale:.5f}")
     print(f"GD activates at t={GD_ACTIVATION_TICK} (yvel {GD_ROWS[7298]['yvel']} "
           f"-> {GD_ROWS[GD_ACTIVATION_TICK]['yvel']})\n")
-    print("  t     aabb |   gd      flat   spin+   spin-  | angle mod 90: "
-          "gd     spin+   spin-")
+    print("  t     aabb |   gd      flat   spin+   spin-     raw  | "
+          "angle mod 90: gd     spin+   spin-     raw")
     for t in WINDOW.ticks():
         m, r = MARGIN[t], GD_ROWS[t]
         print(f"  {t} {str(m['aabb']):>5} | {m['gd']:+7.3f} {m['flat']:+7.3f} "
-              f"{m['spin_plus']:+7.3f} {m['spin_minus']:+7.3f} | "
+              f"{m['spin_plus']:+7.3f} {m['spin_minus']:+7.3f} "
+              f"{m['raw']:+7.3f} | "
               f"{mod90(r['rot']):9.3f} {mod90(MODEL_ANGLE[t]['spin_plus']):7.3f} "
-              f"{mod90(MODEL_ANGLE[t]['spin_minus']):7.3f}")
+              f"{mod90(MODEL_ANGLE[t]['spin_minus']):7.3f} "
+              f"{mod90(MODEL_ANGLE[t]['raw']):7.3f}")
     print("\n  first fire:", ", ".join(f"{k}={v}" for k, v in FIRST_FIRE.items()))
     print("  Q1 the rule at GD's inputs: fires on GD's own tick, 7,299")
     print("  Q2 the model's input, mod 90, at t=7,296:")
@@ -699,6 +797,14 @@ def show() -> None:
           "bites, one tick of")
     print("                                      angle error left "
           "(2 x 1.7308 + 0.023 of column drift)")
+    print("       +1.754 deg (advance gone)   -> fires 7,299, GD's own tick. "
+          "What is left is one")
+    print("                                      spin step of PHASE plus 0.023 "
+          "of column drift, and")
+    print("                                      the phase is the same on both "
+          "sides -- s.rot is the")
+    print("                                      previous tick in GD too, so "
+          "the margins line up.")
 
 
 if __name__ == "__main__":

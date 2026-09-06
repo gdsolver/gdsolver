@@ -217,7 +217,7 @@ def gate(b: Board, px: float, py: float, half: float,
 # --------------------------------------------------------------- the input (Q2)
 
 def sat_angle(rot_prev: float, rot_neg_prev: int, mini: bool = False,
-              mode: int = 0) -> float:
+              mode: int = 0, advance: bool = False) -> float:
     """The angle the MODEL hands the SAT, in degrees. step.hpp's pad site.
 
     PHASE, and it is the trap this measurement fell into first: `s.rot` is the
@@ -225,13 +225,20 @@ def sat_angle(rot_prev: float, rot_neg_prev: int, mini: bool = False,
     is what the gate reads while producing tick t. Reading row t instead moves
     every margin by one tick and reproduces neither GD's answer nor the note's.
 
-    The one-step advance is the model's guess at "GD's angle for this tick". It
-    uses `s.rotNeg`, the sign left behind by the previous write, which on
-    lv20 t=7,296 points the OPPOSITE way to the column's own step -- which is
-    why the shipped angle there sits two steps ahead of GD's.
+    `advance` is the C++ site's `g_noSatRotRaw` arm, i.e. `--no-satrotraw`, and
+    it is False here for the same reason it is off there. Until 2026-09-06 the
+    four oriented-contact sites added one spin step signed by `s.rotNeg` before
+    the call; the cube's own rotation law writes `c.rot += (spinSign ? -rate :
+    rate)` with `spinSign` = that same field, so the advance subtracted the step
+    the law was about to add and the SAT was handed an angle two steps off GD's
+    (38.166 against 34.681 on lv20 t=7,296). Both arms are kept because the C++
+    keeps both, and because the historical traces this leaf pins were produced
+    by builds that advanced.
     """
     if not pad_player_rot_mode(mode):
         return 0.0
+    if not advance:
+        return rot_prev
     step = CUBE_SPIN_STEP_MINI if mini else CUBE_SPIN_STEP
     return rot_prev + (1.0 if rot_neg_prev else -1.0) * step
 
@@ -278,13 +285,18 @@ SOURCE_SPANS: dict[str, tuple[str, str, str]] = {
 }
 
 # Pinned at 6a3c721 (2026-09-06), the commit this leaf was transcribed from.
+# `pad gate angle + call` re-pinned the same day when the one-step advance was
+# deleted and put behind `--no-satrotraw`: the span's `if (s.mode == 0)` became
+# `if (g_noSatRotRaw && s.mode == 0)`, which is the whole diff inside it. The
+# other three spans did not move, and this alarm firing is what sent the
+# transcription (`sat_angle`) after the C++ rather than leaving it behind.
 PINNED_FINGERPRINTS: dict[str, str] = {
     "obbSat/orientedHit": "dfdb012e89906db3",
-    "pad gate angle + call": "848505bdddc72da5",
+    "pad gate angle + call": "716e422ff69e6a4e",
     "oriented box from the bound": "10fc68d7604a7684",
     "padPlayerRotMode": "067068fc6e480d00",
 }
-PINNED_AT = "6a3c721"
+PINNED_AT = "6a3c721, pad span re-pinned at the g_noSatRotRaw landing"
 
 
 def _strip_cpp_comments(src: str) -> list[str]:

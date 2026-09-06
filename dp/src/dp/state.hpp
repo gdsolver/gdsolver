@@ -583,13 +583,18 @@ struct State {
     // dropped: the law is already baked into the size, and the sign those two
     // inputs decide is baked into `rotNeg` at stake time. Neither had a reader.
     //
-    // ONE READER: the ball branch's own application. The three contact tests
-    // that advance the player one step (pRotE / pRotHere / pRotPad) still
+    // ONE READER: the ball branch's own application. The contact tests that
+    // advanced the player one step (pRotE / pRotHere / pRotPad / pRotSp) still
     // hard-code `mini ? 2.25 : 1.7307692` and MUST keep doing so -- those run in
     // CUBE mode, and every writer of this field is on a ball path, so pointing
     // them here would hand the cube a ball's step or a stale zero. They can be
     // folded in on the day the cube gets a stake of its own; that is a change to
     // the cube's behaviour and belongs in its own landing, not this one.
+    // [2026-09-06] Those four now advance only under `--no-satrotraw`: the
+    // advance was measured to be a sign inversion against the cube's own
+    // rotation law and is deleted by default (constants.hpp, g_noSatRotRaw).
+    // Nothing above changes -- the arm that keeps the expression keeps the
+    // hard-coded step, for the same reason.
     //
     // **At the END of the struct on purpose** -- same reason as jumpBuf above.
     float rotStep = 0.f;

@@ -239,6 +239,10 @@ inline int cliMain(int argc, char** argv) {
         // END-of-tick gravity (the pre-2026-09-06 behaviour) instead of the
         // gravity at the moment of the call. See g_noPadSpinPre.
         if (!std::strcmp(argv[i], "--no-padspinpre")) g_noPadSpinPre = true;
+        // --no-satrotraw: the four oriented-contact sites advance s.rot by one
+        // spin step before the SAT (the pre-2026-09-06 behaviour) instead of
+        // passing it as it stands. See g_noSatRotRaw.
+        if (!std::strcmp(argv[i], "--no-satrotraw")) g_noSatRotRaw = true;
         if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
@@ -1024,8 +1028,11 @@ inline int cliMain(int argc, char** argv) {
             // site in step.hpp. A type-8 pad's activation is judged with the
             // player's square TURNED BY ITS OWN ROTATION, so the anchor asks the
             // same question here, under the same three arms. (No one-step
-            // advance of the angle: `init.rot` is a whole seeded state, not the
-            // mid-tick value the loop reconstructs from `s.rot`.)
+            // advance of the angle. That used to be a DIFFERENCE from the loop,
+            // justified by `init.rot` being a whole seeded state rather than the
+            // mid-tick value the loop reconstructed from `s.rot`; since the
+            // advance was deleted at the loop's site the two ask the same thing,
+            // and `--no-satrotraw` reintroduces the difference along with it.)
             double sRotPad = (double)init.rot;
             if (o.type == 8) {
                 if (g_noPadPlayerRot) sRotPad = 0.0;

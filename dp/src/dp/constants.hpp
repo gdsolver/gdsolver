@@ -317,6 +317,64 @@ inline bool g_noBallCornG = false;      // --no-ballcorng
 // step.hpp for the 116 witnesses and the two samples in the comment there.
 inline bool g_noPadSpinPre = false;     // --no-padspinpre
 
+// --no-satrotraw: the four oriented-contact sites in step.hpp advance `s.rot`
+// by one spin step before handing it to the SAT (the pre-2026-09-06 behaviour)
+// instead of passing the state's rotation as it stands. The sites are the
+// gravity-portal pass, the portal pass, the pad loop and the speed portals;
+// they all carried the same expression
+//     pRot* += (s.rotNeg ? 1.0 : -1.0) * (s.mini ? 2.25 : 1.7307692);
+//
+// IT WAS A SIGN INVERSION AGAINST THE MODEL'S OWN ROTATION LAW. The cube's law
+// (step.hpp, the `spinNow && !c.grounded` branch) writes
+//     c.rot = c.rot + (spinSign ? -rate : rate)
+// with `spinSign` = `rotSignNow` = `s.rotNeg` on a plain airborne tick -- THE
+// SAME FIELD, THE OPPOSITE MAPPING. The advance therefore subtracted the step
+// the law was about to add. Census over the whole corpus, 240,271 cube ticks,
+// each level cut at its own first divergence so both sides stay on one
+// world-line; median |error| against GD's own `rot` column at tick t, mod 90:
+//     s.rot, no advance          1.731    (corpus 1.720 .. 2.247)
+//     s.rot - step (as shipped)  3.462    (corpus 3.450 .. 4.473)
+//     s.rot + step (law's sign)  0.023    (corpus 0.002 .. 0.664)
+//     the model's own rot[t]     0.000    (corpus 0.000 .. 0.028)
+// The shipped arm is EXACTLY TWICE the no-advance arm on every level -- 3.462
+// against 1.731 full size, 4.473 against 2.247 for lv11's mini -- which is the
+// arithmetic signature of a sign inversion and of nothing else. Independently,
+// the column's own step carries `rotNeg` with the law's sign on 180,093 of
+// 180,248 airborne cube ticks.
+//
+// AND THE REMEDY IS NOT TO FLIP THE SIGN. The census scores against GD's
+// END-OF-TICK column; the SAT is fed an angle INSIDE the tick. Asked at GD's
+// own positions for lv20's uid 7030 (Q1 -- the rule, not a trajectory), margins
+// in px at the two ticks that decide it:
+//     arm                        7,298            7,299        fires
+//     GD's own rot[t]            31.220 -> -0.585 32.950 -> +0.642  7,299
+//     s.rot, no advance          32.950 -> -0.157 31.220 -> +0.214  7,299
+//     s.rot + step (law's sign)  31.220 -> -0.585 29.489 -> -0.228  never
+//     s.rot - step (as shipped)  34.681 -> +0.257 32.950 -> +0.642  7,298
+// The law-signed arm fires NOWHERE, because GD's rotation reverses on the
+// activation tick -- the pad's own runNormalRotation turns the column from
+// -1.7308 to +1.7308 at 7,299 -- so extrapolating from the pre-pad sign lands
+// at 29.489, inside the only refusal notch at that position (swept at 0.001 deg
+// over the whole circle: refuses on 27.051 .. 30.375 and accepts everywhere
+// else). Choosing on the census median would have deleted lv20's pad.
+//
+// `s.rot` unmodified is the only candidate the model can compute before the pad
+// loop that reproduces GD's answer, and it has margin on both sides: it refuses
+// 7,298 by 0.157 px and takes 7,299 by 0.214 px, against a column drift of
+// 0.023 deg which is 0.006 px at the local slope (0.243 px/deg) -- a factor of
+// 25 of slack. All 28 cases of that table were re-evaluated through the SHIPPED
+// predicate (`leveldp --eval-padgate`): 0 disagreements, 5 hits and 23 misses,
+// so the agreement is not the trivial agreement of two functions that say no.
+//
+// REACH, measured at GD's own positions over the whole corpus: 7,765 oriented
+// objects, 46 of them in the families that reach these four sites (lv16 2,
+// lv18 4, lv19 4, lv20 23, lv21 13, lv22 none at all), of which a cube's AABB
+// window touches 13. The two arms differ on 5 objects and change a FIRST FIRE
+// on exactly one -- lv20's pad uid 7030, 7,298 -> 7,299, which is GD's tick.
+// The other four are lv16 uid 3450's contact tail (8,072 vs 8,073) and three
+// that agree. It does NOT fix lv20: the model still dies at 15,125.
+inline bool g_noSatRotRaw = false;      // --no-satrotraw
+
 // --no-padplayerrot: a rotated PAD's activation is judged with the player square
 // forced AXIS-ALIGNED (the 2026-09-06 behaviour, commit a874728), instead of
 // turned by the player's own rotation.
@@ -352,9 +410,10 @@ inline bool g_noPadSpinPre = false;     // --no-padspinpre
 // The turned square first passes at **7,299, which is GD's own activation
 // tick**; the axis-aligned one passes at 7,296, three ticks early, and that is
 // lv20's whole-run first divergence before this change. After it, at the
-// MODEL's own angle rather than GD's, the firing lands on 7,298 and the
-// divergence moves 7,296 -> 7,298 (see the site in step.hpp for the tick that
-// is left, which is a rotation-sign leaf and not this shape).
+// MODEL's own angle rather than GD's, the firing landed on 7,298 -- one tick
+// still early, and that last tick was the ROTATION-SIGN leaf and not this
+// shape. [2026-09-06] That leaf is taken too: with g_noSatRotRaw's advance
+// deleted the model's angle is GD's to 0.023 deg and this pad fires on 7,299.
 //
 // SCOPED TO THE MODES WHOSE ANGLE THE MODEL TRACKS -- see padPlayerRotMode.
 // Kept as the A/B arm: with it the whole 22-level replay suite has to be
