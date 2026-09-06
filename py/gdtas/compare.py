@@ -158,7 +158,7 @@ CONDITIONS = ("mode", "vsize", "speed", "gravity")
 # got (lv20 reached 4.6% and went into a commit message as a match).
 MOVING_GEOMETRY_FLAGS = ("--groups", "--triggers", "--objgroups", "--obb")
 # Whole-run only, and in practice lv22 only -- State::rotSpent accumulates, so
-# it is wrong at an anchor. See quick_regress.whole_run_args.
+# it is wrong at an anchor. See fidelity_diff.whole_run_args.
 ROTATION_FLAGS = ("--rotqueue",)
 
 

@@ -92,8 +92,7 @@ sys.path.insert(0, str(_PY.parent / "mcp"))
 
 from gdtas.solveutil import (has_grouped_colliders, grounded_of, held_before,
                              FLYING, MODE_ID)
-from fidelity_diff import (groups_args, model_replay, gd_cut_tick, gd_replay,
-                           whole_run_args)
+from fidelity_diff import groups_args, model_replay, gd_cut_tick, gd_replay
 from gdmcp.data import diff_trace
 from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
 
@@ -136,29 +135,6 @@ def ctrlwin_args(level: int) -> list[str]:
     if not wins:
         return []
     return ["--ctrlwin", ",".join(f"{a}:{b}" for a, b in wins)]
-
-
-def whole_run_args(level: int) -> list[str]:
-    """Flags that are right for a run STARTING AT t=0 and wrong at an anchor.
-
-    Only `--rotqueue`, and only on lv22, which is the one level with a rotation
-    queue that matters. Measured on 2026-09-04, same build, both arms:
-
-        default      2 mismatched frame/gravity transitions, model stops t=6,350
-        --rotqueue   t=6,315 agrees on BOTH axes, model stops t=6,375
-
-    The flag cannot be the default because State::rotSpent / rotChan / rotRev
-    accumulate: a state handed to --start mid-level begins on channel 0 with
-    nothing consumed and re-fires what the run already passed (lv22 loses
-    tracking in 12 of quick_regress's anchored sections, worst 400 -> 17 at
-    t=1,800). That objection does not apply to an instrument that replays from
-    the start, so DO NOT call this from quick_regress or anything else anchored.
-
-    Without this, every whole-run measurement of lv22 is taken on a trajectory
-    already known to be wrong from t=6,315 -- measuring the downstream of a
-    defect that is already fixed behind a flag.
-    """
-    return ["--rotqueue"] if level == 22 else []
 
 
 def trim_dump(src: Path, dst: Path) -> int:
@@ -732,7 +708,27 @@ def seg_check(level: int, a) -> dict:
 
 
 def check_level(level: int, a) -> dict:
-    """Replay only the model and compare with the reference. Uses no GD, no worker."""
+    """Replay only the model and compare with the reference. Uses no GD, no worker.
+
+    THIS IS A REPLAY FROM t=0, so it takes `whole_run=True` and with it the
+    flags fidelity_diff.whole_run_args reserves for exactly that arrangement
+    (`--rotqueue`, lv22 only). It did not, until 2026-09-06, which meant every
+    `--whole` reading of lv22 was taken on a trajectory the flag's own docstring
+    says is already known to be wrong from t=6,315 -- 6315 / 36 diverging /
+    model dead at 6,350, where the correct invocation gives 6680 / 199 / 11539.
+    A mover level replayed without its flags dies early and reads as a plausible
+    model defect rather than as a broken call (the same shape as the dropped
+    --groups documented in fidelity_diff.record_provenance).
+
+    The alternative -- refusing to measure lv22 at all rather than changing what
+    is passed -- was rejected because lv22 is the ONLY level with a rotation
+    queue, so refusing it does not leave a smaller instrument, it leaves one
+    that cannot see the rotation queue at all. That is the hole start_fields
+    describes: a section the harness never measured stayed green for weeks.
+
+    The anchored path is untouched: run_seg / seg_jobs build their own argv and
+    never route through here, so `--rotqueue` still never reaches an anchor.
+    """
     out = {"level": level, "status": "OK", "note": ""}
     plan = plan_of(level, a.plans)
     ref = REF / f"lv{level}.csv"
@@ -750,7 +746,8 @@ def check_level(level: int, a) -> dict:
     tmp.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     trace, died, _ = model_replay(level, plan, tmp / f"qr_lv{level}",
-                                  Path(a.leveldp), a.with_fixups)
+                                  Path(a.leveldp), a.with_fixups,
+                                  whole_run=True)
     cut = json.loads((REF / "cut.json").read_text()).get(str(level)) \
         if (REF / "cut.json").exists() else None
     d = diff_trace(trace, ref, t1=cut, tol=a.tol, limit=10 ** 9)
@@ -911,7 +908,10 @@ def main(argv=None) -> int:
                     help="save the current numbers as the baseline")
     ap.add_argument("--whole", action="store_true",
                     help="judge on one whole-level replay (weaker than the "
-                         "sectioned default)")
+                         "sectioned default). It judges against the "
+                         "`baseline_whole` key, which the baseline this repo "
+                         "reads does not carry, so it exits 2 until one is "
+                         "blessed")
     ap.add_argument("--seg-step", type=int, default=400,
                     help="spacing between anchors (ticks). At the default 400 "
                          "the whole suite takes about a minute and a half; 1500 "
@@ -1001,7 +1001,26 @@ def main(argv=None) -> int:
 def report(now: list, a, elapsed: float) -> int:
     """Print the baseline comparison, decide PASS/FAIL, and bless. now is the
     aggregate from run_segments / check_level. verify.py (the unified driver of
-    proposal A) calls this same function."""
+    proposal A) calls this same function.
+
+    IT SAYS HOW MANY LEVELS IT ACTUALLY COMPARED, and refuses a verdict when
+    that number is zero. Before 2026-09-06 a missing key printed one advisory
+    line and RETURNED 0, which is what every script and every reader consumes as
+    a pass -- and the baseline this repo reads holds only `baseline_seg`, so
+    that is what `--whole` did on this machine, measured 2026-09-06: 22 levels
+    of numbers, exit 0. The table above it is a full page of plausible numbers
+    with an EMPTY `vs baseline` column, and an empty cell is exactly what a
+    level whose numbers matched would also print. Two answers that are
+    always "nothing to report" agree perfectly; the count is the gate that tells
+    "compared and agreed" (`same`) from "never compared" (`NOT COMPARED`).
+    The zero return also swallowed the `exe_fail` lines verdict() had already
+    built, so a crashed section could not be seen either.
+
+    An explicit non-zero refusal rather than a loud SKIP: the exit code is the
+    only part of this output that anything reads mechanically, so a SKIP that
+    still exits 0 leaves the defect exactly where it was and moves the warning
+    into prose that CI cannot read.
+    """
     key = "baseline_whole" if a.whole else "baseline_seg"
     all_base = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
     base = all_base.get(key, {})
@@ -1025,7 +1044,7 @@ def report(now: list, a, elapsed: float) -> int:
                     parts.append(f"ticks {b.get('n_div')}->{r.get('n_div')}")
                 if b.get("model_died") != r.get("model_died"):
                     parts.append(f"died {b.get('model_died')}->{r.get('model_died')}")
-            d = " / ".join(parts) if parts else ("same" if b else "")
+            d = " / ".join(parts) if parts else ("same" if b else "NOT COMPARED")
             print(f"lv{r['level']:<3} {'OK':<9}{str(r.get('first_t')):<12}"
                   f"{r.get('n_div', 0):<10}{r.get('model_died', -1):<10}{d:<24}"
                   f"{r['note']}")
@@ -1036,14 +1055,22 @@ def report(now: list, a, elapsed: float) -> int:
                     parts.append(f"tracked {b.get('hold_sum')}->{r.get('hold_sum')}")
                 if b.get("bad") != r.get("bad"):
                     parts.append(f"diverged {b.get('bad')}->{r.get('bad')}")
-            d = " / ".join(parts) if parts else ("same" if b else "")
+            d = " / ".join(parts) if parts else ("same" if b else "NOT COMPARED")
             print(f"lv{r['level']:<3} {'OK':<9}{r['segs']:<7}"
                   f"{r.get('hold_sum', 0):<11}{r.get('hold_min', 0):<7}"
                   f"{str(r['worst_t']):<12}{r['bad']:<11}{d:<26}{r['note']}")
 
     bad, ok = verdict(now, base, a.whole, a.seg_slack)
-    print(f"--- {len([r for r in now if r['status'] == 'OK'])} levels "
-          f"{elapsed:.1f}s ---")
+    n_ok = len([r for r in now if r["status"] == "OK"])
+    # THE COUNT OF COMPARISONS THAT ACTUALLY HAPPENED. verdict() skips a level
+    # with no baseline row (`if not b: continue`), so a partly-populated
+    # baseline judges only the levels it happens to hold and stays silent about
+    # the rest -- the same failure the `--eval-padgate` count assert was added
+    # for, where 4,000 cases produced 0 results and would have gone green.
+    compared = sum(1 for r in now
+                   if r["status"] == "OK" and base.get(str(r["level"])))
+    print(f"--- {n_ok} levels {elapsed:.1f}s, {compared}/{n_ok} compared "
+          f"against {key} ---")
     # PRINT THE VERDICT FIRST, THEN BLESS. --bless used to return before the
     # verdict, so every acceptance paid the same 2.6 minutes twice: "once to
     # judge it, once more to bless it" (2026-08-18).
@@ -1056,10 +1083,22 @@ def report(now: list, a, elapsed: float) -> int:
         print(f"baseline updated: {BASELINE} [{key}]")
 
     if not base:
-        print("no baseline yet -- run with --bless to make these the baseline")
+        print(f"NO BASELINE -- THIS IS NOT A PASS. {BASELINE} has no `{key}` "
+              f"key, so 0 of the {n_ok} levels above were compared against "
+              f"anything.")
+        print("  Every `vs baseline` cell reads NOT COMPARED because no "
+              "comparison was made, not because the numbers agreed.")
+        # verdict() has already collected the harness failures (a section whose
+        # solver did not exit 0). They are not baseline comparisons, so they
+        # survive the absence of one and are still named here.
+        for b in bad:
+            print("  " + b)
         if a.bless:
             do_bless()
-        return 0
+            return 0
+        print(f"  Run with --bless to make these the `{key}` baseline; until "
+              f"one exists this instrument has no verdict to give.")
+        return 2
     if ok:
         print("PASS (nothing worse than the baseline)")
         if a.bless:
