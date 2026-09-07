@@ -29,7 +29,8 @@ inline double slopeXOffset(double m, double pHalf) {
 // at 0x3921B5 (PlayerObject::collidedWithObjectInternal, the m_currentSlopes
 // loop): `dir == 1 || (dir - 3 <= 3 && dir != 4)`, i.e. exactly {1,3,5,6}.
 // m_slopeUphill is a pure function of m_slopeDirection ({0,3,6,7} rise,
-// {1,2,4,5} fall -- checked over all 2,631 type-25 objects in the 22 dumps),
+// {1,2,4,5} fall -- re-checked 2026-09-07 over all 3,091 type-25 objects in the
+// 22 dumps, was 2,631 when first written),
 // so the flag splits each of those families 2-2, and the half that GD picks
 // out is the CEILING half: lv20's corridors pair 0 with 3, 2 with 1, 4 with 5
 // and 7 with 6, low member first, every time. 4..7 are the 90-degree-rotated
@@ -38,10 +39,20 @@ inline bool slopeIsCeiling(uint8_t dir) {
     return dir == 1 || dir == 3 || dir == 5 || dir == 6;
 }
 // m_slopeUphill, which GD stores at obj+0x440. It is a pure function of the
-// direction ({0,3,6,7} rise, {1,2,4,5} fall) -- checked over all 2,631 type-25
-// objects in the 22 dumps, and confirmed on the rig calib_slopeflags, where
-// every one of 160 id/rotation/flip combinations reported sup=1 on exactly
-// that set.
+// direction ({0,3,6,7} rise, {1,2,4,5} fall) -- confirmed on the rig
+// calib_slopeflags, where every one of 160 id/rotation/flip combinations
+// reported sup=1 on exactly that set.
+//   SAMPLE SIZE UPDATED 2026-09-07: the prose said 2,631 type-25 objects; the
+//   22 dumps now hold 3,091, so the claim was re-derived rather than the count
+//   patched. All eight directions are still PURE, zero counterexamples:
+//     sdir 0 sup=1  732     sdir 4 sup=0  303
+//     sdir 1 sup=0  475     sdir 5 sup=0  288
+//     sdir 2 sup=0  460     sdir 6 sup=1  159
+//     sdir 3 sup=1  556     sdir 7 sup=1  118
+//   {0,3,6,7} -> 1 (1,565), {1,2,4,5} -> 0 (1,526). This is an EXCLUSION-type
+//   claim, so it does not age the way a measured constant does -- a larger
+//   sample can only strengthen it, and +460 objects (+17%) did. Only the number
+//   in the prose was stale; the truth was stronger than what was written.
 inline bool slopeIsUphill(uint8_t dir) {
     return dir == 0 || dir == 3 || dir == 6 || dir == 7;
 }
