@@ -24,6 +24,33 @@ DIVERGENCE ON THE VERIFIED CORPUS, and the sets of families mostly overlap.
                                                # grounded_of instead of the raw
                                                # onGround column (same
                                                # divergences, some other names)
+    python py/fixcensus.py --all-hits          # every diverging tick of a
+                                               # section, not just the first
+
+THE DEFAULT KEEPS ONLY THE FIRST HIT PER SECTION, and that is a blind spot as
+well as a discipline. Later ticks in an already-diverged section are mostly the
+first one's arithmetic continuing, which is why the recorder stops -- but a
+divergence with an unrelated mechanism sitting behind the first one is never
+compared at all. Measured over the whole corpus on 2026-09-07 (1,116 sections,
+in a data root isolated from anything else writing gdref): the 19 the default
+reports are the first hits of 19 sections that hold 1,199 diverging ticks
+between them, and EVERY ONE of the 19 has a second hit. So THE HEADLINE COUNT
+IS A FLOOR, NOT A TOTAL.
+
+What the extra ticks are NOT is 1,180 new defects. Folded into runs of
+consecutive ticks they come to 30 events, and re-anchoring each run head (a
+fresh section 40 ticks ahead of it, so the model starts from GD's state again)
+leaves 5 that reproduce as a section's own first hit with their own mechanism;
+the other 6 vanish, being the first hit's arithmetic. So this arm HAS to be
+read by hand, and its counts are not comparable with the blessed baseline,
+which was minted under the first-hit rule -- --bless is refused here.
+
+And the tick it surfaces is not yet the defect. lv22's real killer is a
+headbonk on uid 11475 at t=11342; --all-hits does return t=11342, but as
+`.../air` with edy 0.374, because by then the model has been off GD's
+world-line since t=11259 and is 7.5px away. Anchored at 11300 instead, the same
+tick comes back as `clamp:cube/headbonk/uid11475` with edy 0.726 -- the real
+residual. --all-hits says WHERE to look; re-anchoring is what sees it.
 """
 from __future__ import annotations
 
@@ -50,13 +77,25 @@ from quick_regress import (DATA, LEVEL_DATA, REF, ctrlwin_args, groups_args,
 
 def eval_trace(lv: int, t0: int, span: int, trace: Path,
                gd: dict[int, dict], eps: float,
-               gd_ground: str = GD_GROUND_RAW) -> list[dict]:
+               gd_ground: str = GD_GROUND_RAW,
+               all_hits: bool = False) -> list[dict]:
     """Return THE FIRST DIVERGENCE from an already replayed trace (does not replay).
 
     Same stance as the recorder: a divergence is read as "the transition delta
     of that tick" (dy/dvy). In order to ride along with the section replay of
     quick_regress (proposal A, 2026-08-18), replay and evaluation were split
     apart here.
+
+    With all_hits, EVERY diverging tick of the section is returned instead. The
+    default is the first one alone, for the recorder's reason: after a section
+    has diverged the two sides are integrating different histories, so most
+    later ticks are the first hit's arithmetic and counting them as separate
+    defects would inflate every family. What the default cannot see is the
+    other case -- a later tick whose residual is independent of the first
+    (another quantity, another mechanism, or ticks of re-convergence in
+    between). Those exist, and one of them is what kills lv22 (see the module
+    docstring), so the arm has to be available even though its output needs
+    reading by hand rather than counting.
     """
     if not trace.exists():
         return []
@@ -104,15 +143,24 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
                          g1.get("onGround", "?"),
                          MODE_ID.get(g1.get("mode", ""), -1),
                          gd_ground=gd_ground, gd_row=g0, gd_row_out=g1)
-        out.append({"lv": lv, "t": t, "x": round(float(m0[1]), 1),
-                    "cause": cause, "in": m1[10] if len(m1) > 10 else "?",
-                    "edy": round(edy, 4), "edvy": round(edvy, 4)})
-        break            # same as the recorder: only the first hit per section
+        rec = {"lv": lv, "t": t, "x": round(float(m0[1]), 1),
+               "cause": cause, "in": m1[10] if len(m1) > 10 else "?",
+               "edy": round(edy, 4), "edvy": round(edvy, 4)}
+        if all_hits:
+            # the section this hit belongs to, and its rank within it: without
+            # them a flat list of hits cannot be told apart from a flat list of
+            # sections, which is the very confusion this arm exists to expose
+            rec["seg"] = t0
+            rec["rank"] = len(out)
+        out.append(rec)
+        if not all_hits:
+            break        # same as the recorder: only the first hit per section
     return out
 
 
 def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
-                eps: float, gd_ground: str = GD_GROUND_RAW) -> list[dict]:
+                eps: float, gd_ground: str = GD_GROUND_RAW,
+                all_hits: bool = False) -> list[dict]:
     """Anchor one section from the real GD state, replay it, hand it to eval_trace."""
     plan = plan_of(lv, str(DATA / "solution_lv{}_dp.txt"))
     gd = read_ref(lv)
@@ -145,7 +193,7 @@ def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
     a += qr.pad_anchor_args(lv, t0, gd)
     subprocess.run(a, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return eval_trace(lv, t0, span, Path(str(base) + ".trace.csv"), gd, eps,
-                      gd_ground)
+                      gd_ground, all_hits)
 
 
 def main(argv=None) -> int:
@@ -176,6 +224,16 @@ def main(argv=None) -> int:
                          "near-zero yvel. The A/B answers 'is this family "
                          "signed by physics or by the raw column's looseness?' "
                          "-- it moves NO divergence, only the names")
+    ap.add_argument("--all-hits", action="store_true",
+                    help="keep EVERY diverging tick of a section instead of "
+                         "the first. The first-hit rule is what the recorder "
+                         "does and what the baseline is named by, so this arm "
+                         "is a diagnostic: it shows what the default cannot "
+                         "see (a divergence of another mechanism sitting "
+                         "behind the first one), at the price of also "
+                         "returning every tick that is merely the first one's "
+                         "arithmetic. Its counts are NOT comparable with the "
+                         "baseline and --bless refuses it")
     ap.add_argument("--no-spentpad", action="store_true",
                     help="the A/B arm: still name the pads the run had fired "
                          "before each anchor, but tell the solver to ignore "
@@ -199,6 +257,16 @@ def main(argv=None) -> int:
     # some keys differently, so blessing from it would rewrite the baseline in
     # the other definition without saying so, and every later comparison would
     # be against names nothing else mints.
+    # ...and never from --all-hits. The baseline counts SECTIONS THAT DIVERGE,
+    # one row each; this arm counts DIVERGING TICKS, thousands of them, most
+    # being one section's residual restated. Blessing it would replace a census
+    # of sections with a census of ticks under the same family names, and every
+    # later run would read as a mass disappearance.
+    if a.bless and a.all_hits:
+        print("--bless is refused with --all-hits (the baseline counts one "
+              "row per diverging section; --all-hits counts every diverging "
+              "tick, so the two are not the same quantity)")
+        return 2
     if a.bless and a.gd_ground != GD_GROUND_RAW:
         print(f"--bless is only accepted with --gd-ground {GD_GROUND_RAW} "
               f"(the baseline's family names are minted from the raw column; "
@@ -227,7 +295,8 @@ def main(argv=None) -> int:
     found: list[dict] = []
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         futs = [ex.submit(seg_diverge, lv, t, a.seg_len, Path(a.leveldp),
-                          tmp, a.eps, a.gd_ground) for lv, t in jobs]
+                          tmp, a.eps, a.gd_ground, a.all_hits)
+                for lv, t in jobs]
         for f in futs:
             found += f.result()
 
@@ -258,7 +327,8 @@ def main(argv=None) -> int:
 
     return census_report(found, len(jobs), time.time() - t0,
                          top=a.top, bless=a.bless, levels=a.levels,
-                         waivers=not a.no_waivers, json_out=a.json_out)
+                         waivers=not a.no_waivers, json_out=a.json_out,
+                         all_hits=a.all_hits)
 
 
 def _base_count(v, levels: set[int]) -> int:
@@ -272,7 +342,8 @@ def _base_count(v, levels: set[int]) -> int:
 
 def census_report(found: list[dict], n_segs: int, elapsed: float, *,
                   top: int, bless: bool, levels: list[int],
-                  waivers: bool = True, json_out: str = "") -> int:
+                  waivers: bool = True, json_out: str = "",
+                  all_hits: bool = False) -> int:
     """Aggregate, print, compare against the baseline, and bless the families.
     found is the accumulation of eval_trace's return values.
 
@@ -322,6 +393,26 @@ def census_report(found: list[dict], n_segs: int, elapsed: float, *,
           f"C(>2)={buck['C']}")
     print("  by level: " + " ".join(f"lv{k}x{v}" for k, v in
                                     sorted(per_lv.items(), key=lambda kv: -kv[1])))
+    if all_hits:
+        # SAY WHICH QUANTITY THE HEADLINE IS. Above, "divergences" is the length
+        # of `found`, which on this arm is TICKS, not sections -- the same word
+        # for a number some hundredfold larger. Print the section count next to
+        # it, and the depth distribution, so the two can never be read as one.
+        per_seg: dict[tuple, int] = {}
+        for d in found:
+            per_seg[(d["lv"], d.get("seg"))] = \
+                per_seg.get((d["lv"], d.get("seg")), 0) + 1
+        depths = sorted(per_seg.values())
+        hist: dict[int, int] = {}
+        for n in depths:
+            hist[n] = hist.get(n, 0) + 1
+        deep = sum(1 for n in depths if n >= 2)
+        print(f"  --all-hits: those {len(found)} are TICKS, in "
+              f"{len(per_seg)} sections ({deep} of them with >=2 hits); "
+              f"the first-hit default would report {len(per_seg)}")
+        print("  hits per section: " + " ".join(
+            f"{k}x{v}" for k, v in sorted(hist.items())[:12])
+            + (f"  max={depths[-1]}" if depths else ""))
     print()
     print(f"{'n':>4} {'lv':<14} {'cause':<56} {'edy med':>9} {'edvy med':>9}")
     for (cause, act), rows in ranked[:top]:
@@ -359,7 +450,15 @@ def census_report(found: list[dict], n_segs: int, elapsed: float, *,
     # "once to judge it, once more to bless it" (2026-08-18).
     rc = 0
     partial = lvset != set(range(1, 23))
-    if base_path.exists():
+    if all_hits:
+        # NO COMPARISON AT ALL on this arm. The baseline was minted one row per
+        # diverging section; comparing a per-tick count against it would show
+        # every family "grown" and return red for a run that measured something
+        # else entirely. A refusal that says why beats a number that misleads.
+        print("\nno baseline comparison: --all-hits counts diverging TICKS and "
+              f"{base_path.name} counts diverging SECTIONS (minted under the "
+              "first-hit rule). Re-run without --all-hits to compare")
+    elif base_path.exists():
         base = json.loads(base_path.read_text(encoding="utf-8"))
         old_fmt = any(not isinstance(v, dict) for v in base.values())
         if partial and old_fmt:
