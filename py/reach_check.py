@@ -173,6 +173,21 @@ def gd_survives(res: dict, horizon: int, worker_id: int, tmp: runtmp.RunTmp,
     dump = tmp.dir / f"reach_lv{lv}_{t0}.dump.csv"
     from gdtas.paths import WORKERS_ROOT
     try:
+        # [2026-09-07] THE RETURN VALUE IS DISCARDED AND IT CONTAINS THE ANSWER
+        # TO A QUESTION THIS FUNCTION THEN CANNOT ASK. gd_replay returns
+        # (clear, detail, goal_x) and explicitly marks a timed-out session --
+        # `if res.timed_out and not clear: detail = f"TIMEOUT ({detail})"`. None
+        # of it is bound here, so the verdict below is read from the dump alone
+        # and a TRUNCATED replay is indistinguishable from a completed one. The
+        # information exists and the consumer throws it away, which is the same
+        # shape as the SKIP notes fixed in e8a1b24.
+        # WHICH DIRECTION IT FAILS IN, because it is not symmetric: a timeout
+        # truncates the dump EARLY, so it can only turn a surviving tail into a
+        # DEAD (a phantom reported that is not there). It CANNOT manufacture an
+        # OK -- if the dump reached t0+horizon then the tail did reach its
+        # horizon, whatever happened after. So OK verdicts are sound even under
+        # a timeout; DEAD verdicts are the ones that need the discarded detail.
+        # Left as a note rather than a fix: binding it changes what this returns.
         gd_replay(worker_id, lv, spliced, dump, timeout_s, WORKERS_ROOT)
     except Exception as e:                     # a missing worker must not kill the check
         return {"gd": "SKIP", "note": f"{type(e).__name__}"}
