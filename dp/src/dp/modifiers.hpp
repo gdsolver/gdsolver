@@ -279,13 +279,62 @@ inline double forceFieldAcc(double x, double y, double pHalf) {
 //   t=2,707 x=3,710.8 -- box overlap begins, the counter goes positive
 //   t=2,748 x=3,790.8 y=320.771 vy=10.816, ceiling face 330.008
 //   t=2,749 upsideDown 0->1, onGround=1, y=321.008 = 330.008 - 9 (mini half)
-// ARMING IS STICKY: the counter stays positive for 500+ ticks after the box is
+// ~~ARMING IS STICKY: the counter stays positive for 500+ ticks after the box is
 // behind the player (GD re-sets it every tick), and in a full pass it went off
 // again 638 px past the object. The mechanism behind that range is not
 // identified, so this models the arm as PERMANENT -- inside the measured span
 // it is exact, and no other level owns a 2866, so nothing already green can
 // move. If lv22 later diverges under a ceiling far past x=3,735, this is the
-// first thing to look at.
+// first thing to look at.~~
+//
+// [2026-09-07 AUDIT] **lv22 DID later diverge under a ceiling far past x=3,735,
+// exactly as the last sentence predicted -- at t=11,342, x=16,114, and it is
+// lv22's whole-run killer.** Four claims in the paragraph above are refuted.
+// The full record, the positive control and the bracket live at State::fgArm;
+// what belongs HERE is which of them were wrong and why, because the four sort
+// cleanly by provenance:
+//
+//   REFUTED, and all four rest on ONE behavioural observation of ONE lv22 pass:
+//     "stays positive for 500+ ticks"   -- the two firings this corpus shows are
+//                                          at +42 and +183 ticks, not 500+.
+//     "went off again 638 px past"      -- no firing in the current reference is
+//                                          at 638 px; the observation is from an
+//                                          older solution (its coordinates aged
+//                                          with the route, cf. the corridor ticks
+//                                          in step.hpp's acquireFlip note).
+//     "GD re-sets it every tick"        -- true only WHILE THE MATCH RUNS. There
+//                                          is exactly one setter in the whole
+//                                          .text (0x215ba1) and it needs a match.
+//     "models the arm as PERMANENT"     -- GD arms at ~2,707 and does NOT flip at
+//                                          11,342 in the same replay.
+//
+//   VERIFIED, and every one of these came from the DISASSEMBLY rather than from
+//   that pass -- which is the audit's actual finding, since the file's readings
+//   held and its one behavioural generalisation did not:
+//     the counter is set to a small immediate and decremented every tick
+//       -- 0x215ba1 `mov [r14+0xb80], 2`, 0x389f40 `dec [r15+0xb80]`, the latter
+//          straight-line in update whose 915-instruction prefix has exactly one
+//          exit (m_isDead) skipping it.
+//     didHitHead's body, line for line -- 0x393c30, including the +-2 and the
+//       m_stateNoAutoJump clear.
+//     the 1859 sibling's "set to 2 by the touch and stepped down every tick"
+//       (line ~360) -- 0x215ac6 sets 0xb7c to 2, 0x389f47 decrements it. The
+//       SAME claim shape as the refuted one, from the same reading, and correct.
+//
+//   IMPRECISE: the range "+0x1146..+0x1196" does not contain 2866's branch. That
+//     range holds 0xb74/0xb78/0xb7c/0xb88; `cmp ecx, 0xb32` jumps OUT of it to
+//     0x215ba1 (+0x1241).
+//
+//   AND THE ARM HAS A SECOND CONSUMER, so "the only reader ... is didHitHead"
+//     below is wrong -- and wrong the day it was written, not stale:
+//     collidedWithObjectInternal, which the very next sentence names as the
+//     caller, tests it itself at 0x391e4b (+0x3db, `> 0`) to compute a local
+//     boolean, four instructions after m_stateHitHead and the platformer flag.
+//     GD uses the arm as a COLLISION MODIFIER with two consumers; the model
+//     treats it as a flip enable.
+//
+// WHAT IS STILL OPEN: the binary says 2 ticks and GD flips 42 ticks after
+// arming. Nothing here closes that -- see State::fgArm.
 // TIME WARP (object id 1935, EffectGameObject::m_timeWarpTimeMod, dumped as the
 // objrects `tw` column). GD scales TIME, so within one tick the x advance, the
 // y integration and the velocity increment all shrink by the same factor --
