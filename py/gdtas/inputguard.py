@@ -90,6 +90,13 @@ def _digest(p: Path) -> tuple:
     return (True, st.st_size, st.st_mtime_ns, h.hexdigest())
 
 
+# The same identity, for the guard that watches the OTHER channel: `runtmp`
+# fingerprints the traces a run writes, and the two verdicts have to be taken
+# the same way or one of them would be arguing from mtime while the other
+# argues from bytes.
+digest = _digest
+
+
 class InputGuard:
     """Record the identity of every file a run depends on, and re-check it."""
 

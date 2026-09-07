@@ -40,6 +40,18 @@ from an artefact. The headline moved with it by a single row, and NOTHING ELSE
 IN THE OUTPUT SAID SO. gdtas/inputguard.py holds the reasoning and the measured
 cost.
 
+AND ITS OWN TRACES ARE GUARDED TOO (2026-09-07), because the guard above closed
+one channel and left the other open. Every section writes a trace named
+`fc_lv{lv}_{t0}` -- LEVEL AND TICK, NO RUN IDENTITY -- and `--tmp` defaulted to
+a shared `C:\\GDtmp\\fixcensus`, so two runs on one machine wrote the same
+thousand paths. That is invisible to the input guard: a trace is this run's
+output, not one of its declared inputs, so every fingerprint verifies and the
+census is still a mixture. The default is now a directory only this run can
+name, removed when the run ends; naming `--tmp` keeps the old behaviour for
+isolating or inspecting a run by hand, and in either case the traces are
+fingerprinted after our solver writes them and re-read at the end, with the same
+refusal and the same exit 2. gdtas/runtmp.py holds the reasoning.
+
 The corollary for anyone reading a number out of the paragraphs below: THE
 TOTALS HERE ARE NOT A FIXTURE. They are a function of the leveldp build and of
 the state of the lab tree. Measured in this worktree on 2026-09-07 against a
@@ -91,6 +103,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import census_waivers                             # noqa: E402  known outliers
 from gdtas import inputguard                      # noqa: E402  contamination refusal
+from gdtas import runtmp                          # noqa: E402  ...and of the traces
 from gdtas.solveutil import (GD_GROUND_CORROBORATED, GD_GROUND_RAW, MODE_ID,
                              cause_of)            # noqa: E402  recorder's classification
 from gdtas.paths import LEVELDP_EXE               # noqa: E402
@@ -183,7 +196,7 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
     return out
 
 
-def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
+def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: runtmp.RunTmp,
                 eps: float, gd_ground: str = GD_GROUND_RAW,
                 all_hits: bool = False) -> list[dict]:
     """Anchor one section from the real GD state, replay it, hand it to eval_trace."""
@@ -192,7 +205,12 @@ def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
     objrects = LEVEL_DATA / f"objrects_lv{lv}.txt"
     if not plan.exists() or t0 not in gd:
         return []
-    base = tmp / f"fc_lv{lv}_{t0}"
+    # `reserve` clears whatever is already at this name. The name carries the
+    # level and the anchor but NOT the run, so in an explicit --tmp it is also
+    # yesterday's name, a crashed run's name, and the name a job with another
+    # --seg-len wrote; if our solver then fails to write, eval_trace would read
+    # that file and call it this run's physics. See gdtas/runtmp.py.
+    base = tmp.reserve(f"fc_lv{lv}_{t0}", ".trace.csv")
     r0 = gd[t0]
     a = [str(exe), str(objrects), "--replay", str(plan),
          "--start", start_fields(t0, r0, plan, gd.get(t0 - 1), gd),
@@ -217,15 +235,29 @@ def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: Path,
     # it every re-entered pad in lv13/14/18/21 shows up here as a family.
     a += qr.pad_anchor_args(lv, t0, gd)
     subprocess.run(a, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return eval_trace(lv, t0, span, Path(str(base) + ".trace.csv"), gd, eps,
-                      gd_ground, all_hits)
+    trace = Path(str(base) + ".trace.csv")
+    # Fingerprinted the moment our solver lets go of it, and re-read when the
+    # last section is done. That bracket is what turns "another run wrote our
+    # trace" from an invisible missing row into a refusal.
+    tmp.claim(trace)
+    return eval_trace(lv, t0, span, trace, gd, eps, gd_ground, all_hits)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--levels", type=int, nargs="*", default=list(range(1, 23)))
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
-    ap.add_argument("--tmp", default=r"C:\GDtmp\fixcensus")
+    ap.add_argument("--tmp", default=None,
+                    help="where the section traces are written. THE DEFAULT IS "
+                         "NO LONGER A SHARED DIRECTORY: with this unset the run "
+                         "gets a directory of its own under "
+                         "data/tmp_fixcensus/ and removes it at the end, so two "
+                         "runs cannot write each other's traces. Naming one "
+                         "keeps the old behaviour exactly -- the same stable "
+                         "file names, kept afterwards -- which is how a run is "
+                         "isolated or inspected by hand; the traces are "
+                         "fingerprinted either way and a run whose own traces "
+                         "moved refuses to report")
     ap.add_argument("--seg-step", type=int, default=400)
     ap.add_argument("--seg-len", type=int, default=400)
     ap.add_argument("--seg-start", type=int, default=200)
@@ -297,8 +329,25 @@ def main(argv=None) -> int:
               f"(the baseline's family names are minted from the raw column; "
               f"blessing a {a.gd_ground} run would silently rename them)")
         return 2
-    tmp = Path(a.tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
+    # THE RUN'S OWN OUTPUTS ARE THE OTHER CONTAMINATION CHANNEL, and the input
+    # guard below cannot see them: a trace is not one of the run's declared
+    # inputs. Unnamed, --tmp is now a directory only this run can name; named,
+    # it behaves as it always did and the fingerprints are what make sharing it
+    # detectable. gdtas/runtmp.py holds the reasoning.
+    tmp = runtmp.RunTmp("fixcensus", a.tmp, root=DATA / "tmp_fixcensus")
+    try:
+        return census(a, tmp)
+    finally:
+        # A private directory is 1.5 GB of traces; it goes whichever way the run
+        # ends, refusal included. A --tmp the caller named is kept, because it
+        # was named so somebody could look in it.
+        tmp.release()
+
+
+def census(a, tmp: runtmp.RunTmp) -> int:
+    """Everything downstream of the parsed arguments, with the run's working
+    directory already open. Split out of `main` so that directory has one
+    lifetime instead of one per return path."""
     # THE RUN COMMITS TO ITS INPUTS HERE. Everything watched below is read over
     # the next several minutes by a few thousand replays; if any of it moves in
     # between, the sections were not all measured against the same world and
@@ -364,11 +413,28 @@ def main(argv=None) -> int:
         print(text)
         print(text, file=sys.stderr)
         return 2
+    # ...and the same question asked of the OTHER channel: are the traces the
+    # sections were read from still the ones our own solver wrote? Both verdicts
+    # are taken before a number is printed, and they are separate refusals
+    # because the remedies differ -- an input that moved means someone else is
+    # writing the lab tree, a trace that moved means someone else is writing
+    # this --tmp.
+    t_guard = time.time()
+    clobbered = tmp.check()
+    if clobbered:
+        text = runtmp.banner(clobbered, "fixcensus", tmp.dir)
+        print(text)
+        print(text, file=sys.stderr)
+        return 2
     # On the clean path, say so ON STDERR: it is the only evidence that the
     # check ran at all rather than being skipped, and keeping it off stdout is
     # what lets a guarded run be compared byte-for-byte with an unguarded one.
     print(f"[inputguard] {guard.count()} inputs verified unchanged "
           f"across {round(elapsed, 1)}s of replay", file=sys.stderr)
+    print(f"[runtmp] {tmp.count()} traces verified as ours in "
+          f"{round(time.time() - t_guard, 1)}s -- {tmp.dir} "
+          f"({'private' if tmp.private else 'named on the command line'})",
+          file=sys.stderr)
 
     if a.family:
         # THE TABLE'S SPELLING AND THIS ONE WERE DIFFERENT KEYS. census_report

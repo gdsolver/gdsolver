@@ -95,6 +95,7 @@ from gdtas.solveutil import (has_grouped_colliders, grounded_of, held_before,
 from fidelity_diff import groups_args, model_replay, gd_cut_tick, gd_replay
 from gdmcp.data import diff_trace
 from gdtas import inputguard
+from gdtas import runtmp
 from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
 
 REF = LEVEL_DATA / "gdref"
@@ -606,6 +607,33 @@ def band_track_args(level: int, gd: dict) -> list[str]:
         return args
 
 
+# check_level runs on a pool, so the lazy open has to be one-shot.
+_RUNTMP_LOCK = threading.Lock()
+
+
+def tmp_of(a) -> runtmp.RunTmp:
+    """The run's working directory, opened once and cached on the arguments.
+
+    THE TRACE NAMES CARRY NO RUN IDENTITY (`seg_lv20_9000.trace.csv`), and this
+    tool shared one directory with every other run of itself AND with verify.py,
+    which writes the very same names. Two of them at once wrote each other's
+    traces and nothing said so -- the same hole `gdtas.inputguard` closed on the
+    input side and could not see on this one. Unnamed, `--tmp` is now a
+    directory only this run can name; named, it is used exactly as before and
+    the fingerprints are what make sharing it detectable. gdtas/runtmp.py.
+
+    Cached on `a` because seg_jobs / check_level / record_level are each handed
+    the arguments and nothing else, and a second directory per level would
+    defeat the point."""
+    with _RUNTMP_LOCK:
+        tmp = getattr(a, "_runtmp", None)
+        if tmp is None:
+            tmp = runtmp.RunTmp("quick_regress", getattr(a, "tmp", None),
+                                root=DATA / "tmp_quickregress")
+            a._runtmp = tmp
+        return tmp
+
+
 def seg_jobs(level: int, a) -> tuple[dict, list]:
     """ONLY BUILDS the section jobs. Running them is the caller's business (we want
     to line every level's jobs up before feeding them to the pool). Running them
@@ -625,8 +653,7 @@ def seg_jobs(level: int, a) -> tuple[dict, list]:
         return out, []
     cuts = json.loads((REF / "cut.json").read_text()) if (REF / "cut.json").exists() else {}
     cut = cuts.get(str(level)) or max(gd)
-    tmp = Path(a.tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
+    tmp = tmp_of(a)
     common = [str(objrects), "--replay", str(plan)]
     trig, grp = LEVEL_DATA / f"triggers_lv{level}.txt", LEVEL_DATA / f"objgroups_lv{level}.txt"
     if trig.exists() and grp.exists():
@@ -642,9 +669,16 @@ def seg_jobs(level: int, a) -> tuple[dict, list]:
     while t + a.seg_len <= cut:
         r = gd.get(t)
         if r:
+            # `reserve` clears whatever already sits at this name. The name
+            # carries the level and the anchor and NOT the run, so in a --tmp
+            # named on the command line it is also the name an earlier run, a
+            # crashed run, or a run with another --seg-len wrote; a solver that
+            # then fails to write would leave run_seg diffing that file. See
+            # gdtas/runtmp.py.
+            base = tmp.reserve(f"seg_lv{level}_{t}", ".trace.csv")
             args = list(common) + [
                 "--start", start_fields(t, r, plan, gd.get(t - 1), gd),
-                "--out", str(tmp / f"seg_lv{level}_{t}")]
+                "--out", str(base)]
             if r.get("pmin") and r.get("pmax"):
                 args += ["--startband", f"{r['pmin']},{r['pmax']}"]
             args += band_track_args(level, gd)
@@ -652,7 +686,7 @@ def seg_jobs(level: int, a) -> tuple[dict, list]:
             args += pad_anchor_args(level, t, gd)
             jobs.append({"level": level, "t0": t, "args": args,
                          "t1": min(t + a.seg_len, cut),
-                         "trace": tmp / f"seg_lv{level}_{t}.trace.csv"})
+                         "trace": Path(str(base) + ".trace.csv")})
         t += a.seg_step
     out["segs"] = len(jobs)
     return out, jobs
@@ -683,6 +717,10 @@ def run_seg(job: dict, a) -> tuple[int, int, int, int]:
     # stdout stays on DEVNULL -- a section prints a lot and none of it is needed.
     p = subprocess.run([a.leveldp] + job["args"], stdout=subprocess.DEVNULL,
                        stderr=subprocess.PIPE)
+    # Fingerprinted the moment our solver lets go of it and re-read at the end
+    # of the run: that bracket is what turns "another run wrote our trace" from
+    # an invisible shift of one number into a refusal.
+    tmp_of(a).claim(job["trace"])
     err = ""
     if p.returncode:
         err = (p.stderr or b"").decode("utf-8", "replace").strip()
@@ -724,8 +762,7 @@ def seg_check(level: int, a) -> dict:
         return out
     cuts = json.loads((REF / "cut.json").read_text()) if (REF / "cut.json").exists() else {}
     cut = cuts.get(str(level)) or max(gd)
-    tmp = Path(a.tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
+    tmp = tmp_of(a)
 
     starts = []
     t = a.seg_start
@@ -737,7 +774,7 @@ def seg_check(level: int, a) -> dict:
     for t0 in starts:
         r = gd[t0]
         start = start_fields(t0, r, plan, gd.get(t0 - 1))
-        base = tmp / f"seg_lv{level}_{t0}"
+        base = tmp.reserve(f"seg_lv{level}_{t0}", ".trace.csv")
         args = [str(objrects), "--replay", str(plan), "--start", start,
                 "--out", str(base)]
         if r.get("pmin") and r.get("pmax"):
@@ -802,12 +839,14 @@ def check_level(level: int, a) -> dict:
     if has_grouped_colliders(objrects) and not groups_args(plan):
         out["status"], out["note"] = "SKIP", f"no {plan.name}.groups*.txt"
         return out
-    tmp = Path(a.tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
+    tmp = tmp_of(a)
     t0 = time.time()
-    trace, died, _ = model_replay(level, plan, tmp / f"qr_lv{level}",
+    trace, died, _ = model_replay(level, plan,
+                                  tmp.reserve(f"qr_lv{level}", ".trace.csv",
+                                              ".trace.csv.prov.json"),
                                   Path(a.leveldp), a.with_fixups,
                                   whole_run=True)
+    tmp.claim(trace)
     cut = json.loads((REF / "cut.json").read_text()).get(str(level)) \
         if (REF / "cut.json").exists() else None
     d = diff_trace(trace, ref, t1=cut, tol=a.tol, limit=10 ** 9)
@@ -828,9 +867,14 @@ def record_level(level: int, worker_id: int, a) -> dict:
     plan = plan_of(level, a.plans)
     if not plan.exists():
         return {"level": level, "status": "SKIP", "note": "no solution"}
-    tmp = Path(a.tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
-    dump = tmp / f"qr_ref_lv{level}.dump.csv"
+    tmp = tmp_of(a)
+    # The GD dump is this run's output too, and it is consumed by trim_dump
+    # below into the reference every other instrument anchors from. A second
+    # --record into the same directory would hand this one the other's dump.
+    # NOTE the raw dumps no longer survive a default --record: they go in the
+    # run's private directory and it is removed at the end. Name a --tmp when
+    # you want to keep them (which is how the trimmed columns get checked).
+    dump = Path(str(tmp.reserve(f"qr_ref_lv{level}", ".dump.csv")) + ".dump.csv")
     clear, detail, goal_x = gd_replay(worker_id, level, plan, dump,
                                       a.timeout_minutes * 60, Path(a.workers_root))
     if not dump.exists():
@@ -952,6 +996,37 @@ def run_segments(a, extra=None):
     return now, len(jobs), extras
 
 
+def trace_verdict(a, tool: str) -> int:
+    """Re-read the traces this run wrote. 2 and a banner if any of them moved,
+    0 (and a line on stderr saying the check happened) if none did.
+
+    CALLED BEFORE ANYTHING IS PRINTED OR BLESSED, the same place the input
+    guard's verdict is taken in fixcensus: a run reading somebody else's traces
+    prints a table indistinguishable from a clean one, so the only safe verdict
+    is to withhold the whole thing. The clean line goes to stderr so that a
+    guarded run can still be compared byte-for-byte with an unguarded one.
+
+    verify.py drives the same section pass through run_segments, so it takes
+    the verdict through here too rather than owning a second copy of it."""
+    tmp = tmp_of(a)
+    t = time.time()
+    clobbered = tmp.check()
+    if clobbered:
+        text = runtmp.banner(clobbered, tool, tmp.dir)
+        print(text)
+        print(text, file=sys.stderr)
+        return 2
+    # The cost is printed because it is the argument for keeping the check on:
+    # a second pass over the traces is what the numbers above are worth, and a
+    # reader who thinks it is expensive should be able to see what it actually
+    # costs rather than guess.
+    print(f"[runtmp] {tmp.count()} traces verified as ours in "
+          f"{round(time.time() - t, 1)}s -- {tmp.dir} "
+          f"({'private' if tmp.private else 'named on the command line'})",
+          file=sys.stderr)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--levels", nargs="+", type=int,
@@ -960,7 +1035,17 @@ def main(argv=None) -> int:
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
     ap.add_argument("--tol", type=float, default=0.3)
     ap.add_argument("--with-fixups", action="store_true")
-    ap.add_argument("--tmp", default=str(DATA / "tmp_quickregress"))
+    ap.add_argument("--tmp", default=None,
+                    help="where the section traces are written. THE DEFAULT IS "
+                         "NO LONGER ONE SHARED DIRECTORY: with this unset the "
+                         "run gets a directory of its own under "
+                         "data/tmp_quickregress/ and removes it at the end, so "
+                         "two runs -- or a run of this and a run of verify.py, "
+                         "which writes the very same seg_lv* names -- cannot "
+                         "write each other's traces. Naming one keeps the old "
+                         "behaviour exactly, and either way the traces are "
+                         "fingerprinted and a run whose own traces moved "
+                         "refuses to report")
     ap.add_argument("--parallel", type=int, default=6)
     ap.add_argument("--record", action="store_true",
                     help="run GD and re-record the reference (needs a worker)")
@@ -1029,33 +1114,48 @@ def main(argv=None) -> int:
     REF.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 
-    if a.record:
-        cuts = {}
-        if (REF / "cut.json").exists():
-            cuts = json.loads((REF / "cut.json").read_text())
-        pool = a.pool
-        res = []
-        with ThreadPoolExecutor(max_workers=len(pool)) as ex:
-            futs = {ex.submit(record_level, lv, pool[i % len(pool)], a): lv
-                    for i, lv in enumerate(a.levels)}
-            for f in futs:
-                r = f.result()
-                res.append(r)
-                if r.get("cut") is not None:
-                    cuts[str(r["level"])] = r["cut"]
-        (REF / "cut.json").write_text(json.dumps(cuts, indent=1))
-        for r in sorted(res, key=lambda r: r["level"]):
-            print(f"lv{r['level']:<3} {r['status']:<9} {r['note']}")
-        print(f"--- reference updated in {REF} ({time.time() - t0:.1f}s) ---")
-        return 0
+    try:
+        if a.record:
+            cuts = {}
+            if (REF / "cut.json").exists():
+                cuts = json.loads((REF / "cut.json").read_text())
+            pool = a.pool
+            res = []
+            with ThreadPoolExecutor(max_workers=len(pool)) as ex:
+                futs = {ex.submit(record_level, lv, pool[i % len(pool)], a): lv
+                        for i, lv in enumerate(a.levels)}
+                for f in futs:
+                    r = f.result()
+                    res.append(r)
+                    if r.get("cut") is not None:
+                        cuts[str(r["level"])] = r["cut"]
+            (REF / "cut.json").write_text(json.dumps(cuts, indent=1))
+            for r in sorted(res, key=lambda r: r["level"]):
+                print(f"lv{r['level']:<3} {r['status']:<9} {r['note']}")
+            print(f"--- reference updated in {REF} "
+                  f"({time.time() - t0:.1f}s) ---")
+            return 0
 
-    if a.whole:
-        with ThreadPoolExecutor(max_workers=a.parallel) as ex:
-            now = list(ex.map(lambda lv: check_level(lv, a), a.levels))
-        now.sort(key=lambda r: r["level"])
-    else:
-        now, _, _ = run_segments(a)
-    return report(now, a, time.time() - t0)
+        if a.whole:
+            with ThreadPoolExecutor(max_workers=a.parallel) as ex:
+                now = list(ex.map(lambda lv: check_level(lv, a), a.levels))
+            now.sort(key=lambda r: r["level"])
+        else:
+            now, _, _ = run_segments(a)
+        # Taken here, not after the verdict, so THE HEADLINE STILL TIMES THE
+        # REPLAY -- the same stance fixcensus takes with the input guard. The
+        # guard's own second pass over the traces is timed and printed
+        # separately by trace_verdict.
+        elapsed = time.time() - t0
+        rc = trace_verdict(a, "quick_regress")
+        if rc:
+            return rc
+        return report(now, a, elapsed)
+    finally:
+        # A private directory goes whichever way the run ends, refusal
+        # included; a --tmp the caller named is kept, because it was named so
+        # somebody could look in it.
+        tmp_of(a).release()
 
 
 def report(now: list, a, elapsed: float) -> int:

@@ -35,6 +35,9 @@ data/rigs/*
 __pycache__/
 *.pyc
 data/tmp_quickregress/
+# fixcensus's traces used to go to a shared C:\GDtmp; each run now gets its own
+# directory in here and removes it on the way out (py/gdtas/runtmp.py).
+data/tmp_fixcensus/
 
 # Isolated data roots used for one cold run / A-B comparison (~1.5 GB each)
 data-cold*/

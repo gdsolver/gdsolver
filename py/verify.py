@@ -45,7 +45,11 @@ def main(argv=None) -> int:
     ap.add_argument("--levels", type=int, nargs="+", default=list(range(1, 23)))
     ap.add_argument("--plans", default=str(qr.DATA / "solution_lv{}_dp.txt"))
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
-    ap.add_argument("--tmp", default=str(qr.DATA / "tmp_quickregress"))
+    # THE SAME `seg_lv{lv}_{t}` NAMES quick_regress WRITES. Sharing one
+    # directory with it was not an accident of the default -- it was the
+    # default -- so a verify and a quick_regress running at once wrote each
+    # other's traces. Unset, the run now gets a directory only it can name.
+    ap.add_argument("--tmp", default=None)
     # in the separated era it was two runs, census 8 / regress 6. Now that it is
     # a single run, we take census's 8
     ap.add_argument("--parallel", type=int, default=8)
@@ -88,24 +92,35 @@ def main(argv=None) -> int:
                                     Path(job["trace"]), refs[lv], a.eps)
 
     t0 = time.time()
-    now, n_segs, found = qr.run_segments(qa, extra=census_of)
-    elapsed = time.time() - t0
-
-    # leave real examples of the divergences (so looking inside a family needs
-    # no re-run)
     try:
-        (qr.REF / "last_census.json").write_text(
-            json.dumps(sorted(found, key=lambda d: (d["lv"], d["t"])),
-                       indent=1), encoding="utf-8")
-    except OSError:
-        pass
+        now, n_segs, found = qr.run_segments(qa, extra=census_of)
+        elapsed = time.time() - t0
 
-    rc_r = qr.report(now, qa, elapsed)
-    print()
-    rc_c = fixcensus.census_report(found, n_segs, elapsed, top=a.top,
-                                   bless=a.bless, levels=a.levels,
-                                   waivers=not a.no_waivers)
-    return max(rc_r, rc_c)
+        # BEFORE ANYTHING IS WRITTEN OR PRINTED, and before --bless. Both
+        # verdicts below are read off the same traces, so a trace another run
+        # wrote would move the regression AND the census by the same invisible
+        # row. Same refusal, same exit 2, as fixcensus.
+        rc_t = qr.trace_verdict(qa, "verify")
+        if rc_t:
+            return rc_t
+
+        # leave real examples of the divergences (so looking inside a family
+        # needs no re-run)
+        try:
+            (qr.REF / "last_census.json").write_text(
+                json.dumps(sorted(found, key=lambda d: (d["lv"], d["t"])),
+                           indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+        rc_r = qr.report(now, qa, elapsed)
+        print()
+        rc_c = fixcensus.census_report(found, n_segs, elapsed, top=a.top,
+                                       bless=a.bless, levels=a.levels,
+                                       waivers=not a.no_waivers)
+        return max(rc_r, rc_c)
+    finally:
+        qr.tmp_of(qa).release()
 
 
 if __name__ == "__main__":
