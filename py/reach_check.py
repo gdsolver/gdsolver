@@ -157,7 +157,8 @@ def gd_survives(res: dict, horizon: int, worker_id: int, tmp: runtmp.RunTmp,
     quick_regress and the bare reach (verdict SOLVED), while the tail built here
     dies in GD at t=6,010. The same check as one iteration of the driver's loop.
     """
-    from fidelity_diff import gd_replay  # lazy import (keeps the GD-free path light)
+    # lazy imports (keep the GD-free path light)
+    from fidelity_diff import gd_cut_tick, gd_replay
     lv, t0 = res["level"], res["t0"]
     tail = Path(str(res["tail"]))
     if not tail.exists():
@@ -173,28 +174,41 @@ def gd_survives(res: dict, horizon: int, worker_id: int, tmp: runtmp.RunTmp,
     dump = tmp.dir / f"reach_lv{lv}_{t0}.dump.csv"
     from gdtas.paths import WORKERS_ROOT
     try:
-        # [2026-09-07] THE RETURN VALUE IS DISCARDED AND IT CONTAINS THE ANSWER
-        # TO A QUESTION THIS FUNCTION THEN CANNOT ASK. gd_replay returns
-        # (clear, detail, goal_x) and explicitly marks a timed-out session --
-        # `if res.timed_out and not clear: detail = f"TIMEOUT ({detail})"`. None
-        # of it is bound here, so the verdict below is read from the dump alone
-        # and a TRUNCATED replay is indistinguishable from a completed one. The
-        # information exists and the consumer throws it away, which is the same
-        # shape as the SKIP notes fixed in e8a1b24.
-        # WHICH DIRECTION IT FAILS IN, because it is not symmetric: a timeout
-        # truncates the dump EARLY, so it can only turn a surviving tail into a
-        # DEAD (a phantom reported that is not there). It CANNOT manufacture an
-        # OK -- if the dump reached t0+horizon then the tail did reach its
-        # horizon, whatever happened after. So OK verdicts are sound even under
-        # a timeout; DEAD verdicts are the ones that need the discarded detail.
-        # Left as a note rather than a fix: binding it changes what this returns.
-        gd_replay(worker_id, lv, spliced, dump, timeout_s, WORKERS_ROOT)
+        # [2026-09-07] `goal_x` IS BOUND BECAUSE THE VERDICT BELOW NEEDS IT.
+        # gd_replay returns (clear, detail, goal_x) and every field used to be
+        # thrown away, which left the verdict to be read off the dump's final
+        # row -- and THE DUMP DOES NOT END WHERE THE RUN ENDS. GD does not
+        # truncate on death, it PADS: it keeps writing frozen rows (identical
+        # x and y) afterwards, so the final tick is the end of the padding.
+        # `last >= t0 + horizon` therefore cleared almost any target and could
+        # barely produce a DEAD at all. fidelity_diff.gd_cut_tick already knows
+        # this (its docstring measures lv1: t=20329..21592 frozen at the goal)
+        # and it needs exactly this goal_x.
+        # `detail` STAYS DISCARDED, deliberately: it is what marks a timed-out
+        # session (`if res.timed_out and not clear: detail = f"TIMEOUT (...)"`).
+        # A timeout truncates the dump EARLY, so it can only turn a surviving
+        # tail into a DEAD -- a phantom reported that is not there. Acting on
+        # it is a second change and not the one that was approved.
+        _clear, _detail, goal_x = gd_replay(worker_id, lv, spliced, dump,
+                                            timeout_s, WORKERS_ROOT)
     except Exception as e:                     # a missing worker must not kill the check
         return {"gd": "SKIP", "note": f"{type(e).__name__}"}
     tmp.claim(dump)
-    # did the last tick of the dump reach the end of the window (on death the
-    # dump stops)
-    last, target = -1, t0 + horizon
+    # where the run ACTUALLY ended: the goal if it was reached, otherwise the
+    # first row of the frozen stretch at the end.
+    target = t0 + horizon
+    cut = gd_cut_tick(dump, goal_x)
+    if cut is not None:
+        return {"gd": "OK" if cut >= target else "DEAD", "gd_last": cut,
+                "gd_target": target, "gd_cut": cut}
+    # NO CUT. gd_cut_tick returns None when the dump cannot be read, when no row
+    # parses, or when the final row's x differs from the one before it -- i.e.
+    # when there is no frozen tail at all. The padding this change exists to
+    # defeat is by construction absent there, so the final row IS the end of the
+    # run and the old attempt-max walk is the right reading, not a silent
+    # relapse. It is kept as the fallback, and `gd_cut: None` records that the
+    # branch was taken.
+    last = -1
     try:
         with dump.open(encoding="utf-8-sig", errors="replace") as f:
             hdr = f.readline().rstrip("\n").split(",")
@@ -212,7 +226,7 @@ def gd_survives(res: dict, horizon: int, worker_id: int, tmp: runtmp.RunTmp,
     except OSError:
         return {"gd": "SKIP", "note": "cannot read the dump"}
     return {"gd": "OK" if last >= target else "DEAD", "gd_last": last,
-            "gd_target": target}
+            "gd_target": target, "gd_cut": None}
 
 
 def main(argv=None) -> int:
