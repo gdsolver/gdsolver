@@ -541,9 +541,58 @@ struct State {
     // then vy exactly 0, og 0->1, up flips, y unchanged -- which no pad, orb or
     // portal produces) gives firings at t=2,749, t=2,890 and t=2,961 -- ALL
     // THREE mini cube (vsize 0.600), and none has any gravity portal / pad /
-    // orb / rotated frame in contact. So it decays rather than being consumed.
-    //   (This said "both" while the scan showed two; the third was recovered
-    //   later, see the [CORRECTED again] block below.)
+    // orb / rotated frame in contact. ~~So it decays rather than being consumed.~~
+    //
+    // ============================================================
+    // [2026-09-07, MEASURED IN GD] IT DOES NOT DECAY EITHER, AND
+    // THERE IS NO DECAY CONSTANT TO FIND. THE 2866 IS A MOVER AND
+    // IT RIDES THE PLAYER. Everything from here to the end of the
+    // bracket discussion below is superseded; it is kept because
+    // the reasoning is instructive about HOW it went wrong.
+    //
+    // `hitboxtrace=1` on a gdref replay, reading +0xb80 after every
+    // PlayerObject::update (the `mod:` lines, render_trace.hpp):
+    //     t=2,706  flipGrav=-2706      (counting down, never set)
+    //     t=2,707  flipGrav=1          <- arms
+    //     t=2,749  flipGrav=1  FLIP
+    //     t=2,890  flipGrav=1  FLIP
+    //     t=2,961  flipGrav=1  FLIP
+    //     t=3,388  flipGrav=1
+    //     t=3,389  flipGrav=0          <- releases
+    // PINNED AT 1 FOR 682 TICKS / 983 px, and this is the ONLY armed
+    // interval in the whole level (26 edge lines, all levels of the
+    // run). A counter reading 1 AFTER update was set to 2 during
+    // that tick, so it is RE-SET EVERY TICK -- and the same lines
+    // show `dart` and `force` running to -3,389 unbounded, so the
+    // decrement is unconditional and has no floor. `hitHead` pins at
+    // 1 from 2,432 then releases at 2,843 and falls away, which is
+    // the internal control that a pinned counter does drop when its
+    // source stops.
+    //
+    // WHY CONTACT NEVER ENDS: uid 2860 MOVES. groups.live.txt gives
+    // it 649 distinct positions and it tracks the player at a
+    // constant gap of -1.186 px in x, following in y as well
+    // (cy 282 -> 326.8 -> 299.6 -> 327.0 -> 171.0 while the player
+    // rises and falls). It starts moving at t=2,722, fifteen ticks
+    // after first contact. The player never leaves it.
+    //
+    // So the binary was right all along -- set 2, decrement
+    // unconditionally -- and BOTH readings were confirmed directly.
+    // The missing piece was never in the decrement.
+    //
+    // AND THE ARITHMETIC THAT SAID OTHERWISE WAS RUN ON A FICTION.
+    // objrects holds uid 2860 at its ENTRY position (3735, 255)
+    // forever, so the AABB window "t=2,707..2,733" computed from
+    // that table, and every distance derived from it, describes an
+    // object that is not there ([[gd-locked-object-position-lies]]).
+    // The static box is fiction from t=2,722 on.
+    //
+    // COROLLARY, and it explains a coincidence rather than leaving
+    // it: m_stateNoAutoJump (+0xb74, id 1813) arms and releases on
+    // EXACTLY the same ticks. uid 2861 is an id-1813 in the same
+    // rigid group -- dx 0.0, dy 0.0 across all 649 shared ticks,
+    // one offset value each. One moving pair arms both counters.
+    // ============================================================
     //
     // [CORRECTED] That scan also returned t=4,592 and THAT ONE IS NOT A HEAD
     // BONK -- it is a SWING, and a swing flips gravity on a tap, which when it
@@ -552,6 +601,10 @@ struct State {
     // identifies a shape, not a code path. Dropping it moves the ACTIVE end of
     // the bracket from 1,885 ticks to 183.
     //
+    // [SUPERSEDED -- there is no decay constant; see the measured block above.
+    // The "bracket" below is the gap between flips inside ONE continuous
+    // contact, which is why it grew every time another firing was found. It was
+    // never a lifetime. Kept for the reasoning, not for the numbers.]
     // WHAT IS NOT KNOWN is the decay constant. Active for at least 254 ticks /
     // 451 px past the box (t=2,961, x=4,204.2) -- that end rests on observed
     // firings.
