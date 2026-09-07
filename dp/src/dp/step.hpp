@@ -6564,7 +6564,62 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     ((double)K.dxF < 0.0 || s.rev != 0) ? -1.0 : 1.0;
                 const double xHiPO = (m > 0) ? x1 : x0;
                 bool okHere = smp.ok;
-                if (!okHere && ridesTop && !c.flip && !ceilRamp && !s.onSlope
+                // [2026-09-08] `!c.flip` REMOVED. It was the only orientation
+                // test in this gate, and GD has no counterpart to it.
+                //
+                // Measured: across lv16/18/20 the +/-2.000 slope-contact
+                // assignment fires on an INVERTED body at six of its ten sites,
+                // and five of those are mirrored dual rows where the SAME tick
+                // carries the assignment on an upright body and an inverted one
+                // at once (lv16 t=8,720 / 8,877 / 9,244 / 9,246 / 9,248: p1
+                // up=1 and p2 up=0, |vy| = 2.000 on both). A same-tick pair
+                // under one input is as close to a control as this corpus gets,
+                // and GD does not split on the flag.
+                //
+                // The restriction the flag was carrying is carried already, by
+                // conjuncts that do not mention orientation: `!ceilRamp` keeps
+                // this to floor ramps, and `ridesTop` (a position test,
+                // `s.y - topPrevUp >= -kLandTol`) keeps it to a player ON TOP of
+                // one. The body is shaped for exactly that and needs no mirror:
+                // the ridge loop skips ceilings (:6613) and drops a face above
+                // the box (:6623), and the seat is `best + pH` (:6628) -- push
+                // UP off a floor surface, which is right for a body on top of it
+                // whichever way its gravity points. The nudge downstream is
+                // already flip-aware (slopes.hpp:180, `gs = flip ? -1 : 1`).
+                //
+                // Worked at lv16 t=8,732 before this was written, from objrects
+                // and the recorded dumps, no run: uid 3748 is sdir=0/sup=1 with
+                // x [13190,13220] and sy0=376, so line(x1) = 406; the model's
+                // own free y is 419.574707 against GD's pre-write 419.575, so
+                // pLo = 404.5747 < 405.0 and the 1.0px penetration gate passes
+                // with 1.425. The seat is then 406 + 15 = 421.000 and the nudge
+                // -gs*2.0 = +2.000 -- GD's y and vy on that tick, exactly.
+                //
+                // THIS IS A MEASURED CHANGE, NOT A BUG FIX. The known cost of
+                // opening this family is over-retention (the two 2026-08-19
+                // proposals above cost families 27->44 and 27->31), and what
+                // closes it structurally is `!s.onSlope` (:6540-6541), which
+                // still stands. That it does not bite AT THIS SITE was
+                // established by enumeration (the nearest ceiling ramp is 133px
+                // away against a 15px half); nothing was established about any
+                // other level. The regression suite arbitrates.
+                // [2026-09-08] The gate's own conjuncts, one field each, so
+                // "the branch did not fire" names WHICH conjunct refused
+                // instead of leaving a choice between seven. `slopepush` below
+                // sits inside the penetration test, so its absence is equally
+                // consistent with the gate failing and with the penetration
+                // failing -- that ambiguity is what this print removes.
+                if (g_slopeDbg)
+                    std::printf("pogate t=%lld uid=%d flip=%d y=%.6f notok=%d ridesTop=%d "
+                                "notceil=%d notonslope=%d past=%d inx0=%d inx1=%d "
+                                "x=%.3f xHiPO=%.1f sgnPO=%.0f x0=%.1f x1=%.1f pH=%.2f\n",
+                                (long long)K.t, sp->uid, c.flip ? 1 : 0, (double)c.y,
+                                !okHere ? 1 : 0, ridesTop ? 1 : 0,
+                                !ceilRamp ? 1 : 0, !s.onSlope ? 1 : 0,
+                                ((x - xHiPO) * sgnPO > 0.0) ? 1 : 0,
+                                (x + pH > x0) ? 1 : 0, (x - pH < x1) ? 1 : 0,
+                                x, xHiPO, sgnPO, x0, x1, pH);
+                if (!okHere && ridesTop && !ceilRamp && !s.onSlope
                     && (x - xHiPO) * sgnPO > 0.0
                     && x + pH > x0 && x - pH < x1) {
                     const double lineHere =
