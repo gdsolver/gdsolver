@@ -6674,10 +6674,19 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // ramp uid4032: 585.000 (the corner) -> 588.893, which is
                 // gdref's y to the digit.
                 double top;
+                // [2026-09-07] Which branch actually produced `top`, named at
+                // the branch rather than inferred from the value. The first
+                // rampwin run showed `top` IDENTICAL under --no-slopeseat and
+                // without it, which cannot happen if these two branches differ
+                // here -- so the question is which one ran, and that is not a
+                // thing to settle by arithmetic on the printed value.
+                const char* topSrc = "?";
                 if (!g_noSlopeSeat) {
                     top = slopeSeatTarget(sp, x, pH, gs < 0.0, seatOff);
+                    topSrc = "seatTarget";
                 } else {
                     top = sp->sy0 + m * (xr - x0) + gs * hangOff;
+                    topSrc = "flatOld";
                     if (c.mode == 2 && gs < 0.0) {
                         // The hang's low end is bounded by the **flat** at
                         // line(end) - pH (lv16 t=13,116: 583.000 = sy1 - 9, not
@@ -6689,7 +6698,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 }
                 // [r33] On a tick pushed out at the ridge, no ramp's seat drops
                 // below the apex height (measurements at pushOutSeat's declaration).
-                if (pushOutSeat && !c.flip) top = std::max(top, pushOutTop);
+                if (pushOutSeat && !c.flip) {
+                    const double beforePush = top;
+                    top = std::max(top, pushOutTop);
+                    if (top != beforePush) topSrc = "pushOutSeat";
+                }
                 // ...and it only counts as "a ramp still has me" if its resting
                 // height is where the player actually is. The window alone is
                 // far too coarse: at lv16 t=6516 the player runs off the top of
@@ -6739,8 +6752,19 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     const double mTravNew = m * sgnT;
                     if (s.onSlope && ridesTop && !c.flip
                         && mTravOld > 0.01 && mTravNew > 0.0
-                        && mTravNew < mTravOld - 0.01)
+                        && mTravNew < mTravOld - 0.01) {
+                        // Named so absence at the predicate below has ONE cause.
+                        // See the rampwin comment: a candidate dropped here and
+                        // a candidate never in K.slopes are indistinguishable
+                        // from the predicate's own silence.
+                        if (g_slopeDbg)
+                            std::printf("rampwin: t=%lld uid=%d id=%d "
+                                        "dropped=convex-seam mTravOld=%.3f "
+                                        "mTravNew=%.3f\n",
+                                        (long long)K.t, sp ? sp->uid : -1,
+                                        sp ? sp->id : -1, mTravOld, mTravNew);
                         continue;
+                    }
                 }
                 // [2026-08-21 r68] **At a hang's equal-gradient seam, do not move
                 // to the neighbour until the previous ramp lets go.** Calibration
@@ -6768,7 +6792,48 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             prevHolds = true;
                         break;
                     }
-                    if (prevHolds) continue;
+                    if (prevHolds) {
+                        // The exit worth watching: it turns on s.slopeUidNow,
+                        // the PREVIOUS ride's identity, so a model that never
+                        // entered a ride carries it differently from one that
+                        // did -- and the predicate's own fields would not show
+                        // that. Named for the same reason as the one above.
+                        if (g_slopeDbg)
+                            std::printf("rampwin: t=%lld uid=%d id=%d "
+                                        "dropped=prev-holds slopeUidNow=%d\n",
+                                        (long long)K.t, sp ? sp->uid : -1,
+                                        sp ? sp->id : -1, (int)s.slopeUidNow);
+                        continue;
+                    }
+                }
+                // [2026-09-07] `rampwin:` -- the ramp-window predicate's OWN
+                // INPUTS, for every candidate ramp examined, whether or not it
+                // holds. It prints the FAILING branch deliberately: cli.hpp:257
+                // records that a diagnostic which is silently off is worse than
+                // one that is missing, because the empty output reads as "the
+                // model never even looks at this object" -- and a print gated on
+                // rampWindowHere would reproduce that trap at this very site.
+                // Nothing here is derived or judged; the verdict shown is the
+                // same expression the line below evaluates, so a reader can
+                // check the arithmetic rather than take it. Opened for lv16
+                // t=8,728-8,731, where GD has onGround=1 for four ticks and the
+                // model has grounded=0 and onSlope=0 throughout, and the first
+                // divergence is the tick after (t=8,732, GD vy -> exactly +2.000).
+                if (g_slopeDbg) {
+                    const double tol = 3.0 * std::fabs((double)useDx);
+                    const double gap = std::fabs(top - (double)s.y);
+                    std::printf("rampwin: t=%lld uid=%d id=%d inside=%d "
+                                "top=%.4f y=%.4f gap=%.4f tol=%.4f useDx=%.4f "
+                                "pH=%.2f m=%.3f gs=%.1f seatOff=%.4f seat=%s "
+                                "topSrc=%s xr=%.4f hangOff=%.4f sy0=%.1f "
+                                "x0=%.1f verdict=%d\n",
+                                (long long)K.t, sp ? sp->uid : -1,
+                                sp ? sp->id : -1, smp.inside ? 1 : 0,
+                                top, (double)s.y, gap, tol, (double)useDx,
+                                pH, m, gs, seatOff,
+                                g_noSlopeSeat ? "flat" : "secant",
+                                topSrc, smp.xr, hangOff, (double)sp->sy0, x0,
+                                (smp.inside && gap <= tol) ? 1 : 0);
                 }
                 if (smp.inside && std::fabs(top - (double)s.y)
                                       <= 3.0 * std::fabs((double)useDx))
