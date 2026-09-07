@@ -278,8 +278,19 @@ def _run(a, tmp: runtmp.RunTmp) -> int:
         gd_tag = r.get("gd", "-")
         if gd_tag == "DEAD":
             gd_tag = f"DEAD@{r.get('gd_last')}"
+        # A BARE "SKIP" CANNOT SAY WHETHER THE TOOL HAD NOTHING TO DO OR COULD
+        # NOT RUN. Six sites return SKIP and each records a distinct `note`,
+        # but the note was never printed, so "this case does not apply" and "a
+        # hard dependency is missing" rendered identically. --verify has been
+        # unable to run since a6dd210, this repository's FIRST commit
+        # (py/splice_plan.py is called at :169 and has never been added to this
+        # tree), and eleven days of runs reported three clean SKIPs and exit 0.
+        # The reason was in r["note"] the whole time. Printing it does not fix
+        # --verify; it stops the instrument being unable to report its own
+        # unavailability, which is why nobody noticed.
+        skip_why = f"  ({r['note']})" if gd_tag == "SKIP" and r.get("note") else ""
         print(f"lv{lv} t={at} {note[:18]:<18} {r['verdict']:<8} {deep:<22} "
-              f"{gd_tag:<6} {r.get('seconds', '-')}")
+              f"{gd_tag:<6} {r.get('seconds', '-')}{skip_why}")
         b = base.get(key, "")
         # a case that was SOLVED and is no longer = a regression. The reverse
         # is welcome.
