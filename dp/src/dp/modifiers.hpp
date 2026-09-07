@@ -417,9 +417,36 @@ inline bool flipHeadArms(double x, double y, double pHalf) {
 //   lv18 (24,345): the same full-size cube into a plain ceiling (underside 240,
 //        no modifier objects anywhere near) DIES.
 //   lv11 (4,500):  a MINI cube into a plain continuous ceiling DIES.
-// So the discriminant is neither the size nor the mode: it is this object. The
-// model's old `mode == robot || (cube && mini)` was its proxy, which is why
+// So the discriminant is neither the size nor the mode: ~~it is this object~~.
+// The model's old `mode == robot || (cube && mini)` was its proxy, which is why
 // f3ca55d had to limit the bonk to mini to stop it firing where GD kills.
+//
+// [2026-09-07] **"IT IS THIS OBJECT" IS WRONG -- 1859 IS ONE OF THREE INPUTS.**
+// Read at the gate itself (collidedWithObjectInternal +0x3ce..+0x3e2): the local
+// boolean that selects resolution over kill is set by
+//     m_stateHitHead (0xb7c) > 0   OR   platformer (0xb70)   OR
+//     m_stateFlipGravity (0xb80) > 0
+// -- the last being the id-2866 arm, four instructions below the other two. So a
+// live 2866 also puts a classic ground mode into the resolution arm, and this
+// sentence would tell anyone reasoning about ceiling resolution the wrong thing.
+// Marked here rather than folded into State::fgArm's record because that is
+// where this claim is met.
+//
+// INDEPENDENT of everything about the 2866 arm's LIFETIME: this is about what
+// FEEDS the gate, not how long the counter lives. The model's bonk gate reads
+// only armT (the 1859 side).
+//
+// AND THE FAILURE MODE IS THE SAME ONE AS THE ceilramp NOTE'S: the paragraph
+// this sits in was written about 1859 and is silently wrong about MEMBERSHIP --
+// right about what it measured, silent about the axis it never varied. That is
+// the second time today a note's blind spot rather than its content was the
+// defect (the 2866 paragraph below was written about permanence and was silently
+// wrong about the reader set). Worth treating as a pattern, not a tally.
+//
+// WHAT WOULD MAKE THIS WRONG: a fourth input to that boolean, or the 2866 branch
+// being unreachable for the classic ground modes. Look at
+// collidedWithObjectInternal +0x3ce..+0x3e2 and at what [rsp+0x35] gates
+// (0x392474 and 0x3928ed).
 // The armed-mini case (lv22's switch band, 1859 at (3,195,255)) is covered by
 // the verified solutions that run through it.
 struct ArmBox { double cx, cy, hw, hh; };

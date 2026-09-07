@@ -642,6 +642,19 @@ struct State {
     //   * ORDER: read what the two paths produce, let that define the
     //     population, THEN census. Not the other way round.
     //
+    // AND THE PROBE READS SURVIVALS, NOT DEATHS, WHICH MAKES IT SIMPLER.
+    // gdref is a SOLUTION -- GD never dies in it -- so there is nothing to look
+    // for on the kill side. That is the strength: at every qualifying ceiling
+    // contact in the window GD SURVIVED, therefore the gate was satisfied,
+    // therefore something armed it. platformer is out (classic level) and the
+    // only 1859s lie at x ~ 11,341..11,458, so across most of 2,890..11,342
+    // THE 2866 ARM IS THE SOLE POSSIBLE INPUT and a survival proves it was live
+    // at that tick. The tick of the LATEST such contact is a lower bound on the
+    // arm's life; any of them far past 2,736 refutes the binary's two ticks
+    // through a consumer that never involves a flip.
+    // That also removes the last dependence on the disputed attribution: the
+    // 2,749 flip does not enter, and neither does didHitHead.
+    //
     // AND THE ARM HAS A SECOND CONSUMER, which the model does not model: besides
     // didHitHead's flip, PlayerObject::collidedWithObjectInternal tests it at
     // +0x3db (0x391e4b, `cmp [r14+0xb80], r13d`, > 0) to compute a local boolean,
