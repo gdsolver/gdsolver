@@ -50,6 +50,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from gdtas import runtmp             # noqa: E402  private tmp + trace fingerprints
 from gdtas.paths import LEVELDP_EXE  # noqa: E402
 from quick_regress import (DATA, LEVEL_DATA, REF, groups_args, has_grouped_colliders,  # noqa: E402
                            plan_of, read_ref, start_fields)
@@ -92,7 +93,7 @@ CASES = [
 ]
 
 
-def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: Path,
+def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: runtmp.RunTmp,
                threads: int, cap: int = 2000) -> dict:
     plan = plan_of(lv, str(DATA / "solution_lv{}_dp.txt"))
     gd = read_ref(lv)
@@ -102,7 +103,14 @@ def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: Path,
     if has_grouped_colliders(objrects) and not groups_args(plan):
         return {"verdict": "SKIP", "note": "no groups"}
     r = gd[t0]
-    out = tmp / f"reach_lv{lv}_{t0}.txt"
+    # `reach_lv{lv}_{t0}` carries NO RUN IDENTITY, and --tmp defaulted to a
+    # machine-wide C:\GDtmp\reach, so two runs wrote the same paths. Same hole
+    # and same fix as fixcensus / quick_regress / verify: private by default,
+    # fingerprinted when a --tmp is named by hand. All three suffixes are
+    # reserved together because they belong to one case -- the .txt written
+    # here, and the two gd_survives writes below. gdtas/runtmp.py.
+    base = tmp.reserve(f"reach_lv{lv}_{t0}", ".txt", ".spliced.txt", ".dump.csv")
+    out = Path(str(base) + ".txt")
     a = [str(exe), str(objrects), "--out", str(out),
          "--cap", str(cap), "--shipyq", "0.25", "--shipvq", "1.0",
          "--threads", str(threads),
@@ -129,12 +137,16 @@ def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: Path,
             continue
         if ln.startswith("SOLVED at") and verdict != "PARTIAL":
             verdict = "SOLVED"
+    # Fingerprint it as ours the moment our solver has let go of it. Absent is
+    # recorded as absent, so a tail that appears later cannot be read as this
+    # run's.
+    tmp.claim(out)
     return {"verdict": verdict, "deep_t": deep_t, "deep_x": deep_x,
             "seconds": round(time.time() - t, 1), "tail": out, "t0": t0,
             "level": lv, "plan": plan}
 
 
-def gd_survives(res: dict, horizon: int, worker_id: int, tmp: Path,
+def gd_survives(res: dict, horizon: int, worker_id: int, tmp: runtmp.RunTmp,
                 timeout_s: float) -> dict:
     """Splice the solved tail onto the verified prefix and RUN IT ONCE THROUGH GD.
 
@@ -150,18 +162,21 @@ def gd_survives(res: dict, horizon: int, worker_id: int, tmp: Path,
     tail = Path(str(res["tail"]))
     if not tail.exists():
         return {"gd": "SKIP", "note": "no tail was produced"}
-    spliced = tmp / f"reach_lv{lv}_{t0}.spliced.txt"
+    # solve_case already reserved these two alongside the tail.
+    spliced = tmp.dir / f"reach_lv{lv}_{t0}.spliced.txt"
     r = subprocess.run([sys.executable, str(Path(__file__).parent / "splice_plan.py"),
                         str(res["plan"]), str(tail), str(t0), str(spliced)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if r.returncode != 0 or not spliced.exists():
         return {"gd": "SKIP", "note": "splice failed"}
-    dump = tmp / f"reach_lv{lv}_{t0}.dump.csv"
+    tmp.claim(spliced)
+    dump = tmp.dir / f"reach_lv{lv}_{t0}.dump.csv"
     from gdtas.paths import WORKERS_ROOT
     try:
         gd_replay(worker_id, lv, spliced, dump, timeout_s, WORKERS_ROOT)
     except Exception as e:                     # a missing worker must not kill the check
         return {"gd": "SKIP", "note": f"{type(e).__name__}"}
+    tmp.claim(dump)
     # did the last tick of the dump reach the end of the window (on death the
     # dump stops)
     last, target = -1, t0 + horizon
@@ -188,7 +203,11 @@ def gd_survives(res: dict, horizon: int, worker_id: int, tmp: Path,
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
-    ap.add_argument("--tmp", default=r"C:\GDtmp\reach")
+    # WAS r"C:\GDtmp\reach" -- machine-wide, shared by every checkout and every
+    # concurrent run, with file names that carry no run identity. Unset, the run
+    # now gets a directory only it can name; name one by hand and it behaves as
+    # before, with the fingerprints making the sharing detectable.
+    ap.add_argument("--tmp", default=None)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--parallel", type=int, default=2)
     ap.add_argument("--bless", action="store_true")
@@ -200,8 +219,17 @@ def main(argv=None) -> int:
     ap.add_argument("--worker-id", type=int, default=99)
     ap.add_argument("--timeout-minutes", type=float, default=6.0)
     a = ap.parse_args(argv)
-    tmp = Path(a.tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
+    tmp = runtmp.RunTmp("reach_check", a.tmp, root=DATA / "tmp_reachcheck")
+    try:
+        return _run(a, tmp)
+    finally:
+        tmp.release()
+
+
+def _run(a, tmp: runtmp.RunTmp) -> int:
+    """main's body, split out so the run directory has ONE lifetime instead of
+    a release repeated on each of four return paths (the same reasoning
+    fixcensus gives for its own split)."""
     base_path = REF / "reach.json"
     base = json.loads(base_path.read_text()) if base_path.exists() else {}
 
@@ -221,6 +249,21 @@ def main(argv=None) -> int:
                 continue
             r.update(gd_survives(r, hz, a.worker_id, tmp,
                                  a.timeout_minutes * 60))
+
+    # BEFORE THE TABLE AND BEFORE --bless. A tail another run wrote would move
+    # a verdict and a blessed baseline would then carry it. Same refusal and
+    # same exit 2 as fixcensus / quick_regress / verify.
+    clobbered = tmp.check()
+    if clobbered:
+        text = runtmp.banner(clobbered, "reach_check", tmp.dir)
+        print(text)
+        print(text, file=sys.stderr)
+        return 2
+    # On the clean path say so, with the count: a guard whose success is silent
+    # cannot be told from one that never ran. stderr, so a guarded run stays
+    # byte-comparable with an unguarded one on stdout.
+    print(f"[runtmp] {tmp.count()} artefacts verified as ours -- {tmp.dir}"
+          f"{' (private)' if tmp.private else ''}", file=sys.stderr)
 
     print(f"{'case':<34} {'verdict':<8} {'deepest':<22} {'GD':<6} s")
     bad, now = [], {}
