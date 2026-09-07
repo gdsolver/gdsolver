@@ -539,15 +539,48 @@ struct State {
     //
     // NOT one-shot either: scanning lv22 for t=2,749's own signature (|vy| large,
     // then vy exactly 0, og 0->1, up flips, y unchanged -- which no pad, orb or
-    // portal produces) gives THREE firings, t=2,749 / 2,890 / 4,592. So it decays
-    // rather than being consumed.
+    // portal produces) gives firings at t=2,749 and t=2,890, both mini cube, and
+    // neither has any gravity portal / pad / orb / rotated frame in contact. So
+    // it decays rather than being consumed.
     //
-    // WHAT IS NOT KNOWN is the decay constant. Active for at least 1,885 ticks /
-    // 2,882 px past the box (t=4,592, x=6,635) -- that end rests on observed
+    // [CORRECTED] That scan also returned t=4,592 and THAT ONE IS NOT A HEAD
+    // BONK -- it is a SWING, and a swing flips gravity on a tap, which when it
+    // lands produces the identical shape (model trace has act=1/held=1 at 4,591,
+    // and the swing taps again at 4,589 flipping the other way). A signature
+    // identifies a shape, not a code path. Dropping it moves the ACTIVE end of
+    // the bracket from 1,885 ticks to 183.
+    //
+    // WHAT IS NOT KNOWN is the decay constant. Active for at least 183 ticks /
+    // 313 px past the box (t=2,890, x=4,065.7) -- that end rests on observed
     // firings. Inactive by 8,635 ticks / 12,360 px (t=11,342) -- that end rests
     // on an ABSENCE, which is only evidence if a crossing of the right shape
-    // occurred in between and GD declined it. Not yet censused. Do not write a
-    // constant from this bracket.
+    // occurred in between and GD declined it; an opportunity census over
+    // 4,592..11,342 found three qualifying crossings, two of them TELEPORTS
+    // (9,866 / 10,089, dy +-57.522) and so confounded, leaving 11,342 itself as
+    // the only clean declined one. Do not write a constant from this bracket.
+    //
+    // THE BINARY SAYS THE COUNTER IS SET TO 2 AND DECREMENTED EVERY TICK:
+    //   0x215ba1  mov dword ptr [r14 + 0xb80], 2   collisionCheckObjects, on
+    //             `cmp ecx, 0xb32` (= 2866). The only setter in the whole .text.
+    //   0x389f40  dec dword ptr [r15 + 0xb80]      PlayerObject::update. The only
+    //             other writer. update's 915-instruction prefix has exactly ONE
+    //             exit that skips it, `cmp [r15+0x9c0],0 / jne` = m_isDead, so it
+    //             runs on every tick the player is alive. (First order only: a
+    //             backward jump that then leads past the decrement would not have
+    //             been caught.)
+    // So 2 ticks -- and GD flips 42 ticks after arming. THE CONTRADICTION IS ON
+    // THE SET SIDE and is unresolved. Both axes of the raw box say the overlap
+    // ends at t=2,734: entry is exact in X (3717 - 9 = 3708 against GD's
+    // 3,708.886) and the exit is bound by Y (the player rises out at 273 + 9).
+    // getObjectRect inflation would have to be asymmetric, per-axis and exit-only
+    // to close it.
+    //
+    // AND THE ARM HAS A SECOND CONSUMER, which the model does not model: besides
+    // didHitHead's flip, PlayerObject::collidedWithObjectInternal tests it at
+    // +0x3db (0x391e4b, `cmp [r14+0xb80], r13d`, > 0) to compute a local boolean,
+    // four instructions after m_stateHitHead and the platformer flag. GD uses the
+    // arm as a COLLISION MODIFIER with two consumers; the model treats it as a
+    // flip enable.
     //
     // HOW THE ORIGINAL CLAIM GOT IN: the measurement cited at the arming site
     // (step.hpp, lv22 t=2,707, pre-move x 3,708.886 against the box's left edge
