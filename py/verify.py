@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fixcensus                                   # noqa: E402
 import quick_regress as qr                         # noqa: E402
-from gdtas.paths import LEVELDP_EXE                # noqa: E402
+from gdtas import inputguard                       # noqa: E402  contamination refusal
+from gdtas.paths import LEVELDP_EXE, LEVEL_DATA    # noqa: E402
 
 
 def main(argv=None) -> int:
@@ -84,6 +85,41 @@ def main(argv=None) -> int:
                          seg_start=a.seg_start, seg_slack=a.seg_slack,
                          whole=False, bless=a.bless)
 
+    # THE RUN COMMITS TO ITS INPUTS HERE, exactly as fixcensus does. verify had
+    # NO input guard at all, and the consequence was not that it lacked a
+    # nicety: `inputguard.claim`'s contract is "a tool with no guard installed
+    # pays nothing", so quick_regress.band_track_args' claim of
+    # gdref/lv*.bandtrack.txt was a silent no-op on this path. That is THE ONE
+    # FILE whose contamination we have actually observed (2026-09-06), left
+    # unwatched on the path the repair loop uses to decide whether a plan is
+    # good -- so an unguarded input here can move a SOLVE, not merely a reading.
+    #
+    # The watch list is fixcensus's, and it was checked rather than copied:
+    # cut.json is read by seg_jobs / seg_check / check_level (all reached from
+    # run_segments), fixcensus.json by census_report, and both are read-only on
+    # this path -- cut.json's only write is under `if a.record:`, which verify
+    # never enters. A file a run both reads and writes must be claimed, not
+    # watched, or the guard fires on the run's own legitimate write.
+    guard = inputguard.install()
+    guard.watch(a.leveldp)
+    guard.watch_many([qr.REF / "cut.json", qr.REF / "fixcensus.json"])
+    for lv in a.levels:
+        # qr.plan_of, not fixcensus.plan_of: it is DEFINED at
+        # quick_regress.py:173 and only re-exported through fixcensus, so
+        # reaching it through fixcensus depends on that module's import list
+        # staying as it is. Take it from the deciding source.
+        plan = qr.plan_of(lv, a.plans)
+        guard.watch_many([qr.REF / f"lv{lv}.csv", plan]
+                         + [LEVEL_DATA / f"{n}_lv{lv}.txt" for n in
+                            ("objrects", "triggers", "objgroups", "obb")]
+                         + [Path(str(plan) + s) for s in
+                            (".groups.txt", ".groups.deep.txt",
+                             ".groups.live.txt", ".groups.bank.txt")])
+    # gdref/lv*.bandtrack.txt is deliberately NOT watched: this run rewrites it,
+    # so its state beforehand says nothing. It is claimed inside
+    # quick_regress.band_track_args right after our write -- which is what the
+    # missing install() above was making inert.
+
     refs = {lv: qr.read_ref(lv) for lv in a.levels}
 
     def census_of(job: dict) -> list[dict]:
@@ -100,9 +136,39 @@ def main(argv=None) -> int:
         # verdicts below are read off the same traces, so a trace another run
         # wrote would move the regression AND the census by the same invisible
         # row. Same refusal, same exit 2, as fixcensus.
+        # The INPUT channel first: did anything the sections were measured
+        # against move while they were being measured? Separate refusal from the
+        # trace verdict below because the remedies differ -- an input that moved
+        # means someone else is writing the lab tree, a trace that moved means
+        # someone else is writing this --tmp.
+        moved = guard.check()
+        if moved:
+            text = inputguard.banner(moved, "verify")
+            print(text)
+            print(text, file=sys.stderr)
+            return 2
+
         rc_t = qr.trace_verdict(qa, "verify")
         if rc_t:
             return rc_t
+
+        # On the clean path, SAY SO, and say how many. A guard whose success is
+        # silent cannot be told apart from a guard that was never installed --
+        # which is the exact bug being fixed here, so it would be a poor joke to
+        # fix it with something carrying the same failure mode one level up. The
+        # count is the part that matters, and it is enumerable: 1 exe + cut.json
+        # + fixcensus.json + TEN per level (lv{n}.csv, plan, 4 LEVEL_DATA, 4
+        # .groups) = 13 watched, PLUS the bandtrack that band_track_args claims
+        # after writing it -- count() is len(_seen) and _record holds watches
+        # and claims alike. So one level prints 14.
+        # 13 AND 14 ARE THE TWO OUTCOMES THAT HAVE TO BE TOLD APART: 13 means
+        # the guard installed but the claim did not land, which is the no-op
+        # this commit exists to fix and which any nonzero count would hide.
+        # Enumerate it; do not just check it is not zero.
+        # stderr, so a guarded run stays byte-comparable with an unguarded one
+        # on stdout (the same reason trace_verdict does it).
+        print(f"[inputguard] {guard.count()} inputs verified unchanged "
+              f"across {round(elapsed, 1)}s of replay", file=sys.stderr)
 
         # leave real examples of the divergences (so looking inside a family
         # needs no re-run)
