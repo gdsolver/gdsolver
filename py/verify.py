@@ -172,6 +172,20 @@ def main(argv=None) -> int:
 
         # leave real examples of the divergences (so looking inside a family
         # needs no re-run)
+        #
+        # [2026-09-07] A PARTIAL RUN CLOBBERS A FULL ONE, SILENTLY. This writes
+        # whatever `found` holds, and `--levels 19` -- documented at the top as
+        # a supported profile -- leaves TWO records where a full run left twenty.
+        # The docstring promises "real examples ... EVERY TIME ... looking inside
+        # a family does not need another 5 minutes of replay", and a partial run
+        # destroys exactly that, with nothing in the file saying which scope
+        # produced it. Measured the hard way: a `--levels 19` run made to test
+        # the input guard overwrote the full census that was wanted an hour later
+        # for a family triage, and the only surviving copy was the run's stdout.
+        # NOT FIXED HERE because the fix is a behaviour change and wants a
+        # choice: scope-suffixed filenames, refusing to write on a partial run,
+        # or recording the levels inside the file so a reader can tell. The
+        # third is the smallest and would at least make the clobber visible.
         try:
             (qr.REF / "last_census.json").write_text(
                 json.dumps(sorted(found, key=lambda d: (d["lv"], d["t"])),
