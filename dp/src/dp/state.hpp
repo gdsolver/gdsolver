@@ -582,10 +582,35 @@ struct State {
     // obj.minY > player.maxY, player.minY > obj.maxY. No margin either side.
     // 2866 is GameObjectType 40, so it takes the plain box.
     //
-    // So every link in the chain is now read from the binary and verified --
-    // match, set, decrement, and two readers -- and it still does not add up.
-    // The only thing left unexamined is the multi-hop control flow in update's
-    // prefix (a backward jump that then leads past 0x389f40).
+    // So four links are read from the binary and verified -- match, set,
+    // decrement, and two readers -- and it still does not add up.
+    //
+    // THE CONTRADICTION HAS TWO ESCAPES, NOT ONE, AND THEY ARE ALTERNATIVES:
+    // closing either forces the other.
+    //   (a) THE MULTI-HOP CONTROL FLOW. A backward jump in update's prefix that
+    //       then leads past 0x389f40. The forward-jump-and-ret scan cannot see
+    //       it; a real CFG would close it.
+    //   (b) THE ATTRIBUTION. That the flip at t=2,749 is didHitHead's AT ALL is
+    //       the FIFTH link and it is NOT read -- it is inferred from the
+    //       signature, and a signature cannot identify a path here because the
+    //       +-2 is consumed by the seat inside its own tick. 2,749 and 2,890
+    //       survive on "a mini cube has no tap-flip mechanic", which is an
+    //       argument about what ELSE could have done it, not evidence that this
+    //       did. It is the same reasoning that correctly removed t=4,592.
+    // A CLEAN CFG IS THEREFORE NOT A DEAD END: it would prove the attribution
+    // wrong, and the arm expired on schedule exactly as the binary says.
+    //
+    // AND THERE IS A PROBE FOR (b) THAT DOES NOT NEED A FLIP. The second
+    // consumer's boolean is read twice, and both reads gate COLLISION
+    // RESOLUTION rather than the flip:
+    //   0x392474  cmp [rsp+0x35], dil / je   -> else a path keyed on
+    //             m_isUpsideDown (+0x9bf) choosing between xmm13 / xmm14
+    //   0x3928ed  cmp [rsp+0x35], dil / jne  -> a different continuation
+    // So a LIVE arm resolves a head contact differently from a DEAD one, and
+    // that difference is in the POSITION stream -- it is not consumed inside the
+    // tick the way the +-2 is. Any ordinary ceiling contact between 2,890 and
+    // 11,342 could therefore date the arm's expiry without a flip ever
+    // occurring. Nobody has looked for one.
     //
     // AND THE ARM HAS A SECOND CONSUMER, which the model does not model: besides
     // didHitHead's flip, PlayerObject::collidedWithObjectInternal tests it at
