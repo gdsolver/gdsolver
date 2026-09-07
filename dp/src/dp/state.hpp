@@ -592,6 +592,32 @@ struct State {
     // EXACTLY the same ticks. uid 2861 is an id-1813 in the same
     // rigid group -- dx 0.0, dy 0.0 across all 649 shared ticks,
     // one offset value each. One moving pair arms both counters.
+    //
+    // WHAT THIS MEANS FOR THE MODEL, written down because a finding
+    // whose consequence is left implicit gets rediscovered as a bug.
+    // THE MODEL HAS TWO ERRORS HERE AND THEY CANCEL:
+    //   level_loader.hpp:1211  g_flipHeadBoxes takes {cx,cy,hw,hh} at
+    //                          LOAD time -- the PARKED box, which for
+    //                          uid 2860 is fiction from t=2,722.
+    //   step.hpp:2626-2628     the only write in the tree, guarded by
+    //                          !c.fgArm: SET ONCE, NEVER CLEARED.
+    // GD arms every tick from live contact and falls two ticks after
+    // it ends; the model arms once from the static overlap and stays
+    // armed forever. For lv22's ride those give the same trace, which
+    // is why nothing flagged it. THEY STOP CANCELLING TWICE:
+    //   (a) a 2866 that rides without ever statically overlapping --
+    //       GD arms, the model never does;
+    //   (b) after a ride ends (this one breaks up near t~3,300) --
+    //       GD's counter falls, the model stays 1 for the level.
+    // AND IT IS NOT A REPLAY QUESTION: search_key.hpp:305 carries
+    // fgArm at bit 63, so a wrong value splits or merges search
+    // states. Per the standing rule, a dedupe-touching change is
+    // invisible to every whole-replay instrument -- fidelity_diff
+    // cannot witness it and an agreeing corpus proves nothing about
+    // the search. SCOPED, NOT SOLVED: fixing this needs an instrument
+    // named before the change, and we do not have one. That is the
+    // same wall as the hitGround/ride zeroing question, which is
+    // probably not a coincidence.
     // ============================================================
     //
     // [CORRECTED] That scan also returned t=4,592 and THAT ONE IS NOT A HEAD

@@ -2623,6 +2623,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // The count stayed three by coincidence.) The decay constant is NOT
         // known -- see the full record at State::fgArm, and do not write one
         // from the bracket there.
+        // [2026-09-07] TWO ERRORS THAT CANCEL, and only for the case measured.
+        // g_flipHeadBoxes holds LOAD-TIME positions (level_loader.hpp:1211) and
+        // `!c.fgArm` makes this a set-once latch that never clears -- while GD
+        // re-arms every tick from LIVE contact and drops two ticks after it
+        // ends. On lv22 the 2866 rides the player, so a parked box that arms
+        // forever and a live box that re-arms every tick produce the same
+        // trace. They diverge for a 2866 that rides without ever statically
+        // overlapping, and after any ride ends. fgArm is in the dedupe key
+        // (search_key.hpp:305, bit 63), so this cannot be judged by replay --
+        // see the full account at State::fgArm before touching it.
         if (!c.fgArm && !g_flipHeadBoxes.empty()
             && flipHeadArms(modX, modY, pHalf))
             c.fgArm = 1;
