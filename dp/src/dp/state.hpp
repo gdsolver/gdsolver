@@ -550,9 +550,15 @@ struct State {
     // identifies a shape, not a code path. Dropping it moves the ACTIVE end of
     // the bracket from 1,885 ticks to 183.
     //
-    // WHAT IS NOT KNOWN is the decay constant. Active for at least 183 ticks /
-    // 313 px past the box (t=2,890, x=4,065.7) -- that end rests on observed
-    // firings. Inactive by 8,635 ticks / 12,360 px (t=11,342) -- that end rests
+    // WHAT IS NOT KNOWN is the decay constant. Active for at least 254 ticks /
+    // 451 px past the box (t=2,961, x=4,204.2) -- that end rests on observed
+    // firings.
+    //   [CORRECTED again] It said 183 (t=2,890) because the scan that found the
+    //   firings required |vy| > 3.0 and t=2,961 enters at 2.936 -- an arbitrary
+    //   threshold of mine cutting a real case by 0.064, on a scan whose output
+    //   the bracket was then built on. t=2,961 has the full signature: up 0->1,
+    //   vy 2.936 -> exactly 0, og 0->1, y +0.039. Found by the ceiling-contact
+    //   census below, which was looking for something else. Inactive by 8,635 ticks / 12,360 px (t=11,342) -- that end rests
     // on an ABSENCE, which is only evidence if a crossing of the right shape
     // occurred in between and GD declined it; an opportunity census over
     // 4,592..11,342 found three qualifying crossings, two of them TELEPORTS
@@ -654,6 +660,23 @@ struct State {
     // through a consumer that never involves a flip.
     // That also removes the last dependence on the disputed attribution: the
     // 2,749 flip does not enter, and neither does didHitHead.
+    //
+    // [2026-09-07 RUN, AND IT DOES NOT ACHIEVE THAT] The census was run with the
+    // population pre-registered before filtering (a positive = a tick in
+    // (2890,11342), classic ground mode, player box overlapping a type-0 solid
+    // on the binary's own bare AABB, head leading, head crossing the near face,
+    // x outside the 1859 span 11,341..11,458). Canary passed: the detector finds
+    // t=2,749 and t=2,890 when the window is widened to include them.
+    // THREE CONTACTS, AND NONE IS FLIP-FREE:
+    //   t= 2,961  uid 3101   IS A FLIP (up 0->1, vy 2.936 -> 0, og 0->1)
+    //   t= 9,866  uid 6183   the spider-orb teleport pair -- confounded
+    //   t=10,089  uid 6194   the same pair
+    // So the window offers no un-confounded ceiling contact and the flip-free
+    // probe cannot date the arm FROM THIS LEVEL. The design is sound and the
+    // corpus does not supply it -- a statement about lv22, not about the arm.
+    // The teleport pair confounds this the same way it confounded the
+    // opportunity census: a teleport in the same tick means a survival cannot be
+    // read as the gate being satisfied.
     //
     // AND THE ARM HAS A SECOND CONSUMER, which the model does not model: besides
     // didHitHead's flip, PlayerObject::collidedWithObjectInternal tests it at
