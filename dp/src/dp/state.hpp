@@ -572,8 +572,20 @@ struct State {
     // THE SET SIDE and is unresolved. Both axes of the raw box say the overlap
     // ends at t=2,734: entry is exact in X (3717 - 9 = 3708 against GD's
     // 3,708.886) and the exit is bound by Y (the player rises out at 273 + 9).
-    // getObjectRect inflation would have to be asymmetric, per-axis and exit-only
-    // to close it.
+    //
+    // AND THE MATCH EXTENT IS NOW READ RATHER THAN INFERRED: there is no
+    // inflation. collisionCheckObjects' per-object loop takes the PLAYER's plain
+    // rect once (0x2149b8, vtable +0x490) into xmm7/8/9/10, takes each object's
+    // plain rect (0x214ad0, the same +0x490 -- only GameObjectType 0x19, the
+    // slope, goes to the two-argument +0x488 form), and skips the object on a
+    // bare AABB reject: obj.minX > player.maxX, player.minX > obj.maxX,
+    // obj.minY > player.maxY, player.minY > obj.maxY. No margin either side.
+    // 2866 is GameObjectType 40, so it takes the plain box.
+    //
+    // So every link in the chain is now read from the binary and verified --
+    // match, set, decrement, and two readers -- and it still does not add up.
+    // The only thing left unexamined is the multi-hop control flow in update's
+    // prefix (a backward jump that then leads past 0x389f40).
     //
     // AND THE ARM HAS A SECOND CONSUMER, which the model does not model: besides
     // didHitHead's flip, PlayerObject::collidedWithObjectInternal tests it at
