@@ -612,6 +612,36 @@ struct State {
     // 11,342 could therefore date the arm's expiry without a flip ever
     // occurring. Nobody has looked for one.
     //
+    // ...AND IT IS THE CEILING RESOLUTION-vs-KILL GATE, which makes the probe
+    // far stronger than "a position difference". Reading both sides:
+    //   armed   (fall-through 0x39247f) picks (xmm13,xmm14) or (xmm9,xmm10) on
+    //           m_isUpsideDown, compares against xmm15, and resolves.
+    //   unarmed (je 0x39289b)           takes the mode-flag path
+    //                                   (0x9bf / 9b9 / 9ba / 9bc / 9c4).
+    // That is the branch modifiers.hpp's CEILING ARM note already describes --
+    // "puts the classic ground modes into the ceiling RESOLUTION arm instead of
+    // the KILL" -- and its inputs are m_stateHitHead(0xb7c) > 0 OR platformer
+    // OR m_stateFlipGravity(0xb80) > 0. So a live 2866 arm is the difference
+    // between GD resolving a ceiling contact and KILLING THE PLAYER, which is
+    // the most observable outcome there is.
+    //
+    // WHICH IS A SECOND, SEPARATE MODEL DEFECT: modifiers.hpp says the
+    // discriminant for the resolution arm "is this object", meaning 1859 alone.
+    // GD's gate is 1859 OR 2866 OR platformer. Between t=2,890 and t=11,342
+    // lv22's only 1859s are at x ~ 11,341..11,458, so most of that window has
+    // no 1859 at all -- which is exactly where the probe can run cleanly.
+    //
+    // TWO CAUTIONS FOR WHOEVER RUNS IT:
+    //   * DO NOT REUSE THE OPPORTUNITY CENSUS'S POPULATION. That looked for
+    //     crossings of the shape that would fire acquireFlip, a NARROWER
+    //     predicate than "contacts where the armed boolean changes resolution".
+    //     Its only survivor in this window was 11,342 itself, so reusing it
+    //     would make the probe answer with the disputed tick. The population is
+    //     the whole question; derive it from what the two paths above actually
+    //     produce.
+    //   * ORDER: read what the two paths produce, let that define the
+    //     population, THEN census. Not the other way round.
+    //
     // AND THE ARM HAS A SECOND CONSUMER, which the model does not model: besides
     // didHitHead's flip, PlayerObject::collidedWithObjectInternal tests it at
     // +0x3db (0x391e4b, `cmp [r14+0xb80], r13d`, > 0) to compute a local boolean,
