@@ -2616,9 +2616,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // "sticky once set" IS REFUTED BY GD** -- gdref arms at t~2,707 and
         // still does NOT flip at t=11,342 (up stays 0, vy -0.216/tick straight
         // through), which is lv22's whole-run killer. It decays rather than
-        // being consumed: three firings at t=2,749 / 2,890 / 4,592. The decay
-        // constant is NOT known -- see the full record at State::fgArm, and do
-        // not write one from the bracket there.
+        // being consumed: three firings at t=2,749 / 2,890 / 2,961, all mini
+        // cube. (This line said 4,592 -- that one is a SWING and a tap
+        // reproduces the shape, so it was dropped; 2,961 was found later by a
+        // census after an arbitrary |vy| > 3.0 in the scan had cut it by 0.064.
+        // The count stayed three by coincidence.) The decay constant is NOT
+        // known -- see the full record at State::fgArm, and do not write one
+        // from the bracket there.
         if (!c.fgArm && !g_flipHeadBoxes.empty()
             && flipHeadArms(modX, modY, pHalf))
             c.fgArm = 1;

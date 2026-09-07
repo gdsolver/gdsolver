@@ -539,9 +539,11 @@ struct State {
     //
     // NOT one-shot either: scanning lv22 for t=2,749's own signature (|vy| large,
     // then vy exactly 0, og 0->1, up flips, y unchanged -- which no pad, orb or
-    // portal produces) gives firings at t=2,749 and t=2,890, both mini cube, and
-    // neither has any gravity portal / pad / orb / rotated frame in contact. So
-    // it decays rather than being consumed.
+    // portal produces) gives firings at t=2,749, t=2,890 and t=2,961 -- ALL
+    // THREE mini cube (vsize 0.600), and none has any gravity portal / pad /
+    // orb / rotated frame in contact. So it decays rather than being consumed.
+    //   (This said "both" while the scan showed two; the third was recovered
+    //   later, see the [CORRECTED again] block below.)
     //
     // [CORRECTED] That scan also returned t=4,592 and THAT ONE IS NOT A HEAD
     // BONK -- it is a SWING, and a swing flips gravity on a tap, which when it
@@ -558,7 +560,16 @@ struct State {
     //   threshold of mine cutting a real case by 0.064, on a scan whose output
     //   the bracket was then built on. t=2,961 has the full signature: up 0->1,
     //   vy 2.936 -> exactly 0, og 0->1, y +0.039. Found by the ceiling-contact
-    //   census below, which was looking for something else. Inactive by 8,635 ticks / 12,360 px (t=11,342) -- that end rests
+    //   census below, which was looking for something else.
+    //   IT PASSES THE SAME TAP TEST that excluded 4,592, and that test is what
+    //   licenses the number: 4,592 is a SWING at full size, where a tap
+    //   reproduces the shape; t=2,961 is MINI CUBE, vsize 0.600, identical to
+    //   both earlier survivors, and a mini cube has no tap-flip mechanic. The
+    //   hardness is the MODE, not the signature -- so 2,961 inherits the
+    //   protection rather than needing a new argument. (Checked only after the
+    //   bracket was already committed, which is the wrong order: the exclusion
+    //   rule has to run BEFORE the number moves, or it is being applied in one
+    //   direction only.) Inactive by 8,635 ticks / 12,360 px (t=11,342) -- that end rests
     // on an ABSENCE, which is only evidence if a crossing of the right shape
     // occurred in between and GD declined it; an opportunity census over
     // 4,592..11,342 found three qualifying crossings, two of them TELEPORTS

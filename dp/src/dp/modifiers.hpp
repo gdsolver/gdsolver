@@ -295,8 +295,12 @@ inline double forceFieldAcc(double x, double y, double pHalf) {
 // cleanly by provenance:
 //
 //   REFUTED, and all four rest on ONE behavioural observation of ONE lv22 pass:
-//     "stays positive for 500+ ticks"   -- the two firings this corpus shows are
-//                                          at +42 and +183 ticks, not 500+.
+//     "stays positive for 500+ ticks"   -- the firings this corpus shows are at
+//                                          +42, +183 and +254 ticks, not 500+.
+//                                          (+254 was found after this was
+//                                          written; it does not change the
+//                                          verdict, which turns on the corpus
+//                                          having no firing anywhere near 500.)
 //     "went off again 638 px past"      -- no firing in the current reference is
 //                                          at 638 px; the observation is from an
 //                                          older solution (its coordinates aged
