@@ -94,6 +94,7 @@ from gdtas.solveutil import (has_grouped_colliders, grounded_of, held_before,
                              FLYING, MODE_ID)
 from fidelity_diff import groups_args, model_replay, gd_cut_tick, gd_replay
 from gdmcp.data import diff_trace
+from gdtas import inputguard
 from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
 
 REF = LEVEL_DATA / "gdref"
@@ -530,6 +531,7 @@ def pad_anchor_args(level: int, t0: int, gd: dict | None = None) -> list[str]:
 
 
 _BANDTRACK: dict[int, list[str]] = {}
+_BANDTRACK_LOCK = threading.Lock()
 
 
 def band_track_args(level: int, gd: dict) -> list[str]:
@@ -543,30 +545,65 @@ def band_track_args(level: int, gd: dict) -> list[str]:
     If only the measurement rig omits it, divergences that do not exist in the
     deployed configuration get counted as families.
     --startband (the anchor row) stays as it is: it becomes the initial value
-    for ticks with no recording."""
-    if level in _BANDTRACK:
-        return _BANDTRACK[level]
-    out = REF / f"lv{level}.bandtrack.txt"
-    args: list[str] = []
-    try:
-        rows = 0
-        with open(out, "w", encoding="utf-8") as w:
-            prev = None
-            for t in sorted(gd):
-                r = gd[t]
-                cur = (r.get("pmin"), r.get("pmax"))
-                if not cur[0] or not cur[1]:
-                    continue
-                if cur != prev:
-                    w.write(f"{t},{cur[0]},{cur[1]}\n")
-                    rows += 1
-                prev = cur
+    for ticks with no recording.
+
+    [2026-09-07] TWO DEFECTS, ONE SHAPE: this rewrites a file other readers of
+    the same tree are reading, and it used to do it without a lock and without
+    a complaint.
+
+    The cache was checked and filled unlocked from an 8-thread pool. Both
+    instruments submit their sections level by level, so THE FIRST EIGHT JOBS
+    ARE ALL THE SAME LEVEL and all eight miss the cache: eight threads open one
+    path "w" at once, while the leveldp of whichever thread got there first is
+    already reading it. Truncating a file under its reader does not raise; it
+    hands the reader a short band list, which is the same as passing no band at
+    all for the ticks that fell off. The lock is the same one `pad_anchor_args`
+    has had, for the same reason.
+
+    And `except OSError: pass` DROPPED --bandtrack SILENTLY. A read-only gdref,
+    a path that does not exist, a sharing violation from the other session --
+    any of them and the run goes on without the mover geometry, with no error
+    and nothing missing to complain about. The symptom is not "the level looks
+    short", it is "the family counts are wrong", which is unfalsifiable from
+    the output. Refuse instead: a run that cannot write this file cannot
+    measure what it says it measures.
+
+    The write is claimed with `gdtas.inputguard` so a guarded run can tell OUR
+    rewrite (expected, every run does it) from a SECOND PROCESS rewriting the
+    same path (the 2026-09-06 collision), which is invisible in the output."""
+    with _BANDTRACK_LOCK:
+        if level in _BANDTRACK:
+            return _BANDTRACK[level]
+        out = REF / f"lv{level}.bandtrack.txt"
+        args: list[str] = []
+        try:
+            rows = 0
+            with open(out, "w", encoding="utf-8") as w:
+                prev = None
+                for t in sorted(gd):
+                    r = gd[t]
+                    cur = (r.get("pmin"), r.get("pmax"))
+                    if not cur[0] or not cur[1]:
+                        continue
+                    if cur != prev:
+                        w.write(f"{t},{cur[0]},{cur[1]}\n")
+                        rows += 1
+                    prev = cur
+        except OSError as e:
+            raise RuntimeError(
+                f"could not write the band recording {out}: {e}. "
+                f"--bandtrack would have been dropped for lv{level}, and a "
+                f"section replayed without the band diverges into families "
+                f"that do not exist in the deployed configuration. Fix the "
+                f"path or the permissions rather than measuring without it"
+            ) from e
+        # claimed even when it holds no rows: we truncated it either way, and
+        # what the guard compares is whether OUR bytes survived the run
+        inputguard.claim(out)
         if rows:
             args = ["--bandtrack", str(out)]
-    except OSError:
-        pass
-    _BANDTRACK[level] = args
-    return args
+        _BANDTRACK[level] = args
+        return args
 
 
 def seg_jobs(level: int, a) -> tuple[dict, list]:

@@ -27,6 +27,30 @@ DIVERGENCE ON THE VERIFIED CORPUS, and the sets of families mostly overlap.
     python py/fixcensus.py --all-hits          # every diverging tick of a
                                                # section, not just the first
 
+THE RUN REFUSES TO REPORT IF ITS INPUTS MOVE UNDER IT (2026-09-07). Every file
+it depends on -- the level dumps, gdref, the plans and their `.groups*.txt`,
+the solver executable -- is fingerprinted when the run commits to it and
+re-read when the last section is done; anything whose bytes changed, or that
+was truncated and rewritten with the same bytes, withholds the whole result and
+exits 2. THIS IS NOT DEFENSIVE TIDYING. On 2026-09-06 two sessions ran
+census-family instruments against the shared lab tree at once -- fixcensus and
+quick_regress both regenerate `gdref/lv*.bandtrack.txt` -- and the A/B taken
+across the overlap reported "one family removed" that could not be told apart
+from an artefact. The headline moved with it by a single row, and NOTHING ELSE
+IN THE OUTPUT SAID SO. gdtas/inputguard.py holds the reasoning and the measured
+cost.
+
+The corollary for anyone reading a number out of the paragraphs below: THE
+TOTALS HERE ARE NOT A FIXTURE. They are a function of the leveldp build and of
+the state of the lab tree. Measured in this worktree on 2026-09-07 against a
+private RelWithDebInfo build of 5f6e2da, in a data root copied out of the lab
+and written by nothing else, the default arm returns 1,116 sections and TWENTY
+divergences / 19 families, twice, byte-identically -- where the paragraph below
+records nineteen. The section count agrees exactly and the corpus is the same,
+so the gap is the build or the tree, not contamination and not chance. Compare
+arms against each other on one build; do not compare an arm against a total
+written down on another day.
+
 THE DEFAULT KEEPS ONLY THE FIRST HIT PER SECTION, and that is a blind spot as
 well as a discipline. Later ticks in an already-diverged section are mostly the
 first one's arithmetic continuing, which is why the recorder stops -- but a
@@ -66,6 +90,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import census_waivers                             # noqa: E402  known outliers
+from gdtas import inputguard                      # noqa: E402  contamination refusal
 from gdtas.solveutil import (GD_GROUND_CORROBORATED, GD_GROUND_RAW, MODE_ID,
                              cause_of)            # noqa: E402  recorder's classification
 from gdtas.paths import LEVELDP_EXE               # noqa: E402
@@ -274,16 +299,39 @@ def main(argv=None) -> int:
         return 2
     tmp = Path(a.tmp)
     tmp.mkdir(parents=True, exist_ok=True)
+    # THE RUN COMMITS TO ITS INPUTS HERE. Everything watched below is read over
+    # the next several minutes by a few thousand replays; if any of it moves in
+    # between, the sections were not all measured against the same world and
+    # the census is not a result. See gdtas/inputguard.py for why the verdict is
+    # taken on content rather than on mtime.
+    guard = inputguard.install()
+    guard.watch(a.leveldp)
+    guard.watch_many([REF / "cut.json", REF / "fixcensus.json"])
     cuts = json.loads((REF / "cut.json").read_text()) \
         if (REF / "cut.json").exists() else {}
 
     jobs = []
     for lv in a.levels:
+        plan = plan_of(lv, str(DATA / "solution_lv{}_dp.txt"))
+        # Watched for EVERY requested level, present or not, and before the
+        # level is allowed to disqualify itself: a missing objrects or a
+        # missing .groups*.txt is what makes a level drop out silently, so its
+        # absence is part of what the run committed to.
+        guard.watch_many([REF / f"lv{lv}.csv", plan]
+                         + [LEVEL_DATA / f"{n}_lv{lv}.txt" for n in
+                            ("objrects", "triggers", "objgroups", "obb")]
+                         + [Path(str(plan) + s) for s in
+                            (".groups.txt", ".groups.deep.txt",
+                             ".groups.live.txt", ".groups.bank.txt")])
+        # gdref/lv*.bandtrack.txt is deliberately NOT watched as an input: this
+        # run rewrites it itself, so its state beforehand says nothing. It is
+        # claimed inside quick_regress.band_track_args right after our write,
+        # which is what lets the guard tell our rewrite from a second process's.
         gd = read_ref(lv)
         if not gd:
             continue
         if has_grouped_colliders(LEVEL_DATA / f"objrects_lv{lv}.txt") \
-                and not groups_args(plan_of(lv, str(DATA / "solution_lv{}_dp.txt"))):
+                and not groups_args(plan):
             continue
         cut = cuts.get(str(lv)) or max(gd)
         t = a.seg_start
@@ -299,6 +347,28 @@ def main(argv=None) -> int:
                 for lv, t in jobs]
         for f in futs:
             found += f.result()
+    # Taken here rather than at the census call so the headline still times THE
+    # REPLAY. The guard's second pass over the inputs costs a second or two and
+    # belongs to neither.
+    elapsed = time.time() - t0
+
+    # BEFORE ANYTHING IS PRINTED OR WRITTEN. --json, the family table and
+    # --bless all live downstream of this, and a contaminated run must not be
+    # able to emit any of them: the whole difficulty is that its output is
+    # indistinguishable from a clean one. Same stance as quick_regress --whole's
+    # "NO BASELINE -- THIS IS NOT A PASS": refuse, and say so where it cannot be
+    # mistaken for a number.
+    moved = guard.check()
+    if moved:
+        text = inputguard.banner(moved, "fixcensus")
+        print(text)
+        print(text, file=sys.stderr)
+        return 2
+    # On the clean path, say so ON STDERR: it is the only evidence that the
+    # check ran at all rather than being skipped, and keeping it off stdout is
+    # what lets a guarded run be compared byte-for-byte with an unguarded one.
+    print(f"[inputguard] {guard.count()} inputs verified unchanged "
+          f"across {round(elapsed, 1)}s of replay", file=sys.stderr)
 
     if a.family:
         # THE TABLE'S SPELLING AND THIS ONE WERE DIFFERENT KEYS. census_report
@@ -325,7 +395,7 @@ def main(argv=None) -> int:
                   f"in={d['in']} edy={d['edy']:<9} edvy={d['edvy']}")
         return 0
 
-    return census_report(found, len(jobs), time.time() - t0,
+    return census_report(found, len(jobs), elapsed,
                          top=a.top, bless=a.bless, levels=a.levels,
                          waivers=not a.no_waivers, json_out=a.json_out,
                          all_hits=a.all_hits)
