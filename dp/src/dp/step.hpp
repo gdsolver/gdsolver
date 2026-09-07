@@ -8619,6 +8619,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // on the arrival tick and left 2.3 px high from there on.
             // Hazards are deliberately NOT skipped: not killing where GD kills
             // is the dangerous direction, and no measurement covers it.
+            const double vIn = (double)c.vy;   // for `telefire` below
             teleportedThisTick = true;
             teleUid = p->uid;      // uid-order gate (measured, see teleUid's decl.)
             c.y = (float)tpTarg;   // exit half for 2902, closed tpY for 747
@@ -8687,6 +8688,17 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 }
                 c.vy = (float)(gravChanged ? vTp * 0.5 : vTp);
             }
+            // `portfire` below CANNOT SEE THIS BRANCH -- it sits after the
+            // `continue`, so every teleport is invisible to it while ordinary
+            // portals print. Measured: an anchored lv22 run emits 39 portfire
+            // lines and none at t=9,866 / 10,089, where the model teleports
+            // 57.5 px. A debug print that structurally excludes the branch you
+            // are investigating reads exactly like "the branch did not fire".
+            if (g_slopeDbg)
+                std::printf("telefire t=%lld uid=%d id=%d type=%d tpg=%d "
+                            "vIn=%.4f vOut=%.4f y=%.3f gravChanged=%d\n",
+                            (long long)K.t, p->uid, p->id, p->type, p->tpGrav,
+                            vIn, (double)c.vy, (double)c.y, gravChanged ? 1 : 0);
             continue;
         }
         {
