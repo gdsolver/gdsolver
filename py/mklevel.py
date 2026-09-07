@@ -4026,6 +4026,153 @@ def build_flyramps() -> str:
     return header() + ";" + ";".join(objs) + ";"
 
 
+def build_slopevy() -> str:
+    """Is the SLOPE-CONTACT vy ASSIGNMENT flat, or does it scale with speed?
+
+    GD writes a vy of exactly +/-2.000 on the tick it makes slope contact. Ten
+    unambiguous instances across lv16/lv18/lv20; the magnitude does not move with
+    the ramp gradient (-2.0, -1.0, -0.5, -0.291, -0.264, +0.5, +1.0 all give
+    2.000), so it is an assignment and not a computed launch, and the sign
+    follows the RAMP direction rather than gravity. The separator that found them
+    is `vy(t) - vy(t-1)`: the largest gravity step in the corpus is 0.216, the
+    sorted jump-ins run `... 0.216 x23 | 0.363  2.000 x6 ...`, and nothing
+    occupies the gap. 34 of the 44 corpus rows AT |vy| = 2.000 are coincidences --
+    2.000 is not enriched, it ranks 34th of 401 populated values in its band.
+
+    WHAT IS UNDECIDED: all ten instances are at speed 1.1, so a flat 2.000 and a
+    speed-scaled one are indistinguishable in the corpus. There are zero
+    discontinuities among the 366,350 speed-0.9 rows, which is suggestive and not
+    proof. This rig sweeps the speed with a real speed portal per unit.
+
+    PREDICTED, BEFORE THE RUN (dx from speed.hpp:75-84; the assignment is read
+    off the tick where `vy(t) - vy(t-1)` exceeds 0.216):
+
+        id   speed   dx        A: flat   B: prop. to speed   C: prop. to dx
+        200  0.7     1.04650   2.000     1.2726              1.2965
+        201  0.9     1.29825   2.000     1.6362              1.6086
+        202  1.1     1.61426   2.000     2.000               2.000
+        203  1.3     1.95000   2.000     2.3634              2.4160
+
+    B and C differ by 0.024..0.053, and vy is recorded on a 0.001 grid, so all
+    three separate. THE 1.1 UNIT IS THE CONTROL: every known instance is at 1.1,
+    so if that unit shows no 2.000 the rig is not reproducing the phenomenon and
+    THE SWEEP SAYS NOTHING -- read it before reading the others.
+
+    Both modes: the assignment is not flight-specific (lv18 t=20,178 is a cube),
+    so ship and cube run at every speed. Zero input, like its `flyramps` sibling.
+
+    [2026-09-07, after the first run] THE ASSIGNMENT DID NOT APPEAR -- not even in
+    the 1.1 units, so by the control above the sweep says nothing about it. The
+    reason: lv16's event is a DESCENT onto the slope (vyin = -6.752, an inverted
+    ship coming down onto it), and these units only ride UP a ramp and launch.
+    The descent unit is still to be built.
+
+    What the run did settle is the LAUNCH, and the gradient axis was added so it
+    settles a row rather than a point. Measured at |m| = 1, all four speeds:
+
+        speed  dx         ship    cube     ship/dx  cube/dx
+        0.7    1.04650    4.477   5.969    4.278    5.704
+        0.9    1.29825    5.554   7.405    4.278    5.704
+        1.1    1.61426    6.906   9.208    4.278    5.704
+        1.3    1.95000    8.342   11.123   4.278    5.704
+
+    8/8 on the 0.001 grid, and both rows reproduce slopeExitVy's own anchors
+    (cube 7.405 at sp=1; ship 5.554 = the ball row = cube x 0.75). That CONFIRMS
+    the shipped `mode == 1 -> cubeExit * 0.75` at :540; it does not discover it.
+
+    PREDICTED FOR THE GRADIENT AXIS, BEFORE THE RUN (cubeExit anchors 3.999 /
+    7.405 / 10.507 at |m| = 0.5 / 1 / 2, times sp = dx/kDxF, times 0.75 for ship):
+
+        |m|    sp0.7            sp0.9            sp1.1            sp1.3
+        0.5    3.224 / 2.418    3.999 / 2.999    4.972 / 3.729    6.007 / 4.505
+        1.0    5.969 / 4.477    7.405 / 5.554    9.208 / 6.906   11.123 / 8.342
+        2.0    8.470 / 6.352   10.507 / 7.880   13.065 / 9.799   15.782 /11.836
+        (cube / ship)
+
+    The |m|=1 row is the one already measured, so it doubles as a repeat control.
+    WATCH THE CUBE AT |m|=2, sp1.3: 15.782 is past the cube's terminal clamp of
+    15.0 (constants.hpp), so a reading of 15.0 there is the clamp and NOT a
+    refutation of the anchor -- decide that before reading the number.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for sid, sp in ((200, 0.7), (201, 0.9), (202, 1.1), (203, 1.3)):
+      for m in (0.5, 1.0, 2.0):
+       for mini in (False,):
+        for mode in ("ship", "cube"):
+            # A REAL SPEED PORTAL, NOT THE HEADER: the header's kA4 does not
+            # appear in objrects, so the model would run every unit at 1x and the
+            # whole rig would come out a fake DIVERGE (build_ceilrel, 2026-08-21).
+            # It sits 4 cells ahead of the unit so it cannot overlap the mode
+            # portal ramp_unit puts at the unit's own x.
+            objs.append(obj(sid, x, GROUND_TOP + 15.0))
+            x0 = x
+            u, x = ramp_unit(x + 4 * GRID, mode, m, mini, 3, 0.0)
+            objs += u
+            UNITS.append({"x0": x0, "x1": x, "mode": mode, "m": m,
+                          "mini": int(mini), "ramps": 3, "bury": 0.0,
+                          "speed": sp, "speed_id": sid})
+    objs += floor_run(0, PAVE_X)
+    return header() + ";" + ";".join(objs) + ";"
+
+
+def build_bandceil() -> str:
+    """What is the 14 px between the camera band's top and the player's clamp?
+
+    GD pins a rising flyer BELOW the band's upper bound, and the inset is 14.000
+    in two places that share nothing else:
+
+        rig slopevy  t=16610  camy 80         + gy2 309        = 389.000000
+                              clamp y 375                        gap 14.000
+        lv16         t= 8548  camy 320.117188 + gy2 308.882812 = 629.000000
+                              clamp y 615                        gap 14.000
+
+    Different level, different camera height, one number; and in the rig the
+    absence of any object at y=375 is KNOWN rather than merely unobserved,
+    because the rig's contents are generated here (ramp tops 270, floor fill from
+    105 down, the neighbouring portals at 105).
+
+    The full-size player's outer half is 15.0 (kCubeHalf) and its contact half is
+    7.5 x 2 = 15.0... but kMiniContactHalf is 7.5 against kMiniHalf 9.0, so size
+    separates the readings. PREDICTED MINI GAP, WRITTEN BEFORE THE RUN -- five
+    values, not two, because "somewhere near 8" would otherwise be read as
+    "half-derived" and lose the distinction:
+
+        flat constant                        14.0
+        outer half, minus 1   (9.0 - 1)       8.0
+        outer half, scaled    (9.0 x 14/15)   8.4
+        contact half, minus 1 (7.5 - 1)       6.5
+        contact half, scaled  (7.5 x 14/15)   7.0
+
+    An offset says GD insets by a fixed 1 px; a ratio says the clamp is a
+    fraction of the body. They disagree at every other size (spider 13.5 gives
+    12.5 against 12.6), so the distinction is worth the extra rows.
+
+    WHY THIS RIG AND NOT `slopevy`'s mini axis: the mini units there never
+    reached the ceiling. mini launches from a ramp top 6 px lower at the same vy
+    (the exit table has mini equal to full size), and at sp1.1 it peaked at
+    368.034 against a clamp at 375 -- 7 px short. A missing contact there is NOT
+    a null result, it is an unreached one. sp1.3 clears that margin: full size
+    clamped at 375 with vy still 7.613 on the contact tick.
+
+    ONLY the configuration that produces the contact: |m|=2 ship, the two speeds
+    that reach, both sizes. Four units, zero input.
+    """
+    objs: list[str] = []
+    x = 90.0
+    for sid, sp in ((202, 1.1), (203, 1.3)):
+        for mini in (False, True):
+            objs.append(obj(sid, x, GROUND_TOP + 15.0))
+            x0 = x
+            u, x = ramp_unit(x + 4 * GRID, "ship", 2.0, mini, 3, 0.0)
+            objs += u
+            UNITS.append({"x0": x0, "x1": x, "mode": "ship", "m": 2.0,
+                          "mini": int(mini), "ramps": 3, "bury": 0.0,
+                          "speed": sp, "speed_id": sid})
+    objs += floor_run(0, PAVE_X)
+    return header() + ";" + ";".join(objs) + ";"
+
+
 CR_SPEED = 0   # kA4 for ceilrel (0=1x=sp0.9, 1=0.5x=sp0.7, 2=2x=sp1.1)
 
 
@@ -4658,6 +4805,8 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "slopeveto2": build_slopeveto2,
             "dropair": build_dropair, "dualport": build_dualport,
             "flyramps": build_flyramps,
+            "slopevy": build_slopevy,
+            "bandceil": build_bandceil,
             "portwavebig": build_portwavebig,
             "recttop": build_recttop,
             "ramps": build_ramps, "rampseam": build_rampseam,

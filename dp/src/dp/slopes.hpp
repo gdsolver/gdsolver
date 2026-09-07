@@ -466,8 +466,15 @@ inline double slopeExitVy(double m, uint8_t mode, float dxF, bool mini) {
         // every non-cube mode (ship/UFO/robot/spider flags OR'd together)",
         // read off the disassembly. The calibration map says otherwise --
         // ROBOT and SPIDER launch at the CUBE value (7.405 at |m|=1, 10.507 at
-        // |m|=2, 12 units each, mini and full alike), and only the ball (and
-        // the swing) take the 0.75. Measurement wins over the flag reading.
+        // |m|=2, 12 units each, mini and full alike). Measurement wins over the
+        // flag reading FOR THOSE TWO MODES, and only for those two.
+        // [2026-09-07] This paragraph used to end "and only the ball (and the
+        // swing) take the 0.75", which contradicts :540 -- ship, UFO and wave
+        // take it as well, on the flag enumeration a hundred lines below plus a
+        // live lv19 check. THE STALE SENTENCE HAD A READER: someone reading the
+        // table at :436 and this branch, and stopping there, concluded that the
+        // ship was unresolved and proposed measuring it. It is not unresolved;
+        // it is two screens further down. The full list is at :529.
         if (g_oldSlope) {
             if (mini) return cubeExit * 0.625;
             return ballFlipFor(dxF) + 0.598 * a;
