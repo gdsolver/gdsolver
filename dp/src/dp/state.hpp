@@ -521,8 +521,42 @@ struct State {
     // initialisers fill positionally (`State init{...}`), so nothing shifts.
     uint8_t ceilPin = 0;
     // Armed by an id-2866 box (see FlipHeadBox): the cube's HEAD hitting a solid
-    // flips gravity instead of stopping. Sticky once set. Same placement rule as
-    // ceilPin -- after the positionally-initialised members.
+    // flips gravity instead of stopping. ~~Sticky once set.~~ Same placement rule
+    // as ceilPin -- after the positionally-initialised members.
+    //
+    // [2026-09-07] **"STICKY ONCE SET" IS REFUTED BY GD.** Marked wrong here the
+    // day it was refuted rather than the day a replacement is found, so nobody
+    // reads the live citation at step.hpp's arming site under a dead claim.
+    //
+    // gdref is GD replaying this level's own verified plan, so it ARMS BY
+    // CONSTRUCTION at t~2,707 and carries its own positive control:
+    //   t= 2,749  up 0->1, vy 10.816 -> exactly 0, og 0->1, y 320.771->321.008
+    //             -- GD flips.  (the arm is live)
+    //   t=11,342  up stays 0, og stays 0, vy runs 8.296 -> 5.920 at exactly
+    //             -0.216/tick -- GD SAILS STRAIGHT THROUGH.  (the arm is not)
+    // So the arm does not survive to 11,342, and the model's acquireFlip fires
+    // there where GD does nothing. That is lv22's whole-run killer.
+    //
+    // NOT one-shot either: scanning lv22 for t=2,749's own signature (|vy| large,
+    // then vy exactly 0, og 0->1, up flips, y unchanged -- which no pad, orb or
+    // portal produces) gives THREE firings, t=2,749 / 2,890 / 4,592. So it decays
+    // rather than being consumed.
+    //
+    // WHAT IS NOT KNOWN is the decay constant. Active for at least 1,885 ticks /
+    // 2,882 px past the box (t=4,592, x=6,635) -- that end rests on observed
+    // firings. Inactive by 8,635 ticks / 12,360 px (t=11,342) -- that end rests
+    // on an ABSENCE, which is only evidence if a crossing of the right shape
+    // occurred in between and GD declined it. Not yet censused. Do not write a
+    // constant from this bracket.
+    //
+    // HOW THE ORIGINAL CLAIM GOT IN: the measurement cited at the arming site
+    // (step.hpp, lv22 t=2,707, pre-move x 3,708.886 against the box's left edge
+    // 3,717) established WHICH TICK THE COUNTER GOES POSITIVE. It says nothing
+    // about whether it returns to zero. An onset measurement was read as a
+    // persistence measurement -- and the sibling arm four lines below it (id
+    // 1859) had its decay measured explicitly ("set to 2 by the touch and
+    // stepped down every tick"), so the assumption was never tested rather than
+    // tested and confirmed.
     uint8_t fgArm = 0;
     uint32_t parent;  // node arena index
     uint8_t action;   // input level THIS tick (for plan reconstruction)

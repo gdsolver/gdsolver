@@ -2611,7 +2611,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // force field uses -- measured on lv22: GD's counter goes positive on
         // the tick whose PRE-move x first overlaps the box (t=2,707, pre-move
         // x=3,708.886 against the box's left edge 3,717 and a 9 px half), not
-        // on the tick whose post-move x does (t=2,706). Sticky once set.
+        // on the tick whose post-move x does (t=2,706). ~~Sticky once set.~~
+        // [2026-09-07] **THAT MEASUREMENT IS ABOUT ONSET, NOT PERSISTENCE, AND
+        // "sticky once set" IS REFUTED BY GD** -- gdref arms at t~2,707 and
+        // still does NOT flip at t=11,342 (up stays 0, vy -0.216/tick straight
+        // through), which is lv22's whole-run killer. It decays rather than
+        // being consumed: three firings at t=2,749 / 2,890 / 4,592. The decay
+        // constant is NOT known -- see the full record at State::fgArm, and do
+        // not write one from the bracket there.
         if (!c.fgArm && !g_flipHeadBoxes.empty()
             && flipHeadArms(modX, modY, pHalf))
             c.fgArm = 1;
