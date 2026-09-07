@@ -2838,8 +2838,37 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             }
         }
         for (const Obj* o : *K.near) {
+            // [2026-09-08] --hazdbg <uid>: say how far ONE object got down this
+            // loop, gate by gate, and what the hazard predicate then answered.
+            // Written because reading could not settle 22@5400: every gate and
+            // every constant on the path says the spike uid 5897 should kill at
+            // (8286.023, 1076.070) -- rect identical to GD's, in K.near by both
+            // the window arithmetic and XSlice's own rewind, radius 0 and absent
+            // from the obb table so the plain branch at object.hpp:448 runs,
+            // kHazHalf 15 + margin 1.5 against |dy| 18.930 -- and the model
+            // lives. Eight candidates were read and refuted; the ninth has to be
+            // asked, not read.
+            // Same shape as `pogate` (1292e5c) and `rampwin` (3d2a4ef): name the
+            // term that refused, rather than leaving a choice between all of
+            // them. Parameterised rather than hardcoded, default -1 = off.
+            const bool hazDbg = (g_hazDbgUid >= 0 && o->uid == g_hazDbgUid);
+            if (hazDbg)
+                std::printf("hazdbg t=%lld uid=%d type=%d reach=loop x=%.6f "
+                            "cx=%.3f hw=%.3f hh=%.3f pHalf=%.2f eps=%.3f "
+                            "dx=%.6f lim=%.3f\n",
+                            (long long)K.t, o->uid, (int)o->type, x, o->cx,
+                            o->hw, o->hh, pHalf, kContactEps,
+                            std::fabs(x - o->cx), o->hw + pHalf + kContactEps);
             // inclusive: touching edges count as overlapping (see kSupportReach)
-            if (std::fabs(x - o->cx) > o->hw + pHalf + kContactEps) continue;
+            if (std::fabs(x - o->cx) > o->hw + pHalf + kContactEps) {
+                if (hazDbg) std::printf("hazdbg t=%lld uid=%d dropped=xwindow\n",
+                                        (long long)K.t, o->uid);
+                continue;
+            }
+            if (hazDbg)
+                std::printf("hazdbg t=%lld uid=%d passed=xwindow type!=0 is %d, "
+                            "K.t>14 is %d\n", (long long)K.t, o->uid,
+                            (o->type != 0) ? 1 : 0, (K.t > 14) ? 1 : 0);
             if (o->type != 0) {  // hazard (sub-tick sampled, planning margin)
                 if (K.t > 14) {
                     // TRIED AND REVERTED (2026-08-03): sampling SAWS at the tick
@@ -2881,8 +2910,26 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         const double sy = warped
                             ? (double)s.y
                             : (double)s.y + ((double)c.y - (double)s.y) * f;
-                        if (hazardHit(o, sx, sy, pHalf, kHazMargin,
-                                      sawMarginFor(s.mode), s.mode, c.mini)
+                        const bool hzHit = hazardHit(o, sx, sy, pHalf, kHazMargin,
+                                                     sawMarginFor(s.mode),
+                                                     s.mode, c.mini);
+                        if (hazDbg)
+                            std::printf("hazdbg t=%lld uid=%d si=%d sx=%.6f "
+                                        "sy=%.6f pHalf=%.2f marg=%.3f saw=%.3f "
+                                        "mode=%d mini=%d radius=%.3f obbOk=%d "
+                                        "|dx|=%.6f |dy|=%.6f limx=%.3f limy=%.3f "
+                                        "hit=%d\n",
+                                        (long long)K.t, o->uid, si, sx, sy,
+                                        pHalf, kHazMargin,
+                                        sawMarginFor(s.mode), (int)s.mode,
+                                        (int)c.mini, o->radius,
+                                        o->obbOk ? 1 : 0,
+                                        std::fabs(sx - o->cx),
+                                        std::fabs(sy - o->cy),
+                                        o->hw + pHalf + kHazMargin,
+                                        o->hh + pHalf + kHazMargin,
+                                        hzHit ? 1 : 0);
+                        if (hzHit
                             && (!g_obbAll || !o->obbOk
                                 || obbOverlap(*o, sx, sy, pHalf, (double)s.rot)))
                             DIE("cube/hazard", o);

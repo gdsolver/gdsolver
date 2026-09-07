@@ -313,6 +313,10 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--out")) outPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--dbg")) dbgLayers = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--cap")) g_aliveCap = (size_t)std::atoll(argv[i + 1]);
+        // --hazdbg <uid>: see g_hazDbgUid. Takes a value, so it is parsed with
+        // the same argv[i+1] form as --cap and not with the valueless shape at
+        // the top of this file, which is silently off when it is given one.
+        if (!std::strcmp(argv[i], "--hazdbg")) g_hazDbgUid = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--gcnodes")) g_gcNodes = (size_t)std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--memlimit")) g_memLimitMiB = (size_t)std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--shipyq")) g_shipYq = std::atof(argv[i + 1]);

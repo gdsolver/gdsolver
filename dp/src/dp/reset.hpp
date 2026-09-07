@@ -77,6 +77,7 @@ inline void resetInvocationState() {
     g_noMiniWave = false;
     g_noRingMode = false;
     g_noPressSpent = false;
+    g_hazDbgUid = -1;
     g_noPortalSeat = false;
     g_noForceOrder = false;
     g_noRot2900Halve = false;

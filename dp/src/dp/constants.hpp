@@ -117,6 +117,12 @@ inline bool g_noRingMode = false;   // --no-ringmode
 // on this corpus it removes exactly one, so the two arms have to be one build
 // apart rather than one rebuild apart to be told from "no change" at all.
 inline bool g_noPressSpent = false; // --no-pressspent
+// --hazdbg <uid>: trace ONE object down the ground-mode hazard loop in
+// step.hpp, gate by gate. -1 = off, which is the default, so the shipped search
+// is untouched and quick_regress stays byte-identical. A uid rather than a
+// blanket switch because the search evaluates many states per tick and an
+// unconditional print buries the answer.
+inline int g_hazDbgUid = -1;        // --hazdbg
 // --no-portalseat: restore "a mode portal never seats on its own tick" (the
 // pre-2026-09-05 behaviour). GD runs the activation pass before the solid
 // pass, so a body that becomes a cube inside a flat solid is resolved on that
