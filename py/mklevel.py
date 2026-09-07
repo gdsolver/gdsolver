@@ -4406,8 +4406,21 @@ def build_slopeflags() -> str:
     objs: list[str] = []
     x = 90.0
     # The rig's own four, then the seven the corpus actually uses.
+    #
+    # [2026-09-07] 366 AND 367 APPENDED -- THE SPIKED SLOPES, which had never
+    # been on any table. They are exactly the shz=1 population (487 + 86 = 573
+    # across the 22 dumps) and they appeared nowhere in data/rigs, so
+    # slopeUphill's rig confirmation covered PLAIN slopes only and the claim
+    # rested on the corpus census alone for all 573. Note 309 is already here
+    # and is the PLAIN TWIN of lv16's killing column (uid 3782/3783, co-located
+    # with the spiked 366 pair at 13323,465 and 13323,495) -- the rig carried
+    # one half of that pair and never the other.
+    # APPENDED, NOT INSERTED: x advances monotonically through the loop, so the
+    # existing 160 units keep their exact positions and the 32 new ones follow.
+    # Anything measured against the old file still lines up.
     ids = (SLOPE30, SLOPE60A, SLOPE60B, SLOPE30B,
-           309, 321, 323, 484, 665, 666)
+           309, 321, 323, 484, 665, 666,
+           366, 367)
     for oid in ids:
         for rot in (0.0, 90.0, 180.0, 270.0):
             for fx, fy in ((False, False), (True, False),
