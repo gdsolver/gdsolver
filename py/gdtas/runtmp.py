@@ -130,7 +130,20 @@ class RunTmp:
             base = Path(root)
             base.mkdir(parents=True, exist_ok=True)
             prune(base, keep_hours)
-            self.dir = base / f"{tool}-{RUN_ID}"
+            name = f"{tool}-{RUN_ID}"
+            # THE MINTER AND THE MATCHER ARE TWO STATEMENTS OF ONE FORMAT, so
+            # make the mint check itself against _RUN_DIR rather than trusting
+            # them to stay in step. `prune` is the ONLY thing that removes an
+            # orphan left by a crashed run, and it only considers names that
+            # match; a tool named with a digit or a capital (densefit2,
+            # reachCheck) would mint a directory prune can never see and leak
+            # 1.5 GB per crash, silently, forever. Failing here costs the first
+            # run of a new tool; not failing here costs a disk.
+            assert _RUN_DIR.match(name), (
+                f"run directory {name!r} does not match _RUN_DIR, so prune() "
+                f"would never reclaim it -- tool names must be lowercase "
+                f"letters and underscores")
+            self.dir = base / name
             # exist_ok=False on purpose: this name cannot legitimately be taken,
             # so if it is, something is wrong enough to stop for.
             self.dir.mkdir(parents=False, exist_ok=False)
