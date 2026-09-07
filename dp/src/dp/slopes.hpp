@@ -42,6 +42,15 @@ inline bool slopeIsCeiling(uint8_t dir) {
 // direction ({0,3,6,7} rise, {1,2,4,5} fall) -- confirmed on the rig
 // calib_slopeflags, where every one of 160 id/rotation/flip combinations
 // reported sup=1 on exactly that set.
+//   THE TWO JUSTIFICATIONS DO NOT HAVE THE SAME REACH, and the sentence above
+//   reads as if they do. calib_slopeflags.units.json is 160 units = TEN oids
+//   (309, 321, 323, 484, 665, 666, 1338, 1743, 1744, 1746) x 16 rot/flip
+//   combinations, AND ALL TEN ARE PLAIN SLOPES. The two SPIKED ids -- 366 and
+//   367, which are exactly the shz=1 population, 487 + 86 = 573 -- appear
+//   nowhere in data/rigs, in any .lvl or .json. So the rig has never put a
+//   spiked slope on the table; the corpus census below is what covers them.
+//   The claim still holds for spiked slopes (they are type-25 and every
+//   direction came out pure over all 3,091), but it holds on the census alone.
 //   SAMPLE SIZE UPDATED 2026-09-07: the prose said 2,631 type-25 objects; the
 //   22 dumps now hold 3,091, so the claim was re-derived rather than the count
 //   patched. All eight directions are still PURE, zero counterexamples:
