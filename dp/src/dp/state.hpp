@@ -67,8 +67,23 @@ struct State {
     // went up where GD came down. Per-object memory alone cannot express this --
     // the second ring is a different object and was never used.
     uint8_t ringHold;
-    // "This press has already been spent" -- GD's +0x986, mirrored into +0x98a once
-    // per tick at 0x389f18 and tested by ringJump. `ringHold` is the same idea for
+    // "This press has already been spent" -- the COMPLEMENT of GD's +0x986,
+    // which is mirrored into +0x98a once per tick at 0x389f18 and tested by
+    // ringJump.
+    // [2026-09-08] This line used to identify the two, and it was wrong by
+    // exactly a negation. GD's byte means "a press NOT yet consumed", so every
+    // consumer CLEARS it -- :75 below already says so ("updateJump clears 0x986
+    // at 0x38bbef when it jumps"), which is the same paragraph contradicting
+    // itself. This field is the other way round: SET when the press is spent
+    // (step.hpp:10857), cleared on release (step.hpp:10349), and it gates the
+    // ring on `!s.pressSpent` (step.hpp:10357). The mod's own probe warns about
+    // exactly this shape -- "a gate written against the wrong one is INVERTED
+    // rather than merely off" (src/mod/hooks_player.cpp:636).
+    // It is a documentation defect and cannot become a behaviour one here:
+    // nothing in dp/ or py/ reads GD's byte (every mention of 0x986 outside the
+    // probe is a comment) and --start does not carry this field. What it can do
+    // is mislead a reader who puts this field beside the probe's `p986` column,
+    // where the two read ANTI-CORRELATED. `ringHold` is the same idea for
     // rings ALONE; 0x986 is the shared latch of every consumer, and brief-022 named
     // the gap ("nothing does for whatever consumed the press").
     // Set by a ring firing and by the grounded impulse branch (the cube's jump, the
