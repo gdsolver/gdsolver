@@ -4186,11 +4186,26 @@ inline int cliMain(int argc, char** argv) {
     // dead ticks are the tail of the walk, one plan died once and the rest is
     // its corpse; if they are not, the total was never one number about one
     // event. `of` is here so a zero can be told from a walk that never ran.
+    // READ THE COUNTERS ONCE. The printf and the publish below used to read the
+    // globals separately, twenty lines apart, and that is enough to make the two
+    // channels disagree about the same call: nothing serialises cliMain (there
+    // is no lock in src/mod/dp_bridge.cpp, three call sites in repair.hpp, and
+    // this project has already met a solver thread that outlived its session --
+    // the orphaned-worker case), so a second walk mutating g_resim* between the
+    // two reads publishes a number no printf ever emitted.
+    //
+    // That is not hypothetical arithmetic. In the 2026-09-08 cold run
+    // result.txt carries `resimdie=10@19554` and BOTH logs -- the suite's stdout
+    // capture and Geode's own -- hold 423 resimdie lines each, agree on 23 with
+    // dead>0, and contain no `dead=10` at all. The cause was never pinned down;
+    // this removes the one mechanism that could produce it from here.
+    const long long rDead = g_resimDead, rOf = g_resimTicks;
+    const int rFirst = g_resimFirst, rLast = g_resimLast;
+    const char* rWhy = g_resimWhy;
     std::printf("resimdie: dead=%lld of=%lld first=%d last=%d contig=%d why=%s\n",
-                g_resimDead, g_resimTicks, g_resimFirst, g_resimLast,
-                (g_resimDead > 0 &&
-                 (long long)(g_resimLast - g_resimFirst + 1) == g_resimDead) ? 1 : 0,
-                g_resimWhy ? g_resimWhy : "-");
+                rDead, rOf, rFirst, rLast,
+                (rDead > 0 && (long long)(rLast - rFirst + 1) == rDead) ? 1 : 0,
+                rWhy ? rWhy : "-");
     // ...and out through the struct, because the repair loop -- the one consumer
     // that ACTS on these plans -- reads dp::g_outcome, not stdout. A walk that
     // never ran stays -1 and must not be counted as a clean plan.
@@ -4207,12 +4222,12 @@ inline int cliMain(int argc, char** argv) {
     // two channels disagree: the printf above is unconditional, so "printed but
     // not published" happens (that is exactly what `resimdie=?` means) and
     // "published but not printed" cannot come from this path.
-    if (g_resimTicks > 0) {
-        g_outcome.resimDead = g_resimDead;
-        g_outcome.resimFirst = g_resimFirst;
-        g_outcome.resimWhy = g_resimWhy;   // a string literal: static, and dp is
-                                           // linked into the mod, so it outlives
-                                           // the call the way the others do not
+    if (rOf > 0) {
+        g_outcome.resimDead = rDead;
+        g_outcome.resimFirst = rFirst;
+        g_outcome.resimWhy = rWhy;   // a string literal: static, and dp is
+                                     // linked into the mod, so it outlives
+                                     // the call the way the others do not
     }
     std::printf("plan: %d edges, %zu ticks -> %s\n", edges, lvl.size(),
                 outPath.c_str());
