@@ -152,6 +152,17 @@ def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: runtmp.RunTmp,
                      "first": int(m.group(3)), "last": int(m.group(4)),
                      "contig": int(m.group(5)), "why": m.group(6) or "?"}
             continue
+        # `SOLVED at x=...` IS NOT A VERDICT. cli.hpp prints it at :3944 on the
+        # way into the reconstruction, and a run that already printed `PARTIAL:
+        # frontier died` at :3923 prints it too -- measured on the 2026-09-08
+        # cold run's log: 423 solves, 423 `SOLVED at x=`, 321 `PARTIAL:`. So two
+        # thirds of the runs that say PARTIAL also say SOLVED further down.
+        #
+        # This line is right only because of the `verdict != "PARTIAL"` guard:
+        # PARTIAL wins wherever both appear. Anything ADDED to this loop that
+        # wants to know the verdict has to inherit that precedence rather than
+        # match on "SOLVED at" -- which is easy to get wrong, since the string
+        # reads like the answer and is printed by every single call.
         if ln.startswith("SOLVED at") and verdict != "PARTIAL":
             verdict = "SOLVED"
     # Fingerprint it as ours the moment our solver has let go of it. Absent is
