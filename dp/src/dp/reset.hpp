@@ -170,6 +170,18 @@ inline void resetInvocationState() {
     // CLAUDE.md records as having hidden under a green 22/22 for months. A
     // launch per level cannot reach it, so no per-level regression will.
     g_anchorState.clear();
+    // ...and the claims that payload made. `owns=touch` / `owns=portal` are only
+    // ever set to true, by parsing an anchor payload (cli.hpp:1148-1150), and
+    // nothing sets them back -- so in the mod a level whose payload claimed a
+    // subsystem hands that claim to every later call in the session, including
+    // calls whose payload claims nothing. It is not inert: cli.hpp:1239 branches
+    // on g_ownsPortal, and 1174-1180 turn a claim into a hard refusal when the
+    // key it implies is absent, so an inherited claim can refuse a payload that
+    // is complete for what it actually declares. config.hpp:212-220 already
+    // plans to turn portalPayload on for cold verdicts, which is the gate that
+    // makes this reachable rather than merely latent.
+    g_ownsTouch = false;
+    g_ownsPortal = false;
     g_seedPartialOk = false;
     g_seedPartial.clear();
     g_spentRot.clear();
