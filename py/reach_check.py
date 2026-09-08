@@ -129,11 +129,28 @@ def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: runtmp.RunTmp,
     p = subprocess.run(a, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                        text=True, encoding="utf-8", errors="replace")
     verdict, deep_t, deep_x = "FAILED", -1, -1.0
+    resim = None
     for ln in (p.stdout or "").splitlines():
         m = re.match(r"^(PARTIAL|FAILED): frontier died at t=(\d+) x=([\d.\-]+)",
                      ln)
         if m:
             verdict, deep_t, deep_x = m.group(1), int(m.group(2)), float(m.group(3))
+            continue
+        # The solver's own answer to "does the plan it just emitted survive its
+        # own walk?" -- see the `resimdie:` line in cli.hpp. Measured on lv22 at
+        # twelve anchors, SEVEN final plans contain ticks the model calls a kill,
+        # four of them in runs that printed SOLVED. Nothing here changes a
+        # verdict on it: whether a fired tick should invalidate a plan depends on
+        # how often the model overkills, which has not been measured. But this
+        # harness reads two patterns out of a solver that prints a dozen, and
+        # every one it drops (capstat: among them) is a question nobody gets to
+        # ask. Carry it, print it, decide later.
+        m = re.match(r"^resimdie: dead=(-?\d+) of=(-?\d+) first=(-?\d+) "
+                     r"last=(-?\d+) contig=(\d)", ln)
+        if m:
+            resim = {"dead": int(m.group(1)), "of": int(m.group(2)),
+                     "first": int(m.group(3)), "last": int(m.group(4)),
+                     "contig": int(m.group(5))}
             continue
         if ln.startswith("SOLVED at") and verdict != "PARTIAL":
             verdict = "SOLVED"
@@ -143,7 +160,7 @@ def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: runtmp.RunTmp,
     tmp.claim(out)
     return {"verdict": verdict, "deep_t": deep_t, "deep_x": deep_x,
             "seconds": round(time.time() - t, 1), "tail": out, "t0": t0,
-            "level": lv, "plan": plan}
+            "level": lv, "plan": plan, "resim": resim}
 
 
 def gd_survives(res: dict, horizon: int, worker_id: int, tmp: runtmp.RunTmp,
@@ -294,7 +311,8 @@ def _run(a, tmp: runtmp.RunTmp) -> int:
     print(f"[runtmp] {tmp.count()} artefacts verified as ours -- {tmp.dir}"
           f"{' (private)' if tmp.private else ''}", file=sys.stderr)
 
-    print(f"{'case':<34} {'verdict':<8} {'deepest':<22} {'GD':<6} s")
+    print(f"{'case':<34} {'verdict':<8} {'deepest':<22} {'GD':<6} "
+          f"{'s':<6} plan's own walk")
     bad, now = [], {}
     for (lv, at, hz, note, *_), r in results:
         key = f"{lv}@{at}"
@@ -318,8 +336,19 @@ def _run(a, tmp: runtmp.RunTmp) -> int:
         # --verify; it stops the instrument being unable to report its own
         # unavailability, which is why nobody noticed.
         skip_why = f"  ({r['note']})" if gd_tag == "SKIP" and r.get("note") else ""
+        # "?" is not "clean". A missing resimdie: line means the solver predates
+        # the counter or the walk never ran, and those must not render as a plan
+        # that survived -- the same distinction a bare SKIP failed to make above.
+        rs = r.get("resim")
+        if rs is None:
+            walk = "?"
+        elif rs["dead"] == 0:
+            walk = f"ok ({rs['of']}t)"
+        else:
+            walk = (f"DIES {rs['dead']}/{rs['of']}t @{rs['first']}"
+                    f"{'' if rs['contig'] else '+'}")
         print(f"lv{lv} t={at} {note[:18]:<18} {r['verdict']:<8} {deep:<22} "
-              f"{gd_tag:<6} {r.get('seconds', '-')}{skip_why}")
+              f"{gd_tag:<6} {str(r.get('seconds', '-')):<6} {walk}{skip_why}")
         b = base.get(key, "")
         # a case that was SOLVED and is no longer = a regression. The reverse
         # is welcome.
