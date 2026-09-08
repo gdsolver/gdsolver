@@ -1917,16 +1917,37 @@ inline bool runLadder(long long dt) {
                 // ended). The depth bar alone carries the claim.
                 || (restartScale && o.verdict == dpbridge::OutcomePartial
                     && o.deepT > 0 && o.deepX > (double)g_hudVerifiedX + 40.0));
-        char b[280];
+        // 280 before resimdie was added; snprintf truncates rather than
+        // overflows, but a truncated line would silently drop the "- doomed"
+        // tail, which is the half a reader acts on.
+        char b[352];
         char deep[64] = "";
         if (o.deepT >= 0) snprintf(deep, sizeof(deep), " t=%lld x=%.0f", o.deepT, o.deepX);
         // capHits is reported even though nothing acts on it: it is the one number that says
         // whether the search ran out of capacity or out of physics, and the rejected tier
         // ladder above is the reason that distinction has to stay visible
-        snprintf(b, sizeof(b), "dpsolve:   [%s%s] rc=%d inputs=%zu capHits=%lld%s",
+        // ...and so is resimdie, for the same reason and a sharper one: the
+        // verdict on the left of this line is printed by the search, and the
+        // plan on the right is then walked once more without anyone reading
+        // whether it survived. A SOLVED whose own walk dies is an iteration
+        // this loop is about to spend on GD to be told something dp already
+        // knew. Nothing acts on it yet -- whether a fired tick invalidates a
+        // plan depends on how often the model over-kills, and the whole-run
+        // corpus turns out to have almost no power to measure that (19 of 22
+        // levels never die at all). Counted first, decided later.
+        char rd[48] = "";
+        if (o.resimDead > 0)
+            // the cause travels with it: "dp said it dies and GD killed it" is
+            // agreement only if they are the same death. Two deaths in
+            // different places read as a model that knew something it did not.
+            snprintf(rd, sizeof(rd), " resimdie=%lld@%lld/%s", o.resimDead,
+                     o.resimFirst, o.resimWhy ? o.resimWhy : "?");
+        else if (o.resimDead < 0)
+            snprintf(rd, sizeof(rd), " resimdie=?");
+        snprintf(b, sizeof(b), "dpsolve:   [%s%s] rc=%d inputs=%zu capHits=%lld%s%s",
                  o.verdict == dpbridge::OutcomeSolved ? "SOLVED"
                      : (o.verdict == dpbridge::OutcomePartial ? "PARTIAL" : "FAILED"),
-                 deep, rc, cand.size(), o.capHits,
+                 deep, rc, cand.size(), o.capHits, rd,
                  usable ? "" : (!haveFile ? " - no tail written"
                               : (restartScale ? " - doomed, and this far back only a complete "
                                                 "route is worth the prefix"

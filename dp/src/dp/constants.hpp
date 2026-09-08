@@ -144,6 +144,11 @@ inline std::vector<std::pair<const char*, long long>> g_dieReconWhy;
 // PLAN dies. Contiguity (last - first + 1 == dead) separates "one corpse
 // re-dying every tick" from "several deaths", which share a total.
 inline long long g_resimDead = 0;
+// ...and what killed it, taken at the FIRST dying tick. Without this, "the
+// model died and GD died" can only be matched on the fact of a death, and two
+// deaths at different places in the level read as agreement -- the model would
+// be credited with knowing something it did not know.
+inline const char* g_resimWhy = nullptr;
 inline long long g_resimTicks = 0;
 inline int g_resimFirst = -1;
 inline int g_resimLast = -1;

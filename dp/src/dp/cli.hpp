@@ -4063,7 +4063,7 @@ inline int cliMain(int argc, char** argv) {
             // every tick" and "many separate deaths" produce the same total and
             // are told apart only by whether the ticks are contiguous.
             if (rdead) {
-                if (g_resimDead == 0) g_resimFirst = (int)t;
+                if (g_resimDead == 0) { g_resimFirst = (int)t; g_resimWhy = g_deadWhy; }
                 g_resimLast = (int)t;
                 ++g_resimDead;
             }
@@ -4186,10 +4186,22 @@ inline int cliMain(int argc, char** argv) {
     // dead ticks are the tail of the walk, one plan died once and the rest is
     // its corpse; if they are not, the total was never one number about one
     // event. `of` is here so a zero can be told from a walk that never ran.
-    std::printf("resimdie: dead=%lld of=%lld first=%d last=%d contig=%d\n",
+    std::printf("resimdie: dead=%lld of=%lld first=%d last=%d contig=%d why=%s\n",
                 g_resimDead, g_resimTicks, g_resimFirst, g_resimLast,
                 (g_resimDead > 0 &&
-                 (long long)(g_resimLast - g_resimFirst + 1) == g_resimDead) ? 1 : 0);
+                 (long long)(g_resimLast - g_resimFirst + 1) == g_resimDead) ? 1 : 0,
+                g_resimWhy ? g_resimWhy : "-");
+    // ...and out through the struct, because the printf above reaches nobody in
+    // the mod: there is no pipe (dp_bridge.hpp:57), and the repair loop -- the
+    // one consumer that acts on these plans -- reads dp::g_outcome. A walk that
+    // never ran stays -1 and must not be counted as a clean plan.
+    if (g_resimTicks > 0) {
+        g_outcome.resimDead = g_resimDead;
+        g_outcome.resimFirst = g_resimFirst;
+        g_outcome.resimWhy = g_resimWhy;   // a string literal: static, and dp is
+                                           // linked into the mod, so it outlives
+                                           // the call the way the others do not
+    }
     std::printf("plan: %d edges, %zu ticks -> %s\n", edges, lvl.size(),
                 outPath.c_str());
     return 0;

@@ -146,11 +146,11 @@ def solve_case(lv: int, t0: int, horizon: int, exe: Path, tmp: runtmp.RunTmp,
         # every one it drops (capstat: among them) is a question nobody gets to
         # ask. Carry it, print it, decide later.
         m = re.match(r"^resimdie: dead=(-?\d+) of=(-?\d+) first=(-?\d+) "
-                     r"last=(-?\d+) contig=(\d)", ln)
+                     r"last=(-?\d+) contig=(\d)(?: why=(\S+))?", ln)
         if m:
             resim = {"dead": int(m.group(1)), "of": int(m.group(2)),
                      "first": int(m.group(3)), "last": int(m.group(4)),
-                     "contig": int(m.group(5))}
+                     "contig": int(m.group(5)), "why": m.group(6) or "?"}
             continue
         if ln.startswith("SOLVED at") and verdict != "PARTIAL":
             verdict = "SOLVED"
@@ -345,8 +345,11 @@ def _run(a, tmp: runtmp.RunTmp) -> int:
         elif rs["dead"] == 0:
             walk = f"ok ({rs['of']}t)"
         else:
+            # the cause is carried, not decoration: "the model said it dies and
+            # GD killed it" is agreement only if it is the same death, and a
+            # tick plus a cause is what makes that comparable at all.
             walk = (f"DIES {rs['dead']}/{rs['of']}t @{rs['first']}"
-                    f"{'' if rs['contig'] else '+'}")
+                    f"{'' if rs['contig'] else '+'} {rs['why']}")
         print(f"lv{lv} t={at} {note[:18]:<18} {r['verdict']:<8} {deep:<22} "
               f"{gd_tag:<6} {str(r.get('seconds', '-')):<6} {walk}{skip_why}")
         b = base.get(key, "")

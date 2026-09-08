@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // Live progress of the layer loop, for whoever is watching from another thread.
 //
 // The CLI reports progress by printing a line every 500 ticks; in the mod the solver runs on a
@@ -60,6 +60,16 @@ struct SearchOutcome {
     long long deepT = -1;    // where the frontier died (PARTIAL / FAILED); -1 = never reported
     double deepX = -1.0;
     long long capHits = -1;  // -1 = no capstat line, i.e. the layer loop never ran
+    // Ticks of the emitted plan on which the model fired a kill, counted on the
+    // witness resim -- the ONE walk of the final plan (cli.hpp). -1 means the
+    // walk never ran, which is not the same as 0 and must not read as clean.
+    // The CLI prints this as `resimdie:` and the Python driver parses it back
+    // out of stdout; the mod has no pipe (dp_bridge.hpp:57), so a plan that
+    // dies in its own walk is invisible to the repair loop unless it travels
+    // here. Same reason capHits is in this struct.
+    long long resimDead = -1;
+    long long resimFirst = -1;   // first such tick, -1 = none
+    const char* resimWhy = nullptr;  // cause at that tick; a string literal
     // --replay only: the tick the model died on, or -1 if it survived the plan. The fixup
     // recorder needs it for the case where the two agree all the way and only the MODEL kills:
     // there is no divergence to scan for, and the record to make is a revival of the last
@@ -75,6 +85,7 @@ struct SearchOutcome {
     void reset() {
         verdict = VerdictFailed;
         deepT = -1; deepX = -1.0; capHits = -1; replayDiedT = -1;
+        resimDead = -1; resimFirst = -1; resimWhy = nullptr;
         needTrigMask = 0; needTrigPassed = 0;
     }
 };

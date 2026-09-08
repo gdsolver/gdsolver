@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // The mod's view of the solver core (dp/).
 //
 // Narrow on purpose, and free of BOTH Geode and dp types. dp/ is compiled in its own
@@ -67,6 +67,10 @@ struct SolveOutcome {
     long long deepT = -1;
     double deepX = -1.0;
     long long capHits = -1;
+    // Ticks of the emitted plan on which the model itself fired a kill, counted
+    // on the plan's own walk. -1 = the walk never ran, which is NOT zero.
+    long long resimDead = -1, resimFirst = -1;
+    const char* resimWhy = nullptr;   // string literal; dp is linked in here
     long long replayDiedT = -1;   // --replay only: where the model died, -1 = it survived
     // Touch boxes the call required, and those the anchor already sits past. A required box
     // behind the anchor can never be entered, so the frontier is empty before the first tick --

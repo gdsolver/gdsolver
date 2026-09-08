@@ -1,4 +1,4 @@
-// The one translation unit that compiles the solver core (dp/) inside the mod.
+﻿// The one translation unit that compiles the solver core (dp/) inside the mod.
 //
 // NOTHING from Geode or cocos may be included here, and nothing here may include a mod header
 // that does: the dp headers are written for a plain C++ toolchain, and the Windows/cocos
@@ -79,6 +79,9 @@ SolveOutcome outcome() {
     o.deepT = dp::g_outcome.deepT;
     o.deepX = dp::g_outcome.deepX;
     o.capHits = dp::g_outcome.capHits;
+    o.resimDead = dp::g_outcome.resimDead;
+    o.resimFirst = dp::g_outcome.resimFirst;
+    o.resimWhy = dp::g_outcome.resimWhy;
     o.replayDiedT = dp::g_outcome.replayDiedT;
     o.needTrigMask = dp::g_outcome.needTrigMask;
     o.needTrigPassed = dp::g_outcome.needTrigPassed;
