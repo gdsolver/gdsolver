@@ -82,6 +82,7 @@ inline thread_local float g_clampCx = 0.f, g_clampCy = 0.f;
 // difference is exactly what a stale-geometry bug looks like.
 inline thread_local float g_deadCx = 0.f, g_deadCy = 0.f;
 #define DIE(why, obj) do { dead = true; g_deadWhy = (why); \
+    if (g_inRecon) noteReconDeath(why); \
     const Obj* dobj_ = (obj); g_deadObj = dobj_; \
     if (dobj_) { g_deadCx = (float)dobj_->cx; g_deadCy = (float)dobj_->cy; } } while (0)
 

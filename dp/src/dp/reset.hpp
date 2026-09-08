@@ -78,6 +78,9 @@ inline void resetInvocationState() {
     g_noRingMode = false;
     g_noPressSpent = false;
     g_hazDbgUid = -1;
+    g_inRecon = false;
+    g_dieRecon = 0;
+    g_dieReconWhy.clear();
     g_noPortalSeat = false;
     g_noForceOrder = false;
     g_noRot2900Halve = false;

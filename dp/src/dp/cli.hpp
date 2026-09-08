@@ -3942,6 +3942,9 @@ inline int cliMain(int argc, char** argv) {
         return 1;
     }
     std::printf("SOLVED at x=%.0f, reconstructing plan\n", (double)goalState.y * 0 + goalX);
+    // Everything past this line is the reconstruction, so DIE can tell the two
+    // apart (see g_inRecon in constants.hpp). One aggregate line at the end.
+    g_inRecon = true;
     if (g_outcome.verdict != VerdictPartial) g_outcome.verdict = VerdictSolved;
 
     // walk the arena back to get the per-tick input level
@@ -4144,6 +4147,25 @@ inline int cliMain(int argc, char** argv) {
             ++edges;
         }
     }
+    // AFTER the reconstruction, not with `capstat:`. A non-zero count means the
+    // plan this run just reported does not survive its own replay: the search
+    // reached the goal, and rebuilding that path then died.
+    // [2026-09-08] This print started life beside `capstat:` at :3898, which is
+    // FIFTY LINES BEFORE the reconstruction begins, so it read the counter
+    // before anything could increment it and reported n=0 for every case --
+    // including the one where the reconstruction death had already been
+    // observed directly. The `inRecon` field is what caught it: it printed 0
+    // where it had to be 1, which is why a probe should report the state it
+    // depends on and not only its answer (the same reason `pogate` prints its
+    // seven conjuncts).
+    std::printf("recondie: n=%lld inRecon=%d last=%s\n",
+                g_dieRecon, g_inRecon ? 1 : 0,
+                (g_dieRecon && g_deadWhy) ? g_deadWhy : "-");
+    // ...and the split, because the total is not a number about physics: the
+    // `out-of-play` bound is a search prune. Every cause is listed, so the
+    // reader is not left inferring the population from the last entry.
+    for (const auto& e : g_dieReconWhy)
+        std::printf("recondiewhy: %s=%lld\n", e.first ? e.first : "?", e.second);
     std::printf("plan: %d edges, %zu ticks -> %s\n", edges, lvl.size(),
                 outPath.c_str());
     return 0;

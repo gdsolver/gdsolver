@@ -117,6 +117,36 @@ inline bool g_noRingMode = false;   // --no-ringmode
 // on this corpus it removes exactly one, so the two arms have to be one build
 // apart rather than one rebuild apart to be told from "no change" at all.
 inline bool g_noPressSpent = false; // --no-pressspent
+// Deaths during the PLAN RECONSTRUCTION, which is a different question from
+// deaths during the search. 2026-09-08, lv22@5400 at cap 8000: the search never
+// put a state on the spike uid 5897 (0 of ~1,478 evaluations), the reconstructed
+// plan walked into it (16 hits), the sub-step loop exited on `!dead` so DIE ran
+// -- and the run still reported SOLVED and wrote a trace past the death. So a
+// SOLVED verdict does not mean the plan survives its own replay, and nothing
+// counted how often that happens.
+//
+// ONLY the reconstruction is counted, deliberately. The search runs on eight
+// threads and a plain counter there would be a data race; `g_inRecon` is written
+// once, between the search and the reconstruction, and only read during the
+// search, so the branch below costs a predictable read and no synchronisation.
+inline bool g_inRecon = false;      // set after "reconstructing plan"
+inline long long g_dieRecon = 0;    // DIEs while g_inRecon
+// ...and split by cause, because the total is not a number about physics.
+// `out-of-play` (step.hpp:8211) is a SEARCH PRUNE -- the upright escapee bound,
+// not a kill -- so a run reporting n=666 last=out-of-play may be 666 prunes and
+// zero kills, or 665 and one. The total plus the last cause cannot tell those
+// apart, and reading a whole census off the last entry is the mistake this file
+// records elsewhere as "the last witness is not the population".
+inline std::vector<std::pair<const char*, long long>> g_dieReconWhy;
+inline void noteReconDeath(const char* why) {
+    ++g_dieRecon;
+    for (auto& e : g_dieReconWhy)
+        if (e.first == why || (e.first && why && !std::strcmp(e.first, why))) {
+            ++e.second;
+            return;
+        }
+    g_dieReconWhy.emplace_back(why, 1LL);
+}
 // --hazdbg <uid>: trace ONE object down the ground-mode hazard loop in
 // step.hpp, gate by gate. -1 = off, which is the default, so the shipped search
 // is untouched and quick_regress stays byte-identical. A uid rather than a
