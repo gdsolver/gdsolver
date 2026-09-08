@@ -4191,10 +4191,22 @@ inline int cliMain(int argc, char** argv) {
                 (g_resimDead > 0 &&
                  (long long)(g_resimLast - g_resimFirst + 1) == g_resimDead) ? 1 : 0,
                 g_resimWhy ? g_resimWhy : "-");
-    // ...and out through the struct, because the printf above reaches nobody in
-    // the mod: there is no pipe (dp_bridge.hpp:57), and the repair loop -- the
-    // one consumer that acts on these plans -- reads dp::g_outcome. A walk that
+    // ...and out through the struct, because the repair loop -- the one consumer
+    // that ACTS on these plans -- reads dp::g_outcome, not stdout. A walk that
     // never ran stays -1 and must not be counted as a clean plan.
+    //
+    // The printf is not lost in the mod, though 98c36ed's message says it is:
+    // Geode captures stdout into its own log, and the whole first cold run of
+    // this counter was read out of there. What dp_bridge.hpp:57 says is that
+    // there is no pipe to the PYTHON DRIVER, which is a narrower claim than the
+    // one that got written down. The value of this field is correlation -- it
+    // sits on the iteration's own line beside capHits and the verdict -- not
+    // that the number would otherwise be unobtainable.
+    //
+    // Note the gate below is one-way, and the asymmetry is load-bearing when the
+    // two channels disagree: the printf above is unconditional, so "printed but
+    // not published" happens (that is exactly what `resimdie=?` means) and
+    // "published but not printed" cannot come from this path.
     if (g_resimTicks > 0) {
         g_outcome.resimDead = g_resimDead;
         g_outcome.resimFirst = g_resimFirst;
