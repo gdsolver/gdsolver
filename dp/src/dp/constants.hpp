@@ -138,6 +138,15 @@ inline long long g_dieRecon = 0;    // DIEs while g_inRecon
 // apart, and reading a whole census off the last entry is the mistake this file
 // records elsewhere as "the last witness is not the population".
 inline std::vector<std::pair<const char*, long long>> g_dieReconWhy;
+// The same question asked where it can be answered: the witness resim's own
+// `rdead`, which is the final plan's single walk. g_dieRecon counts every DIE
+// the reconstruction runs; these count only the walk, so they say whether the
+// PLAN dies. Contiguity (last - first + 1 == dead) separates "one corpse
+// re-dying every tick" from "several deaths", which share a total.
+inline long long g_resimDead = 0;
+inline long long g_resimTicks = 0;
+inline int g_resimFirst = -1;
+inline int g_resimLast = -1;
 inline void noteReconDeath(const char* why) {
     ++g_dieRecon;
     for (auto& e : g_dieReconWhy)

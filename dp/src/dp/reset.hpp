@@ -81,6 +81,10 @@ inline void resetInvocationState() {
     g_inRecon = false;
     g_dieRecon = 0;
     g_dieReconWhy.clear();
+    g_resimDead = 0;
+    g_resimTicks = 0;
+    g_resimFirst = -1;
+    g_resimLast = -1;
     g_noPortalSeat = false;
     g_noForceOrder = false;
     g_noRot2900Halve = false;

@@ -4052,6 +4052,22 @@ inline int cliMain(int argc, char** argv) {
             const StepCtx K{x, xPrevR, rDxUsed, t, &rn, &rp, &rd, &ro, &rs, &rv, &SP, &SPmini, &UP, &UPmini, &rt};
             bool rdead = false;
             State c = stepBoth(s, lvl[i], K, rdead);
+            // ...and rdead is not read. It was declared, passed, and dropped:
+            // the witness resim walks the whole plan whether or not the player
+            // survived it, so a plan that dies at tick 40 of 1,200 still writes
+            // 1,160 rows of a corpse and the run still prints SOLVED (which was
+            // printed before this loop, by the search). Count it here rather
+            // than at DIE: this is the ONE walk of the FINAL plan, so a death
+            // counted here is the plan's, with none of the search's prunes in
+            // it. First and last are recorded too, because "one corpse dying
+            // every tick" and "many separate deaths" produce the same total and
+            // are told apart only by whether the ticks are contiguous.
+            if (rdead) {
+                if (g_resimDead == 0) g_resimFirst = (int)t;
+                g_resimLast = (int)t;
+                ++g_resimDead;
+            }
+            ++g_resimTicks;
             c.action = (uint8_t)lvl[i];
             s = c;
             modeAt[i] = s.mode;
@@ -4166,6 +4182,14 @@ inline int cliMain(int argc, char** argv) {
     // reader is not left inferring the population from the last entry.
     for (const auto& e : g_dieReconWhy)
         std::printf("recondiewhy: %s=%lld\n", e.first ? e.first : "?", e.second);
+    // ...and the walk itself. `contig` is the test, not a decoration: if the
+    // dead ticks are the tail of the walk, one plan died once and the rest is
+    // its corpse; if they are not, the total was never one number about one
+    // event. `of` is here so a zero can be told from a walk that never ran.
+    std::printf("resimdie: dead=%lld of=%lld first=%d last=%d contig=%d\n",
+                g_resimDead, g_resimTicks, g_resimFirst, g_resimLast,
+                (g_resimDead > 0 &&
+                 (long long)(g_resimLast - g_resimFirst + 1) == g_resimDead) ? 1 : 0);
     std::printf("plan: %d edges, %zu ticks -> %s\n", edges, lvl.size(),
                 outPath.c_str());
     return 0;
