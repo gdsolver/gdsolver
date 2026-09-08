@@ -1942,7 +1942,15 @@ inline bool runLadder(long long dt) {
             // different places read as a model that knew something it did not.
             snprintf(rd, sizeof(rd), " resimdie=%lld@%lld/%s", o.resimDead,
                      o.resimFirst, o.resimWhy ? o.resimWhy : "?");
-        else if (o.resimDead < 0)
+        else if (o.resimDead == 0)
+            // ...and a clean walk says so. Printing nothing here would make
+            // "the plan survived itself" and "this field is not wired on this
+            // path" the same picture, and a whole cold run of blank lines would
+            // then read as "no plan ever dies" with no way to tell it from a
+            // dead field. The first run of this counter printed nothing on 192
+            // dpsolve lines for exactly that reason.
+            snprintf(rd, sizeof(rd), " resimdie=0");
+        else
             snprintf(rd, sizeof(rd), " resimdie=?");
         snprintf(b, sizeof(b), "dpsolve:   [%s%s] rc=%d inputs=%zu capHits=%lld%s%s",
                  o.verdict == dpbridge::OutcomeSolved ? "SOLVED"
