@@ -23,6 +23,14 @@ inline void resetSessionState() {
     watchSpeedSet(WATCH_SPEED_1X); g_visRefresh = false;
     g_pauseAtXFired = false;   // stop once again in the next session
     g_ckpt = nullptr; g_ckptTick = -1; g_headHeld = 0;
+    // The raw jump button, as handleButton last saw it. Nothing physical reads
+    // it -- its only consumer is the slope trace's `held` column
+    // (hooks_player.cpp:664) -- so this is not a physics leak. It is worse in
+    // one narrow way: it is the INSTRUMENT that leaks. Left behind, the first
+    // rows of a level in a one-session run carry the LAST level's button state,
+    // and a `held` column read that way looks exactly like a measurement. A
+    // launch per level cannot reach it, so no per-level regression will.
+    g_btnDown = false;
     g_practiceOn = false; g_restoreDone = false; g_restorePending = false;
     g_restoreLoopDone = false;
     solver::g_log.clear();
