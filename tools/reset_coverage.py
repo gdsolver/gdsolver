@@ -135,7 +135,7 @@ SCOPES = [
     # reset -- without asserting anything about the 300 that were already
     # there. Retiring a name from the ratchet into a real classification is
     # the way this shrinks.
-    ("mod", "src", ["resetSessionState"], "ratchet"),
+    ("mod", "src", ["resetSessionState", "dpsolve::start"], "ratchet"),
 ]
 SUFFIXES = {".hpp", ".cpp", ".h", ".inc", ".cc"}
 
@@ -403,6 +403,22 @@ def collect_bodies(root: Path) -> dict:
     return bodies
 
 
+def entry_key(e: str) -> tuple:
+    """An entry point, optionally namespace-qualified as `ns::name`.
+
+    The bare form resolves through the ("", name) slot, which collect_bodies
+    fills with setdefault -- so the FIRST file in sorted order that defines that
+    name wins it. `start` already has two definitions (repair::start and
+    stallwatch::start) and today the right one wins only because "repair.hpp"
+    sorts before "stallwatch.hpp". Naming the namespace takes the audit off that
+    accident; a file added tomorrow would otherwise silently move the entry
+    point, and this script would keep reporting a clean pass for a reset body it
+    was no longer reading.
+    """
+    ns, sep, name = e.rpartition("::")
+    return (ns, name) if sep else ("", name)
+
+
 def reset_set(bodies: dict, entries: list, names: set):
     """Names mutated by the entry points or anything they call.
 
@@ -410,7 +426,7 @@ def reset_set(bodies: dict, entries: list, names: set):
     reset body but never in a mutating position, which is NOT coverage and is
     worth printing rather than silently counting either way."""
     mutated, touched, seen = set(), set(), set()
-    queue = [("", e) for e in entries]
+    queue = [entry_key(e) for e in entries]
     while queue:
         key = queue.pop()
         if key in seen:
@@ -591,7 +607,7 @@ SAFE_BUCKETS = {"B", "C", "S"}
 # ---------------------------------------------------------------------------
 RATCHET = """
   g_accel g_advance g_all g_anchor
-  g_anchorT g_anchorX g_argsLast g_argsLogged g_at
+  g_anchorT g_anchorX g_at
   g_attemptStart g_barTicks g_best g_bestDeath
   g_bgBlocked g_cap g_capTier g_cfg
   g_ckptDash g_ckptNextInput g_ckptNextToggle g_ckptOobLatch
@@ -727,7 +743,7 @@ def main():
         g = scan_globals(root, base)
         bodies = collect_bodies(root)
         for e in entries:
-            if ("", e) not in bodies:
+            if entry_key(e) not in bodies:
                 print(f"!! {scope}: reset entry point {e}() not found -- the "
                       f"audit would report everything as unreset")
                 rc = 1
