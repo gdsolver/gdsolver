@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "dp/fixup.hpp"
 #include "dp/clearance.hpp"
 // ...and the reference watch, whose globals this file clears. It was not in the
@@ -94,6 +94,10 @@ inline void resetInvocationState() {
     g_resimLast = -1;
     g_resimWhy = nullptr;
     g_trigDbgT = -1;
+    g_gfireGroups = 0;
+    g_gfireSpread = 0;
+    g_gfireSum = 0;
+    g_gfireMax = 0;
     g_resimUid = -1;
     g_resimObjX = 0.f;
     g_resimObjY = 0.f;

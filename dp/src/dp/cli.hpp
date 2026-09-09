@@ -2956,6 +2956,7 @@ inline int cliMain(int argc, char** argv) {
         // tick (from where its slowest member starts to where it ends up)
         double gLo = 1e18, gHi = -1e18;
         int gFire = -1;   // latest tick any of them fired a touch trigger
+        int gFireMin = 0x7fffffff;   // ...and the earliest, for the pass count only
         // ...and the same thing per box, for the formula path. The group key
         // holds `trig`, so every member has entered the SAME set of boxes --
         // what differs is when, and this keeps the latest for each one
@@ -2972,11 +2973,24 @@ inline int cliMain(int argc, char** argv) {
             gLo = std::min(gLo, (double)s.xAbs);
             gHi = std::max(gHi, (double)s.xAbs);
             gFire = std::max(gFire, (int)s.trigT);
+            gFireMin = std::min(gFireMin, (int)s.trigT);
             for (int b = 0; b < 32; ++b)
                 if (s.fireB[b] > gFireB[b]) gFireB[b] = s.fireB[b];
             if (s.lockOff < gLockOff) gLockOff = s.lockOff;
         }
         if (gLockOff > 1e29f) gLockOff = 0.f;   // no member (group is empty)
+        // The gate's pass count: this group is APPROXIMATED only if its members
+        // disagree about when the trigger fired. Counted here, before any of the
+        // reasons below can `continue` past it, so "placed" means placed.
+        if (gFire >= 0) {
+            ++g_gfireGroups;
+            if (gFireMin < gFire) {
+                ++g_gfireSpread;
+                const int d = gFire - gFireMin;
+                g_gfireSum += d;
+                if (d > g_gfireMax) g_gfireMax = d;
+            }
+        }
         // Drop a whole group once it is past a box it was required to enter.
         // Killing it here rather than at the end keeps the frontier spent on
         // states that can still satisfy the requirement.
@@ -4275,6 +4289,8 @@ inline int cliMain(int argc, char** argv) {
     const long long rDead = g_resimDead, rOf = g_resimTicks;
     const int rFirst = g_resimFirst, rLast = g_resimLast;
     const char* rWhy = g_resimWhy;
+    std::printf("gfirestat: groups=%lld spread=%lld sum=%lld max=%d\n",
+                g_gfireGroups, g_gfireSpread, g_gfireSum, g_gfireMax);
     std::printf("resimdie: dead=%lld of=%lld first=%d last=%d contig=%d why=%s\n",
                 rDead, rOf, rFirst, rLast,
                 (rDead > 0 && (long long)(rLast - rFirst + 1) == rDead) ? 1 : 0,

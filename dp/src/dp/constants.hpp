@@ -161,6 +161,16 @@ inline const char* g_resimWhy = nullptr;
 // the search and another for the resim, and on lv20 that is the whole
 // disagreement. -1 = off; set to the tick to look at.
 inline long long g_trigDbgT = -1;
+// How often does the group's collapse of the firing tick actually collapse
+// anything? `gFire` is max(trigT) over the members (cli.hpp:2974) and the group
+// key already pins `trig`, so the masks always agree -- the spread is in trigT
+// alone. A group whose members share one trigT is not approximated at all.
+// Counting the passes separately from the firings is the lesson of `!c.flip`,
+// where a gate was entered 593 times and fired zero.
+inline long long g_gfireGroups = 0;   // groups placed
+inline long long g_gfireSpread = 0;   // ...of which the members disagree on trigT
+inline long long g_gfireSum = 0;      // sum of (max-min) over those
+inline int g_gfireMax = 0;            // widest spread seen, in ticks
 inline int g_resimUid = -1;
 inline float g_resimObjX = 0.f, g_resimObjY = 0.f;
 inline uint32_t g_resimTrig = 0;   // the walk's own trigger mask at that tick
