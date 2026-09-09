@@ -149,6 +149,15 @@ inline long long g_resimDead = 0;
 // deaths at different places in the level read as agreement -- the model would
 // be credited with knowing something it did not know.
 inline const char* g_resimWhy = nullptr;
+// ...and WHO, taken at the same tick. A cause string says `cube/hazard`; it does
+// not say which object, and on lv20 the answer decides an open question: the
+// model-visible hazards near the death (type 2/47 -- level_loader.hpp:923 emits
+// nothing else) are all static, all `groups=0`, and none of them overlaps the
+// player's box, so the killer has to be moving geometry. Naming it turns that
+// from an elimination into an identification.
+inline int g_resimUid = -1;
+inline float g_resimObjX = 0.f, g_resimObjY = 0.f;
+inline uint32_t g_resimTrig = 0;   // the walk's own trigger mask at that tick
 inline long long g_resimTicks = 0;
 inline int g_resimFirst = -1;
 inline int g_resimLast = -1;

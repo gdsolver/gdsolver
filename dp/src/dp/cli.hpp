@@ -4101,7 +4101,17 @@ inline int cliMain(int argc, char** argv) {
             // every tick" and "many separate deaths" produce the same total and
             // are told apart only by whether the ticks are contiguous.
             if (rdead) {
-                if (g_resimDead == 0) { g_resimFirst = (int)t; g_resimWhy = g_deadWhy; }
+                if (g_resimDead == 0) {
+                    g_resimFirst = (int)t;
+                    g_resimWhy = g_deadWhy;
+                    // ...and the object, from the same DIE that set the cause.
+                    // g_deadObj is the killer; its uid is the level's, not this
+                    // build's ordinal, so it can be looked up in the dump.
+                    g_resimUid = g_deadObj ? g_deadObj->uid : -1;
+                    g_resimObjX = g_deadCx;
+                    g_resimObjY = g_deadCy;
+                    g_resimTrig = s.trig;
+                }
                 g_resimLast = (int)t;
                 ++g_resimDead;
             }
@@ -4244,6 +4254,9 @@ inline int cliMain(int argc, char** argv) {
                 rDead, rOf, rFirst, rLast,
                 (rDead > 0 && (long long)(rLast - rFirst + 1) == rDead) ? 1 : 0,
                 rWhy ? rWhy : "-");
+    if (g_resimDead > 0)
+        std::printf("resimwho: uid=%d obj=(%.1f,%.1f) trig=0x%08x\n",
+                    g_resimUid, g_resimObjX, g_resimObjY, g_resimTrig);
     // ...and out through the struct, because the repair loop -- the one consumer
     // that ACTS on these plans -- reads dp::g_outcome, not stdout. A walk that
     // never ran stays -1 and must not be counted as a clean plan.
