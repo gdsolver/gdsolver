@@ -317,6 +317,10 @@ inline int cliMain(int argc, char** argv) {
         // the same argv[i+1] form as --cap and not with the valueless shape at
         // the top of this file, which is silently off when it is given one.
         if (!std::strcmp(argv[i], "--hazdbg")) g_hazDbgUid = std::atoi(argv[i + 1]);
+        // --trigdbg <tick>: one line per group at that tick, naming the mask the
+        // group applied. Reads --hazdbg for WHICH object to locate, so the two
+        // flags are given together.
+        if (!std::strcmp(argv[i], "--trigdbg")) g_trigDbgT = std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--gcnodes")) g_gcNodes = (size_t)std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--memlimit")) g_memLimitMiB = (size_t)std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--shipyq")) g_shipYq = std::atof(argv[i + 1]);
@@ -3028,6 +3032,27 @@ inline int cliMain(int argc, char** argv) {
         std::vector<const Obj*> near;
         FS.near->forRange(wLo - 40, wHi + 40, [&](const Obj& o) { near.push_back(&o); });
         LG.dyn.collect(Dynamics::NEAR, wLo - 40, wHi + 40, near);
+        // --trigdbg <tick>: the mask this GROUP applied, and where it left the
+        // object named by --hazdbg. The resim prints the same pair from the
+        // state's own mask (`resimwho:`), so the two lines can be put side by
+        // side -- which is the only way to say "at this tick the two masks
+        // differ" rather than "they could differ".
+        if (g_trigDbgT >= 0 && (long long)t == g_trigDbgT) {
+            const Obj* seen = nullptr;
+            if (g_hazDbgUid >= 0)
+                for (const Obj* o : near)
+                    if (o->uid == g_hazDbgUid) { seen = o; break; }
+            std::printf("trigdbg t=%lld gtrig=0x%08x gFireB=0x%08x lockOff=%.3f "
+                        "win=[%.1f,%.1f] n=%zu uid=%d %s\n",
+                        (long long)t, (unsigned)gtrig, (unsigned)gFireB,
+                        (double)(gLockOff + (float)sdx), wLo, wHi, near.size(),
+                        g_hazDbgUid,
+                        seen ? "" : "NOT-IN-WINDOW");
+            if (seen)
+                std::printf("trigdbg t=%lld uid=%d at (%.3f,%.3f) hw=%.3f hh=%.3f\n",
+                            (long long)t, seen->uid, seen->cx, seen->cy,
+                            seen->hw, seen->hh);
+        }
         std::vector<const Obj*> ports;
         FS.port->forRange(wLo - 60, wHi + 60, [&](const Obj& o) { ports.push_back(&o); });
         LG.dyn.collect(Dynamics::PORT, wLo - 60, wHi + 60, ports);

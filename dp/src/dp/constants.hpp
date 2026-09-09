@@ -155,6 +155,12 @@ inline const char* g_resimWhy = nullptr;
 // nothing else) are all static, all `groups=0`, and none of them overlaps the
 // player's box, so the killer has to be moving geometry. Naming it turns that
 // from an elimination into an identification.
+// The search's side of the same question the resim's `trig=` answers. The two
+// walks apply triggers with different masks -- the group's (cli.hpp:3026) and
+// the state's own (cli.hpp:4066) -- so a moving object can be in one place for
+// the search and another for the resim, and on lv20 that is the whole
+// disagreement. -1 = off; set to the tick to look at.
+inline long long g_trigDbgT = -1;
 inline int g_resimUid = -1;
 inline float g_resimObjX = 0.f, g_resimObjY = 0.f;
 inline uint32_t g_resimTrig = 0;   // the walk's own trigger mask at that tick

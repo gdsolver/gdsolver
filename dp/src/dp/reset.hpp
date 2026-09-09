@@ -93,6 +93,7 @@ inline void resetInvocationState() {
     g_resimFirst = -1;
     g_resimLast = -1;
     g_resimWhy = nullptr;
+    g_trigDbgT = -1;
     g_resimUid = -1;
     g_resimObjX = 0.f;
     g_resimObjY = 0.f;
