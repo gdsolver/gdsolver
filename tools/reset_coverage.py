@@ -591,7 +591,7 @@ SAFE_BUCKETS = {"B", "C", "S"}
 # ---------------------------------------------------------------------------
 RATCHET = """
   g_accel g_advance g_all g_anchor
-  g_anchorT g_anchorX g_argsLogged g_at
+  g_anchorT g_anchorX g_argsLast g_argsLogged g_at
   g_attemptStart g_barTicks g_best g_bestDeath
   g_bgBlocked g_cap g_capTier g_cfg
   g_ckptDash g_ckptNextInput g_ckptNextToggle g_ckptOobLatch

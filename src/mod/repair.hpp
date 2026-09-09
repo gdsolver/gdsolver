@@ -361,6 +361,7 @@ inline std::chrono::steady_clock::time_point g_t0;
 inline std::string g_csv;          // the level, built once at session start
 inline int g_horizon = 0;
 inline bool g_argsLogged = false;  // the `solver args:` line has been printed for THIS session
+inline std::string g_argsLast;     // ...and what it said, so a CHANGE gets its own line
 
 // ---- what the loop knows between iterations ----
 inline int g_iter = 0;
@@ -748,10 +749,29 @@ inline std::vector<std::string> baseArgs(const std::string& out) {
         // first level solved and for no other, so a second level in the same game -- the only
         // place where the argv can be inherited rather than built -- was the one case the line
         // was never there to answer. It is what would have shown the stale `--groups` outright.
-        if (!g_argsLogged) {
+        //
+        // ...and again whenever they CHANGE. Once per session logs the FIRST
+        // solve -- the one with no anchor, no fixups, no vetoes and the bootstrap
+        // recording -- which is the least like every later one. repair.hpp:1872
+        // already records that consequence for the payload; this is the rest of
+        // it: a solve from iteration 30 cannot be reproduced from this file,
+        // because the flags it actually ran with were never written down.
+        //
+        // Measured 2026-09-09: lv20's search and its own witness resim disagree
+        // (search alive to t=5,752, resim kills at t=5,374) and the case could
+        // not be reproduced offline. With the first solve's flags the frontier
+        // died at t=19,331 and capHits was 9,960 against the run's 1,926 -- a
+        // different search, so a different question. The flags that mattered
+        // were the ones this line did not carry.
+        //
+        // Logging the DIFFERENCE rather than every solve keeps it cheap: lv20's
+        // 49 iterations mostly re-use the same argv, and only the changes are
+        // worth a line. The first solve still prints in full.
+        std::string line = "dpsolve: solver args:";
+        for (const std::string& s : a) line += " " + s;
+        if (!g_argsLogged || line != g_argsLast) {
             g_argsLogged = true;
-            std::string line = "dpsolve: solver args:";
-            for (const std::string& s : a) line += " " + s;
+            g_argsLast = line;
             writeResult(line);
         }
     }
@@ -2337,6 +2357,7 @@ inline void start(GJBaseGameLayer* l) {
     // what a freshly started game passes and what the cold logs of every level show.
     g_maxPlayYLive = 0.f;
     g_argsLogged = false;
+    g_argsLast.clear();   // ...or level N+1's first solve compares against level N's
     anchors::reset();
     writeResult("dpsolve: start level=" + std::to_string(g_cfg.levelId)
                 + " csv=" + std::to_string(g_csv.size()) + " bytes horizon="
