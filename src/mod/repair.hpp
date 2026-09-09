@@ -715,6 +715,26 @@ inline void addWorldArgs(std::vector<std::string>& a) {
     }
 }
 
+
+// Say once what the solver is actually being told, and again whenever it changes.
+//
+// CALLED AT THE HANDOVER, not inside baseArgs. The argv is assembled in two places --
+// baseArgs builds the common part and each caller appends its own (--start, --startband,
+// --anchor-state, the cfg dpArgs) -- so a line printed inside baseArgs carries the half
+// that is the same everywhere and omits the half that distinguishes one solve from the
+// next. Measured 2026-09-10: rebuilding three of a cold run's lv22 solves from the logged
+// args reproduced none of them (first death 1813 -> 1837, 1898 -> 1836, 6322 -> 6402),
+// because the flags that differed were never written down.
+inline void logSolverArgs(const std::vector<std::string>& a) {
+    std::string line = "dpsolve: solver args:";
+    for (const std::string& s : a) line += " " + s;
+    if (!g_argsLogged || line != g_argsLast) {
+        g_argsLogged = true;
+        g_argsLast = line;
+        writeResult(line);
+    }
+}
+
 inline std::vector<std::string> baseArgs(const std::string& out) {
     const bool tiered = g_capTier > 0;
     std::vector<std::string> a{"--out", out,
@@ -744,37 +764,6 @@ inline std::vector<std::string> baseArgs(const std::string& out) {
     // always which of them differed -- a question that cost a session to answer by inference
     // (2026-08-27: a cfg `dparg` was passed, believed delivered, and the A/B built on that
     // belief was wrong twice). One line, at the first solve of a session.
-    {
-        // ONCE PER SESSION, not once per process. As a function-local static this printed for the
-        // first level solved and for no other, so a second level in the same game -- the only
-        // place where the argv can be inherited rather than built -- was the one case the line
-        // was never there to answer. It is what would have shown the stale `--groups` outright.
-        //
-        // ...and again whenever they CHANGE. Once per session logs the FIRST
-        // solve -- the one with no anchor, no fixups, no vetoes and the bootstrap
-        // recording -- which is the least like every later one. repair.hpp:1872
-        // already records that consequence for the payload; this is the rest of
-        // it: a solve from iteration 30 cannot be reproduced from this file,
-        // because the flags it actually ran with were never written down.
-        //
-        // Measured 2026-09-09: lv20's search and its own witness resim disagree
-        // (search alive to t=5,752, resim kills at t=5,374) and the case could
-        // not be reproduced offline. With the first solve's flags the frontier
-        // died at t=19,331 and capHits was 9,960 against the run's 1,926 -- a
-        // different search, so a different question. The flags that mattered
-        // were the ones this line did not carry.
-        //
-        // Logging the DIFFERENCE rather than every solve keeps it cheap: lv20's
-        // 49 iterations mostly re-use the same argv, and only the changes are
-        // worth a line. The first solve still prints in full.
-        std::string line = "dpsolve: solver args:";
-        for (const std::string& s : a) line += " " + s;
-        if (!g_argsLogged || line != g_argsLast) {
-            g_argsLogged = true;
-            g_argsLast = line;
-            writeResult(line);
-        }
-    }
     return a;
 }
 
@@ -1420,6 +1409,7 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
     addWorldArgs(a);
     for (const std::string& s : g_cfg.dpArgs) a.push_back(s);
     std::filesystem::remove(base + ".trace.csv", ec);
+    logSolverArgs(a);
     dpbridge::solveInProcess(g_csv, a);
     const long long modelDied = dpbridge::outcome().replayDiedT;
     std::map<long long, TraceRow> m;
@@ -1899,6 +1889,7 @@ inline bool runLadder(long long dt) {
                     + (ap.empty() ? "" : "  --anchor-state " + ap));
         std::error_code ec;
         std::filesystem::remove(g_tailPath, ec);   // a stale tail must not read as this call's
+        logSolverArgs(a);
         const int rc = dpbridge::solveInProcess(g_csv, a);
         const dpbridge::SolveOutcome o = dpbridge::outcome();
         std::vector<InputCmd> cand;
@@ -2120,7 +2111,9 @@ inline void spawn(int kind, long long arg, const char* phase) {
             if (kind == JobFirstSolve) {
                 std::error_code ec;
                 std::filesystem::remove(g_planPath, ec);
-                g_rc = dpbridge::solveInProcess(g_csv, baseArgs(g_planPath));
+                const std::vector<std::string> a0 = baseArgs(g_planPath);
+                logSolverArgs(a0);
+                g_rc = dpbridge::solveInProcess(g_csv, a0);
                 ok = loadInputsFile(g_planPath, g_plan);
             } else if (kind == JobSeedPlan) {
                 g_rc = 0;
