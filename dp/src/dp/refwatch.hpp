@@ -156,8 +156,20 @@ inline bool refMatches(const State& s, const RefRow& r) {
     if (r.mode >= 0 && (int)s.mode != r.mode) return false;
     if (r.flip >= 0 && (int)s.flip != r.flip) return false;
     if (r.frame >= 0 && (int)s.frame != r.frame) return false;
-    double wy = 0.0, wvy = 0.0;
-    refWorldOf(s, wy, wvy);
+    // WHICH COORDINATES THE REFERENCE IS IN. A GD dump is world -- it has no
+    // notion of the model's turned frames -- so a state in frame 1 or 3 has to
+    // be converted before it can be compared. A reference that CARRIES a frame
+    // column is a model trace instead, written in that frame's own axes
+    // (cli.hpp's witness resim), and converting the state would then compare a
+    // world y against a frame-local one. Measured: on lv22 from t=5,600 the two
+    // agreed to seven figures on y, vy, flip and frame and the match was still
+    // refused, because one side had been turned and the other had not.
+    //
+    // Gated on `r.frame >= 0`, so a reference without the column behaves exactly
+    // as before -- which is every GD-derived reference, including the ones
+    // py/secqueue.py's refwatch_sweep feeds in.
+    double wy = (double)s.y, wvy = (double)s.vy;
+    if (r.frame < 0) refWorldOf(s, wy, wvy);
     return std::fabs(wy - r.y) <= g_refEps
         && std::fabs(wvy - r.vy) <= g_refEps;
 }

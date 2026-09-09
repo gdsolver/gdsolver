@@ -4010,7 +4010,20 @@ inline int cliMain(int argc, char** argv) {
         // gd_diff said "full match" while GD was killing PLAYER 2 (the death
         // looked position-independent: same tick for every injected p1 y/x).
         // act: the input level of the tick (the fixup recorder gates on it).
-        tr << "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act\n";
+        // ...and `flip` and `frame`, appended. --refwatch looks up its reference
+        // columns by NAME (refwatch.hpp:108 asks for "flip" and "frame") and this
+        // trace carried neither, so feeding a resim trace back to the search
+        // reported `cannot-reproduce` with dy=0.000 dvy=0.000 -- the trajectory
+        // matched to seven figures and the match was refused on two fields that
+        // were not in the file. refwatch.hpp:42-46 already records that the frame
+        // mismatch "accounted for most of the first sweep's cannot-reproduce
+        // count"; this is the other half of that, on the writing side.
+        //
+        // Appended rather than inserted: every reader found is name-based
+        // (mcp/gdmcp/data.py builds a csv.DictReader and validates the columns it
+        // wants against r.fieldnames), and the positional reads in the tree index
+        // into diff rows, regex groups and triggers.txt -- not this file.
+        tr << "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,frame\n";
         std::ofstream sn;
         if (!snapLogPath.empty()) {
             sn.open(snapLogPath);
@@ -4161,7 +4174,8 @@ inline int cliMain(int argc, char** argv) {
             tr << t << ',' << (double)s.xAbs << ',' << s.y << ',' << s.vy << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
                << ',' << s.y2 << ',' << s.vy2 << ',' << (int)s.flip2 << ','
-               << (int)lvl[i] << "\n";
+               << (int)lvl[i] << ',' << (int)s.flip << ',' << (int)s.frame
+               << "\n";
         }
         g_snapOut = nullptr;
     }
