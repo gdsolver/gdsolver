@@ -1,6 +1,13 @@
 ﻿#pragma once
 #include "dp/fixup.hpp"
 #include "dp/clearance.hpp"
+// ...and the reference watch, whose globals this file clears. It was not in the
+// chain: only cli.hpp includes this header, and cli.hpp had already pulled
+// refwatch.hpp in, so the omission was invisible until src/mod/dp_bridge.cpp --
+// the other caller of resetInvocationState -- failed to compile. refwatch.hpp
+// includes frames.hpp and state.hpp and nothing includes reset.hpp except
+// cli.hpp, so there is no cycle.
+#include "dp/refwatch.hpp"
 
 namespace dp {
 
@@ -136,6 +143,15 @@ inline void resetInvocationState() {
     g_dynDbg = -1;
     g_formulaDriven = 0;
     g_noFormula = false;
+    // ...and three flags the audit had been carrying as known defects. Two are
+    // diagnostics, but g_rotSplit is not: it is declared TRUE and --no-rotsplit
+    // (cli.hpp:152) turns it off with nothing to turn it back on, so ONE call
+    // passing that flag disables rotation-orbit splitting for every later solve
+    // in the process -- and rotation splitting is physics, not instrumentation
+    // (it is what lv21's 55 px y error turned out to be).
+    g_rotCheck = false;
+    g_rotSplit = true;
+    g_shiftStat = false;
     // ...and the locked box, which the loader finds. Same trap as
     // g_touchMoveTicks: left behind, the next level in a one-session run reads
     // the PREVIOUS level's box index, and a one-session run is exactly the
@@ -286,6 +302,34 @@ inline void resetInvocationState() {
     g_oriented = true;
     g_obbAll = false;
     g_touchFromAnchor = false;
+    // ...and the fireB tally. The three counters only ever `++` (cli.hpp:2748,
+    // 2749, 2760) and nothing zeroes them, so the line printed at cli.hpp:3504
+    // is the PROCESS's running total presented as this solve's -- a number that
+    // grows every call and is read as if it did not.
+    g_fireBCheck = false;
+    g_fireBNoTick = 0;
+    g_fireBNoBit = 0;
+    g_fireBTooEarly = 0;
+
+    // refwatch.hpp -- the reference-trace watch. All per call, and one of them
+    // is worse than drift: g_refRows is filled with `g_refRows[t] = r` and
+    // never cleared, so a second --refwatch load MERGES two levels' reference
+    // rows into one map keyed by tick. The rows that do not collide survive,
+    // which is the shape that reads as a plausible reference rather than a
+    // corrupt one.
+    g_refWatch = false;
+    g_refRows.clear();
+    g_refEps = 0.01;
+    g_refDriftVy = 0.0;
+    g_refDriftY = 0.0;
+    g_refParent = -1;
+    g_refLostAt = -1;
+    for (int i = 0; i < 2; ++i) {
+        g_refKidFate[i] = -1;
+        g_refKidWhy[i] = "";
+        g_refKidKey[i] = 0;
+        g_refKidState[i] = State{};
+    }
 }
 
 }  // namespace dp
