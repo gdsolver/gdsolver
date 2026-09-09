@@ -3978,8 +3978,31 @@ inline int cliMain(int argc, char** argv) {
             g_snapOut = &sn;
         }
         State s = init;
-        XSlice sl(L.objs), pl(L.portals), dl(L.pads), ol(L.orbs), sls(L.slopes),
-            vl(L.speeds);
+        // GAMEPLAY ROTATION: the witness resim did not turn. `applyRotation` had
+        // exactly two callers -- the search's kid (:3108) and --replay (:2654) --
+        // and this walk, which is the one that writes the trace everything is
+        // diffed against, was not one of them. On lv22 the search is in the
+        // rotated frame from t=6,000 (its layer line reads `x=0 y=[8272,8272]`,
+        // which is the turned coordinate system) while this loop kept walking
+        // +X. So the trace was not the plan's trajectory, and every death
+        // counted here after a turn was the walk's, not the plan's.
+        //
+        // The slices have to be re-bound with the frame for the same reason
+        // --replay re-binds (:2440): after a turn the geometry that matters is
+        // the NEW frame's, and reading the old frame's is worse than not
+        // turning at all. XSlice holds a reference, so it cannot be assigned --
+        // hence the pointers, which is also how --replay carries them.
+        Level* rLf = &L;
+        std::unique_ptr<XSlice> sl, pl, dl, ol, sls, vl;
+        auto rrebind = [&](Level& lv) {
+            sl = std::make_unique<XSlice>(lv.objs);
+            pl = std::make_unique<XSlice>(lv.portals);
+            dl = std::make_unique<XSlice>(lv.pads);
+            ol = std::make_unique<XSlice>(lv.orbs);
+            sls = std::make_unique<XSlice>(lv.slopes);
+            vl = std::make_unique<XSlice>(lv.speeds);
+        };
+        rrebind(*rLf);
         FlyBand rBand;
         size_t rIdx = 0;
         // Fallback speed only: replayed by x for an anchor that carries no
@@ -4020,15 +4043,15 @@ inline int cliMain(int argc, char** argv) {
             std::vector<const Obj*> rn, rp, rd, ro, rs;
             // ...and the witness resim has to see the SAME moving geometry the
             // search planned against, or its trace disagrees with its own plan
-            L.dyn.seek((int)t);
+            rLf->dyn.seek((int)t);
             // ...including the doors IT opened. The witness carries its own mask
             // (stepBoth sets it below), so this is the same call the search made
             // for the group this lineage belonged to.
             // + this tick's advance: see the group call's note. `x` is tick t's
             // x and `s.xAbs` is tick t-1's, so their difference is it.
-            L.dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB,
-                                s.lockOff + (float)(x - (double)s.xAbs),
-                                (int)t, x);
+            rLf->dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB,
+                                   s.lockOff + (float)(x - (double)s.xAbs),
+                                   (int)t, x);
             std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
             for (size_t b = 0; b < g_touch.size(); ++b) {
                 if (s.trig & ((uint32_t)1 << b)) continue;
@@ -4036,22 +4059,37 @@ inline int cliMain(int argc, char** argv) {
                 if (T.cx + T.hw < x - 40 || T.cx - T.hw > x + 40) continue;
                 rt.push_back({&T, (uint32_t)1 << b});
             }
-            sl.forRange(x - 40, x + 40, [&](const Obj& o) { rn.push_back(&o); });
-            L.dyn.collect(Dynamics::NEAR, x - 40, x + 40, rn);
-            pl.forRange(x - 60, x + 60, [&](const Obj& o) { rp.push_back(&o); });
-            L.dyn.collect(Dynamics::PORT, x - 60, x + 60, rp);
-            dl.forRange(x - 40, x + 40, [&](const Obj& o) { rd.push_back(&o); });
-            L.dyn.collect(Dynamics::PAD, x - 40, x + 40, rd);
-            ol.forRange(x - 50, x + 50, [&](const Obj& o) { ro.push_back(&o); });
-            L.dyn.collect(Dynamics::ORB, x - 50, x + 50, ro);
-            sls.forRange(x - 60, x + 60, [&](const Obj& o) { rs.push_back(&o); });
-            L.dyn.collect(Dynamics::SLOPE, x - 60, x + 60, rs);
+            sl->forRange(x - 40, x + 40, [&](const Obj& o) { rn.push_back(&o); });
+            rLf->dyn.collect(Dynamics::NEAR, x - 40, x + 40, rn);
+            pl->forRange(x - 60, x + 60, [&](const Obj& o) { rp.push_back(&o); });
+            rLf->dyn.collect(Dynamics::PORT, x - 60, x + 60, rp);
+            dl->forRange(x - 40, x + 40, [&](const Obj& o) { rd.push_back(&o); });
+            rLf->dyn.collect(Dynamics::PAD, x - 40, x + 40, rd);
+            ol->forRange(x - 50, x + 50, [&](const Obj& o) { ro.push_back(&o); });
+            rLf->dyn.collect(Dynamics::ORB, x - 50, x + 50, ro);
+            sls->forRange(x - 60, x + 60, [&](const Obj& o) { rs.push_back(&o); });
+            rLf->dyn.collect(Dynamics::SLOPE, x - 60, x + 60, rs);
             std::vector<const Obj*> rv;
-            vl.forRange(x - 80, x + 80, [&](const Obj& o) { rv.push_back(&o); });
-            L.dyn.collect(Dynamics::SPEED, x - 80, x + 80, rv);
+            vl->forRange(x - 80, x + 80, [&](const Obj& o) { rv.push_back(&o); });
+            rLf->dyn.collect(Dynamics::SPEED, x - 80, x + 80, rv);
             const StepCtx K{x, xPrevR, rDxUsed, t, &rn, &rp, &rd, &ro, &rs, &rv, &SP, &SPmini, &UP, &UPmini, &rt};
             bool rdead = false;
+            const bool rPrevGrounded = (s.grounded != 0);
+            const double rPrevY = (double)s.y;
+            const int rFrame0 = (int)s.frame;
             State c = stepBoth(s, lvl[i], K, rdead);
+            // ...and turn, the way the search's kid does at :3108. Same gate
+            // (`!dead && !g_rotTrig.empty()`), same arguments, and it has to run
+            // BEFORE the row is written or the trace records a position in a
+            // coordinate system the plan had already left.
+            if (!rdead && !g_rotTrig.empty()) {
+                applyRotation(c, xPrevR, (double)rDxUsed, t, lvl[i],
+                              rPrevGrounded, rPrevY, true);
+                if ((int)c.frame != rFrame0) {
+                    rLf = &frameLevel(L, (int)c.frame);
+                    rrebind(*rLf);
+                }
+            }
             // ...and rdead is not read. It was declared, passed, and dropped:
             // the witness resim walks the whole plan whether or not the player
             // survived it, so a plan that dies at tick 40 of 1,200 still writes
