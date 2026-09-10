@@ -151,7 +151,19 @@ struct RotQEntry {
     double px = 0.0, py = 0.0;   // the firing point: the LOAD position, frozen
     int swarm = 0;    // m_changeChannel: only these switch the active channel
     int swch = 0;     // m_targetChannelID
-    int chanOnly = 0; // 1 = switches the channel WITHOUT rotating the player
+    // 1 = switches the channel WITHOUT rotating the player.
+    //
+    // 0 MEANS "ROTATES", NOT "ABSENT". A 2899 has no such field at all (it is a
+    // GameOptionsTrigger), and the loader gives it 0 here because there is no
+    // third value to give -- unlike swarm, whose 0, and swch, whose -1, are
+    // refused by every consumer on their own. What actually keeps a 2899 out of
+    // the rotation branch is `rotIdx >= 0`, and the authoritative predicate is
+    // `id != 2900`; chanOnly is not carrying that and cannot.
+    //
+    // So a NEW consumer of chanOnly has to sit behind `id == 2900` or
+    // `rotIdx >= 0`. Reading it alone would take "does not switch the channel
+    // only" from an object that has no opinion on the question.
+    int chanOnly = 0;
     int rotIdx = -1;  // index into g_rotTrig
 };
 inline std::vector<RotQEntry> g_rotQ;      // grouped by channel, sorted in it
