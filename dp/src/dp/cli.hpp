@@ -2513,6 +2513,13 @@ inline int cliMain(int argc, char** argv) {
             g_snapOut = &sn;
         }
         State s = init;
+        // Did --seeddump's tick actually occur in this walk? A tick the walk
+        // never reached must SAY SO rather than print nothing: silence reads
+        // the same as "nothing was consumed there", and a producer would take
+        // the absence for a clean seed. Same discipline as NO VERSION and
+        // resimdie=? -- a value that is missing has to be distinguishable from
+        // a value that is zero.
+        bool sawSeedTick = false;
         // Slices live in the CURRENT frame and restart when it turns (their
         // cursor is monotone in that frame's u).
         // ...and when the ANCHOR itself starts inside a turned frame
@@ -2716,6 +2723,31 @@ inline int cliMain(int argc, char** argv) {
                 for (int b = 0; b < 32; ++b)
                     if (s.fireB[b]) std::printf("%d:%u,", b, s.fireB[b]);
                 std::printf("\n");
+                // ...and the same state as a READY-MADE --startrotq argument.
+                //
+                // rotSpent is a mask over g_rotQ, and the bit order is
+                // buildRotQueue's, not rotgameplay.txt's -- seeding uid 1215
+                // and uid 1343, the file's first two rows, gives bits 0 and 8.
+                // So the inversion back to uids belongs HERE, beside the queue
+                // it indexes. A caller doing it would have to hold a copy of
+                // that ordering, which is the proxy-for-identity shape this
+                // campaign spent 2026-09-10 learning to distrust.
+                //
+                // SCOPE: these values come from a walk of the MODEL, not from
+                // the game. frames.hpp:165-168 is what licenses that -- the
+                // queue is right from t=0, measured at 191 of 192 transitions
+                // agreeing on lv22 -- so a seed read off a t=0 walk carries at
+                // most that 1-in-192 of the model's own error, and is not the
+                // circular "assume the equality to prove it".
+                if (!g_rotQ.empty()) {
+                    std::printf("seedrotq: t=%lld --startrotq %d,%04x",
+                                t, (int)s.rotChan, (unsigned)s.rotRev);
+                    for (size_t q = 0; q < g_rotQ.size() && q < 32; ++q)
+                        if ((s.rotSpent >> q) & 1u)
+                            std::printf(",%d", g_rotQ[q].uid);
+                    std::printf("\n");
+                }
+                sawSeedTick = true;
             }
             // ...and now turn, if the tick that just ran crossed one. The world
             // point is what carries over; (u,v) is re-read in the new frame.
@@ -2856,6 +2888,13 @@ inline int cliMain(int argc, char** argv) {
         else
             std::printf("REPLAY: SURVIVED to t=%lld x=%.1f (goal %.1f)\n",
                         lastT, (double)s.xAbs, goalX);
+        // A --seeddump tick this walk never reached is reported as such. The
+        // caller asked for the state at a tick; "the walk stopped first" is an
+        // answer and silence is not.
+        if (g_seedDump >= 0 && !sawSeedTick)
+            std::printf("seedrotq: t=%d NOT REACHED - this walk ended at "
+                        "t=%lld, so there is no state to seed from\n",
+                        g_seedDump, lastT);
         std::printf("trace -> %s.trace.csv\n", outPath.c_str());
         g_snapOut = nullptr;
         return 0;
