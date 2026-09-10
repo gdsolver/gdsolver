@@ -505,6 +505,7 @@ inline int g_escalations = 0;         // how many times the ladder has been give
 // dpsolve row (which is assembled earlier in the file) fingerprints the tail
 // the solver just emitted.
 inline std::string planFnv(const std::vector<InputCmd>& p);
+inline std::string fileSig(const std::string& path);
 
 inline std::string num(double v) {
     char b[40];
@@ -749,6 +750,27 @@ inline void logSolverArgs(const std::vector<std::string>& a) {
     std::snprintf(fb, sizeof fb, "dpsolve: fpenv mxcsr=0x%04x",
                   (unsigned)_mm_getcsr());
     writeResult(fb);
+    // ...and WHICH BYTES the file arguments held when this call was made.
+    //
+    // The recordings are rewritten as the loop goes: dp_groups.txt runs from
+    // 79 KB at iteration 1 to 23 MB at iteration 41, over 22 distinct contents
+    // in one lv22 run ([fp]'s `live=` field). An offline rebuild of call N
+    // therefore reads a file call N never saw, and every "the two dp builds
+    // disagree" measurement taken that way was comparing two different inputs.
+    // That invalidated a whole afternoon's comparison on 2026-09-10; the argv
+    // was identical every time, which is exactly what made it convincing.
+    //
+    // Signing the arguments here makes the mismatch detectable instead of
+    // invisible: a rebuild can check the file it is about to read against the
+    // signature the call recorded, and refuse rather than produce a number.
+    // The line is per-call and unconditional, because the whole point is that
+    // it changes between calls whose argv does not.
+    std::string sig = "dpsolve: input sig";
+    for (size_t i = 0; i + 1 < a.size(); ++i)
+        if (a[i] == "--groups" || a[i] == "--fixups" || a[i] == "--bandtrack"
+            || a[i] == "--triggers" || a[i] == "--objgroups" || a[i] == "--obb")
+            sig += " " + a[i].substr(2) + "=" + fileSig(a[i + 1]);
+    writeResult(sig);
 }
 
 inline std::vector<std::string> baseArgs(const std::string& out) {
