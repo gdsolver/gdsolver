@@ -26,6 +26,16 @@ inline int g_vyWrites = 0;      // how many writes this tick -- see below
 inline long long g_vyWatchT = -1;   // --vywriter <t>: report only this tick
 #define VYSET(x) (::dp::g_vyWriter = __LINE__, ++::dp::g_vyWrites, (x))
 
+// ...and the same for c.y, because the two are written two lines apart from the
+// SAME vpNew (:2637 and :2640) while a record reports edy = 0.000 with
+// edvy = -6.3952. One value agreeing to the digit and its neighbour disagreeing
+// by 6.4 cannot both come from that pair untouched -- so either y is overwritten
+// afterwards by something else, or the reading is wrong. The y writer says
+// which, and neither answer needs a guess about the terms.
+inline int g_yWriter = 0;
+inline int g_yWrites = 0;
+#define YSET(x) (::dp::g_yWriter = __LINE__, ++::dp::g_yWrites, (x))
+
 struct StepCtx {
     double x, xPrev;
     float dxF;         // this layer's per-tick x advance (see advanceX)
@@ -708,13 +718,13 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
     // tick, i.e. the parent's y untouched, while the model had already dropped
     // it to 313.500 with the old frame's tap.
     const bool reTap = (input == 1 && c.mode == 6 && wasGrounded);
-    if (reTap && havePrevY) c.y = (float)sPrevY;
+    if (reTap && havePrevY) YSET(c.y) = (float)sPrevY;
     double X, Y;
     fromFrame(f0, (double)c.xAbs, (double)c.y, X, Y);
     double nu, nv;
     toFrame(nf, X, Y, nu, nv);            // no origin correction is needed
     c.xAbs = (float)nu;
-    c.y = (float)nv;
+    YSET(c.y) = (float)nv;
     // ---- vy hand-over [2026-08-19 settled -- replaces the whole old kRotCarry set] --
     // Cross-checking the disassembly of PlayerObject::rotateGameplay (0x399d50)
     // against lv22's raw level data (keys 169/582/583/584 of the 2900s) closed all
@@ -840,7 +850,7 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
                               c.mini != 0, pH, bestY, nf == 0, &hazTgt, nf)
                 && !hazTgt) {
                 const double gs = c.flip ? -1.0 : 1.0;
-                c.y = (float)bestY;
+                YSET(c.y) = (float)bestY;
                 c.flip = c.flip ? 0 : 1;
                 VYSET(c.vy) = (float)(1.0 * gs);   // the teleport's own +-1.000
                 c.grounded = 1;
@@ -912,6 +922,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // distinct answer from "wrote it once".
     g_vyWriter = 0;
     g_vyWrites = 0;
+    g_yWriter = 0;
+    g_yWrites = 0;
     // ...and the (frame, rev) the step ran in. Counted for EVERY step, not only
     // the ones that consult a fixup, so the fixup census below it has a
     // denominator: "frame 2 never reached a lookup" and "frame 2 never happened"
@@ -1339,10 +1351,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // about the pad path.
     auto releasePin = [&](bool undoSnap) {
         if (pinnedOnBlock) {
-            c.y = prePinY;
+            YSET(c.y) = prePinY;
             pinnedOnBlock = false;
         } else if (landedThisTick) {
-            c.y = preLandY;
+            YSET(c.y) = preLandY;
             landedThisTick = false;
             // ...and the STAIR SNAP must not run either. GD does not undo a
             // landing at all -- it never makes one. checkCollisions (0x2137f0)
@@ -1446,7 +1458,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         const double waveSlope = (c.mini && !g_noMiniWave) ? 2.0 : 1.0;
         const double dyDir = (s.held ? 1.0 : -1.0) * (s.flip ? -1.0 : 1.0);
         const double dy = dyDir * useDx * waveSlope;
-        c.y = (float)((double)s.y + dy);
+        YSET(c.y) = (float)((double)s.y + dy);
         yFree = c.y;
         VYSET(c.vy) = (float)(dyDir * useDx * 4.0);
         c.held = (uint8_t)input;
@@ -1493,10 +1505,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         (long long)K.t, x, (double)c.y, (double)s.bandFloor,
                         (double)s.bandCeil, yMaxW);
         if ((double)c.y > yMaxW) {
-            c.y = (float)yMaxW; VYSET(c.vy) = 0; c.grounded = 1; CLAMP0("wave/ceil");
+            YSET(c.y) = (float)yMaxW; VYSET(c.vy) = 0; c.grounded = 1; CLAMP0("wave/ceil");
         }
         if ((double)c.y < bFloor + wClamp) {
-            c.y = (float)(bFloor + wClamp); VYSET(c.vy) = 0; c.grounded = 1;
+            YSET(c.y) = (float)(bFloor + wClamp); VYSET(c.vy) = 0; c.grounded = 1;
             CLAMP0("wave/floor");
         }
         if (c.y > g_yBound) DIE("wave/out-of-play", nullptr);
@@ -1591,7 +1603,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         }
         // ...and the push-out, once every object has had its say (see waveSeat).
         if (!dead && waveSeat > -1e17) {
-            c.y = (float)waveSeat;
+            YSET(c.y) = (float)waveSeat;
             VYSET(c.vy) = 0;
             c.grounded = 1;
             CLAMP0("wave/slide");
@@ -2170,7 +2182,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // pulls y back to 316.53 -- 153 px above GD for the whole section,
             // and straight into the solid uid1616 (2415,345) 5 ticks later.
             pinnedOnBlock = false;
-            c.y = (float)bestY;
+            YSET(c.y) = (float)bestY;
             yFree = c.y;
             // GD leaves 1.0 of velocity pointing the way the teleport went, not
             // zero. Straight off its own dumps (lv21, cfg gatetrace):
@@ -2512,7 +2524,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // raw jump value. Asymmetric with the uphill freeze (the note just
                 // below). Measured for the cube only.
                 else if (s.onSlope && c.mode == 0) {
-                    c.y = (float)((double)c.y
+                    YSET(c.y) = (float)((double)c.y
                                   + (double)s.slopeM
                                         * std::fabs((double)useDx)
                                         * (((double)K.dxF < 0.0
@@ -2536,7 +2548,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // Without this the model runs exactly one tick behind for the rest
             // of the level (a flat 2.5695 px on lv22).
             if (s.action && s.mode == 0) {
-                c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
+                YSET(c.y) = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;
             }
         } else if (groundedNow) {
@@ -2573,7 +2585,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 c.dashing = 1;
                 c.rHover = 0;
                 vpNew = 0.0;
-                c.y = (float)((double)s.y + (double)s.dashSlope * useDx);
+                YSET(c.y) = (float)((double)s.y + (double)s.dashSlope * useDx);
                 yFree = c.y;
             } else if (isRobot && s.rHover && s.action) {
                 vpNew = vp;
@@ -2593,7 +2605,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     vpNew += forceBoxAcc(modX, modY, pHalf,
                                          forceUnitFor(s.mode, useDx)) * gdSign;
                 c.rHover = (uint8_t)(s.rHover - 1);
-                c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
+                YSET(c.y) = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;
             } else {
                 c.dashing = 0;
@@ -2638,7 +2650,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                   : qVy(std::max(vp + acc * tScale, gTerm));
                 if (!g_noForceOrder) vpNew += forceAcc * tScale;
                 if (isRobot) c.rHover = 0;
-                c.y = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
+                YSET(c.y) = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;
             }
         }
@@ -2712,7 +2724,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // loop below.
         bool groundedInvCeil = false;
         if (c.flip && (double)c.y + pHalf >= pCeil) {
-            c.y = (float)(pCeil - pHalf);
+            YSET(c.y) = (float)(pCeil - pHalf);
             VYSET(c.vy) = 0; CLAMP0("ground/flipceil");
             c.grounded = 1;
             groundedInvCeil = true;
@@ -2747,7 +2759,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // t=5,683.. an upward ball at y=1,035 (above the actual ceiling) comes down
         // far above band 387, and without this it gets sucked to 372.
         else if (!c.flip && (double)c.y + pHalf >= pCeil && c.vy > 0) {
-            c.y = (float)(pCeil - pHalf);
+            YSET(c.y) = (float)(pCeil - pHalf);
             VYSET(c.vy) = 0; CLAMP0("ground/ceilblock");
         }
         // GD's ground plane blocks the player from BELOW whatever its gravity is:
@@ -2836,7 +2848,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 DIE("ground/floor-inverted-cube", nullptr);
                 return c;
             }
-            c.y = (float)(floorHere + pHalf);
+            YSET(c.y) = (float)(floorHere + pHalf);
             VYSET(c.vy) = 0; CLAMP0("ground/floor");
             // only an upright player RESTS on it; a flipped one is merely
             // blocked and drifts back up under its own gravity, which is what
@@ -3157,7 +3169,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     stepLandedThisTick = true;
                 if (higherFace) {
                     landFaceBest = face;
-                    c.y = (float)(face + gsign * pHalf);
+                    YSET(c.y) = (float)(face + gsign * pHalf);
                 }
                 // The ORDINARY landing on a solid's face, in every mode -- not a
                 // flight one. It carried the label `fly/land` (which belongs to
@@ -3296,7 +3308,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         std::fabs(x - o->cx) <= o->hw + pHalf
                         && std::fabs(xPrev - o->cx) > o->hw + pHalf;
                     if (xEntered && yPenB > 0.0 && yPenB < pHalf * 0.5) {
-                        c.y = (float)(headB - pHalf);
+                        YSET(c.y) = (float)(headB - pHalf);
                         VYSET(c.vy) = 0; CLAMP0O("ball/headbonk", o);
                         c.grounded = 0;
                         continue;
@@ -3466,7 +3478,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         if (acquireFlip) {
                             c.flip = (uint8_t)!s.flip;
                             const double g2 = c.flip ? -1.0 : 1.0;
-                            c.y = (float)(head + g2 * pHalf);
+                            YSET(c.y) = (float)(head + g2 * pHalf);
                             VYSET(c.vy) = 0; CLAMP0O("cube/fliphead", o);
                             c.grounded = 1;
                             c.ceilPin = 0;
@@ -3476,13 +3488,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         }
                         // plain bonk: stops but does not grab (note at the declaration above)
                         if (bonk && !held && !acquire) {
-                            c.y = (float)(head - gsign * pHalf);
+                            YSET(c.y) = (float)(head - gsign * pHalf);
                             VYSET(c.vy) = 0; CLAMP0O("cube/headbonk", o);
                             c.grounded = 0;
                             c.ceilPin = 0;
                             continue;
                         }
-                        c.y = (float)(head - gsign * pHalf);
+                        YSET(c.y) = (float)(head - gsign * pHalf);
                         VYSET(c.vy) = 0; CLAMP0O("cube/ceilstop", o);
                         c.grounded = 1;
                         c.ceilPin = 1;
@@ -3726,7 +3738,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // the ride: seat on the moved face (cube family's rule, same
             // ordering -- the carry happens in the collision pass)
             if (flyRide)
-                c.y = (float)(flyRideFace + gsign * pHalf);
+                YSET(c.y) = (float)(flyRideFace + gsign * pHalf);
             // [2026-08-21 r86] **A resting flyer also holds "this tick's half
             // gravity step"** (same shape as the cube's pinnedOnBlock). This
             // short-circuit moves neither vy nor y, so left alone the model's y
@@ -3822,7 +3834,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             if (ceilTakeoff) {
                 vpS = -1.0;                    // no gravity step on this tick
                 VYSET(c.vy) = (float)(qVy(vpS) * gsS);
-                c.y = s.y;
+                YSET(c.y) = s.y;
                 yFree = c.y;
             } else {
                 // The TIME WARP scales the swing's step too. It was missing
@@ -3877,7 +3889,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     if (fb != 0.0) { vyW = qVy(vyW + fb); vpS = vyW * gsS; }
                 }
                 VYSET(c.vy) = (float)vyW;
-                c.y = (float)((double)s.y + kYScale * (double)c.vy * tScale);
+                YSET(c.y) = (float)((double)s.y + kYScale * (double)c.vy * tScale);
                 yFree = c.y;
             }
         } else {
@@ -3978,7 +3990,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 && fbAcc == 0.0)
                 vpNew = kUfoRampFlap;
             VYSET(c.vy) = (float)(vpNew * gsign);
-            c.y = (float)((double)s.y + kYScale * (double)c.vy);
+            YSET(c.y) = (float)((double)s.y + kYScale * (double)c.vy);
             yFree = c.y;
             // [2026-08-21 r86] **The flight modes also carry over "the half gravity
             // step of the tick they sat on a block".** The cube side held it in
@@ -4034,7 +4046,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                  < floorVelD * gsign) ? 1 : 0,
                                 caught ? 1 : 0, newFoot, flyRideFace);
                 if (caught) {
-                    c.y = (float)(flyRideFace + gsign * pHalf);
+                    YSET(c.y) = (float)(flyRideFace + gsign * pHalf);
                     c.grounded = 1;
                     const double floorVel = flyRideDcy / 0.25;
                     if ((double)c.vy * gsign < floorVel * gsign)
@@ -4065,7 +4077,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // the ship branch cannot die.
         if (c.frame == 0
             && !c.grounded && c.y <= floorY + pHalf && c.vy <= 0) {
-            c.y = (float)(floorY + pHalf);
+            YSET(c.y) = (float)(floorY + pHalf);
             VYSET(c.vy) = 0; CLAMP0("fly/bandfloor");
             if (!c.flip) c.grounded = 1;
         } else if (c.frame == 0 && btFlyOn && !c.flip && s.grounded
@@ -4097,7 +4109,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // the first place, so only a floor that moved up can put a ship here.
             // The INVERTED mirror (a falling recorded ceiling) is unmeasured and
             // left alone.
-            c.y = (float)(floorY + pHalf);
+            YSET(c.y) = (float)(floorY + pHalf);
             c.grounded = 1; CLAMP0("fly/bandcarry");
         }
         // GD clamps the CENTRE to ceil - 15*vsize (checkCollisions, 0x213c38).
@@ -4173,7 +4185,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // 416.769 and keeps climbing with no clamp of any kind. With the clamp
         // on, the model pinned it and lost 5 px within four ticks.
         if (c.frame == 0 && c.mode != 7 && (double)c.y > yMax) {
-            c.y = (float)yMax; VYSET(c.vy) = 0; CLAMP0("fly/bandceil");
+            YSET(c.y) = (float)yMax; VYSET(c.vy) = 0; CLAMP0("fly/bandceil");
         }
         // In a rotated frame `c.y` is the frame's vertical (= derived from world x),
         // while floorY and g_yBound are world-y quantities, so this comparison is
@@ -4350,7 +4362,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 "dcy=%.4f pHalf=%.3f y %.3f->%.3f\n",
                                 (long long)K.t, o->uid, o->cy, o->hh, face, o->dcy,
                                 pHalf, (double)c.y, face + gsign * pHalf);
-                c.y = (float)(face + gsign * pHalf);
+                YSET(c.y) = (float)(face + gsign * pHalf);
                 // [2026-08-21 r59] **The push-out also carries the face's velocity**
                 // (same convention as the ceiling pin's `dcy/0.25`, but max).
                 // Measured lv20 t=21,718..21,722 (UFO, moving solid uid18453 rising
@@ -4464,7 +4476,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // rather than the plate 222.35.
                 if (!landedThisTick) preLandY = c.y;
                 landedThisTick = true;
-                c.y = (float)(face + gsL * pHalf);
+                YSET(c.y) = (float)(face + gsL * pHalf);
                 if (vpL <= 0) {
                     VYSET(c.vy) = 0; CLAMP0O("fly/land", o);
                 } else {
@@ -4584,7 +4596,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 o->dcy, vpNow * kYScale, prevHeadP, newHeadP,
                                 xPen, pHalf, (int)c.mini, (double)c.y,
                                 head - gsign * pHalf);
-                c.y = (float)(head - gsign * pHalf);
+                YSET(c.y) = (float)(head - gsign * pHalf);
                 // [2026-08-19 item 13] **A moving ceiling's pin carries the face's
                 // velocity** (dcy/0.25, same convention as the floor catch). The
                 // identity of "only vy grows while held, y matches exactly" at lv19
@@ -4709,7 +4721,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     }
                     continue;
                 }
-                c.y = (float)tgt;
+                YSET(c.y) = (float)tgt;
                 // NOT grounded. GD's dump does report onGround=1 for the ticks
                 // that follow, but it keeps integrating freely (t=3,671 onward
                 // is a plain swing step: vy -1.171 -> -1.085 -> -0.999 and y
@@ -5853,7 +5865,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // Reached from UNDER the line: the branch below is the
                         // push-out, which assumes the player was through it.
                         const bool seatU = ((double)c.y <= limU);
-                        c.y = (float)limU;
+                        YSET(c.y) = (float)limU;
                         // GD's write on the underside is `vy := min(vy, 0)`
                         // upright -- it cuts the climb and does not land (no
                         // hitGround, so the +-5.0 gate is the floor's business).
@@ -6067,7 +6079,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             && (double)c.y <= lim
                             && lim - (double)c.y <= 1.0;
                         if ((double)c.y > lim || hangSnap) {
-                            c.y = (float)lim;
+                            YSET(c.y) = (float)lim;
                             // vy: TWO cases share this pin. A body moving AWAY
                             // from the surface (falling through from above,
                             // lv21 t=19,837, vy=-9.884) keeps its vy -- the
@@ -6469,7 +6481,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     if (ceilOk && pressGate) {
                         if ((double)c.y > lim
                             && (c.mode == 1 || rcInSpan)) {   // r42: see the rcInSpan note
-                            c.y = (float)lim;
+                            YSET(c.y) = (float)lim;
                             // ...and GD does NOT stop the player dead here: it
                             // SETS the velocity to the ride's own +-2.000, the
                             // same number the swing's ordinary ride is set to on
@@ -6608,7 +6620,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             "cornerstand y=%.3f (d=%.3f)\n",
                                             (long long)K.t, x, sp->uid,
                                             cyE + pH, d);
-                            c.y = (float)(cyE + pH);
+                            YSET(c.y) = (float)(cyE + pH);
                             VYSET(c.vy) = 0; c.grounded = 1;
                             continue;
                         }
@@ -7494,7 +7506,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             "recttop=%.3f (top=%.3f)\n",
                                             (long long)K.t, x, sp->uid,
                                             rTop, top);
-                            c.y = (float)rTop;
+                            YSET(c.y) = (float)rTop;
                             VYSET(c.vy) = 0; c.grounded = 1;
                             c.rideLanded = 1;   // as above: grounded is the landing
                             c.onSlope = 1; c.slopeM = (float)m;
@@ -7583,7 +7595,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         std::printf("slopeseat t=%lld x=%.2f uid=%d y %.3f -> "
                                     "%.3f\n",
                                     (long long)K.t, x, sp->uid, (double)c.y, top);
-                    c.y = (float)top;
+                    YSET(c.y) = (float)top;
                     // the impulse tick takes the POSITION only -- the jump or
                     // flip already set vy and cleared grounded, and the player
                     // is leaving. Without this the ride simply cancelled a cube
@@ -7608,7 +7620,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             ((double)K.dxF < 0.0 || s.rev != 0) ? -1.0 : 1.0;
                         if (ridesTop && !c.flip && c.mode == 0
                             && m * sgnT2 < -0.01)
-                            c.y = (float)top;
+                            YSET(c.y) = (float)top;
                         continue;
                     }
                     // The SWING does not have its vy zeroed by the ride. GD
@@ -8014,7 +8026,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (face > (double)c.y + pHalf) continue;   // a wall is a different story
                 if (face > bestFace) bestFace = face;
             }
-            if (bestFace > -1e17) c.y = (float)(bestFace + pHalf);
+            if (bestFace > -1e17) YSET(c.y) = (float)(bestFace + pHalf);
         }
         // -------------------------------------------------------------------
         // [2026-09-06] **RAMP FIRST, THEN SOLID** -- GD's own order.
@@ -8098,7 +8110,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         continue;
                     if (up ? (f < lim) : (f > lim)) lim = f;
                 }
-                if (lim != seatY) c.y = (float)lim;
+                if (lim != seatY) YSET(c.y) = (float)lim;
             }
         }
         // Leaving the top launches. GD applies it like a pad: the y move for
@@ -8868,7 +8880,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const double vIn = (double)c.vy;   // for `telefire` below
             teleportedThisTick = true;
             teleUid = p->uid;      // uid-order gate (measured, see teleUid's decl.)
-            c.y = (float)tpTarg;   // exit half for 2902, closed tpY for 747
+            YSET(c.y) = (float)tpTarg;   // exit half for 2902, closed tpY for 747
             // A teleport is the one thing in the pass that MOVES the player for
             // the objects behind it: the uid-order gate above exists because
             // lv20 t=7,295's pad and gravity portal (both larger uids) fire at
@@ -9481,7 +9493,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         (c.mode == 6) ? -kBallG
                         : (((double)useDx > 1.78) ? 0.195 : 0.194);
                     VYSET(c.vy) = (float)(0.5 * gMag);
-                    c.y = (float)((double)c.y + 0.225 * gMag);
+                    YSET(c.y) = (float)((double)c.y + 0.225 * gMag);
                 }
                 // [2026-08-21 r76] **The cube's gravity restore adds only the y
                 // half step.** The calibration rig ceilramp's 6 cube cells
@@ -9499,7 +9511,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (flipBefore && !c.flip && s.grounded && c.mode == 0) {
                     const double gMagC = std::fabs(cubePhysFor(useDx).g);
                     if (std::fabs((double)c.vy - 0.5 * gMagC) < 0.002)
-                        c.y = (float)((double)c.y + 0.225 * gMagC);
+                        YSET(c.y) = (float)((double)c.y + 0.225 * gMagC);
                 }
                 c.grounded = 0;
             } else if (isSize) {
@@ -9551,7 +9563,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // scoring with calib_units --settle). OPEN: is the
                 // discriminating axis the mode, or the kind of support.
                 if (s.grounded && c.grounded && newHalf > oldHalf)
-                    c.y = (float)((double)c.y
+                    YSET(c.y) = (float)((double)c.y
                                   + (c.flip ? -1.0 : 1.0) * (newHalf - oldHalf));
             } else {
                 const uint8_t oldMode = c.mode;
@@ -9712,7 +9724,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     //   `m7/mini0/g1/gdg0/gdm6/sp1.1/slope+1.00/ride3` edy -1.087)
                     // vy is decided separately by the formula above (2.762), so
                     // only y is restored.
-                    c.y = yFreeBeforeSlope;
+                    YSET(c.y) = yFreeBeforeSlope;
                 }
                 // [2026-08-28] **...and the y half of that is not the swing's,
                 // nor the slope ride's.** "GD leaves the tick a portal ends the
@@ -9733,7 +9745,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // measured twice is the POSITION, and the ceiling press has its
                 // own release velocity (ceil/release) already.
                 else if (oldMode != wantMode && s.ceilT > 0 && !s.onSlope)
-                    c.y = yFreeBeforeSlope;
+                    YSET(c.y) = yFreeBeforeSlope;
                 // A MODE portal that changes the resting half re-seats a
                 // grounded player the same tick, exactly like the size portal
                 // above (and by the same mechanism: the box GROWS into the
@@ -9753,7 +9765,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     const double oh = playerHalf(oldMode, c.mini != 0);
                     const double nh = playerHalf(c.mode, c.mini != 0);
                     if (c.grounded && nh > oh)
-                        c.y = (float)((double)c.y
+                        YSET(c.y) = (float)((double)c.y
                                       + (c.flip ? -1.0 : 1.0) * (nh - oh));
                     // [2026-08-19] Even in the air, if the grown box penetrates a
                     // floor ramp's face it seats on the same tick -- the rest of
@@ -9809,7 +9821,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             "y=%.4f seat=%.4f nh=%.2f oh=%.2f\n",
                                             (long long)K.t, sp->uid, p->uid,
                                             (double)c.y, seat, nh, oh);
-                            c.y = (float)seat;
+                            YSET(c.y) = (float)seat;
                             VYSET(c.vy) = 0.f;
                             c.grounded = 1;
                             break;
@@ -9930,7 +9942,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                         (int)oldMode, (int)c.mode,
                                         (double)c.y, bestFace + gs * nh,
                                         (double)c.vy, gs, (int)c.flip);
-                        c.y = (float)(bestFace + gs * nh);
+                        YSET(c.y) = (float)(bestFace + gs * nh);
                         VYSET(c.vy) = 0.f;
                         c.grounded = 1;
                     }
@@ -10819,7 +10831,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     if (spiderTargetY(K, x, (double)c.y, c.flip != 0,
                                       c.mini != 0, pHalf, tgt, c.frame == 0,
                                       nullptr, (int)c.frame)) {
-                        c.y = (float)tgt;
+                        YSET(c.y) = (float)tgt;
                         c.flip = c.flip ? 0 : 1;
                         VYSET(c.vy) = (float)gs;
                         // whatever held us up is a level away now
@@ -11343,7 +11355,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // So the mid-ride anchor problem (lv22 t=5,769: the re-seat drags the
         // player 2.559 px down on the first tick after the anchor) has to be
         // fixed on the ANCHOR side, not here.
-        c.y = (float)(rideFace + (s.flip ? -1.0 : 1.0) * pHalf);
+        YSET(c.y) = (float)(rideFace + (s.flip ? -1.0 : 1.0) * pHalf);
         (void)rideDy;
     }
     if (c.mode == 0 && (c.grounded || cubeContact || cubeLandedThisTick)

@@ -2856,9 +2856,9 @@ inline int cliMain(int argc, char** argv) {
             // is here to prevent. Zero means vy was not written this step at all
             // and the value came from somewhere else entirely.
             if (g_vyWatchT >= 0 && t == g_vyWatchT)
-                std::printf("vywriter: t=%lld writes=%d lastline=%d vy=%.6f "
+                std::printf("vywriter: t=%lld writes=%d lastline=%d ywrites=%d ylastline=%d vy=%.6f "
                             "traceVy=%.6f frame=%d mode=%d\n",
-                            (long long)t, g_vyWrites, g_vyWriter, (double)s.vy,
+                            (long long)t, g_vyWrites, g_vyWriter, g_yWrites, g_yWriter, (double)s.vy,
                             vyGd, (int)s.frame, (int)s.mode);
             tr << t << ',' << wX << ',' << wY << ',' << vyGd << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
