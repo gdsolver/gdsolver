@@ -2856,9 +2856,9 @@ inline int cliMain(int argc, char** argv) {
             // is here to prevent. Zero means vy was not written this step at all
             // and the value came from somewhere else entirely.
             if (g_vyWatchT >= 0 && t == g_vyWatchT)
-                std::printf("vywriter: t=%lld writes=%d lastline=%d ywrites=%d ylastline=%d vy=%.6f "
+                std::printf("vywriter: t=%lld writes=%d lastline=%d ywrites=%d ylastline=%d vyIn=%.6f vy=%.6f yIn=%.4f y=%.4f "
                             "traceVy=%.6f frame=%d mode=%d\n",
-                            (long long)t, g_vyWrites, g_vyWriter, g_yWrites, g_yWriter, (double)s.vy,
+                            (long long)t, g_vyWrites, g_vyWriter, g_yWrites, g_yWriter, (double)g_vyIn, (double)s.vy, (double)g_yIn, (double)s.y,
                             vyGd, (int)s.frame, (int)s.mode);
             tr << t << ',' << wX << ',' << wY << ',' << vyGd << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
@@ -4127,10 +4127,10 @@ inline int cliMain(int argc, char** argv) {
         // arrive under either name and a frame-only count cannot say which.
         for (int f = 0; f < 4; ++f)
             for (int r = 0; r < 2; ++r)
-                if (g_frameRevReach[f][r] || g_frameRevCall[f][r])
-                    std::printf("framerev: f%d rev%d steps=%lld lookups=%lld\n",
-                                f, r, g_frameRevReach[f][r],
-                                g_frameRevCall[f][r]);
+                if (g_frameRevReach[f][r] || g_frameRevCall[f][r] || g_frameRevHit[f][r])
+                    std::printf("framerev: f%d rev%d steps=%lld lookups=%lld hits=%lld\n",
+                                f, r, g_frameRevReach[f][r], g_frameRevCall[f][r],
+                                g_frameRevHit[f][r]);
         std::printf("fixupcall:  f0=%lld f1=%lld f2=%lld f3=%lld rotated=%d",
                     g_fixupCallFrame[0], g_fixupCallFrame[1],
                     g_fixupCallFrame[2], g_fixupCallFrame[3],

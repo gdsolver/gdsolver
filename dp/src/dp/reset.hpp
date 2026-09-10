@@ -74,6 +74,8 @@ inline void resetInvocationState() {
     g_vyWrites = 0;
     g_yWriter = 0;
     g_yWrites = 0;
+    g_yIn = 0.f;
+    g_vyIn = 0.f;
     g_dcyDbg = false;
     g_bandDbg = false;
     g_spdDbg = false;
@@ -187,7 +189,7 @@ inline void resetInvocationState() {
     g_fixupCallRotSeen = 0;
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 2; ++j)
-            g_frameRevReach[i][j] = g_frameRevCall[i][j] = 0;
+            g_frameRevReach[i][j] = g_frameRevCall[i][j] = g_frameRevHit[i][j] = 0;
 
     // frames.hpp
     g_rotTrig.clear();

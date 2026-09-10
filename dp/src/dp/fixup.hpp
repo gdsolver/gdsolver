@@ -174,6 +174,7 @@ inline bool nearDynObject(const State& s, const StepCtx& K) {
 // tick to hand and giving it one would change a signature for a census.
 inline void noteFixupFrame(const State& s) {
     const unsigned f = (unsigned)s.frame;
+    if (f < 4) ++g_frameRevHit[f][s.rev ? 1 : 0];
     if (f < 4) ++g_fixupHitFrame[f];
     if (f != 0) {
         if (g_fixupRotSeen < 8) g_fixupRotX[g_fixupRotSeen] = s.xAbs;

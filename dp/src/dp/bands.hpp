@@ -168,6 +168,12 @@ inline bool g_slopeRelDbg = false;
 // (every fixup lookup): the first is the denominator of the second.
 inline long long g_frameRevReach[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
 inline long long g_frameRevCall[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
+// ...and HITS by the same pair. Frame 0's 2,822 hits are the only ones this
+// level produces, and frame 0 is worn by both the plain frame and the anchor
+// rewrite's (frame 0, rev 1) -- so a frame-only hit count cannot say whether
+// any record was ever applied to a state that GD recorded as frame 2. If none
+// were, the geometry of `rev` has no consequence yet and can stay open.
+inline long long g_frameRevHit[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
 // --dcydbg: one line every time a SURFACE'S OWN SPEED is stamped into vy as
 // `dcy / 0.25`, tagged with which of the four sites did it. Separate from
 // --slopedbg only because that one prints per ramp tick and buries these.

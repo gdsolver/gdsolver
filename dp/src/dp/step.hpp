@@ -34,6 +34,11 @@ inline long long g_vyWatchT = -1;   // --vywriter <t>: report only this tick
 // which, and neither answer needs a guess about the terms.
 inline int g_yWriter = 0;
 inline int g_yWrites = 0;
+// ...and the RAW values the step began with, so a report can show the sequence
+// (in -> out) rather than only naming the last writer. With one write each the
+// pair IS the sequence; with several it still bounds it.
+inline float g_yIn = 0.f;
+inline float g_vyIn = 0.f;
 #define YSET(x) (::dp::g_yWriter = __LINE__, ++::dp::g_yWrites, (x))
 
 struct StepCtx {
@@ -924,6 +929,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     g_vyWrites = 0;
     g_yWriter = 0;
     g_yWrites = 0;
+    g_yIn = s.y;
+    g_vyIn = s.vy;
     // ...and the (frame, rev) the step ran in. Counted for EVERY step, not only
     // the ones that consult a fixup, so the fixup census below it has a
     // denominator: "frame 2 never reached a lookup" and "frame 2 never happened"
