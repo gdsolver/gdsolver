@@ -7615,6 +7615,25 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // `tappedOffSlope` has carried this meaning in a comment
                     // since it was written but was never read anywhere -- the
                     // compiler had been warning C4189 about it the whole time.
+                    // WHICH WAY THIS GATE WENT, and on what.
+                    //
+                    // The comment above justifies skipping the vy work with "the
+                    // jump or flip already set vy". At lv22 t=18,568 the vy
+                    // writer was measured as the ordinary integrator, not a jump
+                    // and not a flip -- so either the gate did not fire and
+                    // something else spared vy, or it fired on a premise that
+                    // does not hold there. The two inputs and their own inputs
+                    // are printed rather than reasoned about.
+                    if (g_vyWatchT >= 0 && K.t == g_vyWatchT)
+                        std::printf("seatgate: t=%lld impulsedOff=%d tappedOff=%d"
+                                    " impulsedThisTick=%d ballFlipped=%d"
+                                    " sOnSlope=%d mode=%d vy=%.6f\n",
+                                    (long long)K.t, impulsedOffSlope ? 1 : 0,
+                                    tappedOffSlope ? 1 : 0,
+                                    impulsedThisTick ? 1 : 0,
+                                    ballFlippedThisTick ? 1 : 0,
+                                    s.onSlope ? 1 : 0, (int)c.mode,
+                                    (double)c.vy);
                     if (impulsedOffSlope || tappedOffSlope) {
                         // [2026-08-19] On a **downhill** (travel-direction) ride,
                         // the jump tick also takes the seat's step first
