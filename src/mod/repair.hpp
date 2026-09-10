@@ -1173,42 +1173,111 @@ struct TraceRow {
     // [[gd-fixup-already-covered-skip]], reproduced on lv22 at t=5,944
     // (grounded ball, edvy=+3.426 = the flip impulse, refused 100+ rounds).
     int flip = -1, mini = -1;
+    // ...and the rest of what a FAMILY is spelled out of. cause_of builds its
+    // signature from the model trace: m<mode> mini<mini> g<grounded> from this
+    // row, sp from `dx`, slope from onslope/slopem/slopet, and clamp / uid /
+    // orbnear from the NEXT row's clamp, clampuid and nearorb. None of them were
+    // parsed here, so a run could not name the family of its own fixups even
+    // though its trace on disk carried every column -- the gap that stopped the
+    // 2026-09-10 join of census occurrences to real-run families.
+    double dx = 0.0, slopem = 0.0;
+    int onslope = -1, slopet = -1, nearorb = -1;
+    std::string clamp, clampuid;
 };
 
+// BY NAME, NOT BY POSITION. Three trace schemas exist side by side -- the
+// replay trace this reads is 36 columns, the witness resim's is 16, and
+// trace.csv is 7 -- and they agree on the first eleven names and then diverge.
+// Read positionally, asking a 16-column row for column 18 either throws the row
+// away or silently answers with a different column: `dx` would come back as
+// whatever sits at 18 in that other file. That is not a hypothetical; on
+// 2026-09-10 the two schemas were confused by a reader who had both open.
+// Names cost one header parse and cannot do it.
+//
+// A trace that lacks a required column is REFUSED BY NAME rather than filled
+// with -1: "the column is missing" and "the value is -1" are different facts,
+// and a family silently spelled from defaults would be wrong in a way nothing
+// downstream could detect.
 inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& out) {
     std::ifstream f(path);
     if (!f) return false;
     out.clear();
-    std::string line;
-    while (std::getline(f, line)) {
-        if (line.empty() || !isdigit((unsigned char)line[0])) continue;   // header
-        std::vector<std::string> c;
+    auto split = [](const std::string& s) {
+        std::vector<std::string> v;
         size_t p = 0;
         while (true) {
-            size_t q = line.find(',', p);
-            c.push_back(line.substr(p, q == std::string::npos ? q : q - p));
+            size_t q = s.find(',', p);
+            v.push_back(s.substr(p, q == std::string::npos ? q : q - p));
             if (q == std::string::npos) break;
             p = q + 1;
         }
-        if (c.size() < 11) continue;
+        return v;
+    };
+    std::string line;
+    if (!std::getline(f, line)) return false;
+    if (!line.empty() && (unsigned char)line[0] == 0xEF) line.erase(0, 3);
+    std::map<std::string, size_t> col;
+    {
+        const std::vector<std::string> h = split(line);
+        for (size_t i = 0; i < h.size(); ++i) col[h[i]] = i;
+    }
+    static const char* kNeed[] = {
+        "tick", "x", "y", "vy", "mode", "grounded", "dual", "y2", "vy2", "act",
+        "flip", "mini", "dx", "onslope", "slopem", "slopet", "nearorb",
+        "clamp", "clampuid",
+    };
+    std::string missing;
+    for (const char* n : kNeed)
+        if (!col.count(n)) missing += (missing.empty() ? "" : ",") + std::string(n);
+    if (!missing.empty()) {
+        char msg[320];
+        snprintf(msg, sizeof(msg),
+                 "dpsolve:   [fixup] REFUSED %s - the trace has %zu columns and is "
+                 "missing: %s. A family cannot be spelled from it, and filling the "
+                 "gaps with defaults would spell a wrong one silently.",
+                 path.c_str(), col.size(), missing.c_str());
+        writeResult(msg);
+        return false;
+    }
+    auto num = [&](const std::vector<std::string>& c, const char* n) {
+        const size_t i = col[n];
+        return i < c.size() ? std::atof(c[i].c_str()) : 0.0;
+    };
+    auto integer = [&](const std::vector<std::string>& c, const char* n) {
+        const size_t i = col[n];
+        return i < c.size() ? std::atoi(c[i].c_str()) : 0;
+    };
+    auto text = [&](const std::vector<std::string>& c, const char* n) {
+        const size_t i = col[n];
+        return i < c.size() ? c[i] : std::string();
+    };
+    while (std::getline(f, line)) {
+        if (line.empty() || !isdigit((unsigned char)line[0])) continue;
+        const std::vector<std::string> c = split(line);
+        if (c.size() <= col["clampuid"]) continue;
         TraceRow r;
         r.valid = true;
-        const long long t = std::atoll(c[0].c_str());
-        r.x = std::atof(c[1].c_str());
-        r.y = std::atof(c[2].c_str());
-        r.vy = std::atof(c[3].c_str());
-        r.mode = std::atoi(c[4].c_str());
-        r.grounded = std::atoi(c[5].c_str());
-        r.dual = std::atoi(c[6].c_str());
-        r.y2 = std::atof(c[7].c_str());
-        r.vy2 = std::atof(c[8].c_str());
-        r.act = (c[10] == "0" || c[10] == "1") ? std::atoi(c[10].c_str()) : -1;
-        // mini is column 16 and flip column 24 of the model trace; keep -1 on
-        // an old/short trace so the caller can fall back to the anchor row.
-        if (c.size() > 24) {
-            r.mini = std::atoi(c[16].c_str());
-            r.flip = std::atoi(c[24].c_str());
-        }
+        const long long t = (long long)num(c, "tick");
+        r.x = num(c, "x");
+        r.y = num(c, "y");
+        r.vy = num(c, "vy");
+        r.mode = integer(c, "mode");
+        r.grounded = integer(c, "grounded");
+        r.dual = integer(c, "dual");
+        r.y2 = num(c, "y2");
+        r.vy2 = num(c, "vy2");
+        const std::string a = text(c, "act");
+        r.act = (a == "0" || a == "1") ? std::atoi(a.c_str()) : -1;
+        r.mini = integer(c, "mini");
+        r.flip = integer(c, "flip");
+        // ...and the family's remaining inputs.
+        r.dx = num(c, "dx");
+        r.onslope = integer(c, "onslope");
+        r.slopem = num(c, "slopem");
+        r.slopet = integer(c, "slopet");
+        r.nearorb = integer(c, "nearorb");
+        r.clamp = text(c, "clamp");
+        r.clampuid = text(c, "clampuid");
         out[t] = r;
     }
     return !out.empty();
@@ -1489,10 +1558,31 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         snprintf(gd, sizeof(gd), " gdg=%d gdm=%d gdgo=%d gdmo=%d",
                  gPrev->onGround, gPrev->mode,
                  gCur ? gCur->onGround : -1, gCur ? gCur->mode : -1);
+        // ...and the MODEL's half, which is the rest of what a family is spelled
+        // out of. GD's four above are only one side of cause_of; without these a
+        // family still cannot be named, and the trace they come from is deleted
+        // before the next pass (:1569 -- deliberately, so one pass cannot read
+        // the previous pass's file), so they cannot be recovered afterwards.
+        // Written here, while the row is in hand.
+        //
+        // `clamp` and `nearorb` are read from the NEXT row, not this one: both
+        // happen inside that step, so neither is on the row the transition
+        // leaves from. cause_of does the same and says so.
+        char md[160] = "";
+        {
+            const TraceRow& p = mPrev->second;
+            const TraceRow* nx = (mCur != m.end()) ? &mCur->second : nullptr;
+            snprintf(md, sizeof(md),
+                     " mmini=%d mdx=%.4f mslope=%d/%.4f/%d mclamp=%s mcuid=%s morb=%d",
+                     p.mini, p.dx, p.onslope, p.slopem, p.slopet,
+                     nx && !nx->clamp.empty() ? nx->clamp.c_str() : "-",
+                     nx && !nx->clampuid.empty() ? nx->clampuid.c_str() : "-",
+                     nx ? nx->nearorb : -1);
+        }
         snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld x=%.1f mode=%d in=%d "
-                 "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f%s%s (%d total)",
+                 "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f%s%s%s (%d total)",
                  t, mPrev->second.x, mPrev->second.mode, act, dyG, dvG, kill,
-                 eDy, eDvy, e2, gd, g_fixupCount);
+                 eDy, eDvy, e2, gd, md, g_fixupCount);
     }
     writeResult(b);
     // KILL-ONLY: the second veto hit (see g_killVetoIter). The p2 halves are
