@@ -90,6 +90,7 @@ SolveOutcome outcome() {
     o.replayDiedT = dp::g_outcome.replayDiedT;
     o.needTrigMask = dp::g_outcome.needTrigMask;
     o.needTrigPassed = dp::g_outcome.needTrigPassed;
+    o.seedRotQ = dp::g_outcome.seedRotQ;
     return o;
 }
 

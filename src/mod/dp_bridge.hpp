@@ -83,6 +83,12 @@ struct SolveOutcome {
     // behind the anchor can never be entered, so the frontier is empty before the first tick --
     // which looks exactly like an impassable level unless you can see this.
     unsigned needTrigMask = 0, needTrigPassed = 0;
+    // --seeddump only: the ready-made `--startrotq` argument for the dumped
+    // tick. Empty unless the call asked for a dump and the level has a queue.
+    // It crosses here rather than being re-derived on this side because the
+    // bit->uid inversion depends on buildRotQueue's ordering, which only dp
+    // holds -- a caller reproducing it would be keeping a copy of a proxy.
+    std::string seedRotQ;
 };
 SolveOutcome outcome();
 

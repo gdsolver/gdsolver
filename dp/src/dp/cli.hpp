@@ -2756,13 +2756,24 @@ inline int cliMain(int argc, char** argv) {
                 // agreeing on lv22 -- so a seed read off a t=0 walk carries at
                 // most that 1-in-192 of the model's own error, and is not the
                 // circular "assume the equality to prove it".
+                //
+                // Built ONCE, into a string, and then both printed and
+                // published. The in-process caller (the repair loop) cannot
+                // read stdout, so it needs the value rather than the line; two
+                // formatters for one argument would be two things to keep in
+                // step, and the bit->uid inversion above is precisely the part
+                // that must not be duplicated.
                 if (!g_rotQ.empty()) {
-                    std::printf("seedrotq: t=%lld --startrotq %d,%04x",
-                                t, (int)s.rotChan, (unsigned)s.rotRev);
+                    char head[64];
+                    std::snprintf(head, sizeof head, "%d,%04x",
+                                  (int)s.rotChan, (unsigned)s.rotRev);
+                    std::string arg(head);
                     for (size_t q = 0; q < g_rotQ.size() && q < 32; ++q)
                         if ((s.rotSpent >> q) & 1u)
-                            std::printf(",%d", g_rotQ[q].uid);
-                    std::printf("\n");
+                            arg += "," + std::to_string(g_rotQ[q].uid);
+                    std::printf("seedrotq: t=%lld --startrotq %s\n",
+                                t, arg.c_str());
+                    g_outcome.seedRotQ = arg;
                 }
                 sawSeedTick = true;
             }

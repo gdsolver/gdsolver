@@ -8,6 +8,8 @@
 //
 // Written by the search, read by anyone. Nothing in the search ever reads them back, so the
 // stores are relaxed: a UI that samples a tick late is not wrong in any way that matters.
+#include <string>
+
 #include "dp/constants.hpp"
 
 namespace dp {
@@ -95,6 +97,14 @@ struct SearchOutcome {
     // wall -- so the caller needs to be able to tell the two apart and drop the box.
     unsigned needTrigMask = 0;    // bit b = box b was required
     unsigned needTrigPassed = 0;  // bit b = the anchor starts past box b
+    // --seeddump only: the ready-made `--startrotq` argument for the dumped
+    // tick, exactly as stdout carries it on the `seedrotq:` line. The mod has
+    // no pipe (dp_bridge.hpp:57), so a caller in-process cannot read that line;
+    // without this the loop would have to re-derive the seed, and the only
+    // derivation available to it (spentRotArg's gframe walk) cannot see the
+    // entries that change no frame -- 11 of lv22's 30. One producer, one
+    // string, whichever side is reading.
+    std::string seedRotQ;
 
     void reset() {
         verdict = VerdictFailed;
@@ -103,6 +113,7 @@ struct SearchOutcome {
         resimUid = -1; resimObjX = 0.f; resimObjY = 0.f; resimTrig = 0;
         resimFrame = -1;
         needTrigMask = 0; needTrigPassed = 0;
+        seedRotQ.clear();
     }
 };
 
