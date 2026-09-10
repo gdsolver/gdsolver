@@ -39,6 +39,22 @@ inline int g_yWrites = 0;
 // pair IS the sequence; with several it still bounds it.
 inline float g_yIn = 0.f;
 inline float g_vyIn = 0.f;
+// ---- the slope seat's exemption gate, recorded rather than printed ---------
+//
+// Printing at the gate itself named no state: it lives in stepOne, which the
+// search runs for many states at one tick, and at lv22 t=18,568 ninety-four of
+// those carried the record's vy in three different flag combinations. Reading
+// the first match would have picked one of three by luck.
+//
+// Recorded into globals instead and emitted from the replay's own per-tick
+// line. That reporting point fires once per tick, and a --replay invocation
+// does no searching, so the values it reads belong to the replayed state and
+// to nothing else.
+inline int g_seatGateSeen = 0;      // times the gate was reached this step
+inline int g_seatImpulsedOff = -1;  // -1 = the gate was not reached
+inline int g_seatTappedOff = -1;
+inline int g_seatOnSlope = -1;
+inline int g_seatTook = -1;         // did it take the exemption (and skip vy)?
 #define YSET(x) (::dp::g_yWriter = __LINE__, ++::dp::g_yWrites, (x))
 
 struct StepCtx {
@@ -7624,16 +7640,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // something else spared vy, or it fired on a premise that
                     // does not hold there. The two inputs and their own inputs
                     // are printed rather than reasoned about.
-                    if (g_vyWatchT >= 0 && K.t == g_vyWatchT)
-                        std::printf("seatgate: t=%lld impulsedOff=%d tappedOff=%d"
-                                    " impulsedThisTick=%d ballFlipped=%d"
-                                    " sOnSlope=%d mode=%d vy=%.6f\n",
-                                    (long long)K.t, impulsedOffSlope ? 1 : 0,
-                                    tappedOffSlope ? 1 : 0,
-                                    impulsedThisTick ? 1 : 0,
-                                    ballFlippedThisTick ? 1 : 0,
-                                    s.onSlope ? 1 : 0, (int)c.mode,
-                                    (double)c.vy);
+                    ++g_seatGateSeen;
+                    g_seatImpulsedOff = impulsedOffSlope ? 1 : 0;
+                    g_seatTappedOff = tappedOffSlope ? 1 : 0;
+                    g_seatOnSlope = s.onSlope ? 1 : 0;
+                    g_seatTook = (impulsedOffSlope || tappedOffSlope) ? 1 : 0;
                     if (impulsedOffSlope || tappedOffSlope) {
                         // [2026-08-19] On a **downhill** (travel-direction) ride,
                         // the jump tick also takes the seat's step first
