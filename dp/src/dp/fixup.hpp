@@ -93,6 +93,8 @@ inline int g_fixupRotSeen = 0;
 // of one state whichever branch it takes. The x of the first few rotated CALLS
 // is kept as well: if the denominator turns out to be zero, its x says where
 // the lookup stopped being reached, which the firing counters cannot.
+// (the (frame, rev) pair of counters this used to describe lives in bands.hpp:
+// step.hpp does the counting and is upstream of this header)
 inline long long g_fixupCallFrame[4] = {0, 0, 0, 0};
 inline float g_fixupCallRotX[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 inline int g_fixupCallRotSeen = 0;
@@ -181,6 +183,7 @@ inline void noteFixupFrame(const State& s) {
 
 inline void noteFixupCall(const State& s) {
     const unsigned f = (unsigned)s.frame;
+    if (f < 4) ++g_frameRevCall[f][s.rev ? 1 : 0];
     if (f < 4) ++g_fixupCallFrame[f];
     if (f != 0) {
         if (g_fixupCallRotSeen < 8) g_fixupCallRotX[g_fixupCallRotSeen] = s.xAbs;

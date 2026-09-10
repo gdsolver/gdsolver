@@ -912,6 +912,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // distinct answer from "wrote it once".
     g_vyWriter = 0;
     g_vyWrites = 0;
+    // ...and the (frame, rev) the step ran in. Counted for EVERY step, not only
+    // the ones that consult a fixup, so the fixup census below it has a
+    // denominator: "frame 2 never reached a lookup" and "frame 2 never happened"
+    // are different findings and the pair separates them.
+    if ((unsigned)s.frame < 4) ++g_frameRevReach[s.frame][s.rev ? 1 : 0];
     State c = s;
     // The no-control window (id 2899 / GameOptionsTrigger; history at the
     // declaration of g_ctrlWin). **Only the button fails to reach the physics**;

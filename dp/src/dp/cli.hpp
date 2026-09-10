@@ -4122,6 +4122,15 @@ inline int cliMain(int argc, char** argv) {
         // CALLS first, then HITS, on one line each and never merged: a hit count
         // without its call count cannot be read (0 hits means "never matched"
         // or "never asked", and those are different findings).
+        // (frame, rev) for every STEP and for every fixup LOOKUP, side by side.
+        // The mod rewrites GD's frame 2 as (frame 0, rev 1), so frame 2 can
+        // arrive under either name and a frame-only count cannot say which.
+        for (int f = 0; f < 4; ++f)
+            for (int r = 0; r < 2; ++r)
+                if (g_frameRevReach[f][r] || g_frameRevCall[f][r])
+                    std::printf("framerev: f%d rev%d steps=%lld lookups=%lld\n",
+                                f, r, g_frameRevReach[f][r],
+                                g_frameRevCall[f][r]);
         std::printf("fixupcall:  f0=%lld f1=%lld f2=%lld f3=%lld rotated=%d",
                     g_fixupCallFrame[0], g_fixupCallFrame[1],
                     g_fixupCallFrame[2], g_fixupCallFrame[3],

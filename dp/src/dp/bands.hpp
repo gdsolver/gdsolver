@@ -154,6 +154,20 @@ inline bool g_slopeDbg = false;  // --slopedbg: one line per ramp acquisition
 // --slopereldbg: the downhill-RELEASE branch only (step.hpp). Separate from
 // --slopedbg because that one turns on forty-two sites and buries a cold run.
 inline bool g_slopeRelDbg = false;
+// (frame, rev) censuses. Declared here rather than in fixup.hpp because step.hpp
+// is upstream of that header and does the counting.
+//
+// SPLIT BY REVERSED, because frame and rev are two names for one physical
+// situation. The mod rewrites GD's gframe 2 as (frame 0, rev 1)
+// (repair.hpp:970), so a section GD records as frame 2 reaches the model either
+// as frame 2 -- when the model rotated into it through a trigger, and lv22 has
+// two at rot -180 -- or as frame 0 with rev set. A frame-only count cannot tell
+// those apart, so "frame 2 was never seen" and "frame 2 was seen wearing frame
+// 0's name" look identical. That is exactly the ambiguity an earlier f2 = 0
+// reading could not resolve, and why Reach (every step) is kept beside Call
+// (every fixup lookup): the first is the denominator of the second.
+inline long long g_frameRevReach[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
+inline long long g_frameRevCall[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
 // --dcydbg: one line every time a SURFACE'S OWN SPEED is stamped into vy as
 // `dcy / 0.25`, tagged with which of the four sites did it. Separate from
 // --slopedbg only because that one prints per ramp tick and buries these.
