@@ -80,6 +80,22 @@ inline long long g_fixupHits = 0;
 inline long long g_fixupHitFrame[4] = {0, 0, 0, 0};
 inline float g_fixupRotX[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 inline int g_fixupRotSeen = 0;
+// ...AND THE DENOMINATOR. The counters above are firings, and a firing count of
+// zero has two readings: the lookup ran often while rotated and never matched,
+// or it hardly ran while rotated at all. The first says something about frames;
+// the second says nothing, and the two are indistinguishable from the numerator.
+//
+// This is the shape of the very example the commit above cited -- a gate passed
+// 593 times and fired 0 -- and that lesson needs BOTH numbers. Reporting the 0
+// alone was the same mistake with the roles swapped.
+//
+// Counted at applyFixup's entry, before either lookup, so one call is one tick
+// of one state whichever branch it takes. The x of the first few rotated CALLS
+// is kept as well: if the denominator turns out to be zero, its x says where
+// the lookup stopped being reached, which the firing counters cannot.
+inline long long g_fixupCallFrame[4] = {0, 0, 0, 0};
+inline float g_fixupCallRotX[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+inline int g_fixupCallRotSeen = 0;
 // The x window is ONE TICK (1.2 px at 1.3-1.6 px/tick, still covering the
 // +-1 px stair-snap offset class). It was 2.5 and a DELTA record then
 // re-matched the NEXT tick's transition too: applied every tick it kept the
@@ -163,8 +179,18 @@ inline void noteFixupFrame(const State& s) {
     }
 }
 
+inline void noteFixupCall(const State& s) {
+    const unsigned f = (unsigned)s.frame;
+    if (f < 4) ++g_fixupCallFrame[f];
+    if (f != 0) {
+        if (g_fixupCallRotSeen < 8) g_fixupCallRotX[g_fixupCallRotSeen] = s.xAbs;
+        ++g_fixupCallRotSeen;
+    }
+}
+
 inline void applyFixup(const State& s, int input, State& c, bool& dead,
                        bool deltasToo = true) {
+    noteFixupCall(s);
     if (const Fixup* f = findFixup(g_fixupKills, s, input)) {
         (void)f;
         dead = true;

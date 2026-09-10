@@ -4102,6 +4102,16 @@ inline int cliMain(int argc, char** argv) {
         // GD's world dy; a rotated state's y is not on that axis. Printed
         // whether or not any rotated hit occurred, because "the path exists
         // and never fired" is the answer this was built to be able to give.
+        // CALLS first, then HITS, on one line each and never merged: a hit count
+        // without its call count cannot be read (0 hits means "never matched"
+        // or "never asked", and those are different findings).
+        std::printf("fixupcall:  f0=%lld f1=%lld f2=%lld f3=%lld rotated=%d",
+                    g_fixupCallFrame[0], g_fixupCallFrame[1],
+                    g_fixupCallFrame[2], g_fixupCallFrame[3],
+                    g_fixupCallRotSeen);
+        for (int i = 0; i < g_fixupCallRotSeen && i < 8; ++i)
+            std::printf(" x=%.1f", g_fixupCallRotX[i]);
+        std::printf("\n");
         std::printf("fixupframe: f0=%lld f1=%lld f2=%lld f3=%lld rotated=%d",
                     g_fixupHitFrame[0], g_fixupHitFrame[1],
                     g_fixupHitFrame[2], g_fixupHitFrame[3], g_fixupRotSeen);
