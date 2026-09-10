@@ -613,6 +613,23 @@ inline long long g_groupsDepth = -1;
 // past the wall is the only way to record more of it. This breaks that circle.
 inline std::string g_groupsDeepPath;
 
+// Whether this run asked for the rotation queue. It can only arrive through the
+// cfg's dp arguments: no code in src/mod or src/solver APPENDS `--rotqueue` to an
+// argv, and the comparison below is the only place the spelling occurs at all --
+// so that vector is the whole of the question, and asking it here rather than
+// scanning a half-built argv means every caller gets the same answer regardless
+// of the order in which its own flags are appended.
+//
+// This is the gate the queue's two other arguments hang off. Both are appended
+// ONLY inside it, which is what lets their inertness be shown by reading rather
+// than by running: with the flag absent the loop's argv is unchanged, byte for
+// byte, and no extra file is opened.
+inline bool rotQueueRequested() {
+    for (const std::string& s : g_cfg.dpArgs)
+        if (s == "--rotqueue") return true;
+    return false;
+}
+
 inline void addWorldArgs(std::vector<std::string>& a) {
     std::error_code ec;
     // ...and where the moving parts of it were. The static table holds their positions at level
@@ -713,6 +730,29 @@ inline void addWorldArgs(std::vector<std::string>& a) {
             }
     }
     if (std::filesystem::exists(obb, ec)) { a.push_back("--obb"); a.push_back(obb); }
+    // The 2.2 rotation queue's inputs (solver.hpp writes rotgameplay.txt at session
+    // start). UNDER dpWorld, unlike levelsettings above: a queue entry is a trigger
+    // sitting at a position, i.e. world state, whereas kA39 changes the shape of a
+    // hazard test and is physics -- the distinction :681-683 draws.
+    //
+    // Named here for the same reason levelsettings is: the CLI finds the file beside
+    // the objrects path, and the in-process caller's argv[1] is a placeholder, so
+    // rotQPathBeside returns "" (level_loader.hpp:1667). The consequence was not a
+    // missing convenience -- the loop could not load the queue AT ALL, so `--rotqueue`
+    // in the cfg set g_rotQueue while g_rotQ stayed empty and step.hpp's
+    // `g_rotQueue && !g_rotQ.empty()` was false either way. An arm turned on that way
+    // measures nothing and reports it as "the queue changes nothing".
+    //
+    // PAIRED WITH THE FLAG, not passed unconditionally: with no --rotqueue there is
+    // nothing to consume the queue, so reading the file would be pure cost, and the
+    // loop's argv would change for a run that behaves identically. Gated, the default
+    // arm is unchanged byte for byte and that can be shown by grep.
+    if (rotQueueRequested()) {
+        const std::string rotq = std::string(DATA_DIR) + "/rotgameplay.txt";
+        if (std::filesystem::exists(rotq, ec)) {
+            a.push_back("--rotgameplay"); a.push_back(rotq);
+        }
+    }
     // GD's MAX GAMEPLAY Y, read live off the layer (g_maxPlayYLive). Closes the
     // sky-escape phantom: without it the DP plans free climbs into y=3,600+
     // that GD environment-kills (dp/speed.hpp g_maxPlayY has the disassembly).

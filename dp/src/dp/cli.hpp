@@ -1831,7 +1831,16 @@ inline int cliMain(int argc, char** argv) {
     // consumption order per channel, because the order IS the mechanism: GD
     // walks one channel from a cursor and stops at the first element the player
     // has not passed, so an element in the wrong place blocks everything behind
-    // it. Nothing reads the queue yet -- this stage only builds and shows it.
+    // it.
+    //
+    // [2026-09-10] The queue IS read now -- step.hpp:361 and :426, under
+    // `--rotqueue`. The line this replaces said nothing did, which was true when
+    // the queue was built and stopped being true without the comment moving.
+    // What the line is FOR has changed with it: it is no longer a display, it is
+    // the arm's proof of life. A run that turns the queue on and does not print
+    // this loaded no queue, and its result is "the queue never ran" rather than
+    // "the queue changed nothing" -- the two readings a silent empty arm cannot
+    // be told apart by.
     if (!g_rotQ.empty()) {
         std::printf("rotq: %zu queued objects in %d channels\n",
                     g_rotQ.size(), g_rotQChans);
