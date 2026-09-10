@@ -1180,10 +1180,15 @@ struct TraceRow {
     // parsed here, so a run could not name the family of its own fixups even
     // though its trace on disk carried every column -- the gap that stopped the
     // 2026-09-10 join of census occurrences to real-run families.
-    double dx = 0.0, slopem = 0.0;
+    double dx = 0.0, slopem = 0.0, bandf = 0.0, bandc = 0.0;
     int onslope = -1, slopet = -1, nearorb = -1;
     std::string clamp, clampuid;
 };
+
+// Which classification columns the loaded trace lacked, if any. Empty means the
+// family can be spelled; non-empty is reported on the line instead of a family
+// built out of defaults.
+inline std::string g_traceClassMissing;
 
 // BY NAME, NOT BY POSITION. Three trace schemas exist side by side -- the
 // replay trace this reads is 36 columns, the witness resim's is 16, and
@@ -1221,24 +1226,56 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
         const std::vector<std::string> h = split(line);
         for (size_t i = 0; i < h.size(); ++i) col[h[i]] = i;
     }
-    static const char* kNeed[] = {
+    // TWO GROUPS, and only one of them may stop the pass.
+    //
+    // The repair columns are what a fixup record is built from; without them
+    // there is nothing to record and refusing is the honest answer. The
+    // classification columns only spell the FAMILY -- an observation about the
+    // record, not part of it. Requiring them would let a missing diagnostic
+    // column cancel a repair, which is a change to what the loop DOES made in
+    // the name of watching it. (The first version of this function did exactly
+    // that: one list, and a short trace returned false, so fixupPass returned 0
+    // and recorded nothing.)
+    static const char* kRepair[] = {
         "tick", "x", "y", "vy", "mode", "grounded", "dual", "y2", "vy2", "act",
+    };
+    static const char* kClass[] = {
         "flip", "mini", "dx", "onslope", "slopem", "slopet", "nearorb",
-        "clamp", "clampuid",
+        "clamp", "clampuid", "bandf", "bandc",
     };
     std::string missing;
-    for (const char* n : kNeed)
+    for (const char* n : kRepair)
         if (!col.count(n)) missing += (missing.empty() ? "" : ",") + std::string(n);
     if (!missing.empty()) {
         char msg[320];
         snprintf(msg, sizeof(msg),
                  "dpsolve:   [fixup] REFUSED %s - the trace has %zu columns and is "
-                 "missing: %s. A family cannot be spelled from it, and filling the "
-                 "gaps with defaults would spell a wrong one silently.",
+                 "missing what a RECORD needs: %s.",
                  path.c_str(), col.size(), missing.c_str());
         writeResult(msg);
         return false;
     }
+    g_traceClassMissing.clear();
+    for (const char* n : kClass)
+        if (!col.count(n))
+            g_traceClassMissing += (g_traceClassMissing.empty() ? "" : ",")
+                                   + std::string(n);
+    if (!g_traceClassMissing.empty()) {
+        // Named, and the pass CONTINUES. The line will say the family cannot be
+        // spelled rather than spelling one out of defaults -- "the column is
+        // missing" and "the value is 0" are different facts.
+        char msg[320];
+        snprintf(msg, sizeof(msg),
+                 "dpsolve:   [fixup] %s cannot be classified - missing: %s. "
+                 "Repair continues; the family is reported as unavailable.",
+                 path.c_str(), g_traceClassMissing.c_str());
+        writeResult(msg);
+    }
+    size_t maxIdx = 0;
+    for (const char* n : kRepair)
+        if (col.count(n)) maxIdx = std::max(maxIdx, col[n]);
+    for (const char* n : kClass)
+        if (col.count(n)) maxIdx = std::max(maxIdx, col[n]);
     auto num = [&](const std::vector<std::string>& c, const char* n) {
         const size_t i = col[n];
         return i < c.size() ? std::atof(c[i].c_str()) : 0.0;
@@ -1254,7 +1291,11 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
     while (std::getline(f, line)) {
         if (line.empty() || !isdigit((unsigned char)line[0])) continue;
         const std::vector<std::string> c = split(line);
-        if (c.size() <= col["clampuid"]) continue;
+        // Against the LARGEST index this row will be asked for, not one chosen
+        // column: guarding on clampuid alone let a row short of any other read
+        // fall through to the accessors' 0, which is the "missing reads as zero"
+        // the two-group split above exists to avoid.
+        if (c.size() <= maxIdx) continue;
         TraceRow r;
         r.valid = true;
         const long long t = (long long)num(c, "tick");
@@ -1278,6 +1319,8 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
         r.nearorb = integer(c, "nearorb");
         r.clamp = text(c, "clamp");
         r.clampuid = text(c, "clampuid");
+        r.bandf = num(c, "bandf");
+        r.bandc = num(c, "bandc");
         out[t] = r;
     }
     return !out.empty();
@@ -1568,16 +1611,27 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // `clamp` and `nearorb` are read from the NEXT row, not this one: both
         // happen inside that step, so neither is on the row the transition
         // leaves from. cause_of does the same and says so.
-        char md[160] = "";
-        {
+        char md[224] = "";
+        if (!g_traceClassMissing.empty()) {
+            // Say WHY there is no family, and which columns are absent. A tail
+            // of defaults would be a family that is wrong with nothing to show
+            // for it.
+            snprintf(md, sizeof(md), " mfam=unavailable(%s)",
+                     g_traceClassMissing.c_str());
+        } else {
             const TraceRow& p = mPrev->second;
             const TraceRow* nx = (mCur != m.end()) ? &mCur->second : nullptr;
+            // g and y are cause_of's too -- `g<n>` comes from the model's own
+            // grounded, and y is compared against the band edges for
+            // nearceil/nearfloor. They were already parsed and still missing
+            // from the line: having a value in memory is not having it on file.
             snprintf(md, sizeof(md),
-                     " mmini=%d mdx=%.4f mslope=%d/%.4f/%d mclamp=%s mcuid=%s morb=%d",
-                     p.mini, p.dx, p.onslope, p.slopem, p.slopet,
+                     " mg=%d my=%.3f mmini=%d mdx=%.4f mslope=%d/%.4f/%d"
+                     " mclamp=%s mcuid=%s morb=%d mband=%.1f/%.1f",
+                     p.grounded, p.y, p.mini, p.dx, p.onslope, p.slopem, p.slopet,
                      nx && !nx->clamp.empty() ? nx->clamp.c_str() : "-",
                      nx && !nx->clampuid.empty() ? nx->clampuid.c_str() : "-",
-                     nx ? nx->nearorb : -1);
+                     nx ? nx->nearorb : -1, p.bandf, p.bandc);
         }
         snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld x=%.1f mode=%d in=%d "
                  "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f%s%s%s (%d total)",
