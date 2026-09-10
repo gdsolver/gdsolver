@@ -1730,9 +1730,22 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
             // grounded, and y is compared against the band edges for
             // nearceil/nearfloor. They were already parsed and still missing
             // from the line: having a value in memory is not having it on file.
+            // mband at the SAME precision as y, because y is what it is
+            // compared against. cause_of's test is `|y - bandc| < 20.0`, so an
+            // error of e in the band edge moves that comparison by e: the band's
+            // quantum has to be no coarser than y's or the answer can change on
+            // the way through the line. y is %.3f, so these are %.3f. That is
+            // the derivation, not a preference -- picking a "nicer" width would
+            // make the threshold an artefact of the format.
+            //
+            // At %.1f it could and did: constructed on real columns, true
+            // bandc 540.06 with y 520.07 gives |diff| 19.99 and spells
+            // `nearceil`, while the printed 540.1 gives 20.03 and drops it.
+            // Not witnessed in 399 real rows -- unwitnessed, which is not the
+            // same as impossible, and the mechanism is shown.
             snprintf(md, sizeof(md),
                      " mg=%d my=%.3f mmini=%d mdx=%.4f mslope=%d/%.4f/%d"
-                     " mclamp=%s mcuid=%s morb=%d mband=%.1f/%.1f",
+                     " mclamp=%s mcuid=%s morb=%d mband=%.3f/%.3f",
                      p.grounded, p.y, p.mini, p.dx, p.onslope, p.slopem, p.slopet,
                      nx && !nx->clamp.empty() ? nx->clamp.c_str() : "-",
                      nx && !nx->clampuid.empty() ? nx->clampuid.c_str() : "-",
