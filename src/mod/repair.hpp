@@ -1183,6 +1183,13 @@ struct TraceRow {
     double dx = 0.0, slopem = 0.0, bandf = 0.0, bandc = 0.0;
     int onslope = -1, slopet = -1, nearorb = -1;
     std::string clamp, clampuid;
+    // Whether THIS ROW carried the classification columns. g_traceClassMissing
+    // answers it for the header; a row can be short of them while the header
+    // has them all, and that row must still be recorded from -- its family is
+    // the only thing it cannot supply. Default false so a row built anywhere
+    // but the loader (fixupPass synthesises one at the anchor) is never
+    // classified out of values it does not have.
+    bool classOk = false;
 };
 
 // Which classification columns the loaded trace lacked, if any. Empty means the
@@ -1271,33 +1278,62 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
                  path.c_str(), g_traceClassMissing.c_str());
         writeResult(msg);
     }
-    size_t maxIdx = 0;
-    for (const char* n : kRepair)
-        if (col.count(n)) maxIdx = std::max(maxIdx, col[n]);
-    for (const char* n : kClass)
-        if (col.count(n)) maxIdx = std::max(maxIdx, col[n]);
-    auto num = [&](const std::vector<std::string>& c, const char* n) {
-        const size_t i = col[n];
-        return i < c.size() ? std::atof(c[i].c_str()) : 0.0;
+    // TWO MAXIMA, not one. A row short of the CLASSIFICATION columns still
+    // carries everything a record is built from, and dropping it would let a
+    // missing diagnostic cancel a repair -- the same mistake as de82e63, one
+    // level down: that one cancelled the pass, this one cancelled the row.
+    size_t maxRepair = 0, maxClass = 0;
+    for (const char* n : kRepair) {
+        auto it = col.find(n);
+        if (it != col.end()) maxRepair = std::max(maxRepair, it->second);
+    }
+    for (const char* n : kClass) {
+        auto it = col.find(n);
+        if (it != col.end()) maxClass = std::max(maxClass, it->second);
+    }
+    // find(), NOT col[n]. std::map::operator[] INSERTS a missing key with a
+    // value-initialised 0 and returns it, so every accessor below answered a
+    // missing column with COLUMN 0 -- which is `tick`. The damage was not the
+    // diagnostic it looks like: mini and flip are classification columns but
+    // they are also part of the RECORD KEY (:1521), and their "the model's row
+    // does not carry it, use GD's" sentinel is `>= 0`. A tick number is
+    // positive, so the fallback could not fire and the key was written with a
+    // tick in the mini field. `mfam=unavailable` guarded the printed family and
+    // never touched that.
+    //
+    // Each accessor now takes the default it should answer with, because the
+    // right default is per-column and not zero: -1 for mini/flip is what the
+    // key's fallback tests for.
+    auto num = [&](const std::vector<std::string>& c, const char* n,
+                   double def = 0.0) {
+        auto it = col.find(n);
+        if (it == col.end() || it->second >= c.size()) return def;
+        return std::atof(c[it->second].c_str());
     };
-    auto integer = [&](const std::vector<std::string>& c, const char* n) {
-        const size_t i = col[n];
-        return i < c.size() ? std::atoi(c[i].c_str()) : 0;
+    auto integer = [&](const std::vector<std::string>& c, const char* n,
+                       int def = 0) {
+        auto it = col.find(n);
+        if (it == col.end() || it->second >= c.size()) return def;
+        return std::atoi(c[it->second].c_str());
     };
     auto text = [&](const std::vector<std::string>& c, const char* n) {
-        const size_t i = col[n];
-        return i < c.size() ? c[i] : std::string();
+        auto it = col.find(n);
+        if (it == col.end() || it->second >= c.size()) return std::string();
+        return c[it->second];
     };
     while (std::getline(f, line)) {
         if (line.empty() || !isdigit((unsigned char)line[0])) continue;
         const std::vector<std::string> c = split(line);
-        // Against the LARGEST index this row will be asked for, not one chosen
-        // column: guarding on clampuid alone let a row short of any other read
-        // fall through to the accessors' 0, which is the "missing reads as zero"
-        // the two-group split above exists to avoid.
-        if (c.size() <= maxIdx) continue;
+        // Against what a RECORD needs, not against everything that will be read.
+        // Guarding on clampuid alone let a row short of any other read fall
+        // through to the accessors' 0; guarding on the largest index of BOTH
+        // groups went too far the other way and threw the row out entirely for
+        // want of a diagnostic. A row is kept when it can be recorded from, and
+        // says separately whether it can also be classified.
+        if (c.size() <= maxRepair) continue;
         TraceRow r;
         r.valid = true;
+        r.classOk = (c.size() > maxClass);
         const long long t = (long long)num(c, "tick");
         r.x = num(c, "x");
         r.y = num(c, "y");
@@ -1309,8 +1345,12 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
         r.vy2 = num(c, "vy2");
         const std::string a = text(c, "act");
         r.act = (a == "0" || a == "1") ? std::atoi(a.c_str()) : -1;
-        r.mini = integer(c, "mini");
-        r.flip = integer(c, "flip");
+        // -1, not 0. These two are the only classification columns that are
+        // also part of the record key, and -1 is what :1521's fallback tests
+        // for -- "the model's row does not carry it, so use GD's". 0 is a
+        // legitimate value for both, so it cannot double as "absent".
+        r.mini = integer(c, "mini", -1);
+        r.flip = integer(c, "flip", -1);
         // ...and the family's remaining inputs.
         r.dx = num(c, "dx");
         r.onslope = integer(c, "onslope");
@@ -1669,12 +1709,20 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // happen inside that step, so neither is on the row the transition
         // leaves from. cause_of does the same and says so.
         char md[224] = "";
-        if (!g_traceClassMissing.empty()) {
+        const bool rowsClassifiable =
+            mPrev->second.classOk && (mCur == m.end() || mCur->second.classOk);
+        if (!g_traceClassMissing.empty() || !rowsClassifiable) {
             // Say WHY there is no family, and which columns are absent. A tail
             // of defaults would be a family that is wrong with nothing to show
             // for it.
+            //
+            // TWO REASONS, and they are different facts: the header lacked the
+            // columns, or THESE ROWS were short of them while the header had
+            // them. The second is why `classOk` exists -- such a row is still
+            // recorded from, and only its family is withheld.
             snprintf(md, sizeof(md), " mfam=unavailable(%s)",
-                     g_traceClassMissing.c_str());
+                     !g_traceClassMissing.empty() ? g_traceClassMissing.c_str()
+                                                  : "row short of them");
         } else {
             const TraceRow& p = mPrev->second;
             const TraceRow* nx = (mCur != m.end()) ? &mCur->second : nullptr;
