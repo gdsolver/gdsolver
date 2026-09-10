@@ -86,6 +86,7 @@ SolveOutcome outcome() {
     o.resimObjX = dp::g_outcome.resimObjX;
     o.resimObjY = dp::g_outcome.resimObjY;
     o.resimTrig = dp::g_outcome.resimTrig;
+    o.resimFrame = dp::g_outcome.resimFrame;
     o.replayDiedT = dp::g_outcome.replayDiedT;
     o.needTrigMask = dp::g_outcome.needTrigMask;
     o.needTrigPassed = dp::g_outcome.needTrigPassed;

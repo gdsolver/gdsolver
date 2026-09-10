@@ -174,6 +174,13 @@ inline int g_gfireMax = 0;            // widest spread seen, in ticks
 inline int g_resimUid = -1;
 inline float g_resimObjX = 0.f, g_resimObjY = 0.f;
 inline uint32_t g_resimTrig = 0;   // the walk's own trigger mask at that tick
+// ...and the FRAME the walk was in. g_resimObjX/Y are read in whatever frame
+// the resim currently occupies (the loop re-binds rLf = &frameLevel(L,
+// c.frame)), so two walks that report different positions may be reporting the
+// same place seen from different frames -- on lv22 the two sides' killers turn
+// out to differ by exactly a quarter turn, which was inferred from the numbers
+// rather than measured. Reading the frame is what makes it a measurement.
+inline int g_resimFrame = -1;
 inline long long g_resimTicks = 0;
 inline int g_resimFirst = -1;
 inline int g_resimLast = -1;

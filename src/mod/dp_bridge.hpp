@@ -77,6 +77,7 @@ struct SolveOutcome {
     int resimUid = -1;
     float resimObjX = 0.f, resimObjY = 0.f;
     unsigned resimTrig = 0;
+    int resimFrame = -1;              // the frame resimObjX/Y are read in
     long long replayDiedT = -1;   // --replay only: where the model died, -1 = it survived
     // Touch boxes the call required, and those the anchor already sits past. A required box
     // behind the anchor can never be entered, so the frontier is empty before the first tick --

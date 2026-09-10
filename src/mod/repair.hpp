@@ -1971,10 +1971,18 @@ inline bool runLadder(long long dt) {
             // dies at 1837, and until the rows name an object the two cannot be
             // compared at all. stdout says it as `resimwho:`, which the mod
             // cannot read (dp_bridge.hpp:57).
+            //
+            // The position is read in whatever FRAME the walk was in, so the
+            // frame travels with it. Without it, two rows reporting different
+            // coordinates cannot be told from two rows reporting the same
+            // place seen from different frames -- on lv22 the loop's killer and
+            // an offline rebuild's turn out to differ by exactly a quarter
+            // turn, and that was read off the numbers rather than measured.
             snprintf(rd, sizeof(rd),
-                     " resimdie=%lld@%lld/%s who=%d@(%.1f,%.1f)/0x%08x",
+                     " resimdie=%lld@%lld/%s who=%d@(%.1f,%.1f)f%d/0x%08x",
                      o.resimDead, o.resimFirst, o.resimWhy ? o.resimWhy : "?",
-                     o.resimUid, o.resimObjX, o.resimObjY, o.resimTrig);
+                     o.resimUid, o.resimObjX, o.resimObjY, o.resimFrame,
+                     o.resimTrig);
         else if (o.resimDead == 0)
             // ...and a clean walk says so. Printing nothing here would make
             // "the plan survived itself" and "this field is not wired on this

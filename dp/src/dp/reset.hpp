@@ -102,6 +102,7 @@ inline void resetInvocationState() {
     g_resimObjX = 0.f;
     g_resimObjY = 0.f;
     g_resimTrig = 0;
+    g_resimFrame = -1;
     g_noPortalSeat = false;
     g_noForceOrder = false;
     g_noRot2900Halve = false;

@@ -4187,6 +4187,8 @@ inline int cliMain(int argc, char** argv) {
                     g_resimObjX = g_deadCx;
                     g_resimObjY = g_deadCy;
                     g_resimTrig = s.trig;
+                    // ...and the frame those coordinates are expressed in.
+                    g_resimFrame = (int)c.frame;
                 }
                 g_resimLast = (int)t;
                 ++g_resimDead;
@@ -4334,8 +4336,9 @@ inline int cliMain(int argc, char** argv) {
                 (rDead > 0 && (long long)(rLast - rFirst + 1) == rDead) ? 1 : 0,
                 rWhy ? rWhy : "-");
     if (g_resimDead > 0)
-        std::printf("resimwho: uid=%d obj=(%.1f,%.1f) trig=0x%08x\n",
-                    g_resimUid, g_resimObjX, g_resimObjY, g_resimTrig);
+        std::printf("resimwho: uid=%d obj=(%.1f,%.1f) frame=%d trig=0x%08x\n",
+                    g_resimUid, g_resimObjX, g_resimObjY, g_resimFrame,
+                    g_resimTrig);
     // ...and out through the struct, because the repair loop -- the one consumer
     // that ACTS on these plans -- reads dp::g_outcome, not stdout. A walk that
     // never ran stays -1 and must not be counted as a clean plan.
@@ -4365,6 +4368,7 @@ inline int cliMain(int argc, char** argv) {
         g_outcome.resimObjX = g_resimObjX;
         g_outcome.resimObjY = g_resimObjY;
         g_outcome.resimTrig = g_resimTrig;
+        g_outcome.resimFrame = g_resimFrame;
     }
     std::printf("plan: %d edges, %zu ticks -> %s\n", edges, lvl.size(),
                 outPath.c_str());

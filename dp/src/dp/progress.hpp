@@ -83,6 +83,7 @@ struct SearchOutcome {
     int resimUid = -1;               // the LEVEL's uid, not this build's ordinal
     float resimObjX = 0.f, resimObjY = 0.f;
     unsigned resimTrig = 0;          // the walk's trigger mask at that tick
+    int resimFrame = -1;             // the frame resimObjX/Y are expressed in
     // --replay only: the tick the model died on, or -1 if it survived the plan. The fixup
     // recorder needs it for the case where the two agree all the way and only the MODEL kills:
     // there is no divergence to scan for, and the record to make is a revival of the last
@@ -100,6 +101,7 @@ struct SearchOutcome {
         deepT = -1; deepX = -1.0; capHits = -1; replayDiedT = -1;
         resimDead = -1; resimFirst = -1; resimWhy = nullptr;
         resimUid = -1; resimObjX = 0.f; resimObjY = 0.f; resimTrig = 0;
+        resimFrame = -1;
         needTrigMask = 0; needTrigPassed = 0;
     }
 };
