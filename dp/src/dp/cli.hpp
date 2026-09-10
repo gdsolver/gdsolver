@@ -4104,7 +4104,16 @@ inline int cliMain(int argc, char** argv) {
         // (mcp/gdmcp/data.py builds a csv.DictReader and validates the columns it
         // wants against r.fieldnames), and the positional reads in the tree index
         // into diff rows, regex groups and triggers.txt -- not this file.
-        tr << "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,frame\n";
+        // ...and the ROTATION QUEUE's three per-state values. The anchor scan
+        // does not seed them (frames.hpp:158-174), which is why --rotqueue is
+        // opt-in and why --startrotq exists. The producer of a --startrotq seed
+        // needs their value at the tick the next anchor will use, and this walk
+        // passes every such tick: recording them here means the seed is READ
+        // OFF a walk rather than DERIVED from something adjacent. Deriving is
+        // what --spentrot has to do from the dump's frame transitions, and it
+        // cannot see the entries that change no frame (2899 and chanOnly).
+        tr << "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,frame"
+              ",rotspent,rotchan,rotrev\n";
         std::ofstream sn;
         if (!snapLogPath.empty()) {
             sn.open(snapLogPath);
@@ -4258,7 +4267,8 @@ inline int cliMain(int argc, char** argv) {
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
                << ',' << s.y2 << ',' << s.vy2 << ',' << (int)s.flip2 << ','
                << (int)lvl[i] << ',' << (int)s.flip << ',' << (int)s.frame
-               << "\n";
+               << ',' << s.rotSpent << ',' << (int)s.rotChan
+               << ',' << (unsigned)s.rotRev << "\n";
         }
         g_snapOut = nullptr;
     }
