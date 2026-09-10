@@ -1625,6 +1625,29 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // reason `clamp` below is read from the next row. -1 = no row (a kill)
         // or nothing snapped, and those two are already distinguished by gdgo.
         //
+        // ★AND IT IS NOT A PER-TICK CONTACT PREDICATE. m_objectSnappedTo is
+        // STICKY: it keeps the last object it snapped to, and GD does not clear
+        // it on leaving. Measured on gdref/lv22.csv (21,140 ticks): snapuid >= 0
+        // on 98% of all ticks and on ★99% of the AIRBORNE ones, with a single
+        // value persisting up to 3,818 ticks. So `gdsnap >= 0` says "the game
+        // has snapped to U at or before this tick", NOT "the game is holding
+        // the player here", and a count of records with a non-negative gdsnap
+        // is not a count of contacts. This was written down after taking that
+        // count -- 60 of 69 records, which read as a discovery and is an
+        // artefact of the field's persistence.
+        //
+        // What that leaves: the pair still says WHICH object and how far, which
+        // no other field on this line carries, and it is exact when read at a
+        // tick where the snap CHANGES. What it does not do is close the gap
+        // this tail was added for. The recording's only per-tick contact facts
+        // are onGround/onGround2, already here as gdg/gdgo, so "GD held the
+        // player while the model flew" cannot be answered from what is recorded
+        // today; answering it needs a new recorded field, not a new print.
+        //
+        // gdsnapd is not gated by gdsnap either: a record here carried
+        // gdsnap=-1 with gdsnapd=27.79. The uid is the gate; the distance
+        // beside a -1 is the previous snap's, left over.
+        //
         // PRINTED LINE ONLY. The record written to g_fixupPath keeps its format:
         // two readers key on adjacency there (archive_dy_census.py:22,
         // fixup_bias_census.py:44) and dp/fixup.hpp parses it, while this line's
