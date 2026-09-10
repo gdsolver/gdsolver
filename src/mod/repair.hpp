@@ -1461,10 +1461,38 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // cause the deaths around it are the symptom of -- and the two are often hundreds of
         // pixels apart, which is the single most useful thing the picture says.
         itermap::addFixup(g_iter, t, (float)mPrev->second.x, (float)mPrev->second.y, kill != 0);
+        // ...and GD's own half of the transition, as a NAMED TAIL.
+        //
+        // WHY. A family is cause_of's signature, and that function reads both
+        // sides ENTERING the tick plus GD's values on the way out -- the `gdg`
+        // and `gdgo` halves of a string like `m2/mini0/g1/gdg1/gdgo0/sp1.1/...`.
+        // Everything else it needs is already on this line; GD's four values are
+        // not, so a family cannot be rebuilt from a run's own log. That is what
+        // stopped the 2026-09-10 join of census occurrences to real-run
+        // families: the only family-bearing source was fixups_log_lv*.txt, which
+        // nothing has written since 2026-08-22.
+        //
+        // RAW, and not the finished family. `onGround` goes in untranslated --
+        // fixcensus says of the same column "THE COLUMN IS RAW BY DEFAULT", and
+        // putting it through grounded_of would make it a different predicate
+        // (that one's per-mode gap is in its own docstring), so `gdg1` would
+        // stop meaning what a census record means by it. The four inputs are
+        // stored rather than the signature because a signature is a proxy for
+        // its definition: change cause_of and every stored string is stale,
+        // while inputs can be re-signed. Same choice as uid over bit index.
+        //
+        // A TAIL, not fields in the middle: two readers key on adjacency
+        // (archive_dy_census.py:22, fixup_bias_census.py:44) and an insertion
+        // would drop their rows in silence. dp made the same choice for
+        // `,dual2=` and gives the reason at cli.hpp:549.
+        char gd[64] = "";
+        snprintf(gd, sizeof(gd), " gdg=%d gdm=%d gdgo=%d gdmo=%d",
+                 gPrev->onGround, gPrev->mode,
+                 gCur ? gCur->onGround : -1, gCur ? gCur->mode : -1);
         snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld x=%.1f mode=%d in=%d "
-                 "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f%s (%d total)",
+                 "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f%s%s (%d total)",
                  t, mPrev->second.x, mPrev->second.mode, act, dyG, dvG, kill,
-                 eDy, eDvy, e2, g_fixupCount);
+                 eDy, eDvy, e2, gd, g_fixupCount);
     }
     writeResult(b);
     // KILL-ONLY: the second veto hit (see g_killVetoIter). The p2 halves are
