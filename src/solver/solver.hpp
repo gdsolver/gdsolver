@@ -727,21 +727,34 @@ inline void buildPois(GJBaseGameLayer* l) {
         std::ofstream rf(std::string(DATA_DIR) + "/rotgameplay.txt",
                          std::ios::trunc);
         // swarm/chanOnly/swch: the flag that gates a channel switch, the
-        // "channel only" flag, and THE CHANNEL A 2900 SWITCHES TO. This
-        // bindings version has neither m_changeChannel nor m_targetChannelID
-        // (only m_channelValue and m_channelChanged), so there is no name to
-        // read them by and they are taken raw at +0x754/+0x755/+0x758.
+        // "channel only" flag, and THE CHANNEL A 2900 SWITCHES TO.
         //
-        // Raw offsets out of a decompilation are not trusted on sight here --
-        // one was wrong earlier today (the out-of-bounds latch reads 0x187 in
-        // the decompiler's scaled pointer arithmetic and lives at 0xC38). These
-        // were checked against what the values have to look like, and lv22's
-        // thirty answer for themselves: swarm is 1 on every 2900 and nothing
-        // else, and swch PAIRS UP with chan -- uid1343 sits on channel 0 and
-        // switches to 1, uid1215 sits on channel 1 and switches to 0; 4355->2
-        // against 4467's 2->0; 5809->3 against 5957's 3->0. A belongs-to and a
-        // switches-to, complementary across the level. That is the field the
-        // queue needs and the one the model never had.
+        // [2026-09-10] These were read raw at +0x754/+0x755/+0x758 because the
+        // comment here said "this bindings version has neither m_changeChannel
+        // nor m_targetChannelID". That was true of EffectGameObject, which is
+        // what the cast below asks for, and FALSE of the class a 2900 actually
+        // is: RotateGameplayGameObject declares m_changeChannel, m_channelOnly
+        // and m_targetChannelID by name. The fields were missing from the base,
+        // not from the bindings.
+        //
+        // Reading them off the base had one consequence, and it is visible in
+        // the file: a 2899 is a GameOptionsTrigger, a DIFFERENT subclass that
+        // has none of the three, so those offsets land outside it. Five of
+        // lv22's ten 2899 rows came out 255/255/-1 and the other five came out
+        // 1/0/1 -- the same three values on five objects sitting on five
+        // different channels, which is what reading somebody else's memory
+        // looks like rather than a field.
+        //
+        // Nothing downstream consumed it: every consumer is gated on either
+        // `id == 2900` (step.hpp:390) or `rotIdx >= 0` (step.hpp:398,
+        // cli.hpp:1825, frames.hpp:386), and rotIdx is -1 for a 2899 because
+        // only id 2900 enters g_rotTrig (level_loader.hpp:1038). So this is
+        // hygiene, not a behaviour fix -- but the numbers were in a file people
+        // read, and one reader did take them for values.
+        //
+        // Asking for the derived type instead makes the distinction structural:
+        // the cast fails for a 2899 and the row says "-", which is neither 0 nor
+        // 255 and cannot be mistaken for either.
         rf << "uid,id,cx,cy,chan,ord,sord,sordd,spx,target,"
               "chanChanged,swarm,chanOnly,swch\n";
         long long n = 0;
@@ -758,13 +771,15 @@ inline void buildPois(GJBaseGameLayer* l) {
                << e->m_spawnOrder << "," << (e->m_spawnOrdered ? 1 : 0) << ","
                << e->m_spawnXPosition << "," << e->m_targetGroupID << ","
                << (e->m_channelChanged ? 1 : 0) << ",";
-            {
-                const char* ob = reinterpret_cast<const char*>(obj);
-                int r758 = 0;
-                std::memcpy(&r758, ob + 0x758, sizeof(int));
-                rf << (int)(unsigned char)ob[0x754] << ","
-                   << (int)(unsigned char)ob[0x755] << "," << r758 << "\n";
-            }
+            if (auto* r = geode::cast::typeinfo_cast<RotateGameplayGameObject*>(obj))
+                rf << (r->m_changeChannel ? 1 : 0) << ","
+                   << (r->m_channelOnly ? 1 : 0) << ","
+                   << r->m_targetChannelID << "\n";
+            else
+                // A 2899 has no such fields. "-" rather than a number: a 0 here
+                // would read as "does not switch the channel", which is a claim
+                // about a field that does not exist on this object.
+                rf << "-,-,-\n";
             ++n;
         }
         if (n) log::info("rotgameplay: {} rotation-gameplay objects", n);

@@ -384,9 +384,17 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
             // channel, and the reverse it writes is the pure predicate
             // `gnddir - 2 <u 2` -- no mapping through the frame. The id check
             // is not defensive: ten of lv22's thirty queued objects are 2899
-            // Options triggers, two of them carry m_changeChannel, and an
-            // Options trigger never reaches rotateGameplay -- it is consumed
-            // here and does nothing to the channel.
+            // Options triggers, and an Options trigger never reaches
+            // rotateGameplay -- it is consumed here and does nothing to the
+            // channel.
+            //
+            // [2026-09-10] This used to say "two of them carry
+            // m_changeChannel". They carry none: a 2899 is a GameOptionsTrigger
+            // and has no such field. The dumper was reading the offsets off the
+            // base class, so five of the ten rows came out with swarm=1 and
+            // five with swarm=255 -- neither of which was a field. The id check
+            // was load-bearing for a reason slightly different from the one
+            // written here, and stays.
             if (e.id == 2900 && e.swarm && e.swch >= 0 && e.swch <= 15) {
                 c.rotChan = (uint8_t)e.swch;
                 const int gd = (e.rotIdx >= 0)

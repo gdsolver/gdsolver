@@ -135,8 +135,16 @@ struct RotQEntry {
     // rotateGameplay and 2899 to processOptionsTrigger, and the writers of the
     // active channel (+0x33c) are rotateGameplay, resetSpawnChannelIndex,
     // loadUpToPosition, createCheckpoint and init -- no Options path. Ten of
-    // lv22's thirty are 2899 and two of those carry m_changeChannel, so reading
-    // that field without checking the id switches the channel twice over.
+    // lv22's thirty are 2899, so reading that field without checking the id
+    // would switch the channel on objects that cannot switch it.
+    //
+    // [2026-09-10] This used to say "two of those carry m_changeChannel". None
+    // of them do -- a 2899 is a GameOptionsTrigger, which has no such field.
+    // The dumper read the offset off EffectGameObject, the common base, so the
+    // column held whatever memory happened to sit past the end of a 2899: five
+    // rows of 1/0/1 and five of 255/255/-1, on objects spread over five
+    // channels. The id check was right; the number in the comment was reading
+    // that garbage back.
     int id = 0;
     int chan = 0;     // m_channelValue: the bucket this object lives in
     int ord = 0;      // m_ordValue: the first sort key, stronger than position
@@ -438,7 +446,28 @@ inline bool loadRotQueue(const std::string& path) {
             line.c_str(), "%d,%d,%lf,%lf,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
             &e.uid, &e.id, &e.px, &e.py, &e.chan, &e.ord, &sord, &sordd, &spx,
             &target, &chanChanged, &e.swarm, &e.chanOnly, &e.swch);
-        if (n < 14) continue;
+        // The last three columns are "-,-,-" for an object that HAS no such
+        // fields -- a 2899 is a GameOptionsTrigger and carries none of
+        // m_changeChannel / m_channelOnly / m_targetChannelID (the dumper wrote
+        // whatever memory sat at those offsets until 2026-09-10). Such a row is
+        // still a queue resident and must not be dropped: `n < 14` alone would
+        // silently remove all ten of lv22's 2899s from the queue, which is a
+        // behaviour change and not the hygiene this was.
+        //
+        // The sentinels are the values every consumer already refuses --
+        // swarm 0 (frames.hpp:384, cli.hpp:1825), swch -1 (step.hpp:390's
+        // `swch >= 0`) -- so an absent field cannot be read as a present one.
+        static const std::string kAbsent = ",-,-,-";
+        const bool absent = line.size() >= kAbsent.size()
+                            && line.compare(line.size() - kAbsent.size(),
+                                            kAbsent.size(), kAbsent) == 0;
+        if (n == 11 && absent) {
+            e.swarm = 0;
+            e.chanOnly = 0;
+            e.swch = -1;
+        } else if (n < 14) {
+            continue;
+        }
         const auto it = byUid.find(e.uid);
         e.rotIdx = (it == byUid.end()) ? -1 : it->second;
         g_rotQ.push_back(e);
