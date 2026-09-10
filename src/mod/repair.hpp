@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <xmmintrin.h>   // _mm_getcsr: see the fpenv line in logSolverArgs
 // Stage C: the repair loop, inside the game.
 //
 // The loop is a loop around two things the mod already has: solving (dp/, linked in since
@@ -733,6 +734,16 @@ inline void logSolverArgs(const std::vector<std::string>& a) {
         g_argsLast = line;
         writeResult(line);
     }
+    // ...and the half of the input that is not in the argv at all. cli.hpp
+    // prints the same register on its way in, but dp's printf does not reach
+    // result.txt (see the [anchor] note below), so the comparison needs a copy
+    // written down HERE, on the thread that is about to call the solver.
+    // Rounding mode is a runtime property of the process, and the process the
+    // mod lives in has had cocos2d, fmod and the graphics driver in it first.
+    char fb[64];
+    std::snprintf(fb, sizeof fb, "dpsolve: fpenv mxcsr=0x%04x",
+                  (unsigned)_mm_getcsr());
+    writeResult(fb);
 }
 
 inline std::vector<std::string> baseArgs(const std::string& out) {

@@ -31,6 +31,7 @@
 #include "dp/reset.hpp"
 #include "dp/clearance.hpp"
 #include "dp/refwatch.hpp"
+#include <xmmintrin.h>   // _mm_getcsr: see the fpenv line at the top of cliMain
 
 namespace dp {
 
@@ -43,6 +44,29 @@ inline int cliMain(int argc, char** argv) {
     // state, and only the mod ever runs two solves in one process -- see dp/reset.hpp for what
     // that was costing and how it was measured.
     resetInvocationState();
+    // THE FLOATING-POINT ENVIRONMENT IS NOT IN THE OBJECT FILE. The mod's dp
+    // core and this CLI are built from these same headers, and on lv22 they
+    // disagree -- the run's own walk dies at 1813, the CLI's at 1837, from an
+    // argv that has now been checked token for token and a level whose bytes
+    // dpselftest says are the same file. The candidates on the table (the
+    // mod-only defines, the PCH force-include) are both compile-time stories.
+    // This one is not: SSE rounding lives in MXCSR, a per-thread register, and
+    // the mod runs inside a process that cocos2d, fmod, the audio backend and
+    // the graphics driver have all initialised. Any of them may leave
+    // flush-to-zero / denormals-are-zero set, and every arithmetic result in the
+    // search would then round differently with byte-identical code. A bisect of
+    // defines and PCH cannot see it, so it has to be READ rather than inferred.
+    //
+    // Printed unconditionally: quick_regress compares the emitted plans and
+    // sends stdout to DEVNULL (py/quick_regress.py:717), so this changes no
+    // acceptance. `--mxcsr <hex>` then sets it, which is what turns the reading
+    // into an experiment -- without the flag nothing here alters a single bit.
+    std::printf("fpenv: mxcsr=0x%04x\n", (unsigned)_mm_getcsr());
+    for (int i = 1; i + 1 < argc; ++i)
+        if (!std::strcmp(argv[i], "--mxcsr")) {
+            _mm_setcsr((unsigned)std::strtoul(argv[i + 1], nullptr, 0));
+            std::printf("fpenv: mxcsr set to 0x%04x\n", (unsigned)_mm_getcsr());
+        }
     // --eval-padgate: evaluate orientedHit() -- the SHIPPED pad predicate the
     // step.hpp pad loop calls -- on cases read from stdin, and exit. No level,
     // no search.
