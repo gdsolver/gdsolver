@@ -431,6 +431,10 @@ inline void buildRotQueue() {
         if (ch >= 0 && ch <= 15) {
             g_rotQBeg[(size_t)ch] = (int)i;
             g_rotQEnd[(size_t)ch] = (int)j;
+            // `k < 32` is the same 32-bit cursor limit step.hpp's `idx < 32`
+            // obeys. A queue longer than that is REFUSED before it is used
+            // (cli.hpp, right after loadRotQueue), so the truncation here is
+            // unreachable rather than merely unlikely.
             uint32_t m = 0;
             for (size_t k = i; k < j && k < 32; ++k) m |= (uint32_t)1 << k;
             g_rotQChanMask[(size_t)ch] = m;

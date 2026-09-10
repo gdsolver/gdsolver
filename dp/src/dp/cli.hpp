@@ -1755,6 +1755,23 @@ inline int cliMain(int argc, char** argv) {
     if (rotQPath.empty()) rotQPath = rotQPathBeside(argv[1]);
     if (!rotQPath.empty() && !g_rotTrig.empty() && !loadRotQueue(rotQPath))
         std::printf("rotq: could not read %s\n", rotQPath.c_str());
+    // The cursor is a 32-bit set: State::rotSpent marks a consumed entry by its
+    // queue index, and both places that touch it stop at 32 -- step.hpp's
+    // `if (idx < 32)` and buildRotQueue's channel mask. Past that an entry is
+    // CONSUMED WITHOUT BEING RECORDED, so the popcount that picks the next one
+    // points at an entry the walk already passed, silently and forever after.
+    // Refuse the queue instead, and say why: this is the same rule --startrotq
+    // follows a few lines down, where a uid that does not resolve is named
+    // rather than dropped. lv22 -- the only level with a queue -- holds 30, so
+    // this cannot fire today; it is here because 30 is two short of the limit
+    // and nothing else would report crossing it.
+    if (g_rotQ.size() > 32) {
+        std::printf("rotq: %zu entries, but State::rotSpent is a 32-bit cursor "
+                    "- entries 33+ would be consumed without being recorded. "
+                    "Refusing the queue on this level.\n", g_rotQ.size());
+        g_rotQueue = false;
+        g_rotQ.clear();
+    }
     // --startrotq: the queue's --spentrot. Applied HERE because the uids have
     // to be resolved against the built queue, and before init is used -- the
     // --replay path takes its copy at `State s = init` well below, and the
