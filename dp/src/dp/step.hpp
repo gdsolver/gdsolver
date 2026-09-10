@@ -8253,6 +8253,28 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // mechanism: the ramp scales an IMPULSE, and this branch stamps a
             // carried face velocity (dcy/0.25), which is not one.
             c.vy = (float)(mTravel * std::fabs((double)K.dxF) / 0.25);
+            // THE TWO INPUTS, because the value they produce has been read off a
+            // fixup record and could not be checked against them.
+            //
+            // lv22's robot release stamps 6.3952, while this line with the
+            // record's own printed mdx (1.6143) and mTravel = 1 gives 6.4572 --
+            // 0.062 apart. Only two quantities can absorb that and neither is on
+            // a fixup line: mTravel, and whether K.dxF is the same dx the trace
+            // prints. Guessing which would have been a fitted answer, so print
+            // both and let the run say.
+            //
+            // ITS OWN FLAG, not --slopedbg. That one switches on forty-two print
+            // sites at once: a lv22 cold run under it wrote 811 MB of stdout in
+            // half an hour and had reached t=3,703 of 24,589 -- roughly six times
+            // slower, and it would not have got here before the disk complained.
+            // The branch itself is rare (six releases in twenty-two levels by the
+            // note above), so a flag scoped to it costs nothing and finishes.
+            if (g_slopeRelDbg)
+                std::printf("sloperel: t=%lld mode=%d mini=%d slopeM=%.4f "
+                            "mtrav=%.6f dxF=%.6f vy=%.6f\n",
+                            (long long)K.t, (int)c.mode, (int)c.mini,
+                            (double)c.slopeM, mTravel, (double)K.dxF,
+                            (double)c.vy);
             c.grounded = 0;
             // same as the uphill launch above: the slope machinery sets the
             // velocity-limit exemption (State::boost), in every mode that

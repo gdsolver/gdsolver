@@ -151,6 +151,9 @@ inline bool bandTrackIsCamera() {
 // where the band is evaluated (= the anchor).
 inline double g_bandK = 0.0;
 inline bool g_slopeDbg = false;  // --slopedbg: one line per ramp acquisition
+// --slopereldbg: the downhill-RELEASE branch only (step.hpp). Separate from
+// --slopedbg because that one turns on forty-two sites and buries a cold run.
+inline bool g_slopeRelDbg = false;
 // --dcydbg: one line every time a SURFACE'S OWN SPEED is stamped into vy as
 // `dcy / 0.25`, tagged with which of the four sites did it. Separate from
 // --slopedbg only because that one prints per ramp tick and buries these.
