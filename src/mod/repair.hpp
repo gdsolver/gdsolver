@@ -501,6 +501,11 @@ inline int g_escalations = 0;         // how many times the ladder has been give
 
 // Nine significant digits, the same precision the dump is written with. Coarser than that and
 // the re-anchored x lands on the wrong side of a contact test near x=20,000.
+// Defined below with the other reporting helpers; declared here because the
+// dpsolve row (which is assembled earlier in the file) fingerprints the tail
+// the solver just emitted.
+inline std::string planFnv(const std::vector<InputCmd>& p);
+
 inline std::string num(double v) {
     char b[40];
     snprintf(b, sizeof(b), "%.9g", v);
@@ -1993,10 +1998,25 @@ inline bool runLadder(long long dt) {
             snprintf(rd, sizeof(rd), " resimdie=0");
         else
             snprintf(rd, sizeof(rd), " resimdie=?");
-        snprintf(b, sizeof(b), "dpsolve:   [%s%s] rc=%d inputs=%zu capHits=%lld%s%s",
+        // THE PLAN ITSELF, as a fingerprint. CMakeLists.txt:29-35 calls the two
+        // dp builds behaving identically "an acceptance criterion, not an
+        // aspiration", and the thing that has to match is the emitted plan --
+        // not a number derived from it. `resimdie`'s first tick was used for
+        // that on 2026-09-10 and it does not survive the job: raising --cap
+        // alone moved it 1837 -> 1918 -> 1858 on one unchanged argv, so an
+        // agreement there can be coincidence and a disagreement can be noise.
+        //
+        // `cand` is the tail this call just emitted, read back from g_tailPath,
+        // so this is the bytes. planFnv is already the loop's own plan
+        // fingerprint (the [fp] line), which means the offline side has one
+        // function to reimplement and no format to guess.
+        const std::string tailFp = cand.empty() ? std::string("0/-")
+                                                : planFnv(cand);
+        snprintf(b, sizeof(b),
+                 "dpsolve:   [%s%s] rc=%d inputs=%zu capHits=%lld tail=%s%s%s",
                  o.verdict == dpbridge::OutcomeSolved ? "SOLVED"
                      : (o.verdict == dpbridge::OutcomePartial ? "PARTIAL" : "FAILED"),
-                 deep, rc, cand.size(), o.capHits, rd,
+                 deep, rc, cand.size(), o.capHits, tailFp.c_str(), rd,
                  usable ? "" : (!haveFile ? " - no tail written"
                               : (restartScale ? " - doomed, and this far back only a complete "
                                                 "route is worth the prefix"
