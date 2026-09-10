@@ -1611,15 +1611,39 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
     // would cut is the END -- the md tail, i.e. exactly the fields a family is
     // spelled from -- so an overflow here would not look like an overflow. It
     // would look like `mfam` quietly going missing on the longest records.
+    // NAMES, AND THE CONVENTION THEY CARRY.
+    //
+    // These two numbers were printed as a bare `err %.3f/%.3f`: the only pair on
+    // the line without names, on a line where everything else is name=value, in
+    // a loop whose whole diagnostic story this year has been "parse by name".
+    // A reader who greps `edy=` -- which is what the RECORD FILE calls them
+    // (:1600) -- gets zero hits and concludes the run does not have them.
+    // Measured: that happened, and the answer "the value is not in this run" was
+    // wrong. So the log now uses the file's names.
+    //
+    // THE CONVENTION IS PART OF THE NAME. Three different quantities on these
+    // lines look alike and are not:
+    //   dy= / dvy= here      GD's own delta across the transition   (dyG, dvG)
+    //   edy= / edvy= here    dyG MINUS the model's delta -- GD is the baseline,
+    //                        so a negative edy means GD moved less than the model
+    //   dy= / dvy= on the
+    //   `differs (...)` line ACCUMULATED model minus GD (:1908-1909) -- the other
+    //                        baseline AND a different quantity (state, not delta)
+    // The last one is why the same tick can read +7.481 on one line and -7.481
+    // on another: not a sign bug, two instruments. Renaming without saying this
+    // would make them look like one.
     char b[800];
     // Both lines carry the second body's error too, for the same reason the test above now
     // consults it: `err 0.000/0.000` next to a record that was decided by a body those two
     // numbers do not describe is how this went unread for a day.
     char e2[48] = "";
-    if (dual) snprintf(e2, sizeof(e2), " p2 %.3f/%.3f", eDy2, eDvy2);
+    // ...and the second body's pair gets names for the same reason. Leaving
+    // `p2 a/b` unnamed beside a named edy=/edvy= would say the two pairs are
+    // different in kind, which they are not.
+    if (dual) snprintf(e2, sizeof(e2), " edy2=%.3f edvy2=%.3f", eDy2, eDvy2);
     if (noop) {
         ++g_fixupNoop;
-        snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld already right (err %.3f/%.3f%s) "
+        snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld already right (edy=%.3f edvy=%.3f%s) "
                  "- marked only (%d)", t, eDy, eDvy, e2, g_fixupNoop);
     } else {
         ++g_fixupCount;
@@ -1777,7 +1801,7 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
                      nx ? nx->nearorb : -1, p.bandf, p.bandc);
         }
         snprintf(b, sizeof(b), "dpsolve:   [fixup] t=%lld x=%.1f mode=%d in=%d "
-                 "dy=%.3f dvy=%.3f kill=%d err %.3f/%.3f%s%s%s (%d total)",
+                 "dy=%.3f dvy=%.3f kill=%d edy=%.3f edvy=%.3f%s%s%s (%d total)",
                  t, mPrev->second.x, mPrev->second.mode, act, dyG, dvG, kill,
                  eDy, eDvy, e2, gd, md, g_fixupCount);
     }
