@@ -59,6 +59,27 @@ inline std::vector<Fixup> g_fixups;
 // lower_bound plus the 2-3 in-window candidates is effectively free.
 inline std::vector<Fixup> g_fixupKills, g_fixupDeltas;
 inline long long g_fixupHits = 0;
+// ---- WHICH FRAME WAS THE MODEL IN WHEN A RECORD FIRED? ------------------
+//
+// A record's dy is GD's WORLD dy (the mod reads it off PlayerObject), while the
+// state it is added to keeps its y in the CURRENT frame's coordinates
+// (State::frame, state.hpp:483). Those are the same axis only while the model
+// is in frame 0, and applyFixup below has never looked: its only gates are
+// "there are records" and "not near moving geometry".
+//
+// 2026-09-11 measured 34 of one lv22 run's 69 records as written while the
+// model was rotated. That says the records EXIST, not that any of them was
+// ever applied -- a different claim, and this project has been wrong about
+// exactly that distinction before (a gate passed 593 times and fired 0). So
+// count the firings before proposing anything: a census, not a gate.
+//
+// s.frame is the frame AT APPLICATION, not the one the record was written in.
+// They are the same tick of nearly the same trajectory and normally agree, but
+// that is an assumption. Enough to ask "did a rotated state ever take a
+// delta?"; NOT enough to count how many records are corrupt.
+inline long long g_fixupHitFrame[4] = {0, 0, 0, 0};
+inline float g_fixupRotX[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+inline int g_fixupRotSeen = 0;
 // The x window is ONE TICK (1.2 px at 1.3-1.6 px/tick, still covering the
 // +-1 px stair-snap offset class). It was 2.5 and a DELTA record then
 // re-matched the NEXT tick's transition too: applied every tick it kept the
@@ -130,11 +151,24 @@ inline bool nearDynObject(const State& s, const StepCtx& K) {
             return true;
     return false;
 }
+// One place, so a kill hit and a delta hit cannot be counted by different
+// rules. Records the x of the first few rotated firings too: applyFixup has no
+// tick to hand and giving it one would change a signature for a census.
+inline void noteFixupFrame(const State& s) {
+    const unsigned f = (unsigned)s.frame;
+    if (f < 4) ++g_fixupHitFrame[f];
+    if (f != 0) {
+        if (g_fixupRotSeen < 8) g_fixupRotX[g_fixupRotSeen] = s.xAbs;
+        ++g_fixupRotSeen;
+    }
+}
+
 inline void applyFixup(const State& s, int input, State& c, bool& dead,
                        bool deltasToo = true) {
     if (const Fixup* f = findFixup(g_fixupKills, s, input)) {
         (void)f;
         dead = true;
+        noteFixupFrame(s);
         ++g_fixupHits;
         return;
     }
@@ -152,6 +186,7 @@ inline void applyFixup(const State& s, int input, State& c, bool& dead,
             if (f->gAfter2 != 255) c.grounded2 = f->gAfter2;
         }
         dead = false;
+        noteFixupFrame(s);
         ++g_fixupHits;
         return;
     }

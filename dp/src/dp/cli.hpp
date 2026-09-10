@@ -4095,9 +4095,20 @@ inline int cliMain(int argc, char** argv) {
                 maxAlive, capHits, capDropped, g_aliveCap);
     clearReport();
     g_outcome.capHits = capHits;
-    if (!g_fixups.empty())
+    if (!g_fixups.empty()) {
         std::printf("fixups: %lld transitions overridden this call\n",
                     g_fixupHits);
+        // ...and in which frame the overridden state was. A record's dy is
+        // GD's world dy; a rotated state's y is not on that axis. Printed
+        // whether or not any rotated hit occurred, because "the path exists
+        // and never fired" is the answer this was built to be able to give.
+        std::printf("fixupframe: f0=%lld f1=%lld f2=%lld f3=%lld rotated=%d",
+                    g_fixupHitFrame[0], g_fixupHitFrame[1],
+                    g_fixupHitFrame[2], g_fixupHitFrame[3], g_fixupRotSeen);
+        for (int i = 0; i < g_fixupRotSeen && i < 8; ++i)
+            std::printf(" x=%.1f", g_fixupRotX[i]);
+        std::printf("\n");
+    }
     // The reference watch's verdict. Printed whether or not it was lost: a run
     // that carried the reference all the way is the negative control, and it has
     // to be as visible as a loss or the instrument only ever speaks when it has

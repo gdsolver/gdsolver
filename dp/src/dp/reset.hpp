@@ -176,6 +176,8 @@ inline void resetInvocationState() {
     g_fixupKills.clear();
     g_fixupDeltas.clear();
     g_fixupHits = 0;
+    for (int i = 0; i < 4; ++i) g_fixupHitFrame[i] = 0;
+    g_fixupRotSeen = 0;
 
     // frames.hpp
     g_rotTrig.clear();
