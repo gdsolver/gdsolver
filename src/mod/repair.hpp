@@ -1557,7 +1557,12 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         if (!f) return FixupIoError;
         f << line << "\n";
     }
-    char b[600];
+    // 800, not 600: the line now carries e2 (48) + gd (128) + md (224) of named
+    // tails on top of its own text, and snprintf truncates in silence. What it
+    // would cut is the END -- the md tail, i.e. exactly the fields a family is
+    // spelled from -- so an overflow here would not look like an overflow. It
+    // would look like `mfam` quietly going missing on the longest records.
+    char b[800];
     // Both lines carry the second body's error too, for the same reason the test above now
     // consults it: `err 0.000/0.000` next to a record that was decided by a body those two
     // numbers do not describe is how this went unread for a day.
@@ -1597,10 +1602,39 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // (archive_dy_census.py:22, fixup_bias_census.py:44) and an insertion
         // would drop their rows in silence. dp made the same choice for
         // `,dual2=` and gives the reason at cli.hpp:549.
-        char gd[64] = "";
-        snprintf(gd, sizeof(gd), " gdg=%d gdm=%d gdgo=%d gdmo=%d",
+        // ...and WHAT GD WAS RESTING ON, which is the half a family cannot see.
+        //
+        // A family is spelled from the MODEL's row: `clamp` and `clampuid` below
+        // come from the model's own trace, and GD contributes only onGround and
+        // mode. So a transition where GD was held against something and the
+        // model thought it was in free air is spelled `/air` -- the family names
+        // the model's story about the tick and has no room for the game's. That
+        // makes "no clamp-bearing family in this run" ambiguous between "no such
+        // divergence happened" and "the contact was on GD's side", which is the
+        // half the family cannot express. Measured 2026-09-11: 8 of the run's 69
+        // records carry a model-side clamp, and nothing in the log could say how
+        // many carried a game-side one.
+        //
+        // NOT NAMED `gdclamp`. GD has no clamp: it has `m_objectSnappedTo` and
+        // `m_snapDistance` (recorded raw at :183), which answer "the game placed
+        // the player against object U, by D px". Calling that a clamp would put
+        // the model's concept in the game's mouth and the name would then be
+        // read as agreement between two things that were never compared.
+        //
+        // From gCur, not gPrev: the snap happens inside the step, the same
+        // reason `clamp` below is read from the next row. -1 = no row (a kill)
+        // or nothing snapped, and those two are already distinguished by gdgo.
+        //
+        // PRINTED LINE ONLY. The record written to g_fixupPath keeps its format:
+        // two readers key on adjacency there (archive_dy_census.py:22,
+        // fixup_bias_census.py:44) and dp/fixup.hpp parses it, while this line's
+        // readers all match by name.
+        char gd[128] = "";
+        snprintf(gd, sizeof(gd), " gdg=%d gdm=%d gdgo=%d gdmo=%d"
+                 " gdsnap=%d gdsnapd=%.2f",
                  gPrev->onGround, gPrev->mode,
-                 gCur ? gCur->onGround : -1, gCur ? gCur->mode : -1);
+                 gCur ? gCur->onGround : -1, gCur ? gCur->mode : -1,
+                 gCur ? gCur->snapUid : -1, gCur ? gCur->snapDist : 0.f);
         // ...and the MODEL's half, which is the rest of what a family is spelled
         // out of. GD's four above are only one side of cause_of; without these a
         // family still cannot be named, and the trace they come from is deleted
