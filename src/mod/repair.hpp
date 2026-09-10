@@ -630,6 +630,49 @@ inline bool rotQueueRequested() {
     return false;
 }
 
+// Forward: the seed producer below needs the world arguments, and addWorldArgs
+// needs rotQueueRequested, which is declared above it.
+inline void addWorldArgs(std::vector<std::string>& a);
+
+// The rotation queue's cursor at an anchor, as a ready-made --startrotq.
+//
+// WHY A WHOLE EXTRA REPLAY. The cursor is State::rotSpent / rotChan / rotRev,
+// and the only honest way to know them at t0 is to walk the plan from t=0 with
+// the queue running. The cheap alternative is next door -- spentRotArg already
+// walks the recording from t=1 to t0 -- but it infers a firing from a CHANGE IN
+// gframe, and an entry that rotates nothing changes no frame: on lv22 that is
+// the ten 2899s (consumed for the cursor, gated out of the work by `e.id ==
+// 2900`) plus the one channel-only 2900, so 11 of 30 are invisible to it.
+// rotSpent is a popcount cursor, so missing entries do not degrade the seed,
+// they point it at the wrong queue index -- "a state that looks anchored and is
+// not", which is the failure --startrotq exists to prevent (cli.hpp).
+//
+// The walk must itself pass --rotqueue: rotSpent is only written inside
+// step.hpp:361's gate, so a walk without it returns a cursor of zero and the
+// seed would be confidently empty.
+//
+// COST is why this sits behind the same gate as everything else here: one extra
+// replay per re-anchor, and the loop is already dominated by dp calls. With no
+// --rotqueue in the cfg the function returns before building anything, so the
+// default arm pays nothing and issues no call.
+inline std::string startRotQArg(long long t0) {
+    if (!rotQueueRequested() || t0 <= 0) return "";
+    std::error_code ec;
+    if (!std::filesystem::exists(g_planPath, ec)) return "";
+    std::vector<std::string> a{"--replay", g_planPath,
+                               "--seeddump", std::to_string(t0),
+                               "--out", std::string(DATA_DIR) + "/dp_seedq",
+                               "--cap", std::to_string(kCap),
+                               "--shipyq", num(kYq), "--shipvq", num(kVq),
+                               "--threads", kThreads};
+    addWorldArgs(a);
+    for (const std::string& s : g_cfg.dpArgs) a.push_back(s);
+    dpbridge::solveInProcess(g_csv, a);
+    // Read it out NOW: the caller's own solve runs through the same globals and
+    // overwrites the outcome.
+    return dpbridge::outcome().seedRotQ;
+}
+
 inline void addWorldArgs(std::vector<std::string>& a) {
     std::error_code ec;
     // ...and where the moving parts of it were. The static table holds their positions at level
@@ -1478,6 +1521,15 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
         // wired it. Anchored calls only -- a from-head solve estimating from
         // its own plan keeps the crossing rule.
         if (!g_rotObjs.empty()) a.push_back("--trigraw");
+        // ...and, when the queue is the mechanism rather than the pre-queue
+        // selection, its cursor as well. --spentrot above seeds the ONE-SHOTS;
+        // this seeds WHICH QUEUE ENTRIES the walk had already consumed, plus
+        // the active channel and its reverse bits. They are different subsystems
+        // seeded from different sources -- the recording for one, a model walk
+        // for the other (see startRotQArg) -- and only the second is gated,
+        // because only it costs a call.
+        const std::string sq = startRotQArg(t0);
+        if (!sq.empty()) { a.push_back("--startrotq"); a.push_back(sq); }
     }
     std::error_code ec;
     if (std::filesystem::exists(g_fixupPath, ec)) {
@@ -1940,6 +1992,10 @@ inline bool runLadder(long long dt) {
             // ...and the recording's trigger ticks in rotated territory
             // (--trigraw; same wiring as the fixup resim above)
             if (!g_rotObjs.empty()) a.push_back("--trigraw");
+            // ...and the queue's cursor, when the queue is what consumes the
+            // rotations (same wiring and same gate as the fixup resim above).
+            const std::string sq = startRotQArg(t0);
+            if (!sq.empty()) { a.push_back("--startrotq"); a.push_back(sq); }
         }
         a.push_back("--start");
         a.push_back(arg);
