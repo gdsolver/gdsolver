@@ -3,6 +3,29 @@
 
 namespace dp {
 
+// ---- WHICH LINE LAST WROTE c.vy ------------------------------------------
+//
+// Twice now a value read off a fixup record has been blamed on a site chosen
+// for having the right shape, and twice the arithmetic killed it (the downhill
+// release at :8255 and the robot jump at :3209). Choosing is the weak step, so
+// stop choosing: let the writer name itself.
+//
+// AS AN LVALUE WRAPPER, NOT AN EXTRA STATEMENT. Appending `VYW();` after each
+// assignment would silently change every braceless `if (cond) c.vy = X;` into a
+// conditional assignment followed by an unconditional call -- and it would
+// still compile, still leave c.vy correct, and still pass a byte-identical
+// record comparison. C++ keeps the comma operator's right operand an lvalue, so
+//     VYSET(c.vy) = expr;
+// is the same single statement it always was, whatever surrounds it and however
+// many lines the right-hand side spans.
+//
+// __LINE__ rather than a hand-kept id table: a table is a second copy of the
+// truth and drifts from it. Line numbers are resolved by quoting the commit.
+inline int g_vyWriter = 0;      // __LINE__ of the last write this tick
+inline int g_vyWrites = 0;      // how many writes this tick -- see below
+inline long long g_vyWatchT = -1;   // --vywriter <t>: report only this tick
+#define VYSET(x) (::dp::g_vyWriter = __LINE__, ++::dp::g_vyWrites, (x))
+
 struct StepCtx {
     double x, xPrev;
     float dxF;         // this layer's per-tick x advance (see advanceX)
@@ -673,7 +696,7 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
         // and two force boxes). If a tick ever carries both, this is where to
         // look.
         if (nflip >= 0 && !g_noRot2900Halve && (uint8_t)nflip != c.flip)
-            c.vy = (float)((double)c.vy * 0.5);
+            VYSET(c.vy) = (float)((double)c.vy * 0.5);
         if (nflip >= 0) c.flip = (uint8_t)nflip;
         return nf;
     }
@@ -730,7 +753,7 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
     if (((ef0 ^ enf) & 1) != 0) {
         double vyGd = (double)rotModY * std::fabs(dxUsed) / 0.25;
         if (rotOvr) vyGd = (double)rotModY;   // absolute assignment (no example in lv22)
-        c.vy = (float)(vyGd * (enf == 3 ? -1.0 : 1.0));
+        VYSET(c.vy) = (float)(vyGd * (enf == 3 ? -1.0 : 1.0));
     }
     // [2026-08-21 r52] Carry "the tick the frame changed" one tick forward
     // (see the note on State::frameChg. The rotation hits **after** stepOne, so an
@@ -819,7 +842,7 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
                 const double gs = c.flip ? -1.0 : 1.0;
                 c.y = (float)bestY;
                 c.flip = c.flip ? 0 : 1;
-                c.vy = (float)(1.0 * gs);   // the teleport's own +-1.000
+                VYSET(c.vy) = (float)(1.0 * gs);   // the teleport's own +-1.000
                 c.grounded = 1;
                 c.snapObj = nullptr;
             }
@@ -883,6 +906,12 @@ inline bool portalOnFrameRotTrigger(const Obj& p, int frame) {
 // way for the same reason.
 inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                      bool* linkFlip = nullptr) {
+    // Per STEP, not per tick: the search runs many states through the same tick,
+    // and a counter carried between them would report whichever ran last. Zeroed
+    // here so `g_vyWrites == 0` means this step wrote vy nowhere -- which is a
+    // distinct answer from "wrote it once".
+    g_vyWriter = 0;
+    g_vyWrites = 0;
     State c = s;
     // The no-control window (id 2899 / GameOptionsTrigger; history at the
     // declaration of g_ctrlWin). **Only the button fails to reach the physics**;
@@ -1414,7 +1443,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         const double dy = dyDir * useDx * waveSlope;
         c.y = (float)((double)s.y + dy);
         yFree = c.y;
-        c.vy = (float)(dyDir * useDx * 4.0);
+        VYSET(c.vy) = (float)(dyDir * useDx * 4.0);
         c.held = (uint8_t)input;
         c.grounded = 0;
         // SPRITE ROTATION. The dart eases toward the angle it is travelling at,
@@ -1459,10 +1488,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         (long long)K.t, x, (double)c.y, (double)s.bandFloor,
                         (double)s.bandCeil, yMaxW);
         if ((double)c.y > yMaxW) {
-            c.y = (float)yMaxW; c.vy = 0; c.grounded = 1; CLAMP0("wave/ceil");
+            c.y = (float)yMaxW; VYSET(c.vy) = 0; c.grounded = 1; CLAMP0("wave/ceil");
         }
         if ((double)c.y < bFloor + wClamp) {
-            c.y = (float)(bFloor + wClamp); c.vy = 0; c.grounded = 1;
+            c.y = (float)(bFloor + wClamp); VYSET(c.vy) = 0; c.grounded = 1;
             CLAMP0("wave/floor");
         }
         if (c.y > g_yBound) DIE("wave/out-of-play", nullptr);
@@ -1558,7 +1587,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // ...and the push-out, once every object has had its say (see waveSeat).
         if (!dead && waveSeat > -1e17) {
             c.y = (float)waveSeat;
-            c.vy = 0;
+            VYSET(c.vy) = 0;
             c.grounded = 1;
             CLAMP0("wave/slide");
         }
@@ -2362,7 +2391,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 const double bTap =
                     ballFlipFor(useDx) * (c.mini ? kMiniImpulse : 1.0)
                     + bBonus;
-                c.vy = (float)(-bTap * (c.flip ? -1.0 : 1.0));
+                VYSET(c.vy) = (float)(-bTap * (c.flip ? -1.0 : 1.0));
                 // --slopedbg: the tap's own inputs. Without them "the model
                 // wrote -1.713" cannot be told from "some other branch wrote
                 // -1.713", and the value does not factor by inspection: at
@@ -2608,7 +2637,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 yFree = c.y;
             }
         }
-        if (!ballFlipped) c.vy = (float)(vpNew * gsign);
+        if (!ballFlipped) VYSET(c.vy) = (float)(vpNew * gsign);
         // [2026-08-19 D9, REMOVED 2026-09-03] `if (s.pBallOff && c.mode == 2)
         // c.vy = -1.000 * gsign;` used to sit here -- the tick after a ball left
         // its face through a gravity flip in a rotated frame. The game has no
@@ -2667,7 +2696,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const double moved = (double)c.y - (double)s.y;
             if (std::fabs(sep) < 2.0 * pHalf + 5.0 && moved * sep < 0.0) {
                 c.flip = (sep > 0.0) ? 1 : 0;
-                c.vy = (sep > 0.0) ? 2.0f : -2.0f;
+                VYSET(c.vy) = (sep > 0.0) ? 2.0f : -2.0f;
                 c.grounded = 0;
             }
         }
@@ -2679,7 +2708,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         bool groundedInvCeil = false;
         if (c.flip && (double)c.y + pHalf >= pCeil) {
             c.y = (float)(pCeil - pHalf);
-            c.vy = 0; CLAMP0("ground/flipceil");
+            VYSET(c.vy) = 0; CLAMP0("ground/flipceil");
             c.grounded = 1;
             groundedInvCeil = true;
             // GD runs buttons AFTER the collision pass, so a ball that
@@ -2694,7 +2723,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 impulsedThisTick = true;
                 ballFlippedThisTick = true;
                 c.flip = 0;
-                c.vy = (float)(-ballFlipFor(useDx)
+                VYSET(c.vy) = (float)(-ballFlipFor(useDx)
                                * (c.mini ? kMiniImpulse : 1.0));
                 c.grounded = 0;
             }
@@ -2714,7 +2743,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // far above band 387, and without this it gets sucked to 372.
         else if (!c.flip && (double)c.y + pHalf >= pCeil && c.vy > 0) {
             c.y = (float)(pCeil - pHalf);
-            c.vy = 0; CLAMP0("ground/ceilblock");
+            VYSET(c.vy) = 0; CLAMP0("ground/ceilblock");
         }
         // GD's ground plane blocks the player from BELOW whatever its gravity is:
         // an inverted mini ship flown downward is stopped at 99.000 and held there
@@ -2803,7 +2832,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 return c;
             }
             c.y = (float)(floorHere + pHalf);
-            c.vy = 0; CLAMP0("ground/floor");
+            VYSET(c.vy) = 0; CLAMP0("ground/floor");
             // only an upright player RESTS on it; a flipped one is merely
             // blocked and drifts back up under its own gravity, which is what
             // GD's two ticks of vy = 0 then +0.122 show.
@@ -2822,7 +2851,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 && !impulsedThisTick) {
                 impulsedThisTick = true;
                 const CubePhys jph = cubePhysFor(useDx);
-                c.vy = (float)(jph.jump
+                VYSET(c.vy) = (float)(jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                * kRobotJumpScale);
                 c.rHover = (uint8_t)kRobotHoverTicks;
@@ -2841,7 +2870,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 impulsedThisTick = true;
                 ballFlippedThisTick = true;
                 c.flip = 1;
-                c.vy = (float)(ballFlipFor(useDx)
+                VYSET(c.vy) = (float)(ballFlipFor(useDx)
                                * (c.mini ? kMiniImpulse : 1.0));
                 c.grounded = 0;
             }
@@ -3132,7 +3161,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // WHAT the player had landed on. Both halves are the instrument,
                 // not the physics: the label and the uid are what `cause_of`
                 // signs a family with.
-                c.vy = 0; CLAMP0O("solid/land", o);
+                VYSET(c.vy) = 0; CLAMP0O("solid/land", o);
                 c.grounded = 1;
                 // GD runs buttons AFTER the collision pass, so a ball that
                 // LANDS on the press tick flips on that very tick. The input
@@ -3159,7 +3188,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                              c.mini != 0)
                                  / slopeExitVy(0.5, 2, useDx, c.mini != 0))
                         : 0.0;
-                    c.vy = (float)(-(ballFlipFor(useDx) + cornerBonus)
+                    VYSET(c.vy) = (float)(-(ballFlipFor(useDx) + cornerBonus)
                                    * (c.mini ? kMiniImpulse : 1.0)
                                    * (c.flip ? -1.0 : 1.0));
                     c.grounded = 0;
@@ -3206,7 +3235,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         vj *= kRobotJumpScale;
                         c.rHover = (uint8_t)kRobotHoverTicks;
                     }
-                    c.vy = (float)(vj * (c.flip ? -1.0 : 1.0));
+                    VYSET(c.vy) = (float)(vj * (c.flip ? -1.0 : 1.0));
                     c.grounded = 0;
                 }
             } else if (!o->oneway) {
@@ -3263,7 +3292,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         && std::fabs(xPrev - o->cx) > o->hw + pHalf;
                     if (xEntered && yPenB > 0.0 && yPenB < pHalf * 0.5) {
                         c.y = (float)(headB - pHalf);
-                        c.vy = 0; CLAMP0O("ball/headbonk", o);
+                        VYSET(c.vy) = 0; CLAMP0O("ball/headbonk", o);
                         c.grounded = 0;
                         continue;
                     }
@@ -3433,7 +3462,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             c.flip = (uint8_t)!s.flip;
                             const double g2 = c.flip ? -1.0 : 1.0;
                             c.y = (float)(head + g2 * pHalf);
-                            c.vy = 0; CLAMP0O("cube/fliphead", o);
+                            VYSET(c.vy) = 0; CLAMP0O("cube/fliphead", o);
                             c.grounded = 1;
                             c.ceilPin = 0;
                             // every gravity flip negates the cube's spin
@@ -3443,13 +3472,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // plain bonk: stops but does not grab (note at the declaration above)
                         if (bonk && !held && !acquire) {
                             c.y = (float)(head - gsign * pHalf);
-                            c.vy = 0; CLAMP0O("cube/headbonk", o);
+                            VYSET(c.vy) = 0; CLAMP0O("cube/headbonk", o);
                             c.grounded = 0;
                             c.ceilPin = 0;
                             continue;
                         }
                         c.y = (float)(head - gsign * pHalf);
-                        c.vy = 0; CLAMP0O("cube/ceilstop", o);
+                        VYSET(c.vy) = 0; CLAMP0O("cube/ceilstop", o);
                         c.grounded = 1;
                         c.ceilPin = 1;
                         continue;
@@ -3687,7 +3716,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                               forceUnitFor(s.mode, useDx)) * gdSign > kSwingG;
         if (groundedNow && !act && !(isSwing && s.rHover) && !swingLift
             && !ridingCarry) {
-            c.vy = 0;
+            VYSET(c.vy) = 0;
             c.grounded = 1;
             // the ride: seat on the moved face (cube family's rule, same
             // ordering -- the carry happens in the collision pass)
@@ -3787,7 +3816,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const bool ceilTakeoff = s.rHover && groundedNow && s.flip;
             if (ceilTakeoff) {
                 vpS = -1.0;                    // no gravity step on this tick
-                c.vy = (float)(qVy(vpS) * gsS);
+                VYSET(c.vy) = (float)(qVy(vpS) * gsS);
                 c.y = s.y;
                 yFree = c.y;
             } else {
@@ -3842,7 +3871,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                     forceUnitFor(s.mode, useDx));
                     if (fb != 0.0) { vyW = qVy(vyW + fb); vpS = vyW * gsS; }
                 }
-                c.vy = (float)vyW;
+                VYSET(c.vy) = (float)vyW;
                 c.y = (float)((double)s.y + kYScale * (double)c.vy * tScale);
                 yFree = c.y;
             }
@@ -3943,7 +3972,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             if (!g_noUfoRampFlap && isUfo && act && s.onSlope && !c.mini
                 && fbAcc == 0.0)
                 vpNew = kUfoRampFlap;
-            c.vy = (float)(vpNew * gsign);
+            VYSET(c.vy) = (float)(vpNew * gsign);
             c.y = (float)((double)s.y + kYScale * (double)c.vy);
             yFree = c.y;
             // [2026-08-21 r86] **The flight modes also carry over "the half gravity
@@ -4004,7 +4033,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     c.grounded = 1;
                     const double floorVel = flyRideDcy / 0.25;
                     if ((double)c.vy * gsign < floorVel * gsign)
-                        c.vy = (float)floorVel;
+                        VYSET(c.vy) = (float)floorVel;
                 }
             }
         }
@@ -4032,7 +4061,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         if (c.frame == 0
             && !c.grounded && c.y <= floorY + pHalf && c.vy <= 0) {
             c.y = (float)(floorY + pHalf);
-            c.vy = 0; CLAMP0("fly/bandfloor");
+            VYSET(c.vy) = 0; CLAMP0("fly/bandfloor");
             if (!c.flip) c.grounded = 1;
         } else if (c.frame == 0 && btFlyOn && !c.flip && s.grounded
                    && c.y < floorY + pHalf) {
@@ -4139,7 +4168,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // 416.769 and keeps climbing with no clamp of any kind. With the clamp
         // on, the model pinned it and lost 5 px within four ticks.
         if (c.frame == 0 && c.mode != 7 && (double)c.y > yMax) {
-            c.y = (float)yMax; c.vy = 0; CLAMP0("fly/bandceil");
+            c.y = (float)yMax; VYSET(c.vy) = 0; CLAMP0("fly/bandceil");
         }
         // In a rotated frame `c.y` is the frame's vertical (= derived from world x),
         // while floorY and g_yBound are world-y quantities, so this comparison is
@@ -4339,7 +4368,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 (double)c.vy,
                                 surfVp > (double)c.vy * gsign ? 1 : 0);
                 if (surfVp > (double)c.vy * gsign) {
-                    c.vy = (float)(surfVp * gsign);
+                    VYSET(c.vy) = (float)(surfVp * gsign);
                     CLAMP0O("fly/mpush", o);
                 }
                 continue;
@@ -4432,7 +4461,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 landedThisTick = true;
                 c.y = (float)(face + gsL * pHalf);
                 if (vpL <= 0) {
-                    c.vy = 0; CLAMP0O("fly/land", o);
+                    VYSET(c.vy) = 0; CLAMP0O("fly/land", o);
                 } else {
                     // A rising floor RE-CATCHING a climbing ship (overtaking:
                     // the face gains on the foot) is not a landing -- it
@@ -4449,7 +4478,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                     (double)c.vy,
                                     (double)c.vy * gsL < fv * gsL ? 1 : 0);
                     if ((double)c.vy * gsL < fv * gsL)
-                        c.vy = (float)fv;
+                        VYSET(c.vy) = (float)fv;
                 }
                 c.grounded = 1;
             } else if (o->oneway && !c.flip) {
@@ -4602,9 +4631,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // lv20, and this site decides on no other level, so that is the
                 // whole corpus. Not worth the cold. Left as a leaf.
                 if (flyMode && o->dcy != 0.0)
-                    c.vy = (float)((double)o->dcy / 0.25);
+                    VYSET(c.vy) = (float)((double)o->dcy / 0.25);
                 else
-                    c.vy = 0;
+                    VYSET(c.vy) = 0;
                 CLAMP0O("fly/ceilride", o);
             // SWING PUSH-OUT. A swing that merely CLIPS a solid is not killed:
             // GD shoves it out along y to the nearer face, keeps vy and sets
@@ -5826,7 +5855,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // lv19 5,465: vy 8.000 -> 0.000 on the seat tick, then
                         // plain gravity -0.069 / -0.138 once the press ends.
                         if (seatU) {
-                            if ((double)c.vy > 0.0) c.vy = 0;
+                            if ((double)c.vy > 0.0) VYSET(c.vy) = 0;
                             // ...and GD clears m_isOnGround / m_isOnGround2 on
                             // the underside branch. It does NOT call hitGround,
                             // so nothing here lands.
@@ -5938,14 +5967,14 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                                         sp->slopeDir, c.mode,
                                                         input);
                             if (vN != c.vy) {
-                                c.vy = vN;
+                                VYSET(c.vy) = vN;
                                 CLAMP0O("slope/upceil", sp);
                             }
                         } else {
                             const double vClampU = (c.mode == 6) ? 0.0 : -2.0;
                             if (dirU < 0.0 && (freshU || holdRelU)
                                 && (double)c.vy > vClampU) {
-                                c.vy = (float)vClampU;
+                                VYSET(c.vy) = (float)vClampU;
                                 CLAMP0O("slope/upceil", sp);
                             }
                         }
@@ -6157,11 +6186,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 && slopeSkipsHitGround(c.flip != 0,
                                                        sp->slopeDir, c.mode,
                                                        input)) {
-                                c.vy = slopeNudge(c.vy, c.flip != 0,
+                                VYSET(c.vy) = slopeNudge(c.vy, c.flip != 0,
                                                   sp->slopeDir, c.mode, input);
                                 flyHangRide = true;
                             } else if (nudgeHere && contH) {
-                                c.vy = 0.f;       // V1, hitGround @0x39c164
+                                VYSET(c.vy) = 0.f;       // V1, hitGround @0x39c164
                                 flyHangRide = true;
                             } else if (nudgeHere) {
                                 // nothing to continue: the generic clamp below
@@ -6169,7 +6198,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 const double dirH =
                                     (m * (double)useDx >= 0.0) ? 1.0 : -1.0;
                                 if (!(contH && s.vy != 0.0f))
-                                    c.vy = (float)(2.0 * dirH);
+                                    VYSET(c.vy) = (float)(2.0 * dirH);
                                 flyHangRide = true;
                             } else if ((c.mode == 1 || c.mode == 3)
                                        && !input && contH) {
@@ -6177,7 +6206,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 // continuation** -- a craft falling from above
                                 // through the line (lv21 t=19,837's vy=-9.884)
                                 // has s.onSlope unset, so as before.
-                                c.vy = 0.f;
+                                VYSET(c.vy) = 0.f;
                                 flyHangRide = true;
                             }
                             if (!flyHangRide
@@ -6185,7 +6214,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                     || ((c.mode == 2 || c.mode == 1
                                          || c.mode == 3)
                                         && c.frame == 0))
-                                && (double)c.vy > 0.0) c.vy = 0.f;
+                                && (double)c.vy > 0.0) VYSET(c.vy) = 0.f;
                             // ...and GD calls that STANDING (onGround=1 at
                             // t=4,636, then a jump at vy=-2.390). The flag only
                             // survives if the ramp is remembered too -- the
@@ -6476,13 +6505,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 // ramp uid7606, GD sets -2.000), is a released
                                 // tick, so it survives the change.
                                 if (!g_noSlopeNudge && slopeNudgeMode(c.mode)) {
-                                    c.vy = slopeNudge(0.f, c.flip != 0,
+                                    VYSET(c.vy) = slopeNudge(0.f, c.flip != 0,
                                                       sp->slopeDir, c.mode,
                                                       input);
                                 } else {
                                     const double dir =
                                         (m * (double)useDx >= 0.0) ? 1.0 : -1.0;
-                                    c.vy = (c.mode == 1 && dir < 0.0)
+                                    VYSET(c.vy) = (c.mode == 1 && dir < 0.0)
                                                ? (float)(2.0 * dir) : 0.f;
                                 }
                                 CLAMP0("slope/ceillim");
@@ -6521,7 +6550,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             // at some other speed is unmeasured. Speed/mini
                             // scaling UNVERIFIED (all measurements are sp1.1
                             // full-size).
-                            c.vy = -2.762f;
+                            VYSET(c.vy) = -2.762f;
                         }
                         // ...and this ramp is now DONE with this player. The
                         // ride below must not run: its `insideSolid` branch
@@ -6575,7 +6604,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             (long long)K.t, x, sp->uid,
                                             cyE + pH, d);
                             c.y = (float)(cyE + pH);
-                            c.vy = 0; c.grounded = 1;
+                            VYSET(c.vy) = 0; c.grounded = 1;
                             continue;
                         }
                     }
@@ -7461,7 +7490,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             (long long)K.t, x, sp->uid,
                                             rTop, top);
                             c.y = (float)rTop;
-                            c.vy = 0; c.grounded = 1;
+                            VYSET(c.vy) = 0; c.grounded = 1;
                             c.rideLanded = 1;   // as above: grounded is the landing
                             c.onSlope = 1; c.slopeM = (float)m;
                             c.slopeUid0 = s.onSlope ? s.slopeUid0 : sp->uid;
@@ -7669,16 +7698,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     if (!g_noSlopeNudge && slopeNudgeMode(c.mode)) {
                         const double gsN = c.flip ? -1.0 : 1.0;
                         if (slopeUnderside(c.flip != 0, sp->slopeDir)) {
-                            if (gsN * (double)c.vy > 0.0) c.vy = 0.f;   // V3
-                            c.vy = slopeNudge(c.vy, c.flip != 0, sp->slopeDir,
+                            if (gsN * (double)c.vy > 0.0) VYSET(c.vy) = 0.f;   // V3
+                            VYSET(c.vy) = slopeNudge(c.vy, c.flip != 0, sp->slopeDir,
                                               c.mode, input);
                         } else if (slopeSkipsHitGround(c.flip != 0,
                                                        sp->slopeDir, c.mode,
                                                        input)) {
-                            c.vy = slopeNudge(c.vy, c.flip != 0, sp->slopeDir,
+                            VYSET(c.vy) = slopeNudge(c.vy, c.flip != 0, sp->slopeDir,
                                               c.mode, input);
                         } else {
-                            c.vy = 0.f;                                 // V1
+                            VYSET(c.vy) = 0.f;                                 // V1
                         }
                     } else if (c.mode == 1 && input) {
                         // [2026-08-24] ...and the ladder is MIRRORED BY GRAVITY. A ship's
@@ -7703,7 +7732,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // The ladder's entry is "carried is 0" = was not pressing
                         // until just now (same shape as the swing's walkIn0
                         // keying continuation on vy==0)
-                        c.vy = (s.onSlope && c.slopeM == (float)m
+                        VYSET(c.vy) = (s.onSlope && c.slopeM == (float)m
                                 && s.vy != 0.0f)
                                    ? (float)qVy((double)s.vy + kShipRampG * dir)
                                    : (float)(2.0 * dir);
@@ -7772,7 +7801,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                                       forceUnitFor(s.mode, useDx))
                                                   * (s.flip ? -1.0 : 1.0)
                                               > kSwingG));
-                        c.vy = walkIn0
+                        VYSET(c.vy) = walkIn0
                                    ? 0.0f
                                    : (s.onSlope && c.slopeM == (float)m)
                                    ? (float)qVy((double)s.vy + gRide * dir)
@@ -7805,7 +7834,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // ridesTop=1 (the case pushed out onto a floor ramp's top
                     // face by r60's hatch).
                     } else if (!(flipForRide && ridesTop)) {
-                        c.vy = 0;
+                        VYSET(c.vy) = 0;
                     }
                     // CONTACT IS NOT LANDING. collidedWithSlopeInternal does
                     // setPosition(x, targetY) @0x39074a and m_isOnSlope = 1
@@ -7858,7 +7887,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         !g_noSlopeNudge && slopeNudgeMode(c.mode)
                         && slopeUnderside(c.flip != 0, sp->slopeDir);
                     if (!rideLands && !undoneBySide)
-                        c.vy = vyPreRide;               // 0x3907dd's restore
+                        VYSET(c.vy) = vyPreRide;               // 0x3907dd's restore
                     // ...and **it is not grounded either**. GD's onGround stays 0
                     // throughout this ride (the measurement table above, every
                     // tick of 8,227..8,235). Setting it lets the next tick's
@@ -8174,7 +8203,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // rider on a floor ramp's TOP leaves upward exactly as an upright one
             // does. lv22 t=3,806 measures it: GD emits **+6.906**, and keyed on
             // the flip alone the model emitted -6.906 (dvy -13.812).
-            c.vy = (float)(((c.flip && rodeCeil) ? -1.0 : 1.0)
+            VYSET(c.vy) = (float)(((c.flip && rodeCeil) ? -1.0 : 1.0)
                            * slopeExitVy(std::fabs((double)s.slopeM), c.mode,
                                          useDx, c.mini != 0)
                            * slopeRampFactor((int)s.slopeT + 1));
@@ -8252,7 +8281,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // breaks two rows that are currently exact. The asymmetry is the
             // mechanism: the ramp scales an IMPULSE, and this branch stamps a
             // carried face velocity (dcy/0.25), which is not one.
-            c.vy = (float)(mTravel * std::fabs((double)K.dxF) / 0.25);
+            VYSET(c.vy) = (float)(mTravel * std::fabs((double)K.dxF) / 0.25);
             // THE TWO INPUTS, because the value they produce has been read off a
             // fixup record and could not be checked against them.
             //
@@ -8875,7 +8904,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // with coasting everywhere (alive=1) and the frontier died in
                 // the spike V at x=13,330. UNVERIFIED: tpGrav==2/3 (no
                 // instance in lv1-22), mini scaling, non-cube modes.
-                if (p->tpGrav == 1) c.vy = 18.0f;
+                if (p->tpGrav == 1) VYSET(c.vy) = 18.0f;
             } else {
                 // The 2902 family carries vy through flipGravity instead:
                 // *0.5 when gravity actually changes (PlayerObject::flipGravity
@@ -8898,7 +8927,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         vTp = (s.flip ? 1.0 : -1.0)
                             * std::fabs(cubePhysFor(useDx).g);
                 }
-                c.vy = (float)(gravChanged ? vTp * 0.5 : vTp);
+                VYSET(c.vy) = (float)(gravChanged ? vTp * 0.5 : vTp);
             }
             // `portfire` below CANNOT SEE THIS BRANCH -- it sits after the
             // `continue`, so every teleport is invisible to it while ordinary
@@ -9356,7 +9385,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             halves ? 1 : 0, isGrav ? 1 : 0, flyEnds,
                             portalScale, vAtPortal, (double)c.vy,
                             halves ? vAtPortal * portalScale : (double)c.vy);
-            if (halves) c.vy = (float)(vAtPortal * portalScale);
+            if (halves) VYSET(c.vy) = (float)(vAtPortal * portalScale);
             if (isGrav) {
                 // r101: both bodies in the same box = flipGravity twice -> up
                 // round-trips back to what it was.
@@ -9446,7 +9475,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     const double gMag =
                         (c.mode == 6) ? -kBallG
                         : (((double)useDx > 1.78) ? 0.195 : 0.194);
-                    c.vy = (float)(0.5 * gMag);
+                    VYSET(c.vy) = (float)(0.5 * gMag);
                     c.y = (float)((double)c.y + 0.225 * gMag);
                 }
                 // [2026-08-21 r76] **The cube's gravity restore adds only the y
@@ -9658,7 +9687,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (oldMode == 7 && wantMode != 7 && s.onSlope) {
                     const double mTravP = (double)s.slopeM
                         * (((double)K.dxF < 0.0 || s.rev != 0) ? -1.0 : 1.0);
-                    c.vy = (float)((mTravP >= 0.0 ? 1.0 : -1.0)
+                    VYSET(c.vy) = (float)((mTravP >= 0.0 ? 1.0 : -1.0)
                                    * slopeExitVy(std::fabs((double)s.slopeM),
                                                  2, useDx, c.mini != 0)
                                    * slopeRampFactor((int)s.slopeT + 1));
@@ -9776,7 +9805,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             (long long)K.t, sp->uid, p->uid,
                                             (double)c.y, seat, nh, oh);
                             c.y = (float)seat;
-                            c.vy = 0.f;
+                            VYSET(c.vy) = 0.f;
                             c.grounded = 1;
                             break;
                         }
@@ -9897,7 +9926,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                         (double)c.y, bestFace + gs * nh,
                                         (double)c.vy, gs, (int)c.flip);
                         c.y = (float)(bestFace + gs * nh);
-                        c.vy = 0.f;
+                        VYSET(c.vy) = 0.f;
                         c.grounded = 1;
                     }
                     }
@@ -9915,7 +9944,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     const double ms = c.mini ? kMiniImpulse : 1.0;
                     if (c.mode == 0 || c.mode == 5) {  // -> cube / robot: a jump
                         const CubePhys jph = cubePhysFor(useDx);
-                        c.vy = (float)(jph.jump * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
+                        VYSET(c.vy) = (float)(jph.jump * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                        * (c.mode == 5 ? kRobotJumpScale : 1.0)
                                        * sgn);
                         c.grounded = 0;
@@ -9930,7 +9959,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         const double fp =
                             (c.mini ? gdapprox::UfoParams::mini()
                                     : gdapprox::UfoParams::normal()).flapPostVy();
-                        if ((double)c.vy * sgn < fp) c.vy = (float)(fp * sgn);
+                        if ((double)c.vy * sgn < fp) VYSET(c.vy) = (float)(fp * sgn);
                         c.grounded = 0;
                     }
                     // -> ball: NO re-issue. A ball tap only acts while
@@ -10271,7 +10300,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 c.flip = c.flip ? 0 : 1;
                 gravPadFlipped = true;
             }
-            c.vy = (float)(c.flip ? bv : -bv);
+            VYSET(c.vy) = (float)(c.flip ? bv : -bv);
         } else {
             // UNVERIFIED for the pink pad: the ball ratio (the 0.600 below is
             // the yellow pad's, measured) and the mini factor. Both are carried
@@ -10303,7 +10332,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                           : pBase * kPadYellowBall / kPadYellow)
                                        : pBase)
                               * (c.mini ? kMiniImpulse : 1.0);
-            c.vy = (float)(c.flip ? -pv : pv);
+            VYSET(c.vy) = (float)(c.flip ? -pv : pv);
             // The RED pad is the bumpPlayer type that sets the velocity-limit
             // exemption (type==34 at +0x191) where every other pad clears it.
             // kPadRed is 20, so without it the swing handed back 12 of those
@@ -10714,7 +10743,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         ((c.mode == 2) ? kOrbGravityBall : kOrbGravity)
                         * ms * gpost;
                     c.flip = c.flip ? 0 : 1;
-                    c.vy = (float)(gv * (c.flip ? 1.0 : -1.0));
+                    VYSET(c.vy) = (float)(gv * (c.flip ? 1.0 : -1.0));
                 } else if (ob->type == 37 || ob->type == 38) {
                     // DASH ring. Freezes vy and starts the straight-line
                     // travel; the ring's rotation is the angle. Every dash
@@ -10731,7 +10760,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // the display is matched.
                     g_dashVy = (double)c.vy * (ob->type == 38 ? 0.5 : 1.0);
                     g_dashVySet = 1;
-                    c.vy = 0.f;
+                    VYSET(c.vy) = 0.f;
                     c.grounded = 0;
                     if (ob->type == 38) c.flip = c.flip ? 0 : 1;
                 } else if (ob->type == 32) {
@@ -10760,7 +10789,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // returns to -15.000.
                     if ((double)c.vy * (c.flip ? -1.0 : 1.0) >= 2.0)
                         c.pNoTerm = 1;
-                    c.vy = (float)(c.flip ? dv : -dv);
+                    VYSET(c.vy) = (float)(c.flip ? dv : -dv);
                     c.grounded = 0;
                 } else if (ob->type == 43) {
                     // SPIDER ORB (GameObjectType::SpiderOrb = 43, id 3004).
@@ -10787,7 +10816,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                       nullptr, (int)c.frame)) {
                         c.y = (float)tgt;
                         c.flip = c.flip ? 0 : 1;
-                        c.vy = (float)gs;
+                        VYSET(c.vy) = (float)gs;
                         // whatever held us up is a level away now
                         c.snapObj = nullptr;
                         c.snapDist = 0.f;
@@ -10840,7 +10869,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // declaration).
                     if (green) { c.flip = c.flip ? 0 : 1; rotWriteFlip = c.flip; }
                     const double ov = kOrbYellow * r * post * ms;
-                    c.vy = (float)(c.flip ? -ov : ov);
+                    VYSET(c.vy) = (float)(c.flip ? -ov : ov);
                     // RED is one of the two ring/pad types that SET the
                     // velocity-limit exemption instead of clearing it
                     // (ringJump +0xc7a, type 35 only; every bumpPlayer orb
@@ -10897,7 +10926,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         ((c.mode == 2) ? (pink ? kOrbPinkBall : kOrbYellowBall)
                                        : (pink ? kOrbPink : kOrbYellow))
                         * ms * post * robotR;
-                    c.vy = (float)(c.flip ? -ov : ov);
+                    VYSET(c.vy) = (float)(c.flip ? -ov : ov);
                 }
                 c.grounded = 0;
                 // Same as the pad: an orb is an outside impulse, so the robot's
@@ -11579,7 +11608,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // branch" + "the portal returned upright" -- limited to the portal-order
     // hole itself.
     if (rodeFlipped && c.onSlope && !c.flip && c.flip != s.flip) {
-        c.vy = 0;
+        VYSET(c.vy) = 0;
         c.grounded = 1;
     }
     // [2026-08-21 r66] **The ceiling ramp's push-down release places vy on the
@@ -11632,7 +11661,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                                useDx, c.mini != 0)
                                    * slopeRampFactor((int)s.ceilT);
                 if ((double)c.vy > -exU) {
-                    c.vy = (float)-exU;
+                    VYSET(c.vy) = (float)-exU;
                     CLAMP0("ceil/release");
                     // [2026-09-06] ...and it sets GD's velocity-limit
                     // exemption, for the same reason the two uphill/downhill
@@ -11662,7 +11691,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // without moving y: lv21 t=16,714 stays og=0 / y=226.500 with +5.226, pushed
     // back onto the ceiling to 0 the next tick).
     if (s.pExitVy != 0.f) {
-        c.vy = s.pExitVy;
+        VYSET(c.vy) = s.pExitVy;
         c.grounded = 0;
     }
     // GD's flip stamp (player+0x800), as an age. Written by flipGravity, which

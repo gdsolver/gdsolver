@@ -305,6 +305,7 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--banddbg")) g_bandDbg = true;
         if (!std::strcmp(argv[i], "--slopedbg")) g_slopeDbg = true;
             if (!std::strcmp(argv[i], "--slopereldbg")) g_slopeRelDbg = true;
+            if (!std::strcmp(argv[i], "--vywriter") && i + 1 < argc) g_vyWatchT = std::atoll(argv[++i]);
         if (!std::strcmp(argv[i], "--dcydbg")) g_dcyDbg = true;
         // --no-slopeseat: the pre-2026-09-06 slope seat (surface sampled at an
         // x clamped into the ramp's span, plus/minus a flat player half)
@@ -2844,6 +2845,21 @@ inline int cliMain(int argc, char** argv) {
             // The state stays 0, so the trajectory is unchanged.
             const double vyGd = (g_dashVySet ? g_dashVy : (double)s.vy)
                                 * (s.frame == 3 ? -1.0 : 1.0);
+            // ...and which line of step.hpp wrote this tick's vy, when asked.
+            // Reported HERE rather than inside stepOne: this is the replay's own
+            // per-tick loop, so it fires once per tick and cannot be confused
+            // with the search running the same tick for many states.
+            //
+            // `writes` matters as much as `writer`. One write and the site is
+            // the answer; several and the last one is only the last -- reading
+            // it as "the site that decided the value" is the mistake the count
+            // is here to prevent. Zero means vy was not written this step at all
+            // and the value came from somewhere else entirely.
+            if (g_vyWatchT >= 0 && t == g_vyWatchT)
+                std::printf("vywriter: t=%lld writes=%d lastline=%d vy=%.6f "
+                            "traceVy=%.6f frame=%d mode=%d\n",
+                            (long long)t, g_vyWrites, g_vyWriter, (double)s.vy,
+                            vyGd, (int)s.frame, (int)s.mode);
             tr << t << ',' << wX << ',' << wY << ',' << vyGd << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
                << ',' << s.y2 << ',' << s.vy2 << ',' << (int)s.flip2 << ','

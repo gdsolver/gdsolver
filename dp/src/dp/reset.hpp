@@ -69,6 +69,9 @@ inline void resetInvocationState() {
     g_bandK = 0.0;
     g_slopeDbg = false;
     g_slopeRelDbg = false;
+    g_vyWatchT = -1;
+    g_vyWriter = 0;
+    g_vyWrites = 0;
     g_dcyDbg = false;
     g_bandDbg = false;
     g_spdDbg = false;
