@@ -4358,6 +4358,13 @@ inline int cliMain(int argc, char** argv) {
         g_outcome.resimWhy = rWhy;   // a string literal: static, and dp is
                                      // linked into the mod, so it outlives
                                      // the call the way the others do not
+        // The killer travels with the cause. Read from the same locals-once
+        // discipline as the counters above, and left at their reset values when
+        // the walk found nothing -- `uid=-1` is "no death here", not "unknown".
+        g_outcome.resimUid = g_resimUid;
+        g_outcome.resimObjX = g_resimObjX;
+        g_outcome.resimObjY = g_resimObjY;
+        g_outcome.resimTrig = g_resimTrig;
     }
     std::printf("plan: %d edges, %zu ticks -> %s\n", edges, lvl.size(),
                 outPath.c_str());

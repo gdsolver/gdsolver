@@ -71,6 +71,12 @@ struct SolveOutcome {
     // on the plan's own walk. -1 = the walk never ran, which is NOT zero.
     long long resimDead = -1, resimFirst = -1;
     const char* resimWhy = nullptr;   // string literal; dp is linked in here
+    // ...and the killer at that tick. A cause is a category; this is an object,
+    // so a row can be joined to the dump and to another walk's row. uid is the
+    // LEVEL's, not this build's ordinal. -1 = the walk found no death.
+    int resimUid = -1;
+    float resimObjX = 0.f, resimObjY = 0.f;
+    unsigned resimTrig = 0;
     long long replayDiedT = -1;   // --replay only: where the model died, -1 = it survived
     // Touch boxes the call required, and those the anchor already sits past. A required box
     // behind the anchor can never be entered, so the frontier is empty before the first tick --

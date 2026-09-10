@@ -1939,10 +1939,10 @@ inline bool runLadder(long long dt) {
                 // ended). The depth bar alone carries the claim.
                 || (restartScale && o.verdict == dpbridge::OutcomePartial
                     && o.deepT > 0 && o.deepX > (double)g_hudVerifiedX + 40.0));
-        // 280 before resimdie was added; snprintf truncates rather than
-        // overflows, but a truncated line would silently drop the "- doomed"
-        // tail, which is the half a reader acts on.
-        char b[352];
+        // 280 before resimdie was added, 352 before the killer was added to it;
+        // snprintf truncates rather than overflows, but a truncated line would
+        // silently drop the "- doomed" tail, which is the half a reader acts on.
+        char b[448];
         char deep[64] = "";
         if (o.deepT >= 0) snprintf(deep, sizeof(deep), " t=%lld x=%.0f", o.deepT, o.deepX);
         // capHits is reported even though nothing acts on it: it is the one number that says
@@ -1957,13 +1957,24 @@ inline bool runLadder(long long dt) {
         // plan depends on how often the model over-kills, and the whole-run
         // corpus turns out to have almost no power to measure that (19 of 22
         // levels never die at all). Counted first, decided later.
-        char rd[48] = "";
+        char rd[128] = "";
         if (o.resimDead > 0)
             // the cause travels with it: "dp said it dies and GD killed it" is
             // agreement only if they are the same death. Two deaths in
             // different places read as a model that knew something it did not.
-            snprintf(rd, sizeof(rd), " resimdie=%lld@%lld/%s", o.resimDead,
-                     o.resimFirst, o.resimWhy ? o.resimWhy : "?");
+            //
+            // ...and so does the KILLER, because the cause is a category. Every
+            // hazard on the level answers `cube/hazard`, so on the cause alone
+            // "the same object, moved" and "a different object entirely" are
+            // the same row. That is exactly the open question on lv22: the
+            // loop's walk dies at 1813 and an offline rebuild of the same solve
+            // dies at 1837, and until the rows name an object the two cannot be
+            // compared at all. stdout says it as `resimwho:`, which the mod
+            // cannot read (dp_bridge.hpp:57).
+            snprintf(rd, sizeof(rd),
+                     " resimdie=%lld@%lld/%s who=%d@(%.1f,%.1f)/0x%08x",
+                     o.resimDead, o.resimFirst, o.resimWhy ? o.resimWhy : "?",
+                     o.resimUid, o.resimObjX, o.resimObjY, o.resimTrig);
         else if (o.resimDead == 0)
             // ...and a clean walk says so. Printing nothing here would make
             // "the plan survived itself" and "this field is not wired on this

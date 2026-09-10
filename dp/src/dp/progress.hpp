@@ -70,6 +70,19 @@ struct SearchOutcome {
     long long resimDead = -1;
     long long resimFirst = -1;   // first such tick, -1 = none
     const char* resimWhy = nullptr;  // cause at that tick; a string literal
+    // ...and WHICH object, at that same tick. The cause is a category --
+    // `cube/hazard` is true of every hazard on the level -- so two walks that
+    // die at different ticks for the same reason cannot be told apart from the
+    // cause alone, and neither can "the same object, moved" be told from "a
+    // different object". That distinction is the whole question on lv20 (same
+    // mask, different position) and it is now the question on lv22, where the
+    // loop's walk dies at 1813 and a rebuild of the same solve dies at 1837.
+    // stdout already carries it as `resimwho:`, but the mod has no pipe
+    // (dp_bridge.hpp:57), so without this the loop's own rows cannot be joined
+    // to an object at all.
+    int resimUid = -1;               // the LEVEL's uid, not this build's ordinal
+    float resimObjX = 0.f, resimObjY = 0.f;
+    unsigned resimTrig = 0;          // the walk's trigger mask at that tick
     // --replay only: the tick the model died on, or -1 if it survived the plan. The fixup
     // recorder needs it for the case where the two agree all the way and only the MODEL kills:
     // there is no divergence to scan for, and the record to make is a revival of the last
@@ -86,6 +99,7 @@ struct SearchOutcome {
         verdict = VerdictFailed;
         deepT = -1; deepX = -1.0; capHits = -1; replayDiedT = -1;
         resimDead = -1; resimFirst = -1; resimWhy = nullptr;
+        resimUid = -1; resimObjX = 0.f; resimObjY = 0.f; resimTrig = 0;
         needTrigMask = 0; needTrigPassed = 0;
     }
 };

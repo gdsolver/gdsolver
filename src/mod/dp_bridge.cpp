@@ -82,6 +82,10 @@ SolveOutcome outcome() {
     o.resimDead = dp::g_outcome.resimDead;
     o.resimFirst = dp::g_outcome.resimFirst;
     o.resimWhy = dp::g_outcome.resimWhy;
+    o.resimUid = dp::g_outcome.resimUid;
+    o.resimObjX = dp::g_outcome.resimObjX;
+    o.resimObjY = dp::g_outcome.resimObjY;
+    o.resimTrig = dp::g_outcome.resimTrig;
     o.replayDiedT = dp::g_outcome.replayDiedT;
     o.needTrigMask = dp::g_outcome.needTrigMask;
     o.needTrigPassed = dp::g_outcome.needTrigPassed;
