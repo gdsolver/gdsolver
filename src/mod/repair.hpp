@@ -1183,6 +1183,14 @@ struct TraceRow {
     double dx = 0.0, slopem = 0.0, bandf = 0.0, bandc = 0.0;
     int onslope = -1, slopet = -1, nearorb = -1;
     std::string clamp, clampuid;
+    // The model's ROTATED-GAMEPLAY FRAME (trace column `frame`), -1 when the
+    // trace predates it. Not a cause_of input and deliberately NOT in kClass:
+    // adding it there would make an older trace unclassifiable over a column no
+    // family is spelled from. It is here because the recorder compares GD's
+    // world dy against this row's dy, and frames.hpp:57-59 says the model keeps
+    // its state in the CURRENT FRAME's coordinates -- so in a rotated section
+    // those two are not the same quantity, and nothing on the line said so.
+    int frame = -1;
     // Whether THIS ROW carried the classification columns. g_traceClassMissing
     // answers it for the header; a row can be short of them while the header
     // has them all, and that row must still be recorded from -- its family is
@@ -1359,6 +1367,7 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
         r.nearorb = integer(c, "nearorb");
         r.clamp = text(c, "clamp");
         r.clampuid = text(c, "clampuid");
+        r.frame = integer(c, "frame", -1);
         r.bandf = num(c, "bandf");
         r.bandc = num(c, "bandc");
         out[t] = r;
@@ -1692,12 +1701,28 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // two readers key on adjacency there (archive_dy_census.py:22,
         // fixup_bias_census.py:44) and dp/fixup.hpp parses it, while this line's
         // readers all match by name.
-        char gd[128] = "";
+        // ...and BOTH FRAMES, side by side, because the deltas above are only
+        // comparable when they agree.
+        //
+        // eDy is `dyG - (model's dy)`. GD's y is world (anchors::row fills it
+        // from PlayerObject, and :278 has to call rotUV to get frame
+        // coordinates out of it), while the model's is already in the current
+        // frame's coordinates (frames.hpp:57-59). In a rotated section those
+        // are different axes and the subtraction is meaningless -- yet nothing
+        // on the line said which frame either side was in, so a record made
+        // there looked exactly like one made anywhere else.
+        //
+        // This does NOT fix the comparison; it makes the precondition visible.
+        // Whether a given family came from a frame mismatch is then a question
+        // the log can answer instead of one needing a trace that no longer
+        // exists. -1 = the trace has no `frame` column.
+        char gd[160] = "";
         snprintf(gd, sizeof(gd), " gdg=%d gdm=%d gdgo=%d gdmo=%d"
-                 " gdsnap=%d gdsnapd=%.2f",
+                 " gdsnap=%d gdsnapd=%.2f mframe=%d gdframe=%d",
                  gPrev->onGround, gPrev->mode,
                  gCur ? gCur->onGround : -1, gCur ? gCur->mode : -1,
-                 gCur ? gCur->snapUid : -1, gCur ? gCur->snapDist : 0.f);
+                 gCur ? gCur->snapUid : -1, gCur ? gCur->snapDist : 0.f,
+                 mPrev->second.frame, gPrev->gframe);
         // ...and the MODEL's half, which is the rest of what a family is spelled
         // out of. GD's four above are only one side of cause_of; without these a
         // family still cannot be named, and the trace they come from is deleted
