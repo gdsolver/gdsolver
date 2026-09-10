@@ -173,6 +173,23 @@ inline int cliMain(int argc, char** argv) {
         // --rotqueue: consume rotations from the queue (frames.hpp) instead of
         // the pre-queue selection. Opt-in until the anchor can seed the state.
         if (!std::strcmp(argv[i], "--rotqueue")) g_rotQueue = true;
+        // --startrotq <chan>,<revHex>[,<uid>...]: seed the queue's per-state
+        // values at an anchor (history at g_startRotChan's declaration).
+        // Applied after the queue is built, because the uids have to be looked
+        // up in it.
+        if (!std::strcmp(argv[i], "--startrotq")) {
+            const char* p = argv[i + 1];
+            g_startRotChan = std::atoi(p);
+            const char* c = std::strchr(p, ',');
+            if (c) {
+                g_startRotRev = (unsigned)std::strtoul(c + 1, nullptr, 16);
+                p = std::strchr(c + 1, ',');
+                while (p) {
+                    g_startRotSpent.push_back(std::atoi(p + 1));
+                    p = std::strchr(p + 1, ',');
+                }
+            }
+        }
         // --seeddump <t>: the accumulated-field line, for the seeding check.
         if (!std::strcmp(argv[i], "--seeddump")) g_seedDump = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--seedevery")) g_seedEvery = std::atoi(argv[i + 1]);
@@ -1738,6 +1755,46 @@ inline int cliMain(int argc, char** argv) {
     if (rotQPath.empty()) rotQPath = rotQPathBeside(argv[1]);
     if (!rotQPath.empty() && !g_rotTrig.empty() && !loadRotQueue(rotQPath))
         std::printf("rotq: could not read %s\n", rotQPath.c_str());
+    // --startrotq: the queue's --spentrot. Applied HERE because the uids have
+    // to be resolved against the built queue, and before init is used -- the
+    // --replay path takes its copy at `State s = init` well below, and the
+    // search takes its own at `cur.push_back(init)` below that.
+    //
+    // Every uid that does not resolve is NAMED. A seed that silently drops
+    // entries is worse than no seed: it produces a state that looks anchored
+    // and is not, which is the failure the flag exists to fix.
+    if (g_startRotChan >= 0) {
+        if (g_rotQ.empty()) {
+            std::printf("startrotq: no rotation queue on this level - the seed "
+                        "has nothing to bind to and is ignored\n");
+        } else {
+            init.rotChan = (uint8_t)g_startRotChan;
+            init.rotRev = (uint16_t)g_startRotRev;
+            init.rotSpent = 0;
+            int hit = 0;
+            std::string miss;
+            for (int su : g_startRotSpent) {
+                bool found = false;
+                for (size_t q = 0; q < g_rotQ.size() && q < 32; ++q)
+                    if (g_rotQ[q].uid == su) {
+                        init.rotSpent |= (uint32_t)1 << q;
+                        found = true;
+                        ++hit;
+                        break;
+                    }
+                if (!found) {
+                    miss += miss.empty() ? "" : ",";
+                    miss += std::to_string(su);
+                }
+            }
+            std::printf("startrotq: chan=%d rev=0x%04x spent=%d/%zu of %zu "
+                        "queued%s%s\n",
+                        (int)init.rotChan, (unsigned)init.rotRev, hit,
+                        g_startRotSpent.size(), g_rotQ.size(),
+                        miss.empty() ? "" : "  NOT IN THE QUEUE: ",
+                        miss.c_str());
+        }
+    }
     std::printf("level: %zu colliders, %zu portals, %zu pads, %zu orbs, "
                 "%zu moving, maxX=%.0f\n",
                 L.objs.size(), L.portals.size(), L.pads.size(), L.orbs.size(),

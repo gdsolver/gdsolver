@@ -173,6 +173,24 @@ inline std::array<uint32_t, 16> g_rotQChanMask{};
 // transitions before t0; the queue needs the equivalent before it can be the
 // default, and until then it is what the flag turns on.
 inline bool g_rotQueue = false;
+// --startrotq <chan>,<revHex>[,<uid>...]: the queue's equivalent of --spentrot,
+// which is the thing the paragraph above says is missing. It seeds the three
+// per-state values the anchor scan does not: the active channel, the per-channel
+// reverse bits, and WHICH QUEUE ENTRIES the run had already consumed before t0.
+//
+// The consumed set is given as UIDs, not as a raw rotSpent mask, for the reason
+// this campaign spent a day learning: a bit index is a proxy that depends on the
+// order buildRotQueue happened to produce, while a uid is the identity of the
+// object itself. A mask handed to a differently-ordered queue is wrong in a way
+// nothing can detect; a uid that is not in the queue can be reported, and is.
+// --spentrot names uids for the same reason.
+//
+// -1 = not given, which is not the same as "given as channel 0": the anchor
+// starting on channel 0 with nothing consumed is precisely the broken state
+// described above, so it must be distinguishable from an explicit seed.
+inline int g_startRotChan = -1;
+inline unsigned g_startRotRev = 0;
+inline std::vector<int> g_startRotSpent;
 // --seeddump <t>: print the state's accumulated fields at tick t. The
 // self-check for anchor seeding -- see the print site in cli.hpp.
 inline int g_seedDump = -1;
