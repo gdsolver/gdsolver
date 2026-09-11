@@ -162,6 +162,10 @@ inline thread_local int g_tcBranchP1 = 0;
 // pre-warp y -- or this tick's own y when no button effect moved it.
 // g_preBtnSet/g_preBtnY are written by the warp branch under the flag only.
 inline bool g_touchPreyButton = false;
+// --ceilpush (default off): seat a body that overlaps a ceiling ramp's rect at
+// GD's ceiling seat even where the ramp window has dropped the ramp. See the
+// branch beside the push-out gate in step.hpp.
+inline bool g_ceilPush = false;
 inline thread_local bool g_preBtnSet = false;
 inline thread_local double g_preBtnY = 0.0;
 

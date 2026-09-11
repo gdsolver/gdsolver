@@ -6790,6 +6790,46 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                 ((x - xHiPO) * sgnPO > 0.0) ? 1 : 0,
                                 (x + pH > x0) ? 1 : 0, (x - pH < x1) ? 1 : 0,
                                 x, xHiPO, sgnPO, x0, x1, pH);
+                // --ceilpush (default off): the CEILING push-out the window drops.
+                // Measured 2026-09-11/12 from GD's `slp:` lines: a body overlapping a
+                // ceiling ramp's rect, and still UNDER its line, is seated at
+                // line(x) - pH*sqrt(1+m^2), the line EXTRAPOLATED to the centre x
+                // (GD's syAtX) -- also while this window still rejects the ramp
+                // (lv22 t=4,622, uid 4359: GD pushes 8 ticks before the window accepts
+                // it). The body is under a ceiling line whichever way its gravity
+                // points; a body ABOVE the line is on the other face and is not pushed
+                // (lv16 t=8,715, uid 3765: GD leaves it where it is, and the first
+                // version of this branch dropped it 27.3 px). |m| <= 1 only: at
+                // |m| = 2 neither candidate factor fitted.
+                // vy: the SWING takes min(vy, -2) -- GD writes -2.000 on the first
+                // contact and then lets the ride integrate (-2.086, -2.172, ...), so a
+                // ride tick must not rewrite it. That rests on ONE swing episode in the
+                // corpus. Every other mode's vy is left alone: the ship's zeroing looks
+                // like a separate press mechanism (1468: +0.103 -> 0, but 3868's p2
+                // keeps -2.582) and has not been measured. grounded is left alone.
+                // The seat is the one slopeSeatTarget computes; --slopedbg prints both
+                // (the print is behind g_slopeDbg: in a search stepOne runs on every
+                // child from the worker threads).
+                if (g_ceilPush && !okHere && ceilRamp && std::fabs(m) <= 1.0) {
+                    const double lineCP = sp->sy0 + m * (x - x0);
+                    const double seatCP = lineCP - pH * std::sqrt(1.0 + m * m);
+                    const bool boxX = (x + pH > x0) && (x - pH < x1);
+                    const bool boxY = ((double)c.y + pH > sp->cy - sp->hh)
+                                      && ((double)c.y - pH < sp->cy + sp->hh);
+                    if (boxX && boxY && (double)c.y > seatCP && (double)c.y < lineCP) {
+                        const double yWas = (double)c.y, vyWas = (double)c.vy;
+                        YSET(c.y) = (float)seatCP;
+                        if (c.mode == 7 && (double)c.vy > -2.0) VYSET(c.vy) = -2.0f;
+                        if (g_slopeDbg)
+                            std::printf("ceilpush: t=%lld p%d uid=%d mode=%d m=%.3f "
+                                        "x=%.3f y=%.4f->%.4f vy=%.3f->%.3f "
+                                        "seatTarget=%.4f\n",
+                                        (long long)K.t, g_halfNow + 1, sp->uid,
+                                        (int)c.mode, m, x, yWas, seatCP, vyWas,
+                                        (double)c.vy,
+                                        slopeSeatTarget(sp, x, pH, true, seatOff));
+                    }
+                }
                 if (!okHere && ridesTop && !ceilRamp && !s.onSlope
                     && (x - xHiPO) * sgnPO > 0.0
                     && x + pH > x0 && x - pH < x1) {
