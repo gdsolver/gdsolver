@@ -55,6 +55,14 @@ inline int g_seatImpulsedOff = -1;  // -1 = the gate was not reached
 inline int g_seatTappedOff = -1;
 inline int g_seatOnSlope = -1;
 inline int g_seatTook = -1;         // did it take the exemption (and skip vy)?
+// ...and WHICH of the eight sites raised impulsedThisTick, since that flag is
+// half of the exemption's condition and the comment justifying the exemption
+// names a jump or a flip while the measured vy writer was the integrator.
+// Eight candidates, and picking one is what failed twice, so the site says so
+// itself -- as a comma expression, which keeps `impulsedThisTick = IMPULSE();`
+// the single statement `impulsedThisTick = true;` already was.
+inline int g_impulseSite = 0;
+#define IMPULSE() (::dp::g_impulseSite = __LINE__, true)
 #define YSET(x) (::dp::g_yWriter = __LINE__, ++::dp::g_yWrites, (x))
 
 struct StepCtx {
@@ -2194,7 +2202,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // ...and the search STOPS on a hazard (see spiderTargetY's note):
             // GD lands the spider on it and kills it on the same tick.
             if (hazTgt) DIE("spider/tp-hazard", nullptr);
-            impulsedThisTick = true;
+            impulsedThisTick = IMPULSE();
             spiderWarpedThisTick = true;
             // ...and the block-pin has to let go. `pinnedOnBlock` was armed
             // above for a player standing on a solid, and `releasePin` puts y
@@ -2369,7 +2377,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // grounded that tick is decided inside GD's collision pass, below
             // the model's resolution (the gd-shrinking-gap class). Per-run
             // fixup records are the only honest carrier for it.
-            impulsedThisTick = true;
+            impulsedThisTick = IMPULSE();
             // The press is now SPENT. GD's updateJump clears +0x986 when it jumps
             // (0x38bbef), and the ball's arm ends the same way, so a ring met later
             // in the same hold finds the 0x98a mirror at 0 and does not fire. This
@@ -2760,7 +2768,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // mirrored tap (-2.7408) in the SAME tick; the model froze it
             // at 621 with the plan holding, and the pair never re-mirrored.
             if (isBall && input && !s.action) {
-                impulsedThisTick = true;
+                impulsedThisTick = IMPULSE();
                 ballFlippedThisTick = true;
                 c.flip = 0;
                 VYSET(c.vy) = (float)(-ballFlipFor(useDx)
@@ -2889,7 +2897,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // block-landing branch below IS measured, lv20 t=1,224).
             if (c.mode == 5 && !c.flip && input && !s.action
                 && !impulsedThisTick) {
-                impulsedThisTick = true;
+                impulsedThisTick = IMPULSE();
                 const CubePhys jph = cubePhysFor(useDx);
                 VYSET(c.vy) = (float)(jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
@@ -2907,7 +2915,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // impulse is in **the new gravity's direction**, so upward +ballFlipFor
             // (the ceiling side is -).
             if (isBall && !c.flip && input && !s.action && !impulsedThisTick) {
-                impulsedThisTick = true;
+                impulsedThisTick = IMPULSE();
                 ballFlippedThisTick = true;
                 c.flip = 1;
                 VYSET(c.vy) = (float)(ballFlipFor(useDx)
@@ -3214,7 +3222,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // cube's same-tick jump is unmeasured and the last "one
                 // measurement" cube landing rule cost 7 levels (see below).
                 if (isBall && input && !s.action && !ballFlippedThisTick) {
-                    impulsedThisTick = true;
+                    impulsedThisTick = IMPULSE();
                     ballFlippedThisTick = true;
                     c.flip = c.flip ? 0 : 1;
                     // A tap on the tick of a corner landing carries the slope
@@ -3264,7 +3272,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // two -- same as the cube.
                 else if ((c.mode == 0 || c.mode == 5) && input && !s.action
                          && !impulsedThisTick) {
-                    impulsedThisTick = true;
+                    impulsedThisTick = IMPULSE();
                     const CubePhys jph = cubePhysFor(useDx);
                     double vj = jph.jump
                                 * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0);
@@ -3719,7 +3727,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         const bool act = (isUfo || isSwing)
             ? ((input && !s.action) || (isUfo && s.pFlap != 0 && input))
             : (input != 0);
-        if (isUfo && act) impulsedThisTick = true;
+        if (isUfo && act) impulsedThisTick = IMPULSE();
         // ...but a PENDING SWING FLIP must not be swallowed by the grounded
         // short-circuit. The tap sets the pending bit and is then RELEASED, so
         // on the tick the flip is due `act` is 0 and this branch used to eat it
