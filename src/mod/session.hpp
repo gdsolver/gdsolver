@@ -439,7 +439,11 @@ inline void loadConfig() {
             (key == "touchpayload" ? g_cfg.touchPayload : g_cfg.portalPayload)
                 = (val == "1");
         else if (key == "snaptrace") g_cfg.snapTrace = (val == "1");
-        else if (key == "hitboxtrace") g_cfg.hitboxTrace = (val == "1");
+        // `fieldprobe` shares this branch rather than taking one of its own: the chain is at
+        // MSVC's C1061 nesting ceiling (see the note above at "touchpayload"), so a plain
+        // `else if` here does not fail this key -- it fails the whole mod build.
+        else if (key == "hitboxtrace" || key == "fieldprobe")
+            (key == "hitboxtrace" ? g_cfg.hitboxTrace : g_cfg.fieldProbe) = (val == "1");
         else if (key == "hbfrom") g_cfg.hbFrom = std::atoll(val.c_str());
         else if (key == "hbto") g_cfg.hbTo = std::atoll(val.c_str());
         else if (key == "watchuid") g_cfg.watchUid = std::atoi(val.c_str());

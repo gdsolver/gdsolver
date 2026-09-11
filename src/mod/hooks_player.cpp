@@ -695,6 +695,54 @@ class $modify(PlayerObject) {
                 writeResult(b);
             }
         }
+        // The three fields that decide this call's return value (cfg `fieldprobe=1`).
+        //
+        // Why a separate line and not more columns on `hbin:`: that format is parsed by every
+        // downstream script and its buffer is already near full at 416 bytes. Widening a line
+        // everything reads is how a "print-only" change stops being print-only.
+        //
+        // Why here, after the call: the question is which of the four sufficient causes produced
+        // THIS return value, so the row is worthless unless it carries `r` from the same call.
+        // Measured so far: cause (4), the 0.3-scaled crush box, is excluded for uid 4705 (its
+        // 9x9 inner box was fully inside and GD still returned 0), and "a resolution that moved
+        // the player" is excluded for 4705 and 4681 while firing 5 times on 5755. What remains is
+        // (1) [rsp+0x3a], (2) the platformer flag and (3) [obj+0x515] -- and (1) is a stack slot,
+        // so this print separates (2) and (3) only. If both come back clear, (1) survives by
+        // elimination and needs a different instrument (which of 0x392895 / 0x392cca / 0x392ebe
+        // was reached), NOT a stronger reading of this line.
+        //
+        // The offsets are literal because the bindings carry no offset annotations for them and
+        // inferring a position from an `m_unkNNN` name has already produced a wrong answer once
+        // (m_unk28c -> +0x28a, actual +0x28e). `ofsUp` is the canary: the layout the compiler
+        // gives must agree with the binary's 0x9bf, or every raw read on this line is suspect.
+        if (g_cfg.fieldProbe && who && obj
+            && g_tick >= g_cfg.hbFrom
+            && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo)) {
+            static int fpLines = 0;
+            if (++fpLines <= 40000) {
+                const char* ob = reinterpret_cast<const char*>(obj);
+                const char* pb = reinterpret_cast<const char*>(this);
+                const int o515 = (int)(unsigned char)ob[0x515];
+                float s394 = 0.f, s398 = 0.f;
+                memcpy(&s394, pb + 0x394, sizeof(float));
+                memcpy(&s398, pb + 0x398, sizeof(float));
+                const int plat = (int)(unsigned char)pb[0xb70];
+                // The canary is a RUNTIME layout measurement, not offsetof: it needs no header,
+                // and it checks the object in front of us rather than a compile-time constant.
+                const unsigned ofsUp = (unsigned)(
+                    reinterpret_cast<const char*>(&this->m_isUpsideDown) - pb);
+                char fb[288];
+                snprintf(fb, sizeof(fb),
+                    "fprobe: t=%lld who=%s obj=%d id=%d hit=%d size=%.2f "
+                    "o515=%d p394=%.4f p398=%.4f plat=%d "
+                    "ofs=(0x515,0x394,0x398,0xb70) canary_up=0x%x want=0x9bf %s",
+                    (long long)g_tick, who, obj->m_uniqueID, obj->m_objectID,
+                    r ? 1 : 0, this->m_vehicleSize,
+                    o515, (double)s394, (double)s398, plat,
+                    ofsUp, ofsUp == 0x9bf ? "LAYOUT-OK" : "LAYOUT-MISMATCH");
+                writeResult(fb);
+            }
+        }
         return r;
     }
 

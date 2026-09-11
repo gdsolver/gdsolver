@@ -265,6 +265,14 @@ struct Config {
     // advances extra on the landing tick
     bool snapTrace = false;
     bool hitboxTrace = false;   // record the hitboxes GD actually uses (cfg hitboxtrace=1)
+    // Print the raw fields that decide collidedWithObjectInternal's return value, at the call
+    // itself (cfg `fieldprobe=1`, `fprobe:` lines). Reading them off the object/player by literal
+    // offset is deliberate: the bindings carry no offset annotations here, and inferring a
+    // position from an `m_unkNNN` name has already produced a wrong answer once. The line
+    // therefore carries a LAYOUT CANARY -- offsetof(PlayerObject, m_isUpsideDown), which must
+    // read 0x9bf -- so a disagreeing compiler layout invalidates the row instead of silently
+    // renaming the bytes.
+    bool fieldProbe = false;
     // Watch the candidate list of collisionCheckObjects (cfg `watchuid=N`, combined with the
     // hbfrom/hbto window). Speed portal lv19 uid13689 "overlapping by 4px for 3 ticks yet not
     // firing" cannot be explained by the test formula (plain AABB, confirmed by disassembly),
