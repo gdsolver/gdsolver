@@ -49,6 +49,12 @@ struct TouchTrig {
     // that boundary would silently mean a different box whenever the window
     // moved.
     int uid = -1;
+    // The root row's own id and, for a Toggle (1049), which way it switches its
+    // target group (TrigRow::togon: 1 on, 0 off). -1 for everything else. Read
+    // only by --rotqtoggle, which needs to know that entering this box switches
+    // off a group holding rotation-queue objects.
+    int id = 0;
+    int togOn = -1;
 };
 // Bit b of State::trig is g_touch[b]. Global because the step function, the
 // layer loop and the witness resim all need the same numbering, and there is
@@ -219,6 +225,11 @@ struct TrigRow {
     // False when the dump predates the t360 column, i.e. "the angle in this row
     // is not trustworthy" -- distinct from an angle that is genuinely zero.
     bool hasAngle = false;
+    // A Toggle's (1049) m_activateGroup, the 35th column: 1 turns its target
+    // group on, 0 off. -1 on other ids and on dumps that predate the column.
+    // Read only by --rotqtoggle: a group switched off makes GD's rotation queue
+    // consume its 2900s without firing them (checkSpawnObjects 0x21aad8).
+    int togon = -1;
 };
 inline bool loadTrigRows(const std::string& path,
                          std::unordered_map<int, TrigRow>& trig) {
@@ -242,6 +253,17 @@ inline bool loadTrigRows(const std::string& path,
         // 26 = through lockrot. Anything shorter predates the column and its
         // deg (if any) is only part of the angle, so the angle is unusable.
         r.hasAngle = (n >= 26);
+        {   // togon, the 35th column: found by position past the 26 parsed above,
+            // so the columns between are skipped rather than read. A dump that
+            // predates it has 34 columns and leaves -1.
+            size_t p = 0;
+            int commas = 0;
+            while (commas < 34 && (p = line.find(',', p)) != std::string::npos) {
+                ++p;
+                ++commas;
+            }
+            if (commas == 34 && p < line.size()) r.togon = std::atoi(line.c_str() + p);
+        }
         trig[r.uid] = r;
     }
     return true;
@@ -298,6 +320,8 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
         if (!T.touch || T.target == 0) continue;
         TouchTrig tt{T.cx, T.cy, T.w * 0.5, T.h * 0.5, {}};
         tt.uid = T.uid;   // so an outside payload can name the box (see the field)
+        tt.id = T.id;
+        tt.togOn = (T.id == 1049) ? T.togon : -1;   // --rotqtoggle (see the field)
         struct Item {
             int group; float dx, dy; double dur; int ease; double erate;
             double lock, lockY;

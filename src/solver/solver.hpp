@@ -630,11 +630,25 @@ inline void buildPois(GJBaseGameLayer* l) {
               // the disassembly finds the flag on the COMMAND (cmd+0x72), not
               // on the trigger -- so lv22's twelve Stops are dumped without
               // saying which of the three they are.
-              "sdelay,mvtgt,mvaxis,tmodctr,dirsnap,dirdist,dynmode,silent\n";
+              "sdelay,mvtgt,mvaxis,tmodctr,dirsnap,dirdist,dynmode,silent,togon\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
         gf << "uid,groups\n";
+        // Is m_isGroupDisabled the byte toggleGroup writes (+0x28e, 0x223cbc)? The
+        // bindings carry no offsets, and grouptrace's `on` column reads this field,
+        // so whether `on` can witness a toggle depends on the answer. Read off a
+        // live object rather than inferred from the member order. Logged once.
+        for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+            if (!obj) continue;
+            log::info("offsets: GameObject::m_isGroupDisabled=+{:#x} "
+                      "m_isGroupDisabledTemp=+{:#x}",
+                      (size_t)(reinterpret_cast<char const*>(&obj->m_isGroupDisabled)
+                               - reinterpret_cast<char const*>(obj)),
+                      (size_t)(reinterpret_cast<char const*>(&obj->m_isGroupDisabledTemp)
+                               - reinterpret_cast<char const*>(obj)));
+            break;
+        }
         long long nTrig = 0, nGrp = 0;
         for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
             if (!obj) continue;
@@ -700,7 +714,16 @@ inline void buildPois(GJBaseGameLayer* l) {
                << (e->m_isDirectionFollowSnap360 ? 1 : 0) << ","
                << e->m_directionModeDistance << ","
                << (e->m_isDynamicMode ? 1 : 0) << ","
-               << (e->m_isSilent ? 1 : 0) << "\n";
+               << (e->m_isSilent ? 1 : 0) << ","
+               // togon: a Toggle's (1049) m_activateGroup -- 1 turns its target
+               // group ON, 0 turns it OFF; -1 on every other id. dp needs it to
+               // tell which way a touched toggle moves a group's disabled state
+               // (toggleGroup 0x223bc0: +0x28e = counter < 0), because a group
+               // switched off makes the rotation queue consume its 2900s without
+               // firing them (checkSpawnObjects 0x21aad8). Appended at the end:
+               // loadTrigRows reads the first 26 columns by position and nothing
+               // else parses this file.
+               << (obj->m_objectID == 1049 ? (e->m_activateGroup ? 1 : 0) : -1) << "\n";
             ++nTrig;
         }
         log::info("triggers: {} triggers with a target, {} grouped objects",

@@ -213,6 +213,12 @@ inline void resetInvocationState() {
     g_rotWatchHi = -1;
     g_qfoldLo = -1;
     g_qfoldHi = -1;
+    g_rotQToggle = false;
+    g_rotQOff.clear();
+    g_rotQOn.clear();
+    g_rotTrigOff.clear();
+    g_rotTrigOn.clear();
+    g_touchSeedArg.clear();
     g_startRotChan = -1;
     g_startRotRev = 0;
     g_startRotSpent.clear();

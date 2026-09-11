@@ -455,6 +455,15 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
             if (!rev) { if (ref < p) break; }
             else      { if (p < ref) break; }
             if (idx < 32) c.rotSpent |= (uint32_t)1 << idx;
+            // --rotqtoggle: the object sits in a group this state has switched
+            // off by entering a touch Toggle's box. GD skips triggerObject for
+            // it (checkSpawnObjects 0x21aad8 on +0x28e, which toggleGroup
+            // 0x223cbc sets) and moves the cursor on anyway (0x21ab62), so it is
+            // consumed here with neither the switch nor the rotation half.
+            if (g_rotQToggle && (size_t)idx < g_rotQOff.size()
+                && popCount32(c.trig & g_rotQOff[(size_t)idx])
+                       > popCount32(c.trig & g_rotQOn[(size_t)idx]))
+                continue;
             // The switch half: only a 2900 with `swarm` moves the active
             // channel, and the reverse it writes is the pure predicate
             // `gnddir - 2 <u 2` -- no mapping through the frame. The id check
@@ -507,6 +516,15 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
     bool toggleRev = false;
     for (const RotTrig& r : g_rotTrig) {
         if (qUsed) break;   // the queue above already decided
+        // --rotqtoggle, the pre-queue selection's half: a trigger whose object
+        // this state has switched off (see the queue branch above) is not a
+        // candidate at all.
+        if (g_rotQToggle) {
+            const size_t k = (size_t)(&r - g_rotTrig.data());
+            if (k < g_rotTrigOff.size()
+                && popCount32(c.trig & g_rotTrigOff[k]) > popCount32(c.trig & g_rotTrigOn[k]))
+                continue;
+        }
         // A 2900 that points to the current frame is a **reverse-travel toggle**.
         // GD measurement (2026-08-15, lv22's 14 firings tabulated by frame and
         // travel before/after):

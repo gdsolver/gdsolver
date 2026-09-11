@@ -195,6 +195,11 @@ struct Config {
     // object's +0x28e byte (the flag checkSpawnObjects tests before it calls triggerObject)
     // on every tick. Empty by default, and then the column reads "-". Print only.
     std::vector<int> dpWatchFired;
+    // cfg `dprotqtoggle=1`: pass --rotqtoggle to the anchored solves and the fixup resims,
+    // with --touchseed naming the touch Toggles the attempt had already entered by t0 (a
+    // geometric test on its own recorded positions -- GD's touch recorder never sees a
+    // touch Toggle). Off by default.
+    bool dpRotQToggle = false;
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be

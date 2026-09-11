@@ -216,29 +216,76 @@ inline void record(GJBaseGameLayer* l, long long t) {
 struct RotObj { int uid; double cx, cy; };
 inline std::vector<RotObj> g_rotObjs;   // parsed from the level csv at session start
 
+// Touch Toggles (1049 with touch=1), for cfg dprotqtoggle's anchor seed. Parsed from the same
+// csv in the same pass: GD's own touch recorder (activatedByPlayer, hooks_player.cpp) never
+// sees one -- 0 of lv22's three -- so whether the attempt entered one has to be read off its
+// recorded positions instead (touchSeedArg).
+struct TouchTog { int uid; double cx, cy, hw, hh; };
+inline std::vector<TouchTog> g_touchToggles;
+
 inline void loadRotObjs(const std::string& csv) {
     g_rotObjs.clear();
+    g_touchToggles.clear();
     std::istringstream in(csv);
     std::string line;
     std::getline(in, line);   // header: id,type,cx,cy,...,uid,...
-    // Column positions follow the objrects header (id first, cx/cy 3rd/4th, uid 8th).
+    // Column positions follow the objrects header (id first, cx/cy 3rd/4th, w/h 5th/6th, uid
+    // 8th, touch 44th).
     while (std::getline(in, line)) {
-        if (line.rfind("2900,", 0) != 0) continue;
+        const bool rot = line.rfind("2900,", 0) == 0;
+        const bool tog = line.rfind("1049,", 0) == 0;
+        if (!rot && !tog) continue;
         RotObj o{};
+        double w = 0.0, h = 0.0;
+        int touch = 0;
         int col = 0;
         size_t p = 0;
-        while (p <= line.size() && col < 9) {
+        while (p <= line.size() && col < 44) {
             size_t q = line.find(',', p);
             if (q == std::string::npos) q = line.size();
             const std::string f = line.substr(p, q - p);
             if (col == 2) o.cx = std::atof(f.c_str());
             else if (col == 3) o.cy = std::atof(f.c_str());
+            else if (col == 4) w = std::atof(f.c_str());
+            else if (col == 5) h = std::atof(f.c_str());
             else if (col == 7) o.uid = std::atoi(f.c_str());
+            else if (col == 43) touch = std::atoi(f.c_str());
             p = q + 1;
             ++col;
         }
-        if (o.uid > 0) g_rotObjs.push_back(o);
+        if (o.uid <= 0) continue;
+        if (rot) g_rotObjs.push_back(o);
+        else if (touch == 1) g_touchToggles.push_back({o.uid, o.cx, o.cy, w * 0.5, h * 0.5});
     }
+}
+
+// cfg dprotqtoggle: the touch Toggles this attempt had entered by t0, as dp's --touchseed
+// (`uid:tick` of the first entry). The test is dp's own box entry (markTouched, step.hpp):
+// |x - cx| < hw + half and the player's y, or its y before the move (the previous row), within
+// hh + half, with half = dp's playerHalf for the recorded mode and size. Only rows in gframe 0,
+// where the recorded position and the trigger's box share world axes -- a Toggle inside a
+// turned section is not seeded by this.
+inline std::string touchSeedArg(long long t0) {
+    std::string out;
+    for (const TouchTog& T : g_touchToggles) {
+        for (long long t = 1; t <= t0; ++t) {
+            const AnchorRow* r = anchors::row(t);
+            if (!r || r->gframe != 0) continue;
+            const AnchorRow* pr = anchors::row(t - 1);
+            const double half = (r->mode == 4) ? (r->mini ? 2.0 : 5.0)
+                              : (r->mode == 6) ? (r->mini ? 8.1 : 13.5)
+                                               : (r->mini ? 9.0 : 15.0);
+            const bool inX = std::fabs((double)r->x - T.cx) < T.hw + half;
+            const bool inY = std::fabs((double)r->y - T.cy) < T.hh + half
+                             || (pr && std::fabs((double)pr->y - T.cy) < T.hh + half);
+            if (inX && inY) {
+                if (!out.empty()) out += ",";
+                out += std::to_string(T.uid) + ":" + std::to_string(t);
+                break;
+            }
+        }
+    }
+    return out;
 }
 
 // The 2900s GD visibly fired at or before t0: at every gframe change in the anchor
@@ -2264,6 +2311,13 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
         // fixes its cursor exactly (rotSeedArgs). --spentrot above seeds the
         // pre-queue selection's one-shots and stays on every call.
         rotQ = rotSeedArgs(t0, a, "resim");
+        // ...and, under cfg dprotqtoggle, the queue's toggle rule with the touch Toggles
+        // this attempt had already entered (see touchSeedArg).
+        if (g_cfg.dpRotQToggle) {
+            a.push_back("--rotqtoggle");
+            const std::string ts = touchSeedArg(t0);
+            if (!ts.empty()) { a.push_back("--touchseed"); a.push_back(ts); }
+        }
     }
     std::error_code ec;
     if (std::filesystem::exists(g_fixupPath, ec)) {
@@ -2730,6 +2784,13 @@ inline bool runLadder(long long dt) {
             if (!g_rotObjs.empty()) a.push_back("--trigraw");
             // ...and, under cfg dprotseed, the queue, exactly as the fixup resim does.
             rotQ = rotSeedArgs(t0, a, "anchor");
+            // ...and, under cfg dprotqtoggle, the queue's toggle rule, seeded with the touch
+            // Toggles this attempt had already entered (touchSeedArg), as the resim does.
+            if (g_cfg.dpRotQToggle) {
+                a.push_back("--rotqtoggle");
+                const std::string ts = touchSeedArg(t0);
+                if (!ts.empty()) { a.push_back("--touchseed"); a.push_back(ts); }
+            }
         }
         a.push_back("--start");
         a.push_back(arg);

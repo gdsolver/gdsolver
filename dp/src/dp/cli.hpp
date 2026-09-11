@@ -202,6 +202,7 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--no-spentpad")) g_spentPadSeed = false;
         // --anchor-state / --seed-partial-ok: the anchor payload (frames.hpp).
         if (!std::strcmp(argv[i], "--anchor-state")) g_anchorState = argv[i + 1];
+        if (!std::strcmp(argv[i], "--touchseed") && i + 1 < argc) g_touchSeedArg = argv[i + 1];
         if (!std::strcmp(argv[i], "--seed-partial-ok")) g_seedPartialOk = true;
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
@@ -289,6 +290,9 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;
         if (!std::strcmp(argv[i], "--rotlast")) g_rotLast = true;
+        // Value-less, so it lives in this loop (see the note just below): the
+        // argc-1 loop would drop it silently whenever it is passed last.
+        if (!std::strcmp(argv[i], "--rotqtoggle")) g_rotQToggle = true;
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below
@@ -1285,6 +1289,25 @@ inline int cliMain(int argc, char** argv) {
                     "difference near one dx means the payload was written at "
                     "t0+1\n");
     }
+    // --touchseed (--rotqtoggle's anchor seed): the touch boxes the anchored
+    // attempt had already entered by t0, named by uid and mapped onto this
+    // build's window exactly as the payload's touch list is above. OR-ed in, and
+    // ownership is not claimed, so the recording-derived seeding below still runs
+    // for every other box.
+    if (t0 > 0 && !g_touchSeedArg.empty()) {
+        int set = 0, unmapped = 0;
+        for (const auto& ut : parseTouchPayload(g_touchSeedArg)) {
+            int bit = -1;
+            for (size_t b = 0; b < g_touch.size() && b < 32; ++b)
+                if (g_touch[b].uid == ut.first) { bit = (int)b; break; }
+            if (bit < 0) { ++unmapped; continue; }
+            init.trig |= (uint32_t)1 << bit;
+            init.fireB[bit] = (uint16_t)std::max(0, ut.second);
+            ++set;
+        }
+        std::printf("seed touchseed: %d boxes set, %d named but not in this "
+                    "build's window\n", set, unmapped);
+    }
     // WHICH GRAVITY PORTALS THE RUN HAD ALREADY SPENT before t0. Without this a
     // state handed to --start starts with an empty mask and re-fires every
     // portal the run has passed -- the same hole State::fireB, State::lockOff
@@ -1798,6 +1821,38 @@ inline int cliMain(int argc, char** argv) {
                               (int)e.id);
                 g_outcome.rotQOrder += b;
             }
+    // --rotqtoggle's masks (frames.hpp). For each queue entry and each pre-queue
+    // trigger: the bits of the touch boxes whose Toggle names the object in its
+    // chain (TouchTrig::ctl) and switches that group off (togOn 0) or on (1).
+    // Built here because both tables exist by now: g_touch was loaded with the
+    // level, the queue just above. Zeros with the flag off, so nothing reads
+    // differently and nothing is printed.
+    g_rotQOff.assign(g_rotQ.size(), 0);
+    g_rotQOn.assign(g_rotQ.size(), 0);
+    g_rotTrigOff.assign(g_rotTrig.size(), 0);
+    g_rotTrigOn.assign(g_rotTrig.size(), 0);
+    if (g_rotQToggle) {
+        auto maskFor = [](int uid, int want) {
+            uint32_t m = 0;
+            for (size_t b = 0; b < g_touch.size() && b < 32; ++b) {
+                if (g_touch[b].togOn != want) continue;
+                for (const TrigCtl& ct : g_touch[b].ctl)
+                    if (ct.uid == uid) { m |= (uint32_t)1 << b; break; }
+            }
+            return m;
+        };
+        for (size_t k = 0; k < g_rotQ.size(); ++k) {
+            g_rotQOff[k] = maskFor(g_rotQ[k].uid, 0);
+            g_rotQOn[k] = maskFor(g_rotQ[k].uid, 1);
+            if (g_rotQOff[k] | g_rotQOn[k])
+                std::printf("rotqtoggle: queue uid %d off=0x%x on=0x%x\n",
+                            g_rotQ[k].uid, g_rotQOff[k], g_rotQOn[k]);
+        }
+        for (size_t k = 0; k < g_rotTrig.size(); ++k) {
+            g_rotTrigOff[k] = maskFor(g_rotTrig[k].uid, 0);
+            g_rotTrigOn[k] = maskFor(g_rotTrig[k].uid, 1);
+        }
+    }
     // --startrotq: the queue's --spentrot. Applied HERE because the uids have
     // to be resolved against the built queue, and before init is used -- the
     // --replay path takes its copy at `State s = init` well below, and the

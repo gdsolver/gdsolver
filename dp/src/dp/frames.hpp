@@ -123,6 +123,26 @@ inline thread_local int g_rotWatchUid = -1;
 // the dedupe merged away. keyOf does not include the queue, so two children
 // that differ only in it land in one cell. Print only. -1 = off.
 inline long long g_qfoldLo = -1, g_qfoldHi = -1;
+// --rotqtoggle: a queue entry whose object sits in a group a touched Toggle
+// (1049, togon=0) has switched off is consumed without firing -- the cursor
+// advances, no channel switch, no rotation. GD does exactly this: toggleGroup
+// (0x223bc0) sets the object's +0x28e when its toggle counter goes negative,
+// and checkSpawnObjects (0x21aad8) then skips triggerObject while still moving
+// the cursor on (0x21ab62). Per state, because the touch is: the off/on
+// masks below are over State::trig. Off by default.
+inline bool g_rotQToggle = false;
+// ...its masks, built once the queue and the touch boxes are both loaded
+// (cli.hpp): for queue entry k (and pre-queue trigger k), the touch-box bits
+// whose Toggle switches that object's group off (togOn 0) or on (togOn 1). An
+// entry counts as disabled for a state when it has entered more "off" boxes
+// than "on" ones -- GD's per-object toggle counter below zero.
+inline std::vector<uint32_t> g_rotQOff, g_rotQOn, g_rotTrigOff, g_rotTrigOn;
+// --touchseed uid:tick,...: touch boxes the anchored attempt had already
+// entered by t0, from the mod's geometric test on its own recorded positions.
+// OR-ed into the anchor state's trig/fireB without claiming ownership, so the
+// recording-derived seeding still runs. Exists because GD's touch recorder
+// (activatedByPlayer) never sees a touch Toggle: 0 of lv22's three.
+inline std::string g_touchSeedArg;
 
 // ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
 //
