@@ -1545,6 +1545,51 @@ def build_ufojump(speed: int = 0) -> str:
     return header(speed=speed) + ";" + ";".join(objs) + ";"
 
 
+def build_robotjump_sp() -> str:
+    u"""A mini robot's press on a flat run-up and on an |m|=2 ramp, at speed 1.1.
+
+    lv22 t=18,567 presses a mini robot riding an |m|=2 ramp at speed 1.1, and
+    GD does not jump: replayed with a 1-tick press, a 3-tick hold and no press
+    at all, x, y and yvel come out identical. rampjump already has GD jumping
+    in the same mode, size and gradient -- but at the default speed and moving
+    forward. This rig changes one of those two, the speed, and keeps a flat
+    control in the same run, so that "the rig did not produce the state"
+    cannot pass for an answer. lv22 rides that stretch in -x; nothing here can
+    build a reverse ride, so direction is not a cell.
+
+    Cells (mini robot, kA4 2 = 1.1, press then release 3 ticks later):
+      control -- press on the flat run-up, as ufojump's controls do
+      sweep   -- |m|=2 x 3 ramps, press at 70% of the ramp band, as rampjump
+    Two passes, like rampjump: build, dump, rebuild with --xmap.
+    """
+    objs: list[str] = []
+    x = 90.0
+    objs += floor_run(0, PAVE_X)
+    x0 = x
+    x_press = x + 4 * GRID
+    u, x = ramp_unit(x, "robot", 2.0, True, 3, 0.0)
+    objs += u
+    t = tick_at(x_press)
+    PLAN.append((t, 1))
+    PLAN.append((t + 3, 0))
+    UNITS.append({"x0": x0, "x1": x, "mode": "robot", "m": 2.0, "mini": 1,
+                  "ramps": 3, "bury": 0.0, "press_x": x_press, "press_t": t,
+                  "cell": "control", "speed": 2})
+    x0 = x
+    _oid, _rot, _fx, _fy, w, _h = RAMP[2.0]
+    x_ramp0 = x + 8 * GRID
+    x_press = x_ramp0 + 3 * w * 0.70
+    u, x = ramp_unit(x, "robot", 2.0, True, 3, 0.0)
+    objs += u
+    t = tick_at(x_press)
+    PLAN.append((t, 1))
+    PLAN.append((t + 3, 0))
+    UNITS.append({"x0": x0, "x1": x, "mode": "robot", "m": 2.0, "mini": 1,
+                  "ramps": 3, "bury": 0.0, "press_x": x_press, "press_t": t,
+                  "cell": "sweep", "speed": 2})
+    return header(speed=2) + ";" + ";".join(objs) + ";"
+
+
 def build_ufoexit() -> str:
     u"""Does a UFO get a slope-exit launch on the FLOOR side? Rig says yes/no.
 
@@ -4816,6 +4861,7 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
     "ridedrop": build_ridedrop,
     "rampjump": build_rampjump, "ufojump": build_ufojump,
     "ufojump_sp": lambda: build_ufojump(speed=2),
+    "robotjump_sp": build_robotjump_sp,
     "ufoexit": build_ufoexit,
             "ceilramp": build_ceilramp, "portrot": build_portrot,
             "portwave": build_portwave,

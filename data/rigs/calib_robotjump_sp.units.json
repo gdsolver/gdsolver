@@ -1,0 +1,28 @@
+[
+ {
+  "x0": 90.0,
+  "x1": 1200.0,
+  "mode": "robot",
+  "m": 2.0,
+  "mini": 1,
+  "ramps": 3,
+  "bury": 0.0,
+  "press_x": 210.0,
+  "press_t": 132,
+  "cell": "control",
+  "speed": 2
+ },
+ {
+  "x0": 1200.0,
+  "x1": 2310.0,
+  "mode": "robot",
+  "m": 2.0,
+  "mini": 1,
+  "ramps": 3,
+  "bury": 0.0,
+  "press_x": 1503.0,
+  "press_t": 933,
+  "cell": "sweep",
+  "speed": 2
+ }
+]
