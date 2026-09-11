@@ -156,6 +156,23 @@ inline bool g_witnessFrame = false;
 // physical cause (hazard / solid-side / crush) is published as the PARTIAL at that
 // death. See the demotion after the witness walk in cli.hpp.
 inline bool g_vetoPhys = false;
+// --dropnocollide (default off): do not ingest id-1910 as a collidable solid.
+//
+// Measured (ledger run D): GD sets [obj+0x515] on lv22's uid 4705 (id 1910) and
+// collidedWithObjectInternal returns false for it regardless of geometry -- 50 of 81
+// hbin rows had the player's 9x9 inner box inside the object, one at full penetration,
+// and hit was 0 on every one. Both neighbouring id-1 solids read [obj+0x515] == 0 and
+// collide normally. The model ingests 4705 as an ordinary 15x15 solid and kills at
+// t=4,889 on an object the game will never touch.
+//
+// The discriminator here is the ID, not the flag: +0x515 is NOT exported to objrects
+// (it is absent from solver.hpp's column list), so the level data cannot express the
+// real condition. id 1910 occurs exactly once in the corpus -- this object -- so the
+// exclusion is one object wide, not a class rule. Match on the id COLUMN only: the same
+// dump carries an unrelated uid 1910 (id 1268, type 20), and a loose numeric match would
+// silently drop the wrong row.
+inline bool g_dropNoCollide = false;
+inline constexpr int kNoCollideId = 1910;
 inline float g_resimPX = 0.f;   // the player's world x at the witness's first death
 // ...and what killed it, taken at the FIRST dying tick. Without this, "the
 // model died and GD died" can only be matched on the fact of a death, and two

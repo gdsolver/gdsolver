@@ -922,6 +922,28 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         }
         if (o.type == 0 || type == 2 || type == 47) {
             L.maxY = std::max(L.maxY, o.cy + o.hh);
+            // --dropnocollide: keep id-1910 out of the collidable set. GD sets
+            // [obj+0x515] on it and never collides with it at any depth (run D), while
+            // the model kills on it at lv22 t=4,889. See constants.hpp for the
+            // measurement and for why the ID is the discriminator rather than the flag.
+            //
+            // Placed AFTER the maxY fold on purpose: maxY feeds the band/ceiling logic,
+            // and skipping before it would make the flag change the reachable height as
+            // well as the collision -- a wider change than the defect, and one that
+            // would not show up at t=4,889.
+            //
+            // Placed here rather than inside emit() for the same reason: emit also feeds
+            // L.dyn.objs, so a skip in there would drop the object from the dynamic path
+            // too if it were ever grouped. This object has groups=0, so the static path
+            // is the whole of it.
+            // `continue`, NOT `return`: this branch is inside the row loop that
+            // starts at the `while (std::getline(in, line))` above, so a return here
+            // would abandon every remaining object in the level after the first
+            // id-1910 row. Both compile. The wrong one is invisible to the regression
+            // suite -- that runs with the flag OFF, where this line is never reached --
+            // and would surface only as "the 4,889 death is gone", which is exactly
+            // what a truncated level looks like too.
+            if (g_dropNoCollide && o.id == kNoCollideId) continue;
             emit(Dynamics::NEAR, o);
         }
         // type 3 = InverseGravityPortal. It was MISSING here, so every blue
