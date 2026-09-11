@@ -4510,9 +4510,15 @@ inline int cliMain(int argc, char** argv) {
                                    s.lockOff + (float)(x - (double)s.xAbs),
                                    (int)t, x);
             std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
-            for (size_t b = 0; b < g_touch.size(); ++b) {
+            // --witnessframe: the boxes in THIS frame's coordinates, as --replay
+            // (touchFor above) and the search do. g_touch is frame 0's, so a walk
+            // that turns part-way could never touch a box inside the turned
+            // section: lv22 box 30 drops the spike row at 213.25 at t=1,758 in
+            // frame 1, and a witness that missed it teleported onto the spikes.
+            const std::vector<TouchTrig>& tw = g_witnessFrame ? touchFor((int)s.frame) : g_touch;
+            for (size_t b = 0; b < tw.size(); ++b) {
                 if (s.trig & ((uint32_t)1 << b)) continue;
-                const TouchTrig& T = g_touch[b];
+                const TouchTrig& T = tw[b];
                 if (T.cx + T.hw < x - 40 || T.cx - T.hw > x + 40) continue;
                 rt.push_back({&T, (uint32_t)1 << b});
             }
