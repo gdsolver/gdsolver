@@ -118,6 +118,11 @@ inline std::vector<RotTrig> g_rotTrig;
 // when the window is set, and nothing reads it for a decision. -1 = off.
 inline long long g_rotWatchLo = -1, g_rotWatchHi = -1;
 inline thread_local int g_rotWatchUid = -1;
+// --qfoldwatch <lo>,<hi>: print, per search tick in [lo, hi], how wide the
+// frontier is and how many rotation-queue states (rotSpent, rotChan, rotRev)
+// the dedupe merged away. keyOf does not include the queue, so two children
+// that differ only in it land in one cell. Print only. -1 = off.
+inline long long g_qfoldLo = -1, g_qfoldHi = -1;
 
 // ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
 //

@@ -211,6 +211,8 @@ inline void resetInvocationState() {
     g_rotQueue = false;
     g_rotWatchLo = -1;
     g_rotWatchHi = -1;
+    g_qfoldLo = -1;
+    g_qfoldHi = -1;
     g_startRotChan = -1;
     g_startRotRev = 0;
     g_startRotSpent.clear();

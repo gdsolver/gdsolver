@@ -311,6 +311,9 @@ inline int cliMain(int argc, char** argv) {
             if (!std::strcmp(argv[i], "--rotwatch") && i + 1 < argc
                 && std::sscanf(argv[++i], "%lld,%lld", &g_rotWatchLo, &g_rotWatchHi) != 2)
                 g_rotWatchLo = g_rotWatchHi = -1;
+            if (!std::strcmp(argv[i], "--qfoldwatch") && i + 1 < argc
+                && std::sscanf(argv[++i], "%lld,%lld", &g_qfoldLo, &g_qfoldHi) != 2)
+                g_qfoldLo = g_qfoldHi = -1;
         if (!std::strcmp(argv[i], "--dcydbg")) g_dcyDbg = true;
         // --no-slopeseat: the pre-2026-09-06 slope seat (surface sampled at an
         // x clamped into the ramp's span, plus/minus a flat player half)
@@ -3169,6 +3172,37 @@ inline int cliMain(int argc, char** argv) {
         // "alive dropped" does not say whether the children DIED or were merged
         // away by the dedupe; those need opposite fixes, so count both.
         long long nBorn = 0, nDied = 0;
+        // --qfoldwatch: which rotation-queue states this group's dedupe merged
+        // away. keyOf has no rotSpent/rotChan/rotRev, so children that differ
+        // only in the queue share a cell. For each key, the queue states among
+        // the group's live children minus those among what the dedupe kept (the
+        // survivors are copies of children, so they key the same). Print only.
+        long long qfLost = 0, qfKeys = 0;
+        auto qfoldAccount = [&](size_t before) {
+            auto qs = [](const State& s) {
+                return ((uint64_t)s.rotSpent << 32) | ((uint64_t)s.rotChan << 16)
+                       | (uint64_t)s.rotRev;
+            };
+            auto add = [](std::vector<uint64_t>& v, uint64_t q) {
+                if (std::find(v.begin(), v.end(), q) == v.end()) v.push_back(q);
+            };
+            std::unordered_map<uint64_t, std::vector<uint64_t>> alive, kept;
+            for (size_t i = 0; i < kids.size(); ++i)
+                if (kidFlag[i] == 2) add(alive[kidKeys[i]], qs(kids[i].s));
+            for (size_t j = before; j < nxt.size(); ++j)
+                add(kept[keyOf(nxt[j], (long long)t)], qs(nxt[j]));
+            for (const auto& [k, a] : alive) {
+                const auto it = kept.find(k);
+                long long lost = 0;
+                for (uint64_t q : a)
+                    if (it == kept.end()
+                        || std::find(it->second.begin(), it->second.end(), q)
+                               == it->second.end())
+                        ++lost;
+                if (lost) { qfLost += lost; ++qfKeys; }
+            }
+        };
+        const bool qfHere = (g_qfoldLo >= 0 && t >= g_qfoldLo && t <= g_qfoldHi);
         for (const auto& gkey : groupDx) {
         const float gdx = gkey.dx;
         const uint32_t gtrig = gkey.trig;
@@ -3521,6 +3555,7 @@ inline int cliMain(int argc, char** argv) {
         //   3. the goal is the smallest ACCEPTED ordinal whose x reached
         //      goalX, which is the same state the serial loop would have
         //      grabbed first.
+        const size_t qfBefore = nxt.size();   // --qfoldwatch: this group's survivors start here
         const bool parDedupe = pool && !dbgHere && g_threads > 1
                                && kids.size() >= 4096;
         if (parDedupe) {
@@ -3637,6 +3672,7 @@ inline int cliMain(int argc, char** argv) {
                     solved = true;
                 }
             }
+            if (qfHere) qfoldAccount(qfBefore);
             continue;   // next speed group -- skips the serial phase 2
         }
         // ---- phase 2: dedupe and record (serial, in order) ------------------
@@ -3693,6 +3729,7 @@ inline int cliMain(int argc, char** argv) {
                 if (!dead) emit(c, s, (uint8_t)input, kid.key);
             }
         }
+        if (qfHere) qfoldAccount(qfBefore);
         }   // speed group
         // ---- SAFE BANDS ------------------------------------------------------
         // How wide the frontier is at this tick, written out for the driver.
@@ -3900,6 +3937,7 @@ inline int cliMain(int argc, char** argv) {
             }
         }
         maxAlive = std::max(maxAlive, nxt.size());
+        const size_t qfPre = nxt.size();   // --qfoldwatch: the frontier before the alive cap
         if (nxt.size() > g_aliveCap) {
             ++capHits;
             capDropped += (long long)(nxt.size() - g_aliveCap);
@@ -3965,6 +4003,9 @@ inline int cliMain(int argc, char** argv) {
         // far back they are actually different (--clearprobe only; reads the
         // arena, changes nothing).
         if (g_clearProbe && solved) measureGoalDiversity(nxt, arena, goalX);
+        if (qfHere)
+            std::printf("qfold: t=%lld frontier=%zu kept=%zu lostq=%lld keys=%lld\n",
+                        (long long)t, qfPre, nxt.size(), qfLost, qfKeys);
         prevAlive = cur.size();
         cur.swap(nxt);
         nBornPrev = nBorn;
