@@ -3529,7 +3529,15 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // unmeasured thing, and `!s.flip` above may be part of the
                     // old proxy rather than of GD.
                     // 004b re-lands all of it together, behind CVar29.
-                    const bool bonk = (c.mode == 5 || (c.mode == 0 && c.mini))
+                    // --bonkarm (default off) puts the measured discriminant back:
+                    // the id-1859 arm (armT: the touch tick and the one after)
+                    // instead of the robot / mini proxy. Only the discriminant
+                    // moves, as in 005. The flip arm is still missing, so with the
+                    // flag on the model is stricter than GD right after a flip.
+                    const bool bonkWho = g_bonkArm
+                        ? (c.armT < kArmTicks)
+                        : (c.mode == 5 || (c.mode == 0 && c.mini));
+                    const bool bonk = bonkWho
                                       && acquireBase && !s.flip && !s.fgArm
                                       && yPenC <= xPenC;
                     if (std::fabs(x - o->cx) <= o->hw + pInner

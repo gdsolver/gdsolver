@@ -329,6 +329,8 @@ inline uint64_t keyOf(const State& s, long long t) {
            // Only the ARMED/not bit, never the counter -- the two ticks it
            // holds behave alike -- and 0 in every level without an id-1859, so
            // every existing key stays bit-identical.
+           // --bonkarm puts the gate back, so it puts the bit back with it.
+           ^ ((g_bonkArm && s.armT < kArmTicks) ? 0xFF51AFD7ED558CCDull : 0)
            // [r52] The frame-change bit goes in the key too (it is set only on
            // the tick after the change, so the partition granularity barely
            // moves)

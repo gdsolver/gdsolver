@@ -144,6 +144,10 @@ inline std::vector<std::pair<const char*, long long>> g_dieReconWhy;
 // PLAN dies. Contiguity (last - first + 1 == dead) separates "one corpse
 // re-dying every tick" from "several deaths", which share a total.
 inline long long g_resimDead = 0;
+// --bonkarm (default off): the plain head bonk's discriminant is the id-1859 arm
+// (State::armT) instead of the `robot || mini cube` proxy. See the bonk gate in
+// step.hpp. Declared here, beside kArmTicks, because the search key reads it too.
+inline bool g_bonkArm = false;
 // ...and what killed it, taken at the FIRST dying tick. Without this, "the
 // model died and GD died" can only be matched on the fact of a death, and two
 // deaths at different places in the level read as agreement -- the model would

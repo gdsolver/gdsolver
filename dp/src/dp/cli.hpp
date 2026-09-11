@@ -304,6 +304,7 @@ inline int cliMain(int argc, char** argv) {
         }
         if (!std::strcmp(argv[i], "--ceilpush")) g_ceilPush = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--escrotahead")) g_escRotAhead = true;   // value-less, same reason
+        if (!std::strcmp(argv[i], "--bonkarm")) g_bonkArm = true;   // value-less, same reason
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below

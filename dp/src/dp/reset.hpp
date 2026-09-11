@@ -225,6 +225,7 @@ inline void resetInvocationState() {
     g_touchPreyButton = false;
     g_ceilPush = false;
     g_escRotAhead = false;
+    g_bonkArm = false;
     g_preBtnSet = false;
     g_preBtnY = 0.0;
     g_startRotChan = -1;
