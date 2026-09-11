@@ -160,10 +160,16 @@ struct Config {
     bool dpBandTrack = true;
     // cfg `dpctrlwin`: hand the model GD's recorded control-disabled windows
     // (--ctrlwin, built from the anchor source's ctrlOff rows in addWorldArgs).
-    // OFF by default until a cold census has been read; the band next door is
-    // why -- passing it at all once regressed lv22, and a switch that lands
-    // on is a commit nobody can call behaviour-preserving.
-    bool dpCtrlWin = false;
+    // It landed OFF (43d73db) so that commit could be proven behaviour-preserving;
+    // it is ON now that an lv22 cold census has been read with it on and both
+    // window edges were checked against GD (a press inserted on either side of
+    // each edge: GD and the model agree to the tick). Only lv22 has these windows
+    // among the official levels, so elsewhere this passes nothing.
+    // Known gap, not closed here: a press held into the window and released on
+    // its last tick makes GD jump as the controls come back. The replay path
+    // (the fixup resim) reproduces that; the search does not, so it cannot plan
+    // that one-tick-earlier jump and presses a tick later instead.
+    bool dpCtrlWin = true;
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be
