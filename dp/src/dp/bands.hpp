@@ -167,6 +167,12 @@ inline bool g_slopeRelDbg = false;
 // reading could not resolve, and why Reach (every step) is kept beside Call
 // (every fixup lookup): the first is the denominator of the second.
 inline long long g_frameRevReach[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
+// --fxwatch <t>: why a fixup did or did not fire on the replayed state at one
+// step (fixup.hpp fxDescribe fills it, the replay's per-tick line prints it).
+// Declared here rather than in fixup.hpp for the same reason as the counters
+// above: reset.hpp has to see it.
+inline long long g_fxWatchT = -1;
+inline char g_fxWhy[1600] = "";
 inline long long g_frameRevCall[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
 // ...and HITS by the same pair. Frame 0's 2,822 hits are the only ones this
 // level produces, and frame 0 is worn by both the plain frame and the anchor

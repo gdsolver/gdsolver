@@ -307,6 +307,7 @@ inline int cliMain(int argc, char** argv) {
             if (!std::strcmp(argv[i], "--slopereldbg")) g_slopeRelDbg = true;
             if (!std::strcmp(argv[i], "--vywriter") && i + 1 < argc) g_vyWatchT = std::atoll(argv[++i]);
             if (!std::strcmp(argv[i], "--vywriter2") && i + 1 < argc) g_vyWatchT2 = std::atoll(argv[++i]);
+            if (!std::strcmp(argv[i], "--fxwatch") && i + 1 < argc) g_fxWatchT = std::atoll(argv[++i]);
         if (!std::strcmp(argv[i], "--dcydbg")) g_dcyDbg = true;
         // --no-slopeseat: the pre-2026-09-06 slope seat (surface sampled at an
         // x clamped into the ramp's span, plus/minus a flat player half)
@@ -2875,6 +2876,11 @@ inline int cliMain(int argc, char** argv) {
                             (long long)t, g_vyWrites, g_vyWriter, g_yWrites, g_yWriter, (double)g_vyIn, (double)s.vy, (double)g_yIn, (double)s.y, g_seatGateSeen, g_seatImpulsedOff, g_seatTappedOff, g_seatOnSlope, g_seatTook, g_impulseSite,
                             g_impCount, impt, g_vpWrites, vpt, vyGd, (int)s.frame, (int)s.mode);
             }
+            // --fxwatch: the fixup gate's own account of this step (fixup.hpp
+            // fxDescribe). Kt is the step's tick as stepBoth saw it; it has to
+            // equal t or the line describes some other step.
+            if (g_fxWatchT >= 0 && t == g_fxWatchT)
+                std::printf("fxwhy: t=%lld %s\n", (long long)t, g_fxWhy);
             tr << t << ',' << wX << ',' << wY << ',' << vyGd << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
                << ',' << s.y2 << ',' << s.vy2 << ',' << (int)s.flip2 << ','

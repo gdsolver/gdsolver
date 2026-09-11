@@ -222,6 +222,66 @@ inline void applyFixup(const State& s, int input, State& c, bool& dead,
     }
 }
 
+// --fxwatch <t>: WHY a fixup did or did not fire on the replayed state at one
+// step. Print only -- it reads what applyFixup and its gate read and writes
+// nothing the step uses; the replay's per-tick line prints it (cli.hpp).
+//
+// Written for lv22 t=11,239, where the recorder calls a transition "covered" by
+// a record the resim never applies. The two sides do not ask the same question:
+// the recorder's test (repair.hpp fixupOnFile) is the key window plus delta
+// agreement, while this path first refuses the whole lookup next to moving
+// geometry (nearDynObject, below in stepBoth). So the line says which of them
+// refused: the gate and the object that tripped it, then every record in the
+// x window with each key field's match and its distances, kills and deltas both.
+inline void fxDescribe(const State& s, int input, const StepCtx& K,
+                       const State& c, long long hits0) {
+    const int cap = (int)sizeof g_fxWhy;
+    int o = 0;
+    auto clampO = [&]() { if (o >= cap) o = cap - 1; };
+    o += std::snprintf(g_fxWhy + o, cap - o,
+                       "Kt=%lld xAbs=%.4f y=%.4f vy=%.4f in=%d mode=%d mini=%d flip=%d "
+                       "g=%d dual=%d frame=%d records=%zu",
+                       (long long)K.t, (double)s.xAbs, (double)s.y, (double)s.vy, input,
+                       (int)s.mode, (int)s.mini, (int)s.flip, (int)s.grounded,
+                       (int)s.dual, (int)s.frame, g_fixups.size());
+    clampO();
+    const Obj* dyn = nullptr;
+    if (K.near)
+        for (const Obj* ob : *K.near)
+            if (ob->dynObj && std::fabs((double)s.xAbs - ob->cx) < ob->hw + 40.0
+                && std::fabs((double)s.y - ob->cy) < ob->hh + 40.0) { dyn = ob; break; }
+    o += std::snprintf(g_fxWhy + o, cap - o, " nearDyn=%d", dyn ? 1 : 0);
+    clampO();
+    if (dyn) {
+        o += std::snprintf(g_fxWhy + o, cap - o, " dynUid=%d |dx|=%.1f<%.1f |dy|=%.1f<%.1f",
+                           dyn->uid, std::fabs((double)s.xAbs - dyn->cx), dyn->hw + 40.0,
+                           std::fabs((double)s.y - dyn->cy), dyn->hh + 40.0);
+        clampO();
+    }
+    o += std::snprintf(g_fxWhy + o, cap - o, " fired=%lld vyOut=%.4f",
+                       g_fixupHits - hits0, (double)c.vy);
+    clampO();
+    for (int kd = 0; kd < 2; ++kd) {
+        const std::vector<Fixup>& v = kd ? g_fixupDeltas : g_fixupKills;
+        auto it = std::lower_bound(v.begin(), v.end(), s.xAbs - 1.2f,
+                                   [](const Fixup& f, float x) { return f.x < x; });
+        for (; it != v.end() && it->x <= s.xAbs + 1.2f && o < cap - 200; ++it) {
+            const Fixup& f = *it;
+            o += std::snprintf(g_fxWhy + o, cap - o,
+                               " | %s x=%.4f y=%.4f vy=%.4f key in%d mode%d mini%d flip%d g%d dual%d"
+                               " |dx|=%.3f |dy|=%.3f |dvy|=%.3f matches=%d",
+                               kd ? "delta" : "kill", (double)f.x, (double)f.y, (double)f.vy,
+                               (int)f.in == input, f.mode == s.mode, f.mini == s.mini,
+                               f.flip == s.flip, f.g == s.grounded, f.dual == s.dual,
+                               std::fabs((double)s.xAbs - (double)f.x),
+                               std::fabs((double)s.y - (double)f.y),
+                               std::fabs((double)s.vy - (double)f.vy),
+                               fixupMatches(f, s, input) ? 1 : 0);
+            clampO();
+        }
+    }
+}
+
 inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     bool d1 = false;
     g_halfNow = 0;
@@ -237,8 +297,10 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
         // 03:15, iter ~214 each) ran it, while kills-exempt, drop-both and
         // newest-wins variants all sat pinned for 70+ minutes. The dynamics
         // are not fully understood -- what is measured is which build climbs.
+        const long long fxHits0 = g_fixupHits;
         if (!g_fixups.empty() && !nearDynObject(s, K))
             applyFixup(s, input, c, dead);
+        if (g_fxWatchT >= 0 && K.t == g_fxWatchT) fxDescribe(s, input, K, c, fxHits0);
         return c;
     }
     State sb = s;
