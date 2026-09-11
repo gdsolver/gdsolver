@@ -242,8 +242,15 @@ inline void loadRotObjs(const std::string& csv) {
 }
 
 // The 2900s GD visibly fired at or before t0: at every gframe change in the anchor
-// recording, the rotate-gameplay object whose point lies within 2 px of the player on
-// either axis on that tick.
+// recording, the rotate-gameplay object whose point lies within 2 px of the player, on
+// that tick, along the travel axis of the frame being LEFT (x for gframe 0/2, y for 1/3).
+//
+// The axis matters. Matching on either axis also picks up objects that merely share the
+// other coordinate: on lv22, t=12,325 (1->0 at 15,404.7,615.0) is uid 6308 on y, but uid
+// 6307 (15,405,859) matched too, on x alone; t=16,447 (0->3 at 20,116.0,607.8) is 11342
+// on x, with 6337 (16,005,609) along for the ride on y. 30 of 568 changes in one cold run
+// matched two objects that way. Each coincidental uid had already fired earlier in those
+// attempts, so no set changed -- by luck of order, not by construction.
 //
 // This used to mark any 2900 whose travel coordinate the recording crossed within 150 px
 // perpendicular -- "crossed" standing in for "fired". Measured on lv22 (one cold run, 41
@@ -291,10 +298,11 @@ inline std::string spentRotArg(long long t0) {
         const AnchorRow* r = anchors::row(t);
         if (!r) continue;
         if (pf >= 0 && r->gframe != pf)
-            for (const Pt& p : pts)
-                if (std::min(std::fabs(p.cx - (double)r->x),
-                             std::fabs(p.cy - (double)r->y)) <= 2.0)
-                    spent.insert(p.uid);
+            for (const Pt& p : pts) {
+                const double d = (pf & 1) ? std::fabs(p.cy - (double)r->y)
+                                          : std::fabs(p.cx - (double)r->x);
+                if (d <= 2.0) spent.insert(p.uid);
+            }
         pf = r->gframe;
     }
     std::string s;
