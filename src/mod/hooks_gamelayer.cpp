@@ -4529,6 +4529,36 @@ class $modify(GJBaseGameLayer) {
                    // not known, and guessing either way is worse than a column that
                    // answers it.
                    << ',' << (m_player2 ? m_player2->getPositionX() : -1.f)
+                   // rotch/rotidx/rotrev: GD's OWN rotation-queue state, so a 2900
+                   // that the model fires and GD does not can be asked why instead
+                   // of guessed at. checkSpawnObjects walks one channel from a
+                   // per-channel cursor: the active channel is layer+0x33c (int),
+                   // the cursor layer+0x348 and the reverse flag layer+0x388, both
+                   // unordered_maps keyed by channel. The bindings name none of the
+                   // three, so they are read by offset.
+                   //
+                   // find() only. GD's own access is operator[], which INSERTS a
+                   // missing key; a print that did the same would change the state
+                   // it is printing. A missing key is -1, never 0, because 0 is a
+                   // real cursor value.
+                   //
+                   // The size check is the layout check: MSVC's unordered_map is
+                   // 0x40 bytes, which is exactly the distance between the two.
+                   << ',' << [this]() {
+                          static_assert(sizeof(std::unordered_map<int, int>) == 0x40);
+                          static_assert(sizeof(std::unordered_map<int, bool>) == 0x40);
+                          auto const* base = reinterpret_cast<char const*>(this);
+                          const int ch = *reinterpret_cast<int const*>(base + 0x33c);
+                          auto const& idx = *reinterpret_cast<
+                              std::unordered_map<int, int> const*>(base + 0x348);
+                          auto const& rev = *reinterpret_cast<
+                              std::unordered_map<int, bool> const*>(base + 0x388);
+                          auto const i = idx.find(ch);
+                          auto const r = rev.find(ch);
+                          return std::to_string(ch) + ','
+                              + std::to_string(i == idx.end() ? -1 : i->second) + ','
+                              + std::to_string(r == rev.end() ? -1 : (int)r->second);
+                      }()
                    << '\n';
         }
     }
