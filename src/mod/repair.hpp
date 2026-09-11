@@ -979,14 +979,18 @@ inline bool rotSeedArgs(long long t0, std::vector<std::string>& a, const char* s
     const std::vector<AnchorRow>& v = *anchors::g_src;
     const rotseed::Seed s = rotseed::seedFor(v, t0, g_cfg.dpRotSeed);
     const AnchorRow* r0 = anchors::row(t0);
+    // cfg dprotseedanchor=0: the anchored search is classified and logged like any other
+    // call but runs without the queue (Config::dpRotSeedAnchor).
+    const bool withheld = std::string(site) == "anchor" && !g_cfg.dpRotSeedAnchor;
+    const char* queue = s.cls != "exact" ? "none" : withheld ? "withheld" : "given";
     char head[256];
     std::snprintf(head, sizeof head, "rotseed: site=%s t0=%lld level=%c class=%s rows=%zu x0=%.3f y0=%.3f",
                   site, t0, " AEF"[g_cfg.dpRotSeed], s.cls.c_str(), v.size(),
                   r0 ? (double)r0->x : -1.0, r0 ? (double)r0->y : -1.0);
     writeResult(std::string(head) + " why=" + (s.why.empty() ? "-" : s.why)
                 + " provenance=" + (s.prov.empty() ? "-" : s.prov)
-                + " seed=" + (s.seed.empty() ? "-" : s.seed));
-    if (s.cls != "exact") return false;
+                + " seed=" + (s.seed.empty() ? "-" : s.seed) + " queue=" + queue);
+    if (s.cls != "exact" || withheld) return false;
     a.push_back("--rotqueue");
     a.push_back("--startrotq");
     a.push_back(s.seed);

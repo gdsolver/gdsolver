@@ -178,6 +178,12 @@ struct Config {
     // seen a queue entry, strictest first (rotSeedFor in repair.hpp). Refused, and
     // named, when a cfg `dparg=--rotqueue` already turns the queue on for every call.
     int dpRotSeed = 0;
+    // cfg `dprotseedanchor`: whether an exact seed also hands the queue to the ANCHORED
+    // SEARCH (site=anchor), or only to the fixup resim. 1 = both (dprotseed's own
+    // behaviour); 0 = resim only -- the anchored call still logs its class on the
+    // rotseed: line, marked queue=withheld, and gets no --rotqueue. The A/B arm for
+    // whether the queue in the search is what an lv22 run piles up on.
+    bool dpRotSeedAnchor = true;
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be
