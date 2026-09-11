@@ -149,7 +149,7 @@ inline void pollCommandFileImpl(const std::string& cmd) {
                           "onGround2,dead,speed,gravityMod,platXVel,vsize,gy1,gy2,"
                           "dual,p2y,p2vy,p2up,p2ground,p2dead,pmin,pmax,"
                           "snapuid,snapdist,camscale,gframe,ctrlOff,camx,camy,"
-                          "p2ground2,p2mode,p2vsize,p2x,rotch,rotidx,rotrev\n";
+                          "p2ground2,p2mode,p2vsize,p2x,rotch,rotidx,rotrev,firedw\n";
             }
             if (g_trace.is_open()) {
                 g_trace.close();
@@ -272,6 +272,17 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
     }
     else if (key == "dprotseedanchor") g_cfg.dpRotSeedAnchor = (val != "0");
     else if (key == "dpsnapshot") g_cfg.dpSnapshot = (val == "1");
+    else if (key == "dpwatchfired") {
+        g_cfg.dpWatchFired.clear();
+        size_t p = 0;
+        while (p <= val.size()) {
+            const size_t q = val.find(',', p);
+            const std::string tok = val.substr(p, q == std::string::npos ? std::string::npos : q - p);
+            if (!tok.empty()) g_cfg.dpWatchFired.push_back(std::atoi(tok.c_str()));
+            if (q == std::string::npos) break;
+            p = q + 1;
+        }
+    }
     else if (key == "dpfingerprint") g_cfg.dpFingerprint = (val == "1");
     else if (key == "dparg") g_cfg.dpArgs.push_back(val);
     else return false;

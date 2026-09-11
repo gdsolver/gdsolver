@@ -4559,6 +4559,40 @@ class $modify(GJBaseGameLayer) {
                               + std::to_string(i == idx.end() ? -1 : i->second) + ','
                               + std::to_string(r == rev.end() ? -1 : (int)r->second);
                       }()
+                   // firedw: for each uid in cfg dpwatchfired, the object's +0x28e byte --
+                   // the flag checkSpawnObjects (0x21aad8) tests before it calls
+                   // triggerObject, while advancing the cursor either way. A 2900 whose
+                   // cursor moves but whose channel does not is explained by this byte or
+                   // by nothing on that path, so it is asked rather than inferred.
+                   // Always present so the header never depends on when the cfg is read:
+                   // "-" with no uids, "uid:v|uid:v" otherwise, -1 for a uid not found.
+                   // The uid -> object lookup walks m_objects once per attempt. Read only.
+                   << ',' << [this]() -> std::string {
+                          if (g_cfg.dpWatchFired.empty()) return "-";
+                          static void const* layer = nullptr;
+                          static long long attempt = -1;
+                          static std::vector<std::pair<int, GameObject*>> objs;
+                          if (layer != this || attempt != (long long)g_attempt
+                              || objs.size() != g_cfg.dpWatchFired.size()) {
+                              layer = this;
+                              attempt = (long long)g_attempt;
+                              objs.clear();
+                              for (int uid : g_cfg.dpWatchFired) {
+                                  GameObject* found = nullptr;
+                                  if (m_objects)
+                                      for (auto* o : CCArrayExt<GameObject*>(m_objects))
+                                          if (o && o->m_uniqueID == uid) { found = o; break; }
+                                  objs.push_back({uid, found});
+                              }
+                          }
+                          std::string s;
+                          for (auto const& [uid, o] : objs) {
+                              if (!s.empty()) s += '|';
+                              s += std::to_string(uid) + ':' + std::to_string(
+                                  o ? (int)*(reinterpret_cast<uint8_t const*>(o) + 0x28e) : -1);
+                          }
+                          return s;
+                      }()
                    << '\n';
         }
     }

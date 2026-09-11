@@ -191,6 +191,10 @@ struct Config {
     // cannot be rebuilt offline with the inputs it actually had. Off by default: it only
     // writes files and log lines, and costs disk (lv22 keeps ~20 group versions).
     bool dpSnapshot = false;
+    // cfg `dpwatchfired=<uid>[,<uid>...]`: the dump's `firedw` column carries each listed
+    // object's +0x28e byte (the flag checkSpawnObjects tests before it calls triggerObject)
+    // on every tick. Empty by default, and then the column reads "-". Print only.
+    std::vector<int> dpWatchFired;
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be
