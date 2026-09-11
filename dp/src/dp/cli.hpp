@@ -305,6 +305,7 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--ceilpush")) g_ceilPush = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--escrotahead")) g_escRotAhead = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--bonkarm")) g_bonkArm = true;   // value-less, same reason
+        if (!std::strcmp(argv[i], "--witnessframe")) g_witnessFrame = true;   // value-less, same reason
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below
@@ -4441,7 +4442,13 @@ inline int cliMain(int argc, char** argv) {
         // the NEW frame's, and reading the old frame's is worse than not
         // turning at all. XSlice holds a reference, so it cannot be assigned --
         // hence the pointers, which is also how --replay carries them.
-        Level* rLf = &L;
+        // --witnessframe (default off): bind the frame the call STARTS in, as
+        // --replay does at its own Lf. Fixed at &L, a call anchored in a turned
+        // frame walks frame 0's geometry: lv22 plan 466 (t0=6127, frame 1) fell
+        // through uid 5845 at t=6162 where --replay lands, missed the turn at
+        // 6299 and reported escapee-prune at 6505. The walk also fills modeAt,
+        // which sets the emitted edges' latency, so this is not print-only.
+        Level* rLf = g_witnessFrame ? &frameLevel(L, (int)init.frame) : &L;
         std::unique_ptr<XSlice> sl, pl, dl, ol, sls, vl;
         auto rrebind = [&](Level& lv) {
             sl = std::make_unique<XSlice>(lv.objs);

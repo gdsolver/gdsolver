@@ -148,6 +148,10 @@ inline long long g_resimDead = 0;
 // (State::armT) instead of the `robot || mini cube` proxy. See the bonk gate in
 // step.hpp. Declared here, beside kArmTicks, because the search key reads it too.
 inline bool g_bonkArm = false;
+// --witnessframe (default off): the witness walk binds the geometry of the frame the
+// call STARTS in, as --replay does, instead of frame 0. Not print-only: the walk also
+// fills modeAt, which sets the emitted plan's edge latencies. See cli.hpp at rLf.
+inline bool g_witnessFrame = false;
 // ...and what killed it, taken at the FIRST dying tick. Without this, "the
 // model died and GD died" can only be matched on the fact of a death, and two
 // deaths at different places in the level read as agreement -- the model would
