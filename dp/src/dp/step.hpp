@@ -6810,7 +6810,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // The seat is the one slopeSeatTarget computes; --slopedbg prints both
                 // (the print is behind g_slopeDbg: in a search stepOne runs on every
                 // child from the worker threads).
-                if (g_ceilPush && !okHere && ceilRamp && std::fabs(m) <= 1.0) {
+                // `!s.onSlope`: the same over-retention guard the floor push-out below
+                // uses. A body already riding a ramp is the ride code's business: lv16
+                // t=8,717, the ship rides the descending neighbour of uid 3765 at a V
+                // and GD lets it pass straight through 3765's line (y never moves),
+                // while this branch dropped it 20.85 px. On the corpus the guard removes
+                // that one misfire and seven firings that changed nothing.
+                if (g_ceilPush && !okHere && ceilRamp && !s.onSlope && std::fabs(m) <= 1.0) {
                     const double lineCP = sp->sy0 + m * (x - x0);
                     const double seatCP = lineCP - pH * std::sqrt(1.0 + m * m);
                     const bool boxX = (x + pH > x0) && (x - pH < x1);
