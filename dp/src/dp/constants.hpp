@@ -173,6 +173,17 @@ inline bool g_vetoPhys = false;
 // silently drop the wrong row.
 inline bool g_dropNoCollide = false;
 inline constexpr int kNoCollideId = 1910;
+// --verdictinfo (default off): when a SOLVED plan's own witness walk died, print one
+// `vinfo:` line carrying the verdict beside that death -- tick, cause, uid, object,
+// frame. Print only. The verdict is NOT changed and the plan is NOT withheld: the
+// direction is "send the plan, attach the known death as information" (audit 05:02),
+// and the SOLVED/PARTIAL definition stays exactly where it is.
+//
+// Why it is worth a line at all: 23 of 423 witness walks in the 2026-09-08 cold run
+// died, all on lv20/lv22, and none of those deaths matched GD's within +-30 ticks
+// (0/18). So the witness death is not evidence the route dies -- which is precisely
+// why this is information attached to a plan rather than a reason to demote it.
+inline bool g_verdictInfo = false;
 inline float g_resimPX = 0.f;   // the player's world x at the witness's first death
 // ...and what killed it, taken at the FIRST dying tick. Without this, "the
 // model died and GD died" can only be matched on the fact of a death, and two

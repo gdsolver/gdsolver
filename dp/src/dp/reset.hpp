@@ -229,6 +229,7 @@ inline void resetInvocationState() {
     g_witnessFrame = false;
     g_vetoPhys = false;
     g_dropNoCollide = false;
+    g_verdictInfo = false;
     g_resimPX = 0.f;
     g_preBtnSet = false;
     g_preBtnY = 0.0;

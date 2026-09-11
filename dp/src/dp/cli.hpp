@@ -308,6 +308,7 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--witnessframe")) g_witnessFrame = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--vetophys")) g_vetoPhys = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--dropnocollide")) g_dropNoCollide = true;   // value-less, same reason
+        if (!std::strcmp(argv[i], "--verdictinfo")) g_verdictInfo = true;   // value-less, same reason
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below
@@ -4760,6 +4761,31 @@ inline int cliMain(int argc, char** argv) {
         std::printf("resimwho: uid=%d obj=(%.1f,%.1f) frame=%d trig=0x%08x\n",
                     g_resimUid, g_resimObjX, g_resimObjY, g_resimFrame,
                     g_resimTrig);
+    // --verdictinfo (default off): one line per SOLVED call, carrying that call's
+    // verdict beside its OWN witness walk's death. Print only -- the verdict is not
+    // touched here and the plan is not withheld. The direction is "send the plan,
+    // attach the known death as information" (audit 05:02), which is why this sits
+    // after the verdict is settled and changes nothing about it.
+    //
+    // Emitted for EVERY SOLVED call, dead=0 included, so the line carries its own
+    // denominator. "How many SOLVED plans had a dying witness" cannot be read off
+    // lines that exist only when one died -- the same discipline as the resimdie=?
+    // note above: a value that is missing must be distinguishable from a zero.
+    //
+    // Reads the SNAPSHOT (rDead/rOf/rFirst/rLast/rWhy) rather than g_resim*. Nothing
+    // serialises cliMain, and re-reading those globals here is exactly the mechanism
+    // the READ THE COUNTERS ONCE note removed after the 2026-09-08 cold run published
+    // a resimdie=10 that no printf ever emitted. uid/frame are read once, right here,
+    // and only when there was a death to describe.
+    if (g_verdictInfo && g_outcome.verdict == VerdictSolved) {
+        const int vUid   = (rDead > 0) ? g_resimUid   : -1;
+        const int vFrame = (rDead > 0) ? g_resimFrame : -1;
+        std::printf("vinfo: verdict=SOLVED dead=%lld of=%lld first=%d last=%d "
+                    "why=%s uid=%d objframe=%d startframe=%d\n",
+                    rDead, rOf, rFirst, rLast,
+                    (rDead > 0 && rWhy) ? rWhy : "-",
+                    vUid, vFrame, (int)init.frame);
+    }
     // ...and out through the struct, because the repair loop -- the one consumer
     // that ACTS on these plans -- reads dp::g_outcome, not stdout. A walk that
     // never ran stays -1 and must not be counted as a clean plan.
