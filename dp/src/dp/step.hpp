@@ -8544,8 +8544,20 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // iterations). `flip` still means "flipped against that frame's vertical" in
     // a rotated frame, so it can be used as is.
     if (!dead && c.mode != 1 && c.mode != 4 && c.flip && !c.grounded
-        && (double)c.y - pHalf > topAheadAtF((int)c.frame, x))
+        && (double)c.y - pHalf > topAheadAtF((int)c.frame, x)) {
+        // --slopedbg: WHICH answer the table gave. `i >= size` means topAheadAtF
+        // returned -1e9 from past the table's end, not a surface; size 0 means the
+        // frame has no table (1e9, which cannot prune). Print only.
+        if (g_slopeDbg) {
+            long long bi = -1, bn = 0;
+            topAheadIndex((int)c.frame, x, bi, bn);
+            std::printf("escapee: t=%lld frame=%d x=%.3f y-pH=%.3f topAhead=%.3f "
+                        "i=%lld size=%lld\n",
+                        (long long)K.t, (int)c.frame, x, (double)c.y - pHalf,
+                        topAheadAtF((int)c.frame, x), bi, bn);
+        }
         DIE("escapee-prune", nullptr);
+    }
     // Portals fire when the player's box first OVERLAPS the portal's box, not
     // when it crosses the portal's centre column. Measured on lv4's gravity
     // portal at cx=8775 (rect 25 wide, so left edge 8762.5):

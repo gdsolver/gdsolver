@@ -32,6 +32,21 @@ inline double topAheadAtF(int f, double x) {
     if (i >= (long long)slot->topAhead.size()) return -1e9;
     return slot->topAhead[(size_t)i];
 }
+// For the --slopedbg `escapee:` print: the bucket topAheadAtF reads and the
+// table's length (i >= n: it answered -1e9 from past the end; n == 0: no table).
+inline void topAheadIndex(int f, double x, long long& i, long long& n) {
+    const std::vector<double>* t = nullptr;
+    double x0 = 0.0;
+    if ((f & 3) == 0) {
+        t = &g_topAhead;
+        x0 = g_bucketX0;
+    } else {
+        const auto& slot = g_frameLv[(size_t)(f & 3)];
+        if (slot) { t = &slot->topAhead; x0 = slot->bucketX0; }
+    }
+    n = t ? (long long)t->size() : 0;
+    i = (t && n) ? std::max(0LL, (long long)((x - x0) / 30.0)) : -1;
+}
 // ship dedupe granularity (cube is always 0.5px / 0.1). Ship layers are the
 // only ones that saturate the cap, so these two knobs set the runtime.
 inline double g_shipYq = 0.5;   // multiplier: 0.5 -> 2px bins
