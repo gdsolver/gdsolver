@@ -8562,8 +8562,17 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const int ch = (int)c.rotChan & 15;
             const int beg = g_rotQBeg[(size_t)ch], end = g_rotQEnd[(size_t)ch];
             const int done = popCount32(c.rotSpent & g_rotQChanMask[(size_t)ch]);
+            // "Ahead" is judged at the PARENT's position, not this state's. Within a
+            // tick the order is: stepBoth -> stepOne (THIS prune, old frame, child
+            // already moved) -> applyRotation(child, uPrev = parent's position),
+            // which consumes the entry (rotSpent, :457) and turns the frame (:834).
+            // So on the tick the move crosses the firing point the entry is still
+            // unconsumed and the frame still old, while the CHILD is already past
+            // it -- testing the child let this table prune on exactly that tick
+            // (plan 598 t=5,110, lv22 CLEARED t=5,119). Testing the parent reads
+            // "pending or firing this tick", from the same start applyRotation uses.
             double wx, wy;
-            fromFrame((int)c.frame, (double)c.xAbs, (double)c.y, wx, wy);
+            fromFrame((int)s.frame, (double)s.xAbs, (double)s.y, wx, wy);
             const bool rev = ((c.rotRev >> ch) & 1u) != 0;
             const bool vertical = ((int)c.frame & 1) != 0;
             const double ref = vertical ? wy : wx;
