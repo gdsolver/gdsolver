@@ -156,6 +156,14 @@ inline bool g_touchCensus = false;
 // g_tcBranchP1 is p1's value, saved by stepBoth before p2's stepOne overwrites it.
 inline thread_local int g_tcBranch = 0;
 inline thread_local int g_tcBranchP1 = 0;
+// --touchprey=parent|button: the y markTouched's preY test reads. parent (the
+// default) is the parent state's y, as before; button is p1's y before this
+// tick's button effects, carried out of stepOne -- the spider tap warp's
+// pre-warp y -- or this tick's own y when no button effect moved it.
+// g_preBtnSet/g_preBtnY are written by the warp branch under the flag only.
+inline bool g_touchPreyButton = false;
+inline thread_local bool g_preBtnSet = false;
+inline thread_local double g_preBtnY = 0.0;
 
 // ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
 //

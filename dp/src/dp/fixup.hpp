@@ -282,17 +282,27 @@ inline void fxDescribe(const State& s, int input, const StepCtx& K,
     }
 }
 
+// markTouched's preY under --touchprey (see g_touchPreyButton).
+inline double touchPreY(const State& s, const State& c, bool set, double y) {
+    if (!g_touchPreyButton) return (double)s.y;
+    return set ? y : (double)c.y;
+}
+
 inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     bool d1 = false;
     g_halfNow = 0;
     // Out-parameter, not a global: phase 1 steps the layer in parallel.
     bool p1FlippedGravity = false;
     if (g_touchCensus) g_tcBranch = 0;
+    if (g_touchPreyButton) g_preBtnSet = false;
     State c = stepOne(s, input, K, d1, &p1FlippedGravity);
     if (g_touchCensus) g_tcBranchP1 = g_tcBranch;
+    // p1's pre-button y, saved before p2's stepOne can overwrite it
+    const bool preBtnSet = g_preBtnSet;
+    const double preBtnY = g_preBtnY;
     if (!s.dual) {
         dead = d1;
-        markTouched(c, K, (double)s.y);
+        markTouched(c, K, touchPreY(s, c, preBtnSet, preBtnY));
         // No fixup of either kind applies near moving geometry (nearDynObject
         // above). This exact constellation is the one that breaks the lv22
         // corridor oscillation: both breakout runs (2026-08-26 01:15 and
@@ -420,7 +430,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
         }
     }
     dead = d1 || d2;
-    markTouched(c, K, (double)s.y);
+    markTouched(c, K, touchPreY(s, c, preBtnSet, preBtnY));
     // The dual half used to skip this entirely, so a divergence measured in a dual section was
     // unusable even if something had managed to write it down. Applied here, after both bodies
     // are merged, for the same reason the single case applies it after stepOne: the record is

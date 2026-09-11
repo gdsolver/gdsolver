@@ -222,6 +222,9 @@ inline void resetInvocationState() {
     g_touchCensus = false;
     g_tcBranch = 0;
     g_tcBranchP1 = 0;
+    g_touchPreyButton = false;
+    g_preBtnSet = false;
+    g_preBtnY = 0.0;
     g_startRotChan = -1;
     g_startRotRev = 0;
     g_startRotSpent.clear();

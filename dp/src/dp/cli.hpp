@@ -294,6 +294,14 @@ inline int cliMain(int argc, char** argv) {
         // argc-1 loop would drop it silently whenever it is passed last.
         if (!std::strcmp(argv[i], "--rotqtoggle")) g_rotQToggle = true;
         if (!std::strcmp(argv[i], "--touchcensus")) g_touchCensus = true;   // value-less, same reason
+        // --touchprey=parent|button: the value rides in the same token, so it
+        // lives in this loop too. See g_touchPreyButton.
+        if (!std::strncmp(argv[i], "--touchprey=", 12)) {
+            const char* v = argv[i] + 12;
+            if (!std::strcmp(v, "button")) g_touchPreyButton = true;
+            else if (!std::strcmp(v, "parent")) g_touchPreyButton = false;
+            else std::fprintf(stderr, "leveldp: --touchprey=%s is not parent|button; using parent\n", v);
+        }
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below

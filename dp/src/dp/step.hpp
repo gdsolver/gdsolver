@@ -2250,6 +2250,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // pulls y back to 316.53 -- 153 px above GD for the whole section,
             // and straight into the solid uid1616 (2415,345) 5 ticks later.
             pinnedOnBlock = false;
+            if (g_touchPreyButton) { g_preBtnSet = true; g_preBtnY = (double)c.y; }
             YSET(c.y) = (float)bestY;
             yFree = c.y;
             // GD leaves 1.0 of velocity pointing the way the teleport went, not
