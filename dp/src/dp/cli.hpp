@@ -306,6 +306,7 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--slopedbg")) g_slopeDbg = true;
             if (!std::strcmp(argv[i], "--slopereldbg")) g_slopeRelDbg = true;
             if (!std::strcmp(argv[i], "--vywriter") && i + 1 < argc) g_vyWatchT = std::atoll(argv[++i]);
+            if (!std::strcmp(argv[i], "--vywriter2") && i + 1 < argc) g_vyWatchT2 = std::atoll(argv[++i]);
         if (!std::strcmp(argv[i], "--dcydbg")) g_dcyDbg = true;
         // --no-slopeseat: the pre-2026-09-06 slope seat (surface sampled at an
         // x clamped into the ramp's span, plus/minus a flat player half)
@@ -2855,11 +2856,20 @@ inline int cliMain(int argc, char** argv) {
             // it as "the site that decided the value" is the mistake the count
             // is here to prevent. Zero means vy was not written this step at all
             // and the value came from somewhere else entirely.
-            if (g_vyWatchT >= 0 && t == g_vyWatchT)
+            // The vpNew trail is printed oldest first; `vpwrites` above eight
+            // means the head of the sequence was overwritten.
+            if ((g_vyWatchT >= 0 && t == g_vyWatchT)
+                || (g_vyWatchT2 >= 0 && t == g_vyWatchT2)) {
+                char vpt[96] = "-";
+                const int nvp = g_vpWrites < 8 ? g_vpWrites : 8;
+                for (int k = 0, o = 0; k < nvp; ++k)
+                    o += std::snprintf(vpt + o, sizeof vpt - o, k ? ",%d" : "%d",
+                                       g_vpTrail[(g_vpWrites - nvp + k) & 7]);
                 std::printf("vywriter: t=%lld writes=%d lastline=%d ywrites=%d ylastline=%d vyIn=%.6f vy=%.6f yIn=%.4f y=%.4f seatgate=%d impulsedOff=%d tappedOff=%d sOnSlope=%d took=%d impsite=%d "
-                            "traceVy=%.6f frame=%d mode=%d\n",
+                            "vpwrites=%d vptrail=%s traceVy=%.6f frame=%d mode=%d\n",
                             (long long)t, g_vyWrites, g_vyWriter, g_yWrites, g_yWriter, (double)g_vyIn, (double)s.vy, (double)g_yIn, (double)s.y, g_seatGateSeen, g_seatImpulsedOff, g_seatTappedOff, g_seatOnSlope, g_seatTook, g_impulseSite,
-                            vyGd, (int)s.frame, (int)s.mode);
+                            g_vpWrites, vpt, vyGd, (int)s.frame, (int)s.mode);
+            }
             tr << t << ',' << wX << ',' << wY << ',' << vyGd << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
                << ',' << s.y2 << ',' << s.vy2 << ',' << (int)s.flip2 << ','

@@ -64,6 +64,14 @@ inline int g_seatTook = -1;         // did it take the exemption (and skip vy)?
 inline int g_impulseSite = 0;
 #define IMPULSE() (::dp::g_impulseSite = __LINE__, true)
 #define YSET(x) (::dp::g_yWriter = __LINE__, ++::dp::g_yWrites, (x))
+// ...and the lines that built vpNew, IN ORDER. c.vy is written once, after the
+// whole branch chain, from vpNew -- so the vy writer names that shared line and
+// not the branch that produced the value. The last eight writes are kept, so
+// a jump, its robot scale and a slope bonus read as the sequence they are.
+inline int g_vpTrail[8] = {};
+inline int g_vpWrites = 0;
+inline long long g_vyWatchT2 = -1;  // --vywriter2 <t>: a second (control) tick
+#define VPSET(x) (::dp::g_vpTrail[::dp::g_vpWrites & 7] = __LINE__, ++::dp::g_vpWrites, (x))
 
 struct StepCtx {
     double x, xPrev;
@@ -955,6 +963,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     g_yWrites = 0;
     g_yIn = s.y;
     g_vyIn = s.vy;
+    g_vpWrites = 0;
     // ...and the (frame, rev) the step ran in. Counted for EVERY step, not only
     // the ones that consult a fixup, so the fixup census below it has a
     // denominator: "frame 2 never reached a lookup" and "frame 2 never happened"
@@ -2250,7 +2259,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             c.flip = s.flip ? 0 : 1;
             c.grounded = 0;
             c.snapObj = nullptr;
-            vpNew = 1.0;
+            VPSET(vpNew) = 1.0;
             // [2026-08-21 r93] **When a warp interrupts a ride, the ramp's
             // slope-exit launch pulse appears on the next tick.** Measured lv21
             // t=16,713/16,714 (spider, rode an |m|=2 uphill for 3 ticks, then
@@ -2460,13 +2469,13 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             } else {
                 // jump edge: vy set, y frozen this tick
                 // mini keeps the measured 0.800 ratio against this speed's jump
-                vpNew = c.mini ? (cph.jump * (kCubeJumpMini / kCubeJump))
+                VPSET(vpNew) = c.mini ? (cph.jump * (kCubeJumpMini / kCubeJump))
                                : cph.jump;
                 // ...and the robot's is half of it, with the hover budget
                 // armed. GD zeroes the budget (this+0x830) in the same block
                 // that sets the jump velocity.
                 if (isRobot) {
-                    vpNew *= kRobotJumpScale;
+                    VPSET(vpNew) *= kRobotJumpScale;
                     c.rHover = rePushNoHoverAt(K.t)
                                    ? (uint8_t)0
                                    : (uint8_t)kRobotHoverTicks;
@@ -2545,7 +2554,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         * slopeExitVy(std::fabs((double)s.slopeM), 0,
                                       useDx, c.mini != 0)
                         * slopeRampFactor((int)s.slopeT + 1);
-                    vpNew += std::min(bonus,
+                    VPSET(vpNew) += std::min(bonus,
                                       kSlopeJumpBonusCap * std::fabs(vpNew));
                 }
                 // On the fresh-jump tick of a **downhill** ride, y first drops by
@@ -2583,7 +2592,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 yFree = c.y;
             }
         } else if (groundedNow) {
-            vpNew = 0;
+            VPSET(vpNew) = 0;
             c.grounded = 1;
             c.rHover = 0;
             // ...but GD's update phase still took this tick's gravity step
@@ -2615,11 +2624,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // measured -0.215 on the cancel tick (see DashStopBox).
                 c.dashing = 1;
                 c.rHover = 0;
-                vpNew = 0.0;
+                VPSET(vpNew) = 0.0;
                 YSET(c.y) = (float)((double)s.y + (double)s.dashSlope * useDx);
                 yFree = c.y;
             } else if (isRobot && s.rHover && s.action) {
-                vpNew = vp;
+                VPSET(vpNew) = vp;
                 // FORCE BOX (id 2069): the field applies during hover too, at the
                 // ROBOT's strength -- this branch is gated on isRobot, so `s.mode`
                 // is 5 by construction and the mode-less lookup could only ever
@@ -2633,7 +2642,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // jumps in the corpus -- so neither half of that was measuring this.
                 // The dash branch stays pass-through, as measured for 3645.
                 if (!g_forceBoxes.empty())
-                    vpNew += forceBoxAcc(modX, modY, pHalf,
+                    VPSET(vpNew) += forceBoxAcc(modX, modY, pHalf,
                                          forceUnitFor(s.mode, useDx)) * gdSign;
                 c.rHover = (uint8_t)(s.rHover - 1);
                 YSET(c.y) = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
@@ -2677,9 +2686,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // exact accumulation would have given 0.130 on the third).
                 // r102: the tick after hitting a black orb on a fast climb has no terminal
                 if (g_noForceOrder) acc += forceAcc;
-                vpNew = s.pNoTerm ? qVy(vp + acc * tScale)
+                VPSET(vpNew) = s.pNoTerm ? qVy(vp + acc * tScale)
                                   : qVy(std::max(vp + acc * tScale, gTerm));
-                if (!g_noForceOrder) vpNew += forceAcc * tScale;
+                if (!g_noForceOrder) VPSET(vpNew) += forceAcc * tScale;
                 if (isRobot) c.rHover = 0;
                 YSET(c.y) = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;

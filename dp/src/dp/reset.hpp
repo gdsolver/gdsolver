@@ -79,6 +79,8 @@ inline void resetInvocationState() {
     g_seatGateSeen = 0;
     g_seatImpulsedOff = g_seatTappedOff = g_seatOnSlope = g_seatTook = -1;
     g_impulseSite = 0;
+    g_vpWrites = 0;
+    g_vyWatchT2 = -1;
     g_dcyDbg = false;
     g_bandDbg = false;
     g_spdDbg = false;
