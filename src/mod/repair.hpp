@@ -211,10 +211,8 @@ inline void record(GJBaseGameLayer* l, long long t) {
 // through the same x at t=14,3xx, GD ignores them -- but an anchored tail solve knows nothing
 // of the maze, sees uid6337 at (16,005,609) six pixels from the ride, and rotates a world GD
 // does not (the -7.8 carry fixups at x=16,003 were the model fighting its own phantom turn).
-// The anchor recording holds the truth: any 2900 whose travel coordinate the recorded run
-// crossed within the firing window BEFORE the anchor is dead by t0 -- it either fired there
-// (a gframe change says where) or was already spent even earlier. Marking those spent is
-// exactly what the driver's --spentrot carried, and the loop never wired it.
+// The anchor recording holds the truth, and the only part of it that says a 2900 FIRED is a
+// gframe change -- see spentRotArg for why crossing its coordinate is not enough.
 struct RotObj { int uid; double cx, cy; };
 inline std::vector<RotObj> g_rotObjs;   // parsed from the level csv at session start
 
@@ -243,47 +241,61 @@ inline void loadRotObjs(const std::string& csv) {
     }
 }
 
-// The frame maps of dp/frames.hpp, reduced to what the scan needs.
-inline void rotUV(int f, double X, double Y, double& u, double& v) {
-    switch (f & 3) {
-        case 0:  u = X;  v = Y;  break;
-        case 1:  u = -Y; v = X;  break;
-        case 2:  u = -X; v = -Y; break;
-        default: u = Y;  v = -X; break;
-    }
-}
-
+// The 2900s GD visibly fired at or before t0: at every gframe change in the anchor
+// recording, the rotate-gameplay object whose point lies within 2 px of the player on
+// either axis on that tick.
+//
+// This used to mark any 2900 whose travel coordinate the recording crossed within 150 px
+// perpendicular -- "crossed" standing in for "fired". Measured on lv22 (one cold run, 41
+// anchors), that was wrong in both directions:
+//   - OVER: a 2900 on a channel GD has not switched to yet is crossed well before it fires
+//     (uid 1215 crossed at t~1,653, fired at 1,817). Spent early, the replay never turns
+//     there -- 4 uids at 3 anchors. The old note here said no such trigger existed in the
+//     corpus.
+//   - UNDER: the crossing test only ran between two rows in the SAME gframe, so the tick on
+//     which a 2900 actually turned the frame was never looked at -- 91 uids at 36 anchors
+//     (uid 4355 at t=4,646, uid 6286 at t=11,332).
+// Replaying all 41 anchors with the witnessed set instead moved no first divergence
+// earlier, and five later or away.
+//
+// Only a 2900 that rotates can be witnessed. A 2899 and a channel-only 2900 never change
+// the frame, so they are left out (rotgameplay.txt names both), as is a reverse toggle that
+// keeps the frame -- --spentrot only ever set firedT, never revT (cli.hpp).
 inline std::string spentRotArg(long long t0) {
     if (g_rotObjs.empty()) return "";
+    struct Pt { int uid; double cx, cy; };
+    std::vector<Pt> pts;
+    {
+        // Read per call, not cached: the file is rewritten at every level's start, and a
+        // cache would carry one level's triggers into the next in a one-session run.
+        const std::string path = std::string(DATA_DIR) + "/rotgameplay.txt";
+        std::ifstream f(path);
+        if (!f) {
+            log::warn("spentrot: {} missing -- no 2900 can be witnessed, none marked", path);
+            return "";
+        }
+        std::string line;
+        std::getline(f, line);   // uid,id,cx,cy,chan,ord,sord,sordd,spx,target,chanChanged,swarm,chanOnly,swch
+        while (std::getline(f, line)) {
+            std::vector<std::string> c;
+            std::stringstream ss(line);
+            for (std::string v; std::getline(ss, v, ',');) c.push_back(v);
+            if (c.size() < 14 || c[1] != "2900" || c[12] != "0") continue;
+            pts.push_back({std::atoi(c[0].c_str()), std::atof(c[2].c_str()),
+                           std::atof(c[3].c_str())});
+        }
+    }
     std::set<int> spent;
-    const AnchorRow* prev = nullptr;
-    double puPrev = 0.0;
-    int pf = 0;
-    for (long long t = 1; t < t0; ++t) {
+    int pf = -1;
+    for (long long t = 1; t <= t0; ++t) {
         const AnchorRow* r = anchors::row(t);
         if (!r) continue;
-        if (prev && r->gframe == pf) {
-            double u1, v1;
-            rotUV(pf, (double)r->x, (double)r->y, u1, v1);
-            for (const RotObj& o : g_rotObjs) {
-                if (spent.count(o.uid)) continue;
-                double ut, vt;
-                rotUV(pf, o.cx, o.cy, ut, vt);
-                const bool crossed = (puPrev < ut && u1 >= ut)
-                                     || (puPrev > ut && u1 <= ut);
-                // 150 = kRotPerpWin. Over-marking is the risk to watch: a trigger
-                // crossed inside the window before t0 that GD in fact never fires
-                // and that a LATER rung needs would be wrongly dead -- no such
-                // trigger exists in the corpus (the shaft's 11342 is first crossed
-                // at its own firing), and under-marking is the measured disease.
-                if (crossed && std::fabs(v1 - vt) <= 150.0) spent.insert(o.uid);
-            }
-        }
-        double u0, v0;
-        rotUV((int)r->gframe, (double)r->x, (double)r->y, u0, v0);
-        puPrev = u0;
+        if (pf >= 0 && r->gframe != pf)
+            for (const Pt& p : pts)
+                if (std::min(std::fabs(p.cx - (double)r->x),
+                             std::fabs(p.cy - (double)r->y)) <= 2.0)
+                    spent.insert(p.uid);
         pf = r->gframe;
-        prev = r;
     }
     std::string s;
     for (int uid : spent) {
@@ -1766,8 +1778,8 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
         // comparable when they agree.
         //
         // eDy is `dyG - (model's dy)`. GD's y is world (anchors::row fills it
-        // from PlayerObject, and :278 has to call rotUV to get frame
-        // coordinates out of it), while the model's is already in the current
+        // from PlayerObject, and nothing here maps it into a frame), while the
+        // model's is already in the current
         // frame's coordinates (frames.hpp:57-59). In a rotated section those
         // are different axes and the subtraction is meaningless -- yet nothing
         // on the line said which frame either side was in, so a record made
