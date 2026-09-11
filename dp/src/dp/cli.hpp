@@ -306,6 +306,7 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--escrotahead")) g_escRotAhead = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--bonkarm")) g_bonkArm = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--witnessframe")) g_witnessFrame = true;   // value-less, same reason
+        if (!std::strcmp(argv[i], "--vetophys")) g_vetoPhys = true;   // value-less, same reason
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below
@@ -4560,6 +4561,13 @@ inline int cliMain(int argc, char** argv) {
                 if (g_resimDead == 0) {
                     g_resimFirst = (int)t;
                     g_resimWhy = g_deadWhy;
+                    // ...and where the player was, in world x, for --vetophys's deepX
+                    // (the loop's PARTIAL gate compares deepX with the verified x).
+                    {
+                        double wxR, wyR;
+                        fromFrame((int)c.frame, (double)c.xAbs, (double)c.y, wxR, wyR);
+                        g_resimPX = (float)wxR;
+                    }
                     // ...and the object, from the same DIE that set the cause.
                     // g_deadObj is the killer; its uid is the level's, not this
                     // build's ordinal, so it can be looked up in the dump.
@@ -4710,6 +4718,31 @@ inline int cliMain(int argc, char** argv) {
     const long long rDead = g_resimDead, rOf = g_resimTicks;
     const int rFirst = g_resimFirst, rLast = g_resimLast;
     const char* rWhy = g_resimWhy;
+    // --vetophys (default off). A SOLVED whose witness walk dies of a physical
+    // cause is the model agreeing that the route dies, which is what the repair
+    // loop means by PARTIAL (checkPhantom: "a PARTIAL tail is the model agreeing
+    // that the route dies, which is not a phantom"). So publish it as the PARTIAL
+    // at that death, and let the loop's own PARTIAL gate decide whether to play
+    // it. Only when the witness is bound to the right geometry (frame 0, or
+    // --witnessframe), and only for physical causes -- a search prune
+    // (escapee-prune, deadband, maxplayy, out-of-play) is not the model's
+    // physics. The emitted tail is not cut, as for any PARTIAL.
+    if (g_vetoPhys && rDead > 0 && g_outcome.verdict == VerdictSolved && rWhy
+        && ((int)init.frame == 0 || g_witnessFrame)) {
+        static const char* const kPhys[] = {"cube/hazard", "wave/hazard", "fly/hazard",
+                                            "spider/tp-hazard", "cube/solid-side",
+                                            "fly/solid-side", "crush"};
+        bool phys = false;
+        for (const char* p : kPhys)
+            if (!std::strcmp(rWhy, p)) phys = true;
+        if (phys) {
+            g_outcome.verdict = VerdictPartial;
+            g_outcome.deepT = rFirst;
+            g_outcome.deepX = g_resimPX;
+            std::printf("vetophys: SOLVED -> PARTIAL at t=%d x=%.1f (witness %s, start frame %d)\n",
+                        rFirst, (double)g_resimPX, rWhy, (int)init.frame);
+        }
+    }
     std::printf("gfirestat: groups=%lld spread=%lld sum=%lld max=%d\n",
                 g_gfireGroups, g_gfireSpread, g_gfireSum, g_gfireMax);
     std::printf("resimdie: dead=%lld of=%lld first=%d last=%d contig=%d why=%s\n",

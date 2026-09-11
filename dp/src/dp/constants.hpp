@@ -152,6 +152,11 @@ inline bool g_bonkArm = false;
 // call STARTS in, as --replay does, instead of frame 0. Not print-only: the walk also
 // fills modeAt, which sets the emitted plan's edge latencies. See cli.hpp at rLf.
 inline bool g_witnessFrame = false;
+// --vetophys (default off): a SOLVED whose correctly bound witness walk dies of a
+// physical cause (hazard / solid-side / crush) is published as the PARTIAL at that
+// death. See the demotion after the witness walk in cli.hpp.
+inline bool g_vetoPhys = false;
+inline float g_resimPX = 0.f;   // the player's world x at the witness's first death
 // ...and what killed it, taken at the FIRST dying tick. Without this, "the
 // model died and GD died" can only be matched on the fact of a death, and two
 // deaths at different places in the level read as agreement -- the model would
