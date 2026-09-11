@@ -166,6 +166,9 @@ inline bool g_touchPreyButton = false;
 // GD's ceiling seat even where the ramp window has dropped the ramp. See the
 // branch beside the push-out gate in step.hpp.
 inline bool g_ceilPush = false;
+// --escrotahead (default off): do not escapee-prune a body in a turned frame while
+// a rotation is still ahead on the active queue channel. See the prune in step.hpp.
+inline bool g_escRotAhead = false;
 inline thread_local bool g_preBtnSet = false;
 inline thread_local double g_preBtnY = 0.0;
 

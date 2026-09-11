@@ -8545,18 +8545,59 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // a rotated frame, so it can be used as is.
     if (!dead && c.mode != 1 && c.mode != 4 && c.flip && !c.grounded
         && (double)c.y - pHalf > topAheadAtF((int)c.frame, x)) {
-        // --slopedbg: WHICH answer the table gave. `i >= size` means topAheadAtF
-        // returned -1e9 from past the table's end, not a surface; size 0 means the
-        // frame has no table (1e9, which cannot prune). Print only.
-        if (g_slopeDbg) {
-            long long bi = -1, bn = 0;
-            topAheadIndex((int)c.frame, x, bi, bn);
-            std::printf("escapee: t=%lld frame=%d x=%.3f y-pH=%.3f topAhead=%.3f "
-                        "i=%lld size=%lld\n",
-                        (long long)K.t, (int)c.frame, x, (double)c.y - pHalf,
-                        topAheadAtF((int)c.frame, x), bi, bn);
+        // --escrotahead (default off): the test above reads THIS frame's table and
+        // cannot know the frame will change. lv22 t=5,096 (plan 598, frame 3):
+        // topAhead is a real surface 444 px below (i=25 of 91), and GD rotates back
+        // to frame 0 fourteen ticks later, falls and lands (alive to t=6,735). So
+        // while a ROTATION is still ahead on the active queue channel -- the same
+        // cursor and world-axis test the queue branch uses -- the prune is not
+        // this table's to make. Every spared prune prints its distance to that
+        // firing (--slopedbg): inside a turned section the return is nearly always
+        // ahead, so this is close to switching the prune off there, which cost
+        // lv22's entrance 2,441 -> 2,343 on 2026-08-15. A bound, if one is needed,
+        // is to be derived from that distribution, not chosen.
+        bool spareEsc = false;
+        double escDist = 0.0;
+        if (g_escRotAhead && c.frame != 0 && g_rotQueue && !g_rotQ.empty()) {
+            const int ch = (int)c.rotChan & 15;
+            const int beg = g_rotQBeg[(size_t)ch], end = g_rotQEnd[(size_t)ch];
+            const int done = popCount32(c.rotSpent & g_rotQChanMask[(size_t)ch]);
+            double wx, wy;
+            fromFrame((int)c.frame, (double)c.xAbs, (double)c.y, wx, wy);
+            const bool rev = ((c.rotRev >> ch) & 1u) != 0;
+            const bool vertical = ((int)c.frame & 1) != 0;
+            const double ref = vertical ? wy : wx;
+            for (int idx = beg + done; idx < end; ++idx) {
+                const RotQEntry& e = g_rotQ[(size_t)idx];
+                if (!(e.id == 2900 && !e.chanOnly && e.rotIdx >= 0)) continue;
+                const double p = vertical ? e.py : e.px;
+                if (rev ? (p < ref) : (ref < p)) {
+                    spareEsc = true;
+                    escDist = std::fabs(p - ref);
+                }
+                break;   // the first ROTATING entry decides, fired or not
+            }
+            if (spareEsc && g_slopeDbg)
+                std::printf("escspare: t=%lld frame=%d x=%.3f y-pH=%.3f "
+                            "dist=%.3f ticks=%.1f\n",
+                            (long long)K.t, (int)c.frame, x, (double)c.y - pHalf,
+                            escDist,
+                            escDist / std::max(1e-6, std::fabs((double)K.dxF)));
         }
-        DIE("escapee-prune", nullptr);
+        if (!spareEsc) {
+            // --slopedbg: WHICH answer the table gave. `i >= size` means
+            // topAheadAtF returned -1e9 from past the table's end, not a surface;
+            // size 0 means the frame has no table (1e9, which cannot prune).
+            if (g_slopeDbg) {
+                long long bi = -1, bn = 0;
+                topAheadIndex((int)c.frame, x, bi, bn);
+                std::printf("escapee: t=%lld frame=%d x=%.3f y-pH=%.3f "
+                            "topAhead=%.3f i=%lld size=%lld\n",
+                            (long long)K.t, (int)c.frame, x, (double)c.y - pHalf,
+                            topAheadAtF((int)c.frame, x), bi, bn);
+            }
+            DIE("escapee-prune", nullptr);
+        }
     }
     // Portals fire when the player's box first OVERLAPS the portal's box, not
     // when it crosses the portal's centre column. Measured on lv4's gravity
