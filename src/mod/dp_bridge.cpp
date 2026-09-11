@@ -91,6 +91,10 @@ SolveOutcome outcome() {
     o.needTrigMask = dp::g_outcome.needTrigMask;
     o.needTrigPassed = dp::g_outcome.needTrigPassed;
     o.seedRotQ = dp::g_outcome.seedRotQ;
+    o.rotQOrder = dp::g_outcome.rotQOrder;
+    o.startRotHit = dp::g_outcome.startRotHit;
+    o.startRotGiven = dp::g_outcome.startRotGiven;
+    o.startRotMiss = dp::g_outcome.startRotMiss;
     return o;
 }
 

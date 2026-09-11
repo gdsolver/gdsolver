@@ -89,6 +89,12 @@ struct SolveOutcome {
     // bit->uid inversion depends on buildRotQueue's ordering, which only dp
     // holds -- a caller reproducing it would be keeping a copy of a proxy.
     std::string seedRotQ;
+    // The queue in dp's own order and --startrotq's read-back (dp progress.hpp
+    // has what each field means). Same reason as seedRotQ: the ordering lives in
+    // dp, and the mod has no pipe to read dp's `startrotq:` line.
+    std::string rotQOrder;
+    int startRotHit = -1, startRotGiven = -1;
+    std::string startRotMiss;
 };
 SolveOutcome outcome();
 

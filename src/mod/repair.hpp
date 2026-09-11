@@ -655,48 +655,354 @@ inline bool rotQueueRequested() {
     return false;
 }
 
-// Forward: the seed producer below needs the world arguments, and addWorldArgs
-// needs rotQueueRequested, which is declared above it.
-inline void addWorldArgs(std::vector<std::string>& a);
+// ============================================================
+// ---- the rotation queue's seed, read off the recording (cfg dprotseed) ----
+//
+// The queue's cursor at an anchor is State::rotSpent / rotChan / rotRev. It used to
+// come from a model walk of the plan (--seeddump), which on lv22 dies before the
+// anchors that need it and so handed back an empty seed. This reads it off GD's
+// own recording instead, with the rule measured offline on two lv22 cold runs:
+//
+//   CHAIN   every gframe change up to t0 is the active channel's next visible entry
+//           (an id-2900 that is not channel-only) within 2 px; entries of other
+//           kinds in front of it are passed over; a channel switch writes that
+//           channel's reverse bit from the switching 2900's gnddir.
+//   STRICT  the seed is only used when nothing the chain cannot see is in doubt:
+//             C1  an entry passed over before a visible fire must have been seen
+//                 to fire (a 2899: ctrlOff changing as the player crosses it)
+//             C2  an entry at or past a channel's cursor that GD's own firing
+//                 test says the player has already passed must be accounted for
+//                 -- on the active channel it never is; on another channel only
+//                 by a witness that it was NOT consumed.
+//   LEVEL   which witnesses count, strictest first:
+//             A (1)  that entry fires visibly later in the same attempt
+//             E (2)  A, or for a 2899: crossed at or before t0 while its channel
+//                    was inactive with ctrlOff unchanged; and C1 may be a 2899
+//                    seen firing
+//             F (3)  E, or an EARLIER attempt of this run showed that entry
+//                    surviving an inactive crossing and firing later
+//                    (g_rotSurvivors, grown once per finished attempt)
+//
+// Only an exact seed reaches a solve, and it takes --rotqueue with it; every other
+// call gets no queue, so an empty seed never runs one. The queue's order is dp's
+// (buildRotQueue), handed back through the solve outcome, not re-derived here.
+struct RotQE {
+    int ch = 0, uid = 0;
+    double px = 0.0, py = 0.0;
+    int swarm = 0, swch = -1, chanOnly = 0, gnddir = -1, id = 0;
+};
+inline std::vector<RotQE> g_rotQOrder;   // this level's queue in dp's order; empty = not read yet
+inline std::set<int> g_rotSurvivors;     // level F's witnesses from earlier attempts
 
-// The rotation queue's cursor at an anchor, as a ready-made --startrotq.
-//
-// WHY A WHOLE EXTRA REPLAY. The cursor is State::rotSpent / rotChan / rotRev,
-// and the only honest way to know them at t0 is to walk the plan from t=0 with
-// the queue running. The cheap alternative is next door -- spentRotArg already
-// walks the recording from t=1 to t0 -- but it infers a firing from a CHANGE IN
-// gframe, and an entry that rotates nothing changes no frame: on lv22 that is
-// the ten 2899s (consumed for the cursor, gated out of the work by `e.id ==
-// 2900`) plus the one channel-only 2900, so 11 of 30 are invisible to it.
-// rotSpent is a popcount cursor, so missing entries do not degrade the seed,
-// they point it at the wrong queue index -- "a state that looks anchored and is
-// not", which is the failure --startrotq exists to prevent (cli.hpp).
-//
-// The walk must itself pass --rotqueue: rotSpent is only written inside
-// step.hpp:361's gate, so a walk without it returns a cursor of zero and the
-// seed would be confidently empty.
-//
-// COST is why this sits behind the same gate as everything else here: one extra
-// replay per re-anchor, and the loop is already dominated by dp calls. With no
-// --rotqueue in the cfg the function returns before building anything, so the
-// default arm pays nothing and issues no call.
-inline std::string startRotQArg(long long t0) {
-    if (!rotQueueRequested() || t0 <= 0) return "";
-    std::error_code ec;
-    if (!std::filesystem::exists(g_planPath, ec)) return "";
-    std::vector<std::string> a{"--replay", g_planPath,
-                               "--seeddump", std::to_string(t0),
-                               "--out", std::string(DATA_DIR) + "/dp_seedq",
-                               "--cap", std::to_string(kCap),
-                               "--shipyq", num(kYq), "--shipvq", num(kVq),
-                               "--threads", kThreads};
-    addWorldArgs(a);
-    for (const std::string& s : g_cfg.dpArgs) a.push_back(s);
-    dpbridge::solveInProcess(g_csv, a);
-    // Read it out NOW: the caller's own solve runs through the same globals and
-    // overwrites the outcome.
-    return dpbridge::outcome().seedRotQ;
+inline void rotSeedLevelReset() {
+    g_rotQOrder.clear();
+    g_rotSurvivors.clear();
 }
+
+// The queue's order, from the last solve that loaded it. While dprotseed is on every
+// call carries --rotgameplay (addWorldArgs), so a level's first solve fills it.
+inline bool rotQOrderReady() {
+    if (!g_rotQOrder.empty()) return true;
+    std::stringstream ss(dpbridge::outcome().rotQOrder);
+    for (std::string item; std::getline(ss, item, ';');) {
+        RotQE e;
+        if (std::sscanf(item.c_str(), "%d,%d,%lf,%lf,%d,%d,%d,%d,%d", &e.ch, &e.uid, &e.px,
+                        &e.py, &e.swarm, &e.swch, &e.chanOnly, &e.gnddir, &e.id) == 9
+            && e.ch >= 0 && e.ch <= 15)
+            g_rotQOrder.push_back(e);
+    }
+    return !g_rotQOrder.empty();
+}
+
+namespace rotseed {
+
+inline bool visible(const RotQE& e) { return e.id == 2900 && !e.chanOnly; }
+
+// GD's own firing test (checkSpawnObjects): the player's axis, the channel's direction.
+inline bool passed(int gframe, double x, double y, const RotQE& e, bool rev) {
+    const bool vertical = (gframe & 1) != 0;
+    const double ref = vertical ? y : x;
+    const double p = vertical ? e.py : e.px;
+    return rev ? (ref <= p) : (p <= ref);
+}
+
+inline bool near2(const RotQE& e, const AnchorRow& r) {
+    return std::min(std::fabs(e.px - (double)r.x), std::fabs(e.py - (double)r.y)) <= 2.0;
+}
+
+inline std::vector<std::vector<const RotQE*>> byChannel() {
+    std::vector<std::vector<const RotQE*>> v(16);
+    for (const RotQE& e : g_rotQOrder) v[(size_t)e.ch].push_back(&e);
+    return v;
+}
+
+struct Chain {
+    std::string fail;          // non-empty: the walk stopped here
+    bool underivable = false;  // ...because the recording contradicts the chain
+    int chan = 0;
+    bool rev[16] = {};
+    int ptr[16] = {};
+    std::vector<int> spent;
+    std::string prov;
+    std::vector<std::pair<long long, int>> skipped;   // (tick of the visible fire, uid)
+    std::vector<std::pair<long long, int>> timeline;  // (tick, active channel from then on)
+};
+
+inline Chain walk(const std::vector<AnchorRow>& v, long long tEnd,
+                  const std::vector<std::vector<const RotQE*>>& q) {
+    Chain w;
+    w.timeline.push_back({0, 0});
+    int pg = -1;
+    for (long long t = 0; t < (long long)v.size() && t <= tEnd; ++t) {
+        const AnchorRow& r = v[(size_t)t];
+        if (!r.valid) continue;
+        if (pg >= 0 && r.gframe != pg) {
+            const std::vector<const RotQE*>& lst = q[(size_t)w.chan];
+            int k = w.ptr[w.chan];
+            std::vector<int> sk;
+            while (k < (int)lst.size() && !visible(*lst[(size_t)k])) {
+                if (lst[(size_t)k]->swarm) {
+                    w.fail = "channel " + std::to_string(w.chan) + " switched by unseen uid "
+                             + std::to_string(lst[(size_t)k]->uid) + " before t="
+                             + std::to_string(t);
+                    return w;
+                }
+                sk.push_back(lst[(size_t)k]->uid);
+                ++k;
+            }
+            if (k >= (int)lst.size() || !near2(*lst[(size_t)k], r)) {
+                w.fail = "gframe change at t=" + std::to_string(t) + " is not channel "
+                         + std::to_string(w.chan) + "'s next visible entry";
+                w.underivable = true;
+                return w;
+            }
+            const RotQE& e = *lst[(size_t)k];
+            for (int u : sk) {
+                w.skipped.push_back({t, u});
+                w.spent.push_back(u);
+            }
+            w.spent.push_back(e.uid);
+            w.prov += (w.prov.empty() ? "" : ",") + std::to_string(t) + ":" + std::to_string(e.uid);
+            w.ptr[w.chan] = k + 1;
+            if (e.swarm && e.swch >= 0 && e.swch <= 15) {
+                w.chan = e.swch;
+                w.rev[e.swch] = (unsigned)(e.gnddir - 2) < 2u;
+                w.timeline.push_back({t, w.chan});
+            }
+        }
+        pg = r.gframe;
+    }
+    return w;
+}
+
+struct Crossing { long long t; int uid; bool ctrlChanged; };
+
+// Every crossing of a 2899's point on the axis of the frame being travelled, with
+// whether ctrlOff changed within one tick of it -- (I)'s witness.
+inline std::vector<Crossing> crossings2899(const std::vector<AnchorRow>& v) {
+    std::vector<long long> chg;
+    const AnchorRow* prev = nullptr;
+    for (long long t = 0; t < (long long)v.size(); ++t) {
+        const AnchorRow& r = v[(size_t)t];
+        if (!r.valid) continue;
+        if (prev && r.ctrlOff != prev->ctrlOff) chg.push_back(t);
+        prev = &r;
+    }
+    std::vector<Crossing> out;
+    prev = nullptr;
+    for (long long t = 0; t < (long long)v.size(); ++t) {
+        const AnchorRow& r = v[(size_t)t];
+        if (!r.valid) continue;
+        if (prev) {
+            const bool vertical = (prev->gframe & 1) != 0;
+            const double c0 = vertical ? prev->y : prev->x;
+            const double c1 = vertical ? r.y : r.x;
+            for (const RotQE& e : g_rotQOrder) {
+                if (e.id != 2899) continue;
+                const double p = vertical ? e.py : e.px;
+                if (c0 != c1 && (c0 - p) * (c1 - p) <= 0.0) {
+                    bool changed = false;
+                    for (long long c : chg)
+                        if (c >= t - 1 && c <= t + 1) { changed = true; break; }
+                    out.push_back({t, e.uid, changed});
+                }
+            }
+        }
+        prev = &r;
+    }
+    return out;
+}
+
+struct Seed { std::string cls, why, prov, seed; };
+
+inline Seed seedFor(const std::vector<AnchorRow>& v, long long t0, int level) {
+    Seed s;
+    if (!rotQOrderReady()) {
+        s.cls = "unavailable";
+        s.why = "dp has not handed back the queue order";
+        return s;
+    }
+    const auto q = byChannel();
+    const Chain w = walk(v, t0, q);
+    s.prov = w.prov;
+    if (!w.fail.empty()) {
+        s.cls = w.underivable ? "underivable" : "ambiguous";
+        s.why = w.fail;
+        return s;
+    }
+    const AnchorRow* last = nullptr;
+    for (long long t = std::min<long long>(t0, (long long)v.size() - 1); t >= 0; --t)
+        if (v[(size_t)t].valid) { last = &v[(size_t)t]; break; }
+    if (!last) {
+        s.cls = "underivable";
+        s.why = "no recorded row at or before t0";
+        return s;
+    }
+    const std::vector<const RotQE*>& act = q[(size_t)w.chan];
+    for (int k = w.ptr[w.chan]; k < (int)act.size(); ++k)
+        if (passed(last->gframe, last->x, last->y, *act[(size_t)k], w.rev[w.chan])) {
+            s.cls = "ambiguous";
+            s.why = "C2 active channel " + std::to_string(w.chan) + " uid "
+                    + std::to_string(act[(size_t)k]->uid) + " passed";
+            return s;
+        }
+    const std::vector<Crossing> cr = level >= 2 ? crossings2899(v) : std::vector<Crossing>{};
+    auto activeAt = [&](long long t) {
+        int c = 0;
+        for (const auto& p : w.timeline) if (p.first <= t) c = p.second;
+        return c;
+    };
+    for (const auto& sk : w.skipped) {
+        bool seen = false;
+        for (const Crossing& c : cr)
+            if (c.uid == sk.second && c.t <= sk.first && c.ctrlChanged) { seen = true; break; }
+        if (!seen) {
+            s.cls = "ambiguous";
+            s.why = "C1 uid " + std::to_string(sk.second) + " passed over unseen before t="
+                    + std::to_string(sk.first);
+            return s;
+        }
+    }
+    for (int c = 0; c <= 15; ++c) {
+        if (c == w.chan) continue;
+        const std::vector<const RotQE*>& lst = q[(size_t)c];
+        for (int k = w.ptr[c]; k < (int)lst.size(); ++k) {
+            const RotQE& e = *lst[(size_t)k];
+            if (!passed(last->gframe, last->x, last->y, e, w.rev[c])) continue;
+            bool ok = false;
+            if (visible(e)) {   // A: it fires visibly later in this same attempt
+                int pg = -1;
+                for (long long t = 0; t < (long long)v.size() && !ok; ++t) {
+                    const AnchorRow& r = v[(size_t)t];
+                    if (!r.valid) continue;
+                    if (t > t0 && pg >= 0 && r.gframe != pg && near2(e, r)) ok = true;
+                    pg = r.gframe;
+                }
+            }
+            if (!ok && level >= 2 && e.id == 2899)   // E: crossed while inactive, not consumed
+                for (const Crossing& x : cr)
+                    if (x.uid == e.uid && x.t <= t0 && !x.ctrlChanged && activeAt(x.t) != c) {
+                        ok = true;
+                        break;
+                    }
+            if (!ok && level >= 3 && g_rotSurvivors.count(e.uid)) ok = true;   // F
+            if (!ok) {
+                s.cls = "ambiguous";
+                s.why = "C2 channel " + std::to_string(c) + " uid " + std::to_string(e.uid)
+                        + " passed, no witness";
+                return s;
+            }
+        }
+    }
+    unsigned rev = 0;
+    for (int c = 0; c <= 15; ++c) if (w.rev[c]) rev |= 1u << c;
+    char head[32];
+    std::snprintf(head, sizeof head, "%d,%x", w.chan, rev);
+    s.seed = head;
+    for (int u : w.spent) s.seed += "," + std::to_string(u);
+    s.cls = "exact";
+    return s;
+}
+
+// Level F's witnesses, grown from one finished attempt: an entry whose firing test held
+// while its channel was inactive and which the chain later saw fire visibly.
+inline void fold(const std::vector<AnchorRow>& v) {
+    if (!rotQOrderReady()) {
+        writeResult("dpsolve:   [rotseed] fold skipped - dp has not handed back the queue order");
+        return;
+    }
+    const auto q = byChannel();
+    int chan = 0;
+    bool rev[16] = {};
+    int ptr[16] = {};
+    std::map<int, long long> first;
+    std::string added;
+    int pg = -1;
+    for (long long t = 0; t < (long long)v.size(); ++t) {
+        const AnchorRow& r = v[(size_t)t];
+        if (!r.valid) continue;
+        if (pg >= 0 && r.gframe != pg) {
+            const std::vector<const RotQE*>& lst = q[(size_t)chan];
+            int k = ptr[chan];
+            while (k < (int)lst.size() && !visible(*lst[(size_t)k]) && !lst[(size_t)k]->swarm) ++k;
+            if (k >= (int)lst.size() || !visible(*lst[(size_t)k]) || !near2(*lst[(size_t)k], r)) break;
+            const RotQE& e = *lst[(size_t)k];
+            ptr[chan] = k + 1;
+            if (first.count(e.uid) && g_rotSurvivors.insert(e.uid).second)
+                added += (added.empty() ? "" : ",") + std::to_string(e.uid);
+            if (e.swarm && e.swch >= 0 && e.swch <= 15) {
+                chan = e.swch;
+                rev[chan] = (unsigned)(e.gnddir - 2) < 2u;
+            }
+        }
+        pg = r.gframe;
+        for (int c = 0; c <= 15; ++c) {
+            if (c == chan) continue;
+            const std::vector<const RotQE*>& lst = q[(size_t)c];
+            for (int k = ptr[c]; k < (int)lst.size(); ++k)
+                if (!first.count(lst[(size_t)k]->uid)
+                    && passed(r.gframe, r.x, r.y, *lst[(size_t)k], rev[c]))
+                    first[lst[(size_t)k]->uid] = t;
+        }
+    }
+    writeResult("dpsolve:   [rotseed] fold rows=" + std::to_string(v.size()) + " added="
+                + (added.empty() ? std::string("-") : added) + " survivors="
+                + std::to_string(g_rotSurvivors.size()));
+}
+
+}  // namespace rotseed
+
+// One call's queue arguments under cfg dprotseed: logged whatever the class, appended only
+// when exact. Returns whether the queue was handed over, so the caller can log dp's read-back.
+inline bool rotSeedArgs(long long t0, std::vector<std::string>& a, const char* site) {
+    if (g_cfg.dpRotSeed <= 0 || t0 <= 0) return false;
+    const std::vector<AnchorRow>& v = *anchors::g_src;
+    const rotseed::Seed s = rotseed::seedFor(v, t0, g_cfg.dpRotSeed);
+    const AnchorRow* r0 = anchors::row(t0);
+    char head[256];
+    std::snprintf(head, sizeof head, "rotseed: site=%s t0=%lld level=%c class=%s rows=%zu x0=%.3f y0=%.3f",
+                  site, t0, " AEF"[g_cfg.dpRotSeed], s.cls.c_str(), v.size(),
+                  r0 ? (double)r0->x : -1.0, r0 ? (double)r0->y : -1.0);
+    writeResult(std::string(head) + " why=" + (s.why.empty() ? "-" : s.why)
+                + " provenance=" + (s.prov.empty() ? "-" : s.prov)
+                + " seed=" + (s.seed.empty() ? "-" : s.seed));
+    if (s.cls != "exact") return false;
+    a.push_back("--rotqueue");
+    a.push_back("--startrotq");
+    a.push_back(s.seed);
+    return true;
+}
+
+// ...and dp's own account of that seed, after the call: how many of its uids bound.
+inline void logRotSeedRead(long long t0, const char* site) {
+    const dpbridge::SolveOutcome o = dpbridge::outcome();
+    writeResult(std::string("rotseed-read: site=") + site + " t0=" + std::to_string(t0)
+                + " startrotq spent=" + std::to_string(o.startRotHit) + "/"
+                + std::to_string(o.startRotGiven)
+                + (o.startRotMiss.empty() ? "" : " NOT IN THE QUEUE: " + o.startRotMiss));
+}
+
+inline void addWorldArgs(std::vector<std::string>& a);
 
 inline void addWorldArgs(std::vector<std::string>& a) {
     std::error_code ec;
@@ -847,7 +1153,10 @@ inline void addWorldArgs(std::vector<std::string>& a) {
     // nothing to consume the queue, so reading the file would be pure cost, and the
     // loop's argv would change for a run that behaves identically. Gated, the default
     // arm is unchanged byte for byte and that can be shown by grep.
-    if (rotQueueRequested()) {
+    // cfg dprotseed passes it on EVERY call as well, without --rotqueue: a loaded queue
+    // is only consumed when --rotqueue is also given (step.hpp), and loading it is how
+    // dp hands back the order rotSeedArgs derives its seeds against.
+    if (rotQueueRequested() || g_cfg.dpRotSeed > 0) {
         const std::string rotq = std::string(DATA_DIR) + "/rotgameplay.txt";
         if (std::filesystem::exists(rotq, ec)) {
             a.push_back("--rotgameplay"); a.push_back(rotq);
@@ -1903,6 +2212,7 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
         const std::string ap = anchorPayloadAll(t0);
         if (!ap.empty()) { a.push_back("--anchor-state"); a.push_back(ap); }
     }
+    bool rotQ = false;
     {   // the resim must not fire 2900s the recorded run already consumed either --
         // a phantom rotation in the REFERENCE side of the diff writes fixups against
         // a world GD does not have (the -7.8 carry family at x=16,003)
@@ -1917,15 +2227,10 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
         // wired it. Anchored calls only -- a from-head solve estimating from
         // its own plan keeps the crossing rule.
         if (!g_rotObjs.empty()) a.push_back("--trigraw");
-        // ...and, when the queue is the mechanism rather than the pre-queue
-        // selection, its cursor as well. --spentrot above seeds the ONE-SHOTS;
-        // this seeds WHICH QUEUE ENTRIES the walk had already consumed, plus
-        // the active channel and its reverse bits. They are different subsystems
-        // seeded from different sources -- the recording for one, a model walk
-        // for the other (see startRotQArg) -- and only the second is gated,
-        // because only it costs a call.
-        const std::string sq = startRotQArg(t0);
-        if (!sq.empty()) { a.push_back("--startrotq"); a.push_back(sq); }
+        // ...and, under cfg dprotseed, the queue itself -- ONLY when the recording
+        // fixes its cursor exactly (rotSeedArgs). --spentrot above seeds the
+        // pre-queue selection's one-shots and stays on every call.
+        rotQ = rotSeedArgs(t0, a, "resim");
     }
     std::error_code ec;
     if (std::filesystem::exists(g_fixupPath, ec)) {
@@ -1937,6 +2242,7 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
     std::filesystem::remove(base + ".trace.csv", ec);
     logSolverArgs(a);
     dpbridge::solveInProcess(g_csv, a);
+    if (rotQ) logRotSeedRead(t0, "resim");
     const long long modelDied = dpbridge::outcome().replayDiedT;
     std::map<long long, TraceRow> m;
     if (!loadTrace(base + ".trace.csv", m)) {
@@ -2382,16 +2688,15 @@ inline bool runLadder(long long dt) {
             a.push_back("--deadband");
             a.push_back(forceBand);
         }
+        bool rotQ = false;
         {   // 2900s the recorded run consumed before this anchor (see spentRotArg)
             const std::string sr = spentRotArg(t0);
             if (!sr.empty()) { a.push_back("--spentrot"); a.push_back(sr); }
             // ...and the recording's trigger ticks in rotated territory
             // (--trigraw; same wiring as the fixup resim above)
             if (!g_rotObjs.empty()) a.push_back("--trigraw");
-            // ...and the queue's cursor, when the queue is what consumes the
-            // rotations (same wiring and same gate as the fixup resim above).
-            const std::string sq = startRotQArg(t0);
-            if (!sq.empty()) { a.push_back("--startrotq"); a.push_back(sq); }
+            // ...and, under cfg dprotseed, the queue, exactly as the fixup resim does.
+            rotQ = rotSeedArgs(t0, a, "anchor");
         }
         a.push_back("--start");
         a.push_back(arg);
@@ -2421,6 +2726,7 @@ inline bool runLadder(long long dt) {
         std::filesystem::remove(g_tailPath, ec);   // a stale tail must not read as this call's
         logSolverArgs(a);
         const int rc = dpbridge::solveInProcess(g_csv, a);
+        if (rotQ) logRotSeedRead(t0, "anchor");
         const dpbridge::SolveOutcome o = dpbridge::outcome();
         std::vector<InputCmd> cand;
         loadInputsFile(g_tailPath, cand);
@@ -2811,6 +3117,12 @@ inline void start(GJBaseGameLayer* l) {
     g_csv = oss.str();
     loadModePortals(g_csv);    // where the mode portals are; see missedPortalTick
     loadRotObjs(g_csv);        // ...and the 2900s, for --spentrot (see spentRotArg)
+    rotSeedLevelReset();       // ...and cfg dprotseed's queue order and witnesses
+    if (g_cfg.dpRotSeed > 0 && rotQueueRequested()) {
+        writeResult("dpsolve: cfg dprotseed REFUSED - cfg dparg=--rotqueue already runs the "
+                    "queue on every call; dprotseed is off for this session");
+        g_cfg.dpRotSeed = 0;
+    }
     g_triedMissedPortal = false;
     g_forceAnchorT = -1;
     g_planPath = std::string(DATA_DIR) + "/dp_plan.txt";
@@ -3216,6 +3528,7 @@ inline void onDeath(long long dt, float deathX) {
         deathX = g_lastDeathX;
     } else {
         anchors::bank();
+        if (g_cfg.dpRotSeed == 3) rotseed::fold(anchors::g_dead);
     }
     harvestGroups();     // rollGroupTrace has already committed this run's recording
     ++g_iter;

@@ -105,6 +105,18 @@ struct SearchOutcome {
     // entries that change no frame -- 11 of lv22's 30. One producer, one
     // string, whichever side is reading.
     std::string seedRotQ;
+    // The rotation queue exactly as buildRotQueue ordered it, for a caller that
+    // derives its own --startrotq (the mod's cfg dprotseed). The mod cannot
+    // re-sort it without keeping a second copy of the ordering rule, which only
+    // dp should hold. One queue slot per `;`-separated entry, each
+    // `ch,uid,px,py,swarm,swch,chanOnly,gnddir,id`; empty when no queue was
+    // loaded. Printed nowhere, so no existing output changes.
+    std::string rotQOrder;
+    // --startrotq's own read-back, for the same caller: how many of the seed's
+    // uids bound to a queue slot, out of how many were given, and the ones that
+    // did not. -1/-1 = this call carried no --startrotq.
+    int startRotHit = -1, startRotGiven = -1;
+    std::string startRotMiss;
 
     void reset() {
         verdict = VerdictFailed;
@@ -114,6 +126,9 @@ struct SearchOutcome {
         resimFrame = -1;
         needTrigMask = 0; needTrigPassed = 0;
         seedRotQ.clear();
+        rotQOrder.clear();
+        startRotHit = -1; startRotGiven = -1;
+        startRotMiss.clear();
     }
 };
 

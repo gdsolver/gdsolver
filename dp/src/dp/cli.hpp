@@ -1776,6 +1776,22 @@ inline int cliMain(int argc, char** argv) {
         g_rotQueue = false;
         g_rotQ.clear();
     }
+    // The queue in consumption order, handed back for a caller that derives its
+    // own seed (progress.hpp rotQOrder). After the refusal above, so a refused
+    // queue hands back nothing; printed nowhere, so no output changes.
+    if (!g_rotQ.empty())
+        for (int ch = 0; ch <= 15; ++ch)
+            for (int k = g_rotQBeg[(size_t)ch]; k < g_rotQEnd[(size_t)ch]; ++k) {
+                const RotQEntry& e = g_rotQ[(size_t)k];
+                char b[192];
+                std::snprintf(b, sizeof b, "%s%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d",
+                              g_outcome.rotQOrder.empty() ? "" : ";", ch, e.uid,
+                              (double)e.px, (double)e.py, (int)e.swarm, (int)e.swch,
+                              (int)e.chanOnly,
+                              e.rotIdx >= 0 ? g_rotTrig[(size_t)e.rotIdx].gndDir : -1,
+                              (int)e.id);
+                g_outcome.rotQOrder += b;
+            }
     // --startrotq: the queue's --spentrot. Applied HERE because the uids have
     // to be resolved against the built queue, and before init is used -- the
     // --replay path takes its copy at `State s = init` well below, and the
@@ -1788,6 +1804,9 @@ inline int cliMain(int argc, char** argv) {
         if (g_rotQ.empty()) {
             std::printf("startrotq: no rotation queue on this level - the seed "
                         "has nothing to bind to and is ignored\n");
+            g_outcome.startRotHit = 0;
+            g_outcome.startRotGiven = (int)g_startRotSpent.size();
+            g_outcome.startRotMiss = "(no queue)";
         } else {
             init.rotChan = (uint8_t)g_startRotChan;
             init.rotRev = (uint16_t)g_startRotRev;
@@ -1814,6 +1833,9 @@ inline int cliMain(int argc, char** argv) {
                         g_startRotSpent.size(), g_rotQ.size(),
                         miss.empty() ? "" : "  NOT IN THE QUEUE: ",
                         miss.c_str());
+            g_outcome.startRotHit = hit;
+            g_outcome.startRotGiven = (int)g_startRotSpent.size();
+            g_outcome.startRotMiss = miss;
         }
     }
     std::printf("level: %zu colliders, %zu portals, %zu pads, %zu orbs, "

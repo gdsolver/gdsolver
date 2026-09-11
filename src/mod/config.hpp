@@ -170,6 +170,14 @@ struct Config {
     // (the fixup resim) reproduces that; the search does not, so it cannot plan
     // that one-tick-earlier jump and presses a tick later instead.
     bool dpCtrlWin = true;
+    // cfg `dprotseed`: seed the 2.2 rotation queue at each re-anchor from GD's own
+    // recording, and hand the queue (--rotqueue --startrotq) ONLY to the calls whose
+    // seed that recording fixes exactly; every other call gets no queue at all, so an
+    // empty seed can never reach a running queue. 0 = off (the default: nothing is
+    // passed and the argv is unchanged), 1/2/3 = A/E/F -- how much counts as having
+    // seen a queue entry, strictest first (rotSeedFor in repair.hpp). Refused, and
+    // named, when a cfg `dparg=--rotqueue` already turns the queue on for every call.
+    int dpRotSeed = 0;
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be

@@ -265,6 +265,11 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
     else if (key == "dpgroups") g_cfg.dpGroups = (val == "1");
     else if (key == "dpbandtrack") g_cfg.dpBandTrack = (val == "1");
     else if (key == "dpctrlwin") g_cfg.dpCtrlWin = (val == "1");
+    else if (key == "dprotseed") {
+        g_cfg.dpRotSeed = val == "A" ? 1 : val == "E" ? 2 : val == "F" ? 3 : 0;
+        if (g_cfg.dpRotSeed == 0 && val != "off" && val != "0")
+            writeResult("cfg: dprotseed=" + val + " is not one of off|A|E|F - left off");
+    }
     else if (key == "dpfingerprint") g_cfg.dpFingerprint = (val == "1");
     else if (key == "dparg") g_cfg.dpArgs.push_back(val);
     else return false;
