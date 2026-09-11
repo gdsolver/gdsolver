@@ -158,6 +158,12 @@ struct Config {
     // (--bandtrack). On since 81f2a09; off is how that commit's remaining half is
     // A/B'd, since lv22's second cold regression bisects to it.
     bool dpBandTrack = true;
+    // cfg `dpctrlwin`: hand the model GD's recorded control-disabled windows
+    // (--ctrlwin, built from the anchor source's ctrlOff rows in addWorldArgs).
+    // OFF by default until a cold census has been read; the band next door is
+    // why -- passing it at all once regressed lv22, and a switch that lands
+    // on is a commit nobody can call behaviour-preserving.
+    bool dpCtrlWin = false;
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be

@@ -87,6 +87,10 @@ struct AnchorRow {
     // skips the terminal clamp, so an anchor without it re-clamps the swing at
     // 8 while GD keeps accelerating.
     int boost = 0;
+    // GD's m_controlsDisabled (the dump's ctrlOff column, same source). While
+    // set, the button is ignored entirely (id 2899, frames.hpp's g_ctrlWin note);
+    // addWorldArgs turns runs of it into --ctrlwin under cfg `dpctrlwin`.
+    int ctrlOff = 0;
 };
 
 // GD's MAX GAMEPLAY Y (layer+0x36a8), refreshed every recorded tick and passed
@@ -188,6 +192,7 @@ inline void record(GJBaseGameLayer* l, long long t) {
     // updateJump's clamp gate reads (0x38ca9f: cmp [player+0x952],0), pinned
     // to 2.2081 like every other raw offset here.
     r.boost = *(reinterpret_cast<uint8_t const*>(p) + 0x952) ? 1 : 0;
+    r.ctrlOff = p->m_controlsDisabled ? 1 : 0;
     // ...and GD's MAX GAMEPLAY Y, the world-y bound whose crossing (two ticks
     // running) is the environment kill with a NULL object. Written by
     // updateMaxGameplayY into layer+0x36a8; read live rather than re-deriving
@@ -735,6 +740,38 @@ inline void addWorldArgs(std::vector<std::string>& a) {
         if (rows > 0 && g_cfg.dpBandTrack) {
             a.push_back("--bandtrack");
             a.push_back(bp);
+        }
+    }
+    // ...and where GD had the controls switched off (--ctrlwin, both ends
+    // inclusive). The model cannot derive these itself -- which crossing makes
+    // GD raise id 2899 is unsolved, and firing one on a guess does more harm
+    // than the real thing (frames.hpp) -- so they are passed only as GD recorded
+    // them, from the same anchor source as --start and --bandtrack: for a fixup
+    // pass that is the attempt that just died, so the resim replays the very
+    // plan the windows were recorded on. A window still open at the last
+    // recorded tick closes there; past the recording the model has no windows,
+    // which is the hole it always had. OFF by default (Config::dpCtrlWin).
+    if (g_cfg.dpCtrlWin) {
+        std::string wins;
+        long long t0 = -1, last = -1;
+        const long long n = anchors::depth();
+        for (long long t = 1; t < n; ++t) {
+            const AnchorRow* r = anchors::row(t);
+            if (!r) continue;
+            last = t;
+            if (r->ctrlOff && t0 < 0) t0 = t;
+            if (!r->ctrlOff && t0 >= 0) {
+                wins += (wins.empty() ? "" : ",") + std::to_string(t0) + ":"
+                        + std::to_string(t - 1);
+                t0 = -1;
+            }
+        }
+        if (t0 >= 0)
+            wins += (wins.empty() ? "" : ",") + std::to_string(t0) + ":"
+                    + std::to_string(last);
+        if (!wins.empty()) {
+            a.push_back("--ctrlwin");
+            a.push_back(wins);
         }
     }
     // The level's own compatibility flags, written beside objrects when the session opened.

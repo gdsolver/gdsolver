@@ -264,6 +264,7 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
     else if (key == "dpworld") g_cfg.dpWorld = (val == "1");
     else if (key == "dpgroups") g_cfg.dpGroups = (val == "1");
     else if (key == "dpbandtrack") g_cfg.dpBandTrack = (val == "1");
+    else if (key == "dpctrlwin") g_cfg.dpCtrlWin = (val == "1");
     else if (key == "dpfingerprint") g_cfg.dpFingerprint = (val == "1");
     else if (key == "dparg") g_cfg.dpArgs.push_back(val);
     else return false;
