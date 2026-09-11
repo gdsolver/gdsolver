@@ -220,6 +220,8 @@ inline void resetInvocationState() {
     g_rotTrigOn.clear();
     g_touchSeedArg.clear();
     g_touchCensus = false;
+    g_tcBranch = 0;
+    g_tcBranchP1 = 0;
     g_startRotChan = -1;
     g_startRotRev = 0;
     g_startRotSpent.clear();

@@ -149,6 +149,13 @@ inline std::string g_touchSeedArg;
 // "before this tick's button effects"). For --replay: a search would print once
 // per child, from the worker threads. Print only. Off by default.
 inline bool g_touchCensus = false;
+// ...and which of stepOne's y-moving branches this tick took, so the census can
+// name an entry by the model's own path instead of a threshold on dy: 1 = the
+// spider's tap warp, 2 = a spider orb, 4 = a teleport portal. Written only under
+// --touchcensus; thread_local because phase 1 steps the layer in parallel.
+// g_tcBranchP1 is p1's value, saved by stepBoth before p2's stepOne overwrites it.
+inline thread_local int g_tcBranch = 0;
+inline thread_local int g_tcBranchP1 = 0;
 
 // ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
 //

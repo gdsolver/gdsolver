@@ -2240,6 +2240,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             if (hazTgt) DIE("spider/tp-hazard", nullptr);
             impulsedThisTick = IMPULSE();
             spiderWarpedThisTick = true;
+            if (g_touchCensus) g_tcBranch |= 1;
             // ...and the block-pin has to let go. `pinnedOnBlock` was armed
             // above for a player standing on a solid, and `releasePin` puts y
             // back to `prePinY` -- which on a teleport tick drags the player
@@ -8960,6 +8961,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // is the dangerous direction, and no measurement covers it.
             const double vIn = (double)c.vy;   // for `telefire` below
             teleportedThisTick = true;
+            if (g_touchCensus) g_tcBranch |= 4;
             teleUid = p->uid;      // uid-order gate (measured, see teleUid's decl.)
             YSET(c.y) = (float)tpTarg;   // exit half for 2902, closed tpY for 747
             // A teleport is the one thing in the pass that MOVES the player for
@@ -10915,6 +10917,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         YSET(c.y) = (float)tgt;
                         c.flip = c.flip ? 0 : 1;
                         VYSET(c.vy) = (float)gs;
+                        if (g_touchCensus) g_tcBranch |= 2;
                         // whatever held us up is a level away now
                         c.snapObj = nullptr;
                         c.snapDist = 0.f;
@@ -11984,10 +11987,10 @@ inline void markTouched(State& c, const StepCtx& K, double preY) {
                 if (g_touchCensus) {
                     const bool yHit = std::fabs((double)c.y - T->cy) < T->hh + half;
                     std::printf("tcensus: t=%lld box=%d uid=%d hit=%s mode=%d mini=%d "
-                                "x=%.3f y=%.3f preY=%.3f vy=%.3f\n",
+                                "x=%.3f y=%.3f preY=%.3f vy=%.3f br=%d\n",
                                 (long long)K.t, b, T->uid, yHit ? "y" : "preY",
                                 (int)c.mode, (int)c.mini, (double)c.xAbs, (double)c.y,
-                                preY, (double)c.vy);
+                                preY, (double)c.vy, g_tcBranchP1);
                 }
             }
             if (g_slopeDbg)

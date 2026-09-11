@@ -287,7 +287,9 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     g_halfNow = 0;
     // Out-parameter, not a global: phase 1 steps the layer in parallel.
     bool p1FlippedGravity = false;
+    if (g_touchCensus) g_tcBranch = 0;
     State c = stepOne(s, input, K, d1, &p1FlippedGravity);
+    if (g_touchCensus) g_tcBranchP1 = g_tcBranch;
     if (!s.dual) {
         dead = d1;
         markTouched(c, K, (double)s.y);
