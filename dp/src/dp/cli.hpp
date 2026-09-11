@@ -2865,10 +2865,15 @@ inline int cliMain(int argc, char** argv) {
                 for (int k = 0, o = 0; k < nvp; ++k)
                     o += std::snprintf(vpt + o, sizeof vpt - o, k ? ",%d" : "%d",
                                        g_vpTrail[(g_vpWrites - nvp + k) & 7]);
+                char impt[96] = "-";
+                const int nimp = g_impCount < 8 ? g_impCount : 8;
+                for (int k = 0, o = 0; k < nimp; ++k)
+                    o += std::snprintf(impt + o, sizeof impt - o, k ? ",%d" : "%d",
+                                       g_impTrail[(g_impCount - nimp + k) & 7]);
                 std::printf("vywriter: t=%lld writes=%d lastline=%d ywrites=%d ylastline=%d vyIn=%.6f vy=%.6f yIn=%.4f y=%.4f seatgate=%d impulsedOff=%d tappedOff=%d sOnSlope=%d took=%d impsite=%d "
-                            "vpwrites=%d vptrail=%s traceVy=%.6f frame=%d mode=%d\n",
+                            "impcount=%d imptrail=%s vpwrites=%d vptrail=%s traceVy=%.6f frame=%d mode=%d\n",
                             (long long)t, g_vyWrites, g_vyWriter, g_yWrites, g_yWriter, (double)g_vyIn, (double)s.vy, (double)g_yIn, (double)s.y, g_seatGateSeen, g_seatImpulsedOff, g_seatTappedOff, g_seatOnSlope, g_seatTook, g_impulseSite,
-                            g_vpWrites, vpt, vyGd, (int)s.frame, (int)s.mode);
+                            g_impCount, impt, g_vpWrites, vpt, vyGd, (int)s.frame, (int)s.mode);
             }
             tr << t << ',' << wX << ',' << wY << ',' << vyGd << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual

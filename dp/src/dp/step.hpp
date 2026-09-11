@@ -62,7 +62,12 @@ inline int g_seatTook = -1;         // did it take the exemption (and skip vy)?
 // itself -- as a comma expression, which keeps `impulsedThisTick = IMPULSE();`
 // the single statement `impulsedThisTick = true;` already was.
 inline int g_impulseSite = 0;
-#define IMPULSE() (::dp::g_impulseSite = __LINE__, true)
+// ...with a count and the sites in order, since the flag only needs to be
+// raised once and the FIRST site is the one that means something; the last one
+// alone cannot say whether a second site raised it again.
+inline int g_impTrail[8] = {};
+inline int g_impCount = 0;
+#define IMPULSE() (::dp::g_impTrail[::dp::g_impCount & 7] = __LINE__, ++::dp::g_impCount, ::dp::g_impulseSite = __LINE__, true)
 #define YSET(x) (::dp::g_yWriter = __LINE__, ++::dp::g_yWrites, (x))
 // ...and the lines that built vpNew, IN ORDER. c.vy is written once, after the
 // whole branch chain, from vpNew -- so the vy writer names that shared line and
@@ -964,6 +969,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     g_yIn = s.y;
     g_vyIn = s.vy;
     g_vpWrites = 0;
+    g_impCount = 0;
+    g_impulseSite = 0;
     // ...and the (frame, rev) the step ran in. Counted for EVERY step, not only
     // the ones that consult a fixup, so the fixup census below it has a
     // denominator: "frame 2 never reached a lookup" and "frame 2 never happened"

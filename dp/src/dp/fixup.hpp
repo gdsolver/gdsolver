@@ -204,8 +204,8 @@ inline void applyFixup(const State& s, int input, State& c, bool& dead,
     }
     if (!deltasToo) return;
     if (const Fixup* f = findFixup(g_fixupDeltas, s, input)) {
-        c.y = s.y + f->dy;
-        c.vy = s.vy + f->dvy;
+        YSET(c.y) = s.y + f->dy;
+        VYSET(c.vy) = s.vy + f->dvy;
         // 255 = "leave the model's grounded flag alone" -- GD's onGround is
         // sticky for the flying modes and cannot be copied into the model's
         // stricter semantics.
