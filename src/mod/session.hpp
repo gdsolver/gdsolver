@@ -271,6 +271,7 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
             writeResult("cfg: dprotseed=" + val + " is not one of off|A|E|F - left off");
     }
     else if (key == "dprotseedanchor") g_cfg.dpRotSeedAnchor = (val != "0");
+    else if (key == "dpsnapshot") g_cfg.dpSnapshot = (val == "1");
     else if (key == "dpfingerprint") g_cfg.dpFingerprint = (val == "1");
     else if (key == "dparg") g_cfg.dpArgs.push_back(val);
     else return false;

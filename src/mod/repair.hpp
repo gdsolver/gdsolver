@@ -1185,6 +1185,24 @@ inline void addWorldArgs(std::vector<std::string>& a) {
 // next. Measured 2026-09-10: rebuilding three of a cold run's lv22 solves from the logged
 // args reproduced none of them (first death 1813 -> 1837, 1898 -> 1836, 6322 -> 6402),
 // because the flags that differed were never written down.
+// cfg dpsnapshot: a copy of `path` under DATA_DIR/snaps, named by its own size/fnv (the
+// same fileSig the call's `input sig` line carries), so identical contents are kept once
+// and any copy can be checked against the call that read it. Returns the copy's name
+// relative to DATA_DIR, or "" when there is nothing to copy.
+inline std::string snapFile(const std::string& path) {
+    std::error_code ec;
+    if (path.empty() || !std::filesystem::exists(path, ec)) return "";
+    std::string sig = fileSig(path);
+    for (char& c : sig) if (c == '/') c = '_';
+    const std::filesystem::path src(path);
+    const std::string name = "snaps/" + src.stem().string() + "_" + sig + src.extension().string();
+    const std::filesystem::path dst = std::filesystem::path(DATA_DIR) / name;
+    std::filesystem::create_directories(dst.parent_path(), ec);
+    if (!std::filesystem::exists(dst, ec))
+        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::skip_existing, ec);
+    return ec ? "" : name;
+}
+
 inline void logSolverArgs(const std::vector<std::string>& a) {
     std::string line = "dpsolve: solver args:";
     for (const std::string& s : a) line += " " + s;
@@ -1224,6 +1242,17 @@ inline void logSolverArgs(const std::vector<std::string>& a) {
             || a[i] == "--triggers" || a[i] == "--objgroups" || a[i] == "--obb")
             sig += " " + a[i].substr(2) + "=" + fileSig(a[i + 1]);
     writeResult(sig);
+    // ...and, under cfg dpsnapshot, the bytes themselves (snapFile), for the inputs the
+    // loop rewrites between calls plus the plan a replay walks.
+    if (g_cfg.dpSnapshot) {
+        std::string snap = "dpsolve: input snap";
+        for (size_t i = 0; i + 1 < a.size(); ++i)
+            if (a[i] == "--groups" || a[i] == "--fixups" || a[i] == "--bandtrack" || a[i] == "--replay") {
+                const std::string n = snapFile(a[i + 1]);
+                snap += " " + a[i].substr(2) + "=" + (n.empty() ? "-" : n);
+            }
+        writeResult(snap);
+    }
 }
 
 inline std::vector<std::string> baseArgs(const std::string& out) {
@@ -2731,6 +2760,11 @@ inline bool runLadder(long long dt) {
         logSolverArgs(a);
         const int rc = dpbridge::solveInProcess(g_csv, a);
         if (rotQ) logRotSeedRead(t0, "anchor");
+        if (g_cfg.dpSnapshot) {   // the plan this anchored search emitted (see snapFile)
+            const std::string n = snapFile(g_tailPath);
+            writeResult("dpsolve: output snap t0=" + std::to_string(t0) + " tail="
+                        + (n.empty() ? std::string("-") : n + " " + fileSig(g_tailPath)));
+        }
         const dpbridge::SolveOutcome o = dpbridge::outcome();
         std::vector<InputCmd> cand;
         loadInputsFile(g_tailPath, cand);

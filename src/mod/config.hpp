@@ -184,6 +184,13 @@ struct Config {
     // rotseed: line, marked queue=withheld, and gets no --rotqueue. The A/B arm for
     // whether the queue in the search is what an lv22 run piles up on.
     bool dpRotSeedAnchor = true;
+    // cfg `dpsnapshot`: keep a copy of the file inputs every solver call read (the moving-
+    // geometry groups, the camera band, the fixups, the replayed plan) and of every anchored
+    // search's emitted plan, each named by its own size/fnv so it matches the call's
+    // `input sig` line. The loop rewrites those files as it goes, so without this a call
+    // cannot be rebuilt offline with the inputs it actually had. Off by default: it only
+    // writes files and log lines, and costs disk (lv22 keeps ~20 group versions).
+    bool dpSnapshot = false;
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be
