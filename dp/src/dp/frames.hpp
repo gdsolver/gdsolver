@@ -112,6 +112,12 @@ struct RotTrig {
     int gndDir = 0;
 };
 inline std::vector<RotTrig> g_rotTrig;
+// --rotwatch <lo>,<hi>: print, per search tick in [lo, hi], the rotations the
+// search's stepKid actually applied (uid, frame before/after, children). Print
+// only: applyRotation writes the uid it adopted into the thread-local below
+// when the window is set, and nothing reads it for a decision. -1 = off.
+inline long long g_rotWatchLo = -1, g_rotWatchHi = -1;
+inline thread_local int g_rotWatchUid = -1;
 
 // ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
 //

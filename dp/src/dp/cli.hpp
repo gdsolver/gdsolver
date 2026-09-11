@@ -308,6 +308,9 @@ inline int cliMain(int argc, char** argv) {
             if (!std::strcmp(argv[i], "--vywriter") && i + 1 < argc) g_vyWatchT = std::atoll(argv[++i]);
             if (!std::strcmp(argv[i], "--vywriter2") && i + 1 < argc) g_vyWatchT2 = std::atoll(argv[++i]);
             if (!std::strcmp(argv[i], "--fxwatch") && i + 1 < argc) g_fxWatchT = std::atoll(argv[++i]);
+            if (!std::strcmp(argv[i], "--rotwatch") && i + 1 < argc
+                && std::sscanf(argv[++i], "%lld,%lld", &g_rotWatchLo, &g_rotWatchHi) != 2)
+                g_rotWatchLo = g_rotWatchHi = -1;
         if (!std::strcmp(argv[i], "--dcydbg")) g_dcyDbg = true;
         // --no-slopeseat: the pre-2026-09-06 slope seat (surface sampled at an
         // x clamped into the ramp's span, plus/minus a flat player half)
@@ -2245,6 +2248,8 @@ inline int cliMain(int argc, char** argv) {
         uint8_t valid = 0;
         const char* why = "";     // --dbg only
         const Obj* obj = nullptr; // --dbg only
+        int rotUid = -1;          // --rotwatch only: the 2900 stepKid applied
+        int8_t rotF0 = -1, rotNf = -1;
     };
     std::vector<Child> kids;      // reused every layer
     std::vector<ClearSample> clearKids;   // --clearprobe only, reused too
@@ -3360,9 +3365,18 @@ inline int cliMain(int argc, char** argv) {
             // happen BEFORE keyOf below -- the turn rewrites x, y, vy and the
             // frame, and a key taken in the old frame would put two different
             // worlds in one cell.
-            if (!dead && !g_rotTrig.empty())
-                applyRotation(kid.s, (double)s.xAbs, (double)K.dxF, K.t,
-                              input, s.grounded != 0, (double)s.y, true);
+            if (!dead && !g_rotTrig.empty()) {
+                const bool rw = (g_rotWatchLo >= 0 && K.t >= g_rotWatchLo && K.t <= g_rotWatchHi);
+                if (rw) g_rotWatchUid = -1;
+                const int f0R = (int)kid.s.frame;
+                const int nfR = applyRotation(kid.s, (double)s.xAbs, (double)K.dxF, K.t,
+                                              input, s.grounded != 0, (double)s.y, true);
+                if (rw && nfR >= 0) {   // --rotwatch: print only, read in the serial pass below
+                    kid.rotUid = g_rotWatchUid;
+                    kid.rotF0 = (int8_t)f0R;
+                    kid.rotNf = (int8_t)nfR;
+                }
+            }
             // The child's own action, set HERE and not only in emit()'s
             // finish(): keyOf reads it (for the robot's hover) and the key is
             // computed on this thread, before phase 2 runs. Without this the
@@ -3421,6 +3435,25 @@ inline int cliMain(int argc, char** argv) {
             pool->parallelFor(kids.size(), stepKid);
         else
             for (size_t i = 0; i < kids.size(); ++i) stepKid(i);
+        // --rotwatch: the rotations this group's children actually took, counted
+        // serially after the parallel step. Print only.
+        if (g_rotWatchLo >= 0 && t >= g_rotWatchLo && t <= g_rotWatchHi) {
+            struct RW { int uid, f0, nf; size_t n; };
+            std::vector<RW> rws;
+            size_t nk = 0;
+            for (const Child& k : kids) {
+                if (!k.valid) continue;
+                ++nk;
+                if (k.rotNf < 0) continue;
+                bool found = false;
+                for (RW& r : rws)
+                    if (r.uid == k.rotUid && r.f0 == k.rotF0 && r.nf == k.rotNf) { ++r.n; found = true; break; }
+                if (!found) rws.push_back(RW{k.rotUid, (int)k.rotF0, (int)k.rotNf, 1});
+            }
+            for (const RW& r : rws)
+                std::printf("rotwatch: t=%lld gdx=%.4f uid=%d f0=%d nf=%d kids=%zu/%zu\n",
+                            (long long)t, (double)gdx, r.uid, r.f0, r.nf, r.n, nk);
+        }
 
         // ---- reference watch, part 2: what happened to its child ------------
         // Every child has been stepped and keyed, and nothing has been merged

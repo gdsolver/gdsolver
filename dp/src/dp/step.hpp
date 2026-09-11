@@ -486,6 +486,7 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
                 qModY = r.vmodY;
                 qOvr = r.ovrVel;
                 qFired = true;
+                if (g_rotWatchLo >= 0) g_rotWatchUid = r.uid;   // --rotwatch, print only
                 // ONE ROTATION PER TICK. GD's loop would keep going, and the
                 // next element could be eligible in the frame this one just
                 // set. It does not happen in the corpus -- lv22's 20 firings
@@ -667,6 +668,7 @@ inline int applyRotation(State& c, double uPrev, double dxUsed, long long t,
         if (g_rotLast || dv < bestDv) {
             bestDv = dv;
             best = &r;
+            if (g_rotWatchLo >= 0) g_rotWatchUid = r.uid;   // --rotwatch, print only
             if (r.setRev >= 0) c.rev = (uint8_t)r.setRev;   // absolute value
             nf = r.frame;
             nflip = r.setFlip;
