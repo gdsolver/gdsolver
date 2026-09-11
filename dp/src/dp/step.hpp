@@ -11978,6 +11978,17 @@ inline void markTouched(State& c, const StepCtx& K, double preY) {
                 // level-wide and first-entry-only, so it cannot tell two
                 // worldlines apart; this can.
                 c.fireB[b] = (uint16_t)K.t;
+                // --touchcensus: which test admitted this entry. "y" = the
+                // player's y this tick overlaps; "preY" = only the y passed in
+                // as preY does (the callers pass the parent state's y).
+                if (g_touchCensus) {
+                    const bool yHit = std::fabs((double)c.y - T->cy) < T->hh + half;
+                    std::printf("tcensus: t=%lld box=%d uid=%d hit=%s mode=%d mini=%d "
+                                "x=%.3f y=%.3f preY=%.3f vy=%.3f\n",
+                                (long long)K.t, b, T->uid, yHit ? "y" : "preY",
+                                (int)c.mode, (int)c.mini, (double)c.xAbs, (double)c.y,
+                                preY, (double)c.vy);
+                }
             }
             if (g_slopeDbg)
                 std::printf("trigfire t=%lld box(%.1f,%.1f) %.0fx%.0f "

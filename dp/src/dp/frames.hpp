@@ -143,6 +143,12 @@ inline std::vector<uint32_t> g_rotQOff, g_rotQOn, g_rotTrigOff, g_rotTrigOn;
 // recording-derived seeding still runs. Exists because GD's touch recorder
 // (activatedByPlayer) never sees a touch Toggle: 0 of lv22's three.
 inline std::string g_touchSeedArg;
+// --touchcensus: print every touch-box entry markTouched makes (step.hpp),
+// labelled by which test admitted it -- the player's y this tick, or only the
+// `preY` its callers pass (the parent state's y, which the comment there calls
+// "before this tick's button effects"). For --replay: a search would print once
+// per child, from the worker threads. Print only. Off by default.
+inline bool g_touchCensus = false;
 
 // ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
 //

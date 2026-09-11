@@ -293,6 +293,7 @@ inline int cliMain(int argc, char** argv) {
         // Value-less, so it lives in this loop (see the note just below): the
         // argc-1 loop would drop it silently whenever it is passed last.
         if (!std::strcmp(argv[i], "--rotqtoggle")) g_rotQToggle = true;
+        if (!std::strcmp(argv[i], "--touchcensus")) g_touchCensus = true;   // value-less, same reason
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
         // empty -- the cold-restart JobFirstSolve path), where the loop below
