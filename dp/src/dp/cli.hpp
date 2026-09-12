@@ -4786,6 +4786,26 @@ inline int cliMain(int argc, char** argv) {
                     (rDead > 0 && rWhy) ? rWhy : "-",
                     vUid, vFrame, (int)init.frame);
     }
+    // Push this call's tail out NOW. stdout is a pipe here (Geode captures it), so it is
+    // block-buffered: everything printed after the search loop -- capstat: at the top of
+    // this block through resimdie:/resimwho:/vinfo: -- sits in the buffer until the NEXT
+    // call's search output happens to fill it. Every call but one is rescued by its
+    // successor; the last call of a run has none, so its whole tail dies with the process
+    // and a verdict that result.txt records is simply absent from the log. Measured on
+    // 2026-09-12: one SOLVED call's block missing, which made a healthy instrument look
+    // like a broken one and cost that run its (1).
+    //
+    // The two existing flushes (the gc line and memstat) are both INSIDE the search loop,
+    // so neither covers this block, and nothing in the tree calls setvbuf.
+    //
+    // Outside the --verdictinfo guard on purpose: the loss is a property of the block, not
+    // of that flag. Inside it, a run with the flag off would keep losing its tail while the
+    // flagged case looked fixed -- and the run that found this had the flag on.
+    //
+    // Not behind a flag of its own: this changes no output byte, only when the bytes leave
+    // the buffer. A default-off flag would leave the instrument broken by default, which is
+    // the opposite of what defaulting off protects.
+    std::fflush(stdout);
     // ...and out through the struct, because the repair loop -- the one consumer
     // that ACTS on these plans -- reads dp::g_outcome, not stdout. A walk that
     // never ran stays -1 and must not be counted as a clean plan.
