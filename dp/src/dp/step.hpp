@@ -2009,14 +2009,39 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // jumped (lv16 t=6,322, y matches exactly, vy alone differs by
                     // 11.42).
                     double loB = sx0, hiB = sx1 + 1.5;
+                    // --slopedbg only: which term built the bound that decides the test
+                    // below. `extC` and `revS` live inside the block, so by the time the
+                    // comparison runs they are gone -- and the comparison is the whole
+                    // question ("a model that stays grounded where GD falls looks like a
+                    // physics bug until the supporting object is named"; the same applies
+                    // to the object it REFUSES to be supported by). Recorded, not
+                    // recomputed: a second copy of this arithmetic could drift from the
+                    // one that actually ran.
+                    double extUsed = 0.0;
+                    int extSide = 0;          // 0 none, -1 widened loB, +1 widened hiB
                     if (!s.flip && s.mode == 0) {
                         const bool revS = ((double)K.dxF < 0.0 || s.rev != 0);
                         const double extC = pHalf * std::sqrt(1.0 + m * m)
                                             / std::fabs(m);
-                        if (!revS && m < -0.01) hiB = sx1 + extC;
-                        else if (revS && m > 0.01) loB = sx0 - extC;
+                        if (!revS && m < -0.01) { hiB = sx1 + extC; extUsed = extC; extSide = 1; }
+                        else if (revS && m > 0.01) { loB = sx0 - extC; extUsed = extC; extSide = -1; }
                     }
-                    if (xr0 < loB || xr0 > hiB) continue;
+                    if (xr0 < loB || xr0 > hiB) {
+                        // The rejection, with every term that produced it. lv22 t=4,612-4,629
+                        // refuses ramp uid4359 and first takes it at 4,630 -- the push-out
+                        // itself already places the model where GD is (see the note above),
+                        // so what is late is the ACQUISITION, and this line is the only place
+                        // that can say which bound refused it.
+                        if (g_slopeDbg)
+                            std::printf("slprej t=%lld x=%.2f uid=%d m=%.4f xr0=%.3f "
+                                        "loB=%.3f hiB=%.3f side=%s off=%.3f ext=%.3f "
+                                        "extside=%d onslope=%d ceil=%d flip=%d mode=%d\n",
+                                        (long long)K.t, x, sp->uid, m, xr0, loB, hiB,
+                                        (xr0 < loB) ? "lo" : "hi", off, extUsed, extSide,
+                                        (int)s.onSlope, slopeIsCeiling(sp->slopeDir) ? 1 : 0,
+                                        (int)s.flip, (int)s.mode);
+                        continue;
+                    }
                     sup = true;
                     break;
                 }
