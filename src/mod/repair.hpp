@@ -1094,17 +1094,31 @@ inline void addWorldArgs(std::vector<std::string>& a) {
     {
         const std::string bp = std::string(DATA_DIR) + "/dp_band.txt";
         std::ofstream bf(bp, std::ios::trunc);
+        // A COLLAPSED BAND IS WRITTEN DOWN. This used to skip `pmax <= pmin`
+        // outright, and since the reader holds the last row until the next one,
+        // "the band collapsed here" became "the band is still the last one I
+        // saw" -- an old, non-degenerate band handed out for the whole stretch.
+        // The four columns are `tick,kind,floor,ceil`; the reader takes the
+        // column count as the version, so a file written by an older build
+        // still reads.
         float lf = -1e9f, lc = -1e9f;
+        char lk = 0;
         long long rows = 0;
         const long long n = anchors::depth();
         for (long long t = 1; t < n; ++t) {
             const AnchorRow* r = anchors::row(t);
-            if (!r || r->pmax <= r->pmin) continue;
-            // Only changes: the reader holds the last row's value until the next
-            // (bandTrackAt), so flat stretches cost one row instead of thousands.
-            if (r->pmin == lf && r->pmax == lc) continue;
-            lf = r->pmin; lc = r->pmax;
-            bf << t << ',' << r->pmin << ',' << r->pmax << '\n';
+            // No row at all is not the same as a row saying there is no band:
+            // this side genuinely has nothing to say about that tick.
+            if (!r) continue;
+            const char k = (r->pmax > r->pmin) ? 'I' : 'D';
+            // Only changes: the reader holds the last row's value until the
+            // next, so flat stretches cost one row instead of thousands.
+            if (k == lk && r->pmin == lf && r->pmax == lc) continue;
+            lk = k; lf = r->pmin; lc = r->pmax;
+            if (k == 'I')
+                bf << t << ",I," << r->pmin << ',' << r->pmax << '\n';
+            else
+                bf << t << ",D," << r->pmin << ',' << r->pmin << '\n';
             ++rows;
         }
         bf.close();

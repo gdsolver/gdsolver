@@ -448,6 +448,14 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // formula does not implement the lockToPlayer term and filling them
         // would hand the recording-driven path a case it never sees today.
         L.dyn.autoAnchor.push_back((autoCtl || formulaDriven) ? tit->second.aAnchor : -1);
+        // Controlled (so trigMask != 0), its touch entry moves nothing, and it
+        // has a live autonomous mover with a resolved anchor. `controlled` is
+        // tested first because it already implies `tit != trigOf.end()` (:302),
+        // so the dereference is guarded. Nine objects across the 22 levels meet
+        // all four, every one of them in lv22; the fire gate that reads this
+        // carries the measurement.
+        L.dyn.recSelfFire.push_back((controlled && !touchMoves && autoMoves
+                                     && tit->second.aAnchor >= 0) ? 1u : 0u);
         L.dyn.autoDx.push_back((autoCtl || formulaDriven) ? tit->second.adx : 0.f);
         L.dyn.autoDy.push_back((autoCtl || formulaDriven) ? tit->second.ady : 0.f);
         L.dyn.autoDur.push_back((autoCtl || formulaDriven) ? tit->second.adur : 0.0);

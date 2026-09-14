@@ -31,8 +31,8 @@ namespace dp {
 //
 // Different plan, different trace, from identical arguments. Some of the leaks are worse than
 // drift: `g_needSkip` only ever ORs bits in, so a box skipped once is skipped for the rest of
-// the session; `g_startBandSet` never goes back to false, so a call with no band inherits the
-// previous one's; `g_touch` is appended to by every load, so a level's touch triggers pile up in
+// the session; the start band's kind never went back to "none given", so a call with no band
+// inherited the previous one's; `g_touch` is appended to by every load, so a level's touch pile up in
 // a list that is read only 32 entries deep; and `g_baseLv` points at a Level local to cliMain,
 // which is dangling the moment it returns.
 //
@@ -61,10 +61,11 @@ namespace dp {
 // same arguments alone and after a loaded call and diff the plan.
 inline void resetInvocationState() {
     // bands.hpp
-    g_startBandSet = false;
+    g_startBandKind = BandKind::Unknown;
     g_startBandFloor = 0.0;
-    g_startBandCeil = 1e9;
+    g_startBandCeil = 0.0;
     g_bandTrack.clear();
+    g_bandTrackIntervals.clear();
     g_bandTrackCam = -1;
     g_bandK = 0.0;
     g_slopeDbg = false;
@@ -224,11 +225,11 @@ inline void resetInvocationState() {
     g_tcBranchP1 = 0;
     g_touchPreyButton = false;
     g_ceilPush = false;
-    g_escRotAhead = false;
+    g_escRotAhead = true;
     g_bonkArm = false;
-    g_witnessFrame = false;
+    g_witnessFrame = true;
     g_vetoPhys = false;
-    g_dropNoCollide = false;
+    g_dropNoCollide = true;
     g_verdictInfo = false;
     g_resimPX = 0.f;
     g_preBtnSet = false;

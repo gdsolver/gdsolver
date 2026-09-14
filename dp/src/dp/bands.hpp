@@ -46,10 +46,32 @@ inline double bandHeightFor(int portalType) {
 inline double bandHeightDual(int mode) {
     return (mode == 1 || mode == 3 || mode == 4) ? kBandFly : kBandOther;
 }
+// WHAT A BAND READING MEANS, as a type rather than as a pair of numbers. The
+// recording carried three different facts in the same two floats, and the
+// parser used to drop everything that was not an interval -- so "the band
+// collapsed here", "there is no band here" and "the writer could not read it"
+// all arrived at the readers as "no row", which the lookup answers with the
+// last interval it saw. Separating them does not decide what a reader should
+// do; it lets the reader say which case it is answering.
+enum class BandKind : uint8_t {
+    Interval,       // fl < ce: a real band
+    Degenerate,     // fl == ce: the band collapsed (NOT "no band")
+    NoBand,         // the writer knows there is none here
+    Unknown,        // the writer could not read it (a missing or zero field)
+};
 // --startband <floor>,<ceil>: the anchor tick's band, read out of GD's dump
 // (pmin/pmax = getMinPortalY / getMaxPortalY) instead of guessed from x.
-inline bool g_startBandSet = false;
-inline double g_startBandFloor = 0.0, g_startBandCeil = 1e9;
+// The kind is the gate. `g_startBandCeil` used to default to 1e9 and three
+// call sites then asked `< 1e8` to find out whether a band had actually been
+// given -- a sentinel standing in for a missing value, with a fourth site
+// asking a different question (`g_startBandSet`) for the same fact. Both are
+// replaced by the kind, so "no band was given" is a value rather than a number
+// large enough to notice.
+inline BandKind g_startBandKind = BandKind::Unknown;
+inline double g_startBandFloor = 0.0, g_startBandCeil = 0.0;
+inline bool startBandUsable() {
+    return g_startBandKind == BandKind::Interval;
+}
 // --bandtrack <file>: GD's flying band from the recorded run (the dump's
 // tick,pmin,pmax with only the rows where it changes). A band frozen at the anchor
 // becomes a lie: GD's band moves every tick with the camera + zoom, and over lv22's
@@ -61,8 +83,12 @@ inline double g_startBandFloor = 0.0, g_startBandCeil = 1e9;
 // In a rotated frame (frame != 0) it is as before (the band is a world-Y quantity
 // and the frame mapping is a separate matter; the maze passes as it is, so it is
 // left alone).
-struct BandTrackRow { int t; float fl, ce; };
+struct BandTrackRow { int t; BandKind kind; float fl, ce; };
 inline std::vector<BandTrackRow> g_bandTrack;
+// The Interval rows' indices, in the same order. The lookup below walks THIS,
+// so a run that sees no D/N/U row behaves exactly as it did before the kinds
+// existed; the readers that want to see the other kinds ask bandTrackKindAt.
+inline std::vector<size_t> g_bandTrackIntervals;
 // [2026-08-22 r107] **Look up the row at t+1.** The 36 fixups at lv22's vertical
 // entrance (x 20,000..20,090, the section where the band rises at +1.4px/tick)
 // named it: GD's seat is
@@ -78,6 +104,25 @@ inline std::vector<BandTrackRow> g_bandTrack;
 // The raw row lookup (no phase shift): the recorded row at or before `t`, held
 // until the next. Callers pick the phase -- see bandTrackAt and the fly floor.
 inline bool bandTrackRowAt(long long t, double& fl, double& ce) {
+    if (g_bandTrackIntervals.empty()) return false;
+    size_t lo = 0, hi = g_bandTrackIntervals.size();
+    while (lo + 1 < hi) {
+        const size_t m = (lo + hi) / 2;
+        if (g_bandTrack[g_bandTrackIntervals[m]].t <= t) lo = m; else hi = m;
+    }
+    const BandTrackRow& r = g_bandTrack[g_bandTrackIntervals[lo]];
+    if ((long long)r.t > t) return false;
+    fl = (double)r.fl;
+    ce = (double)r.ce;
+    return true;
+}
+// The same search over EVERY row, answering with the kind and with how stale
+// the answer is. `age` is t minus the row's tick, so a caller can tell "the
+// band is this" from "the band was this, `age` ticks ago". No age limit is
+// imposed here: which staleness is acceptable is the caller's question, and
+// today every caller accepts any.
+inline bool bandTrackKindAt(long long t, BandKind& kind, double& fl, double& ce,
+                            long long& age) {
     if (g_bandTrack.empty()) return false;
     size_t lo = 0, hi = g_bandTrack.size();
     while (lo + 1 < hi) {
@@ -85,8 +130,10 @@ inline bool bandTrackRowAt(long long t, double& fl, double& ce) {
         if (g_bandTrack[m].t <= t) lo = m; else hi = m;
     }
     if ((long long)g_bandTrack[lo].t > t) return false;
+    kind = g_bandTrack[lo].kind;
     fl = (double)g_bandTrack[lo].fl;
     ce = (double)g_bandTrack[lo].ce;
+    age = t - (long long)g_bandTrack[lo].t;
     return true;
 }
 inline bool bandTrackAt(long long t, double& fl, double& ce) {
@@ -129,17 +176,22 @@ inline bool bandTrackFloorAt(long long t, double& fl, double& ce) {
 inline int g_bandTrackCam = -1;
 inline bool bandTrackIsCamera() {
     if (g_bandTrackCam < 0) {
-        if (g_bandTrack.size() < 8) {
+        // Only Interval rows carry a ceiling to be on or off the grid, so they
+        // are the population -- both the numerator and the count this is
+        // compared against. A collapsed or absent band is not evidence either
+        // way about which kind of band the recording holds.
+        const size_t n = g_bandTrackIntervals.size();
+        if (n < 8) {
             g_bandTrackCam = 0;          // too short to judge; as before
         } else {
             size_t off = 0;
-            for (const BandTrackRow& r : g_bandTrack) {
-                const double c = (double)r.ce;
+            for (const size_t i : g_bandTrackIntervals) {
+                const double c = (double)g_bandTrack[i].ce;
                 if (std::fabs(c - std::round(c / 30.0) * 30.0) >= 0.01) ++off;
             }
-            g_bandTrackCam = (off * 2 > g_bandTrack.size()) ? 1 : 0;
-            std::printf("bandtrack: %zu rows, %zu off-grid -> %s\n",
-                        g_bandTrack.size(), off,
+            g_bandTrackCam = (off * 2 > n) ? 1 : 0;
+            std::printf("bandtrack: %zu interval rows, %zu off-grid -> %s\n",
+                        n, off,
                         g_bandTrackCam ? "CAMERA-driven (no physical ceiling)"
                                        : "portal-set (the ceiling is a wall)");
         }

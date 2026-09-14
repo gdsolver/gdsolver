@@ -151,7 +151,7 @@ inline bool g_bonkArm = false;
 // --witnessframe (default off): the witness walk binds the geometry of the frame the
 // call STARTS in, as --replay does, instead of frame 0. Not print-only: the walk also
 // fills modeAt, which sets the emitted plan's edge latencies. See cli.hpp at rLf.
-inline bool g_witnessFrame = false;
+inline bool g_witnessFrame = true;
 // --vetophys (default off): a SOLVED whose correctly bound witness walk dies of a
 // physical cause (hazard / solid-side / crush) is published as the PARTIAL at that
 // death. See the demotion after the witness walk in cli.hpp.
@@ -171,7 +171,7 @@ inline bool g_vetoPhys = false;
 // exclusion is one object wide, not a class rule. Match on the id COLUMN only: the same
 // dump carries an unrelated uid 1910 (id 1268, type 20), and a loose numeric match would
 // silently drop the wrong row.
-inline bool g_dropNoCollide = false;
+inline bool g_dropNoCollide = true;
 inline constexpr int kNoCollideId = 1910;
 // --verdictinfo (default off): when a SOLVED plan's own witness walk died, print one
 // `vinfo:` line carrying the verdict beside that death -- tick, cause, uid, object,

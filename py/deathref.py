@@ -499,11 +499,20 @@ def band_args(level: int, trunc: int, gd: dict[int, dict]) -> list[str]:
     with dst.open("w", encoding="utf-8") as w:
         for t in sorted(gd):
             r = gd[t]
-            cur = (r.get("pmin"), r.get("pmax"))
-            if not cur[0] or not cur[1]:
-                continue
+            lo, hi = r.get("pmin"), r.get("pmax")
+            # Same four kinds as quick_regress's writer: a field we could not
+            # read is U, a collapsed band is D, only an interval is I. `not lo`
+            # would have dropped a real zero as quietly as a missing field.
+            if lo in (None, "") or hi in (None, ""):
+                cur = ("U", "", "")
+            elif float(hi) > float(lo):
+                cur = ("I", lo, hi)
+            elif float(hi) == float(lo):
+                cur = ("D", lo, lo)
+            else:
+                cur = ("U", "", "")
             if cur != prev:
-                w.write(f"{t},{cur[0]},{cur[1]}\n")
+                w.write(f"{t},{cur[0]},{cur[1]},{cur[2]}\n")
                 rows += 1
             prev = cur
     return ["--bandtrack", str(dst)] if rows else []

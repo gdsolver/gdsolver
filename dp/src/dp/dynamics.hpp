@@ -506,6 +506,15 @@ struct Dynamics {
     // and the later controllers ride the same shift (their relative timing is
     // embedded in the recording).
     std::vector<int> autoAnchor;
+    // "This object's touch entry moves it nowhere (dx=dy=0) but it ALSO has a
+    // real autonomous mover." Deliberately a SEPARATE flag rather than widening
+    // autoAnchor: autoAnchor is read by :632, :710, :853 and cli.hpp:1652/:1981,
+    // and widening it would drag the ownTouch punch-freeze (:853) and the
+    // anchor-seeding rf scan (cli.hpp:1652, both the ahead branch at :1670 and
+    // the behind branch at :1718) along with it -- both were measured as
+    // unintended effects of the wider forms. Read at the fire gate below and
+    // NOWHERE else.
+    std::vector<uint8_t> recSelfFire;
     std::vector<float> autoDx, autoDy;   // summed final offset (ease fallback)
     std::vector<double> autoDur;
     std::vector<int> autoEase;
@@ -766,7 +775,41 @@ struct Dynamics {
                     // other unpunched worldline. (autoAnchor alone missed it:
                     // the ceiling is classified touch-only; recAuto is the
                     // discriminator that caught it.)
-                    if (autoAnchor[i] >= 0 || (i < recAuto.size() && recAuto[i]))
+                    // The recSelfFire disjunct is the middle one. The first is
+                    // KEPT even though it is dead here under default flags (no
+                    // object reaching this line has autoAnchor >= 0: autoCtl
+                    // implies m == 0, and formulaDriven leaves at :708) -- under
+                    // --noformula the formula path is off and formulaDriven
+                    // objects DO arrive here, so removing it would change that
+                    // flag's behaviour. The recAuto disjunct is untouched.
+                    //
+                    // Gated on the RECORDING's own first motion: without the tick
+                    // test this forces `fired` from t=1 and the fired branch then
+                    // interpolates across the leading gap (:931-942) -- measured
+                    // on lv22 uid254, where sample[0] (1, 57.000) and sample[1]
+                    // (315, 65.940) gave cy=62.552 at t=196.
+                    // `trigRecFire[i] >= 0` is guaranteed by the enclosing :754.
+                    //
+                    // MEASURED AGAINST GD, and that measurement is the scope of
+                    // the claim (2026-09-13). The class is nine objects, all in
+                    // lv22 (2,094 triggered objects corpus-wide -> 157 controlled
+                    // -> 15 whose touch moves nothing -> 9 that also move by
+                    // themselves). A fresh recording of the same plan was taken
+                    // from the game and held against both arms at the 20-tick
+                    // print points around each object's first use: 33 comparison
+                    // points, of which this branch puts 33 within 0.02 px of the
+                    // game and the branchless form 27. The two differ on 4 of the
+                    // 9 objects and 6 of the 33 points, by up to ~148 px, in the
+                    // window between the recording's first motion and the late
+                    // fire the touch mask alone produces.
+                    // WHAT IT DOES NOT SHOW: the three objects the player
+                    // actually rides in this corpus (uid 195, 254, 320) come out
+                    // the same either way, so the corpus trajectory does not move
+                    // -- the 22 replays are byte-identical with and without this.
+                    if (autoAnchor[i] >= 0
+                        || (i < recSelfFire.size() && recSelfFire[i]
+                            && t >= trigRecFire[i])
+                        || (i < recAuto.size() && recAuto[i]))
                         fired = true;
                     anchor = recAnchor; lat = 0;
                 }

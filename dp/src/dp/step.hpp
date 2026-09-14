@@ -355,7 +355,7 @@ inline bool spiderTargetY(const StepCtx& K, double x, double fromY, bool flip,
             // limits come from the anchor's dump (--startband); with none, a
             // window wide enough for the 270 px band.
             double bLo = x - 150.0, bHi = x + 150.0;
-            if (g_startBandSet && g_startBandCeil < 1e8) {
+            if (startBandUsable()) {
                 const double u0 = frameU(frame, 0.0, g_startBandFloor);
                 const double u1 = frameU(frame, 0.0, g_startBandCeil);
                 bLo = std::min(u0, u1); bHi = std::max(u0, u1);
@@ -1559,8 +1559,16 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // wiped out every anchor in the ball section).
         double btF = (double)s.bandFloor, btC = (double)s.bandCeil;
         if (s.frame == 0) {
+            // Only an interval is a band to sit in. A collapsed one is not a
+            // ceiling, an absent one is not a ceiling either, and a row the
+            // writer could not read says nothing -- in all three the state's own
+            // band stands. (Before the kinds existed the three arrived as "no
+            // row" and this kept the last interval it had seen instead.)
+            BandKind bk = BandKind::Unknown;
             double f_ = btF, c_ = btC;
-            if (bandTrackAt((long long)K.t, f_, c_)
+            long long bage = 0;
+            if (bandTrackKindAt((long long)K.t + 1, bk, f_, c_, bage)
+                && bk == BandKind::Interval
                 && (double)s.y >= f_ - 1.0 && (double)s.y <= c_ + 1.0) {
                 btF = f_; btC = c_;
             }
@@ -1766,8 +1774,12 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // same (see the note at 5803).
         double bandCT = (double)s.bandCeil, bandFT = (double)s.bandFloor;
         if (s.frame == 0) {
+            // Same reading as the wave side: interval or nothing.
+            BandKind bk = BandKind::Unknown;
             double f_ = bandFT, c_ = bandCT;
-            if (bandTrackAt((long long)K.t, f_, c_)
+            long long bage = 0;
+            if (bandTrackKindAt((long long)K.t + 1, bk, f_, c_, bage)
+                && bk == BandKind::Interval
                 && (double)s.y >= f_ - 1.0 && (double)s.y <= c_ + 1.0) {
                 bandFT = f_; bandCT = c_;
             }
@@ -3709,15 +3721,25 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         double btFlyF = (double)s.bandFloor, btFlyC = (double)s.bandCeil;
         bool btFlyOn = false;
         if (s.frame == 0) {
+            // The two phases are looked up separately and can land on rows of
+            // DIFFERENT kinds. The ceiling decides: without an interval there is
+            // no recorded band to fly in, and the floor is not taken from a
+            // collapsed or absent row on its own.
+            BandKind bk = BandKind::Unknown, bkF = BandKind::Unknown;
             double f_ = btFlyF, c_ = btFlyC;
-            if (bandTrackAt((long long)K.t, f_, c_)
+            long long bage = 0;
+            if (bandTrackKindAt((long long)K.t + 1, bk, f_, c_, bage)
+                && bk == BandKind::Interval
                 && (double)s.y >= f_ - 1.0 && (double)s.y <= c_ + 1.0) {
                 btFlyF = f_; btFlyC = c_; btFlyOn = true;
                 // The FLOOR side reads the previous row (the pan lands after the
                 // clamp -- measurement at bandTrackFloorAt). The ceiling keeps the
                 // r107 phase it was calibrated with.
                 double ff = f_, fc = c_;
-                if (bandTrackFloorAt((long long)K.t, ff, fc)) btFlyF = ff;
+                long long fage = 0;
+                if (bandTrackKindAt((long long)K.t - 1, bkF, ff, fc, fage)
+                    && bkF == BandKind::Interval)
+                    btFlyF = ff;
             }
         }
         const double floorY = std::max(btFlyF, kGroundY);
@@ -4268,8 +4290,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // constant (it measures the band GD was asked for at the
                 // anchor and folds the ratio in), so with the real numerator
                 // in hand it would correct a correct number twice.
-                if (!g_freeModeCol && g_bandK <= 0.0 && g_startBandCeil < 1e8
-                    && g_startBandCeil > g_startBandFloor)
+                if (!g_freeModeCol && g_bandK <= 0.0 && startBandUsable())
                     g_bandK = (g_startBandCeil - g_startBandFloor) * cs
                               / kBandBase;
                 const double k = (g_bandK > 0.0) ? g_bandK : 1.0;
@@ -11428,7 +11449,32 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // the player can legally take, which ties the two together. Separating
         // them needs a rig: a floor-facing pad taken in flipped gravity. Until
         // then this is written as the gravity, not the impulse.
-        const bool spinNow = rotPadSpin || (!c.grounded && !s.grounded);
+        // `!c.grounded && !s.grounded` reads only the two ENDS of the tick, so a
+        // landing that happened INSIDE it is invisible: a cube that lands on a
+        // solid and leaves it on the same tick clears `grounded` again before
+        // this line runs, and the airborne spin fires on a tick GD spent easing
+        // toward the upright. `cubeLandedThisTick` is the landing event itself
+        // -- written at the `solid/land` site and cleared by `undoSnap` -- and
+        // the stair-nudge gate below already treats it as ground. Using it here
+        // leaves `grounded` alone, which is the point: that flag feeds the whole
+        // collision pass, and widening IT would move physics this branch has no
+        // business touching.
+        //
+        // MEASURED ON A RIG, and the rig is the scope of the claim: a flat floor
+        // with pedestals of 18 different heights, so the cube meets a plain top
+        // face with a different incoming vy each time (2026-09-13). Over the 18
+        // landings -- full-size cube, normal gravity, flat top faces, incoming vy
+        // -4.2 .. -10.6 -- the per-tick rotation step across the landing tick is
+        // closer to GD's with this term in for 16 of them, and the two that are
+        // not are rows where GD's own `rot` column wrapped by 720 degrees. The
+        // residual with the term is 0.000 .. 0.002 degrees; without it the spin
+        // fires in full and the residual runs to 6.6. Nothing outside that rig
+        // was measured: mini, flipped gravity, slopes and moving surfaces are
+        // untested here, and so is any effect on search. The corpus shape is
+        // lv22 t=613 (`clamp=solid/land`, `clampuid=320`, grounded 0 on both
+        // sides, vy -15 -> +11.18 = kCubeJump).
+        const bool spinNow =
+            rotPadSpin || (!c.grounded && !s.grounded && !cubeLandedThisTick);
         const uint8_t spinSign =
             rotPadSpin ? (g_noPadSpinPre ? c.flip : rotPadFlip) : rotSignNow;
         // THE BASE IS c.rot, NOT s.rot, and every law below has to agree. A mode

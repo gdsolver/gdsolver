@@ -186,9 +186,17 @@ def model_replay(level: int, plan_out: Path, out_base: Path, leveldp: Path,
     m = re.search(r"REPLAY: model DIED at t=(\d+)", r.stdout)
     trace = Path(str(out_base) + ".trace.csv")
     died = int(m.group(1)) if m else -1
+    # `with_fixups` is the EFFECTIVE fact, read back out of argv, because the
+    # flag only lands there when the file also exists (the `fx.exists()` above):
+    # a run that asked for fixups and found none used to be recorded as
+    # `with_fixups: true` with no `--fixups` in the same sidecar, which is the
+    # one thing write_provenance's contract forbids (`extra` is for what argv
+    # does NOT carry). The caller's intent is kept beside it rather than thrown
+    # away -- "asked and it did not apply" is exactly the case worth seeing.
     record_provenance(trace, argv, level=level, died=died,
                       exit_code=r.returncode, whole_run=whole_run,
-                      with_fixups=with_fixups)
+                      with_fixups="--fixups" in argv,
+                      with_fixups_requested=with_fixups)
     return trace, died, r.stdout
 
 

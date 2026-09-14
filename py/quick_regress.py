@@ -583,11 +583,21 @@ def band_track_args(level: int, gd: dict) -> list[str]:
                 prev = None
                 for t in sorted(gd):
                     r = gd[t]
-                    cur = (r.get("pmin"), r.get("pmax"))
-                    if not cur[0] or not cur[1]:
-                        continue
+                    lo, hi = r.get("pmin"), r.get("pmax")
+                    # `not lo` is true for "0" as well as for a missing field,
+                    # so a real zero used to leave as silently as an absent one.
+                    # The kinds keep them apart: a field we could not read is U,
+                    # a band that collapsed is D, and only an interval is I.
+                    if lo in (None, "") or hi in (None, ""):
+                        cur = ("U", "", "")
+                    elif float(hi) > float(lo):
+                        cur = ("I", lo, hi)
+                    elif float(hi) == float(lo):
+                        cur = ("D", lo, lo)
+                    else:
+                        cur = ("U", "", "")
                     if cur != prev:
-                        w.write(f"{t},{cur[0]},{cur[1]}\n")
+                        w.write(f"{t},{cur[0]},{cur[1]},{cur[2]}\n")
                         rows += 1
                     prev = cur
         except OSError as e:

@@ -512,26 +512,94 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--bandtrack")) {
             std::FILE* bf = std::fopen(argv[i + 1], "r");
             if (bf) {
-                BandTrackRow r{};
-                while (std::fscanf(bf, "%d,%f,%f", &r.t, &r.fl, &r.ce) == 3)
-                    if (r.ce > r.fl) g_bandTrack.push_back(r);
+                // NO ROW IS DROPPED. The old reader kept only `ce > fl` and
+                // said nothing about the rest, so a collapsed band reached the
+                // lookup as "no row" and the lookup answered with the last
+                // interval it had -- an old, wrong, non-degenerate band. Each
+                // row now arrives with its kind and is counted; what a reader
+                // does with a kind is the reader's decision, not the parser's.
+                //
+                // The version is the column count: three fields is the original
+                // `t,floor,ceil`, four is `t,kind,a,b`. No header line, because
+                // a reader of the older format would take one for a row.
+                size_t kn[4] = {0, 0, 0, 0};
+                size_t skipped = 0;
+                char line[256];
+                while (std::fgets(line, sizeof line, bf)) {
+                    BandTrackRow r{};
+                    char k = 0;
+                    float a = 0, b = 0;
+                    if (std::sscanf(line, "%d,%c,%f,%f", &r.t, &k, &a, &b) >= 2
+                        && (k == 'I' || k == 'D' || k == 'N' || k == 'U')) {
+                        r.fl = a;
+                        // A D row carries the collapsed value in both columns,
+                        // so this does not depend on the fourth field being
+                        // present -- but the writers fill it in anyway, so a
+                        // future reader may tighten the field count.
+                        r.ce = (k == 'D') ? a : b;
+                        r.kind = k == 'I' ? BandKind::Interval
+                               : k == 'D' ? BandKind::Degenerate
+                               : k == 'N' ? BandKind::NoBand
+                                          : BandKind::Unknown;
+                        // An interval that is not one is not silently kept:
+                        // the invariant is part of the type.
+                        if (r.kind == BandKind::Interval && !(r.ce > r.fl))
+                            r.kind = BandKind::Unknown;
+                    } else if (std::sscanf(line, "%d,%f,%f", &r.t, &r.fl,
+                                           &r.ce) == 3) {
+                        r.kind = r.ce > r.fl  ? BandKind::Interval
+                               : r.ce == r.fl ? BandKind::Degenerate
+                                              : BandKind::Unknown;
+                        if (r.ce < r.fl)
+                            std::fprintf(stderr, "bandtrack: t=%d has ceil %g "
+                                         "below floor %g\n", r.t, (double)r.ce,
+                                         (double)r.fl);
+                    } else {
+                        // A line that matches neither shape. It is still not
+                        // dropped in silence: the count is printed with the
+                        // rest, because "nothing here" and "I could not read
+                        // this" are the two the whole change exists to keep
+                        // apart.
+                        ++skipped;
+                        continue;
+                    }
+                    if (r.kind == BandKind::Interval)
+                        g_bandTrackIntervals.push_back(g_bandTrack.size());
+                    ++kn[(size_t)r.kind];
+                    g_bandTrack.push_back(r);
+                }
                 std::fclose(bf);
                 g_bandTrackCam = -1;   // the verdict belongs to THIS track
-                std::printf("bandtrack: %zu rows (%s)\n", g_bandTrack.size(),
-                            argv[i + 1]);
+                std::printf("bandtrack: %zu rows (I %zu D %zu N %zu U %zu) "
+                            "unreadable %zu (%s)\n", g_bandTrack.size(),
+                            kn[0], kn[1], kn[2], kn[3], skipped, argv[i + 1]);
             } else {
                 std::fprintf(stderr, "bandtrack: cannot open %s\n", argv[i + 1]);
             }
         }
         if (!std::strcmp(argv[i], "--startband")) {
+            // Three different facts used to leave through the same line: a
+            // collapsed band, a pair the wrong way round, and a string that is
+            // not a pair at all. They are separated here because only the first
+            // says anything about the level.
             double f = 0, c = 0;
-            if (std::sscanf(argv[i + 1], "%lf,%lf", &f, &c) == 2 && c > f) {
-                g_startBandSet = true;
-                g_startBandFloor = f;
-                g_startBandCeil = c;
-            } else {
+            if (std::sscanf(argv[i + 1], "%lf,%lf", &f, &c) != 2) {
+                g_startBandKind = BandKind::Unknown;
                 std::fprintf(stderr, "startband: `%s` is not a readable f,c pair\n",
                              argv[i + 1]);
+            } else if (c > f) {
+                g_startBandKind = BandKind::Interval;
+                g_startBandFloor = f;
+                g_startBandCeil = c;
+            } else if (c == f) {
+                g_startBandKind = BandKind::Degenerate;
+                g_startBandFloor = g_startBandCeil = f;
+                std::fprintf(stderr, "startband: `%s` is a collapsed band\n",
+                             argv[i + 1]);
+            } else {
+                g_startBandKind = BandKind::Unknown;
+                std::fprintf(stderr, "startband: `%s` has the ceiling below the "
+                             "floor\n", argv[i + 1]);
             }
         }
         // --needtrig <n>: repeatable. See g_needTrig.
@@ -2395,7 +2463,7 @@ inline int cliMain(int argc, char** argv) {
         // 156 where GD was at 122. Everything after ran 34 px high, so GD died
         // where the model lived and the driver bought the difference back four
         // ticks at a time -- 5 px per iteration, which is not progress.
-        if (g_startBandSet) {
+        if (startBandUsable()) {
             // ...unless the anchor is OUTSIDE it, in which case GD's pmin/pmax
             // are stale defaults and not a band the player is in. Measured on
             // lv22's ball corridor (2026-08-14): every anchor the ladder takes
@@ -2423,7 +2491,7 @@ inline int cliMain(int argc, char** argv) {
         if (g_flyFloor > 0.0) seed.floorY = g_flyFloor;
         init.bandFloor = (float)seed.floorY;
         init.bandCeil = (float)seed.ceilY;
-        if (g_startBandSet)
+        if (startBandUsable())
             std::printf("startband: the seed will start in [%.1f, %.1f]\n",
                         seed.floorY, seed.ceilY);
     }
