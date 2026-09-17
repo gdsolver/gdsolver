@@ -398,6 +398,23 @@ inline int g_formulaDriven = 0;
 // moved something" from "filling the autonomous fields for a dual-controlled
 // object moved something", which are different changes that arrive together.
 inline bool g_noFormula = false;
+// --touchretime: re-time a touch-controlled object's recording against THIS
+// state's entry into the box that reaches it, instead of playing it on the
+// recording run's clock (the touch branch below sets anchor = recAnchor, so
+// shift is 0 by construction). Measured on lv22's block row, group 508 under
+// box uid17771 (worker 98, three arms of the same plan): the row's first moving
+// row is two ticks after the ball's rect first overlaps the box -- t=6534 after
+// an overlap from 6532, t=6508 after an injected overlap from 6506 without a
+// landing, and no motion at all through t=6546 when the ball is held clear.
+// Only boxes entered at or after the solve's own start are re-timed
+// (g_touchRetimeFrom): a box the anchor arrived with has its fireB seeded from
+// the recording's first motion, not from an entry, and its recording is this
+// run's own. Also changes how recAuto is classified (level_loader.hpp). On by
+// default since v0.1.4 (--no-touchretime turns it off); lv19's doors measured a
+// 5-tick latency with a spawn delay in the chain, which this does not model.
+inline bool g_touchRetime = true;
+inline long long g_touchRetimeFrom = 0;
+inline constexpr int kTouchRetimeLat = 2;
 // The one touch box whose chain locks something to the player's x, and how long
 // the lock lasts in ticks. A per-BOX quantity rather than a per-object one
 // because what a state has to remember is "how far have I travelled since I
@@ -515,6 +532,9 @@ struct Dynamics {
     // unintended effects of the wider forms. Read at the fire gate below and
     // NOWHERE else.
     std::vector<uint8_t> recSelfFire;
+    // Also reached by an autonomous controller (level_loader.hpp). Read only by
+    // --touchretime, which leaves such objects on the recording's clock.
+    std::vector<uint8_t> autoReach;
     std::vector<float> autoDx, autoDy;   // summed final offset (ease fallback)
     std::vector<double> autoDur;
     std::vector<int> autoEase;
@@ -812,6 +832,18 @@ struct Dynamics {
                         || (i < recAuto.size() && recAuto[i]))
                         fired = true;
                     anchor = recAnchor; lat = 0;
+                    // --touchretime (see the flag): this state's own entry.
+                    if (g_touchRetime && fireB && autoAnchor[i] < 0
+                        && !(i < recAuto.size() && recAuto[i])
+                        && !(i < autoReach.size() && autoReach[i])
+                        && !(g_recPhase & m)) {
+                        int fb = -1;
+                        for (int b = 0; b < 32; ++b)
+                            if ((m & mask) & ((uint32_t)1 << b))
+                                fb = std::max(fb, (int)fireB[b]);
+                        if (fb >= 0 && (long long)fb >= g_touchRetimeFrom)
+                            anchor = fb + kTouchRetimeLat;
+                    }
                 }
             } else {
                 const int f = g_autoTrig[(size_t)aA].fireT;
@@ -971,7 +1003,16 @@ struct Dynamics {
                     // even to within 1 tick** (the lv22@6,129 family).
                     // Position and rot only. on (a boolean) and hw/hh stay
                     // stepped.
-                    if (g_dynInterp && lo + 1 < sm.size()) {
+                    // --touchretime: not across the LEADING gap. Before the
+                    // recording's first motion the object is at rest, and the
+                    // row after the gap is already the first moved position --
+                    // interpolating toward it from t=1 put lv22's block row at
+                    // 344.70 one tick before GD moves it (t=6510, shift 5), which
+                    // is exactly the landing tick.
+                    const bool leadingGap = g_touchRetime && m
+                                            && trigRecFire[i] >= 0
+                                            && tt < trigRecFire[i];
+                    if (g_dynInterp && lo + 1 < sm.size() && !leadingGap) {
                         const DynSample& n = sm[lo + 1];
                         const int span = n.t - s.t;
                         if (span > 0 && tt > s.t) {

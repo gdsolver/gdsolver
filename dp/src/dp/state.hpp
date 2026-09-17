@@ -801,6 +801,11 @@ struct State {
     uint8_t fgArm = 0;
     uint32_t parent;  // node arena index
     uint8_t action;   // input level THIS tick (for plan reconstruction)
+    // --latgap: this tick ended in a latency-2 mode (ship/UFO) and the tick before in a
+    // latency-1 one, so no button edge in GD takes effect on the NEXT tick (a press on
+    // the tick before lands on this one, a press on this one lands two later). Set by
+    // the search's child step only; 0 everywhere else, which is "no constraint".
+    uint8_t latLock = 0;
     // Reverse (a same-frame id 2900). A SEPARATE AXIS from frame: it reverses
     // only the direction of travel (gravity / up-down stay as they are). travel
     // is the product frame x rev. All 0 in lv1-21.

@@ -456,6 +456,17 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // carries the measurement.
         L.dyn.recSelfFire.push_back((controlled && !touchMoves && autoMoves
                                      && tit->second.aAnchor >= 0) ? 1u : 0u);
+        // Reached by ANY autonomous controller as well (a moving one, a resolved
+        // anchor, or an autonomous Rotate). --touchretime leaves these on the
+        // recording's clock: their recorded first motion can be the autonomous
+        // one, and re-timing that against a box entry shifts it by the gap --
+        // lv22 uid195/254/320 (group 39/38/40: touch Rotate plus autonomous Move)
+        // first move at t=292/315/339 and the boxes are entered at 417/507/576,
+        // so the flag slid them 127/194/239 ticks and fixcensus grew a lv22 t=425
+        // divergence (edvy +12.22) that nothing else produced.
+        L.dyn.autoReach.push_back(((tit != trigOf.end()
+                                    && (tit->second.aAnchor >= 0 || autoMoves))
+                                   || g_rotated.count(o.uid)) ? 1u : 0u);
         L.dyn.autoDx.push_back((autoCtl || formulaDriven) ? tit->second.adx : 0.f);
         L.dyn.autoDy.push_back((autoCtl || formulaDriven) ? tit->second.ady : 0.f);
         L.dyn.autoDur.push_back((autoCtl || formulaDriven) ? tit->second.adur : 0.0);
@@ -509,13 +520,25 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // box, one direction -- keeps the mask-gated path (lv19/20 unchanged).
         {
             uint8_t ra = 0;
-            if (controlled) {
+            if (controlled && !g_touchRetime) {
                 bool up = false, down = false;
                 for (const auto& p : tit->second.tparts) {
                     if (p.dy > 0.01f) up = true;
                     if (p.dy < -0.01f) down = true;
                 }
                 ra = (up && down) ? 1 : 0;
+            } else if (controlled) {
+                // --touchretime: ACROSS boxes, as the note above says. The test
+                // above pools every part, so one box whose own chain goes down
+                // and back up -- lv22's uid17771 spawns a -12 and a +12 Move on
+                // the block row it sinks -- was classed as a worldline fact,
+                // forced fired, and had its +12 counted as a punch delay.
+                uint32_t upB = 0, downB = 0;
+                for (const auto& p : tit->second.tparts) {
+                    if (p.dy > 0.01f) upB |= (uint32_t)1 << (p.trig & 31);
+                    if (p.dy < -0.01f) downB |= (uint32_t)1 << (p.trig & 31);
+                }
+                ra = ((upB & ~downB) && (downB & ~upB)) ? 1 : 0;
             }
             L.dyn.recAuto.push_back(ra);
         }

@@ -399,9 +399,12 @@ inline bool hazardHit(const Obj* o, double px, double py, double half,
         return dx * dx + dy * dy < r * r;
     }
     // A TURNED hazard, against its recorded box rather than the bound around
-    // it. OPT-IN (--obb) and NOT yet wired into the driver: it is a strict
-    // improvement on the bound but it is not GD's shape either. Read the
-    // measurements before turning it on anywhere.
+    // it. OPT-IN (--obb): a strict improvement on the bound, but not GD's shape
+    // either, so read the measurements before drawing anything from it.
+    // [2026-09-14] It IS wired into the driver -- repair.hpp:1203 passes --obb
+    // whenever the level has an obb dump, and so do quick_regress and deathref.
+    // This note used to say the opposite, which reads as "the loop never sees
+    // this branch" and turns a real disagreement into an instrument artefact.
     //
     // The BOUND is definitely wrong, and no half rescues it. lv20 t=811, mini
     // wave, spike id667 rot -63 at (1057.19,167.595), the player's x fixed by

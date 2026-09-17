@@ -67,6 +67,7 @@ inline void resetInvocationState() {
     g_bandTrack.clear();
     g_bandTrackIntervals.clear();
     g_bandTrackCam = -1;
+    g_bandTrackEnd = -1;
     g_bandK = 0.0;
     g_slopeDbg = false;
     g_slopeRelDbg = false;
@@ -225,6 +226,11 @@ inline void resetInvocationState() {
     g_tcBranchP1 = 0;
     g_touchPreyButton = false;
     g_ceilPush = false;
+    g_slopeLaw = true;
+    g_shipSlopeKill = true;
+    g_waveFlipKill = true;
+    g_latGap = false;
+    g_noFreeSide = false;
     g_escRotAhead = true;
     g_bonkArm = false;
     g_witnessFrame = true;
@@ -362,6 +368,9 @@ inline void resetInvocationState() {
     g_oriented = true;
     g_obbAll = false;
     g_touchFromAnchor = false;
+    g_spawnRemap = true;
+    g_touchRetime = true;
+    g_touchRetimeFrom = 0;
     // ...and the fireB tally. The three counters only ever `++` (cli.hpp:2748,
     // 2749, 2760) and nothing zeroes them, so the line printed at cli.hpp:3504
     // is the PROCESS's running total presented as this solve's -- a number that

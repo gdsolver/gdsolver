@@ -627,6 +627,25 @@ class $modify(PlayerObject) {
         // somewhere else (the exit or the update path) and the two asm sites are
         // a different quantity.
         const double vyBefore = watch ? (double)this->m_yVelocity : 0.0;
+        // ...AND THE STATE THE CALL IS GIVEN, not only what it leaves behind.
+        // Everything after the call is an OUTPUT. lv21 t=19,724 was read the
+        // wrong way round because of that: `top` (m_isCurrentSlopeTop) reads 0
+        // for twelve ticks and 1 from the acquisition onwards, so it is the
+        // acquisition's own result -- and it was compared against the model's
+        // per-tick `ridesTop`, which is a candidate test. Two quantities with
+        // similar names, one a state and one a predicate. A gate derived from
+        // that comparison would have been derived from its own conclusion.
+        // The player's rect is taken here too: GD acquires on the tick the rects
+        // first overlap (0.70px there), and the rect after the call is the
+        // seated one.
+        const int oS0 = watch ? (int)this->m_isOnSlope : 0;
+        const int top0 = watch ? (int)this->m_isCurrentSlopeTop : 0;
+        const int was0 = watch ? (int)this->m_wasOnSlope : 0;
+        const int jb0 = watch ? (int)this->m_jumpBuffered : 0;
+        const int ud0 = watch ? (int)this->m_maybeUpsideDownSlope : 0;
+        const double st0 = watch ? this->m_slopeStartTime : 0.0;
+        CCRect prr = watch ? this->getObjectRect() : CCRect();
+        const double syAtX0 = watch ? obj->slopeYPos(this->getPositionX()) : 0.0;
         PlayerObject::collidedWithSlopeInternal(dt, obj, forced);
         if (!watch) return;
         static int lines = 0;
@@ -647,13 +666,19 @@ class $modify(PlayerObject) {
         // and the rest of the row would be read against the wrong field.
         const unsigned char b68c = *(raw + 0x68c);
         const unsigned char b985 = *(raw + 0x985);
-        char b[416];
+        // 640, not 416: the IN block above adds about 130 characters and
+        // snprintf TRUNCATES SILENTLY -- the new fields sit at the end of the
+        // line, so an undersized buffer would drop exactly the ones this trace
+        // was extended for, with nothing to say it had happened.
+        char b[640];
         snprintf(b, sizeof(b),
                  "slp: t=%lld dt=%lld who=%s uid=%d id=%d forced=%d onSlope=%d up=%d top=%d "
                  "y %.3f->%.3f "
                  "vy=%.3f rect=(%.2f,%.2f,%.2f,%.2f) rot=%.1f syAtX=%.3f "
                  "held=%d p986=%d p9b8=%d vyin=%.3f dvy=%.3f "
-                 "b68c=%d b985=%d jb=%d",
+                 "b68c=%d b985=%d jb=%d "
+                 "| IN oS0=%d top0=%d was0=%d jb0=%d ud0=%d st0=%.3f "
+                 "prect=(%.2f,%.2f,%.2f,%.2f) syAtX0=%.3f",
                  (long long)g_tick, (long long)g_tick + 1, who,
                  obj->m_uniqueID, obj->m_objectID,
                  forced ? 1 : 0, (int)this->m_isOnSlope,
@@ -664,7 +689,10 @@ class $modify(PlayerObject) {
                  g_btnDown ? 1 : 0, (int)p986,
                  (int)this->m_maybeUpsideDownSlope,
                  vyBefore, (double)this->m_yVelocity - vyBefore,
-                 (int)b68c, (int)b985, (int)this->m_jumpBuffered);
+                 (int)b68c, (int)b985, (int)this->m_jumpBuffered,
+                 oS0, top0, was0, jb0, ud0, st0,
+                 prr.origin.x, prr.origin.y, prr.size.width, prr.size.height,
+                 syAtX0);
         writeResult(b);
     }
 
@@ -727,6 +755,21 @@ class $modify(PlayerObject) {
                 memcpy(&s394, pb + 0x394, sizeof(float));
                 memcpy(&s398, pb + 0x398, sizeof(float));
                 const int plat = (int)(unsigned char)pb[0xb70];
+                // +0xc44 is the escape hatch in collidedWithSlopeInternal's kill
+                // gate: `(m_slopeIsHazard == 0 && (A||B)) || player+0xc44` means
+                // a SPIKED ramp kills unless this byte is set. The model kills
+                // unconditionally there, which was justified by "+0xc44 is a
+                // dead field" -- and that was wrong (scan_field_offset.py misses
+                // writes; it fails a known-answer control). It has two writers
+                // besides the constructor, both named by the 2.2081 bindings:
+                //   GJBaseGameLayer::createPlayer  0x20b310 -- sets PLAYER 2's
+                //     to 1 when layer+0x309c and layer+0x886 are both non-zero
+                //   updateOptions                  0x2d2f60 -- mirrors
+                //     layer+0x886 into BOTH players' copy
+                // So whether the model over-kills is one empirical question:
+                // does this byte ever read 1 on the corpus? Printed here rather
+                // than guessed, under the same runtime layout canary.
+                const int c44 = (int)(unsigned char)pb[0xc44];
                 // The canary is a RUNTIME layout measurement, not offsetof: it needs no header,
                 // and it checks the object in front of us rather than a compile-time constant.
                 const unsigned ofsUp = (unsigned)(
@@ -734,11 +777,11 @@ class $modify(PlayerObject) {
                 char fb[288];
                 snprintf(fb, sizeof(fb),
                     "fprobe: t=%lld who=%s obj=%d id=%d hit=%d size=%.2f "
-                    "o515=%d p394=%.4f p398=%.4f plat=%d "
-                    "ofs=(0x515,0x394,0x398,0xb70) canary_up=0x%x want=0x9bf %s",
+                    "o515=%d p394=%.4f p398=%.4f plat=%d c44=%d "
+                    "ofs=(0x515,0x394,0x398,0xb70,0xc44) canary_up=0x%x want=0x9bf %s",
                     (long long)g_tick, who, obj->m_uniqueID, obj->m_objectID,
                     r ? 1 : 0, this->m_vehicleSize,
-                    o515, (double)s394, (double)s398, plat,
+                    o515, (double)s394, (double)s398, plat, c44,
                     ofsUp, ofsUp == 0x9bf ? "LAYOUT-OK" : "LAYOUT-MISMATCH");
                 writeResult(fb);
             }

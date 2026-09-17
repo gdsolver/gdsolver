@@ -1,0 +1,16 @@
+[
+ {
+  "x0": 90.0,
+  "x_ramp": 750.0,
+  "press_ahead": 32,
+  "press_t": 546,
+  "ramp_cy": 273.5,
+  "ceil": 320.0,
+  "ramp_t": 578,
+  "sup": 1,
+  "flip": 1,
+  "oid": 1338,
+  "nbrs": 0,
+  "group": 0
+ }
+]

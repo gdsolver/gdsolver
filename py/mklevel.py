@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Generator for custom calibration maps.
 
 WHY THEY EXIST: the 22 official levels do not yield samples of the physics
@@ -667,6 +667,10 @@ DX_1X = 1.29825044   # x increment at 1x speed (measured)
 # Procedure: run it once, take the dump, and regenerate passing that dump to
 # --xmap.
 XMAP: list[tuple[int, float]] = []
+# (tick, x, mode_before, mode_after) for every tick a --xmap dump changed mode.
+# A portal's own tick has to be MEASURED, not derived from its x -- see
+# load_xmap.
+MODEMAP: list[tuple[int, float, str, str]] = []
 
 
 def tick_at(x: float, dx: float = DX_1X) -> int:
@@ -689,15 +693,45 @@ def tick_at(x: float, dx: float = DX_1X) -> int:
 
 
 def load_xmap(dump: Path) -> None:
-    """Load (tick, x) from a dump.csv (x is monotonic, so bisection works)."""
+    """Load (tick, x) from a dump.csv (x is monotonic, so bisection works).
+
+    Also records where the MODE actually changed. A portal's tick is not
+    `tick_at(its x)`: its box is 34x86 and the player's overlaps it about 25
+    ticks before the player's centre arrives. calib_portalpress was built on
+    that assumption once and every one of its twenty-one cells landed AFTER the
+    portal, so the sweep's seven offsets measured one thing seven times.
+    """
     import csv as _csv
+    prev = None
     with dump.open(newline="", encoding="utf-8-sig", errors="replace") as f:
         for r in _csv.DictReader(f):
             try:
-                XMAP.append((int(r["tick"]), float(r["x"])))
+                t, x = int(r["tick"]), float(r["x"])
             except (ValueError, KeyError):
                 continue
+            XMAP.append((t, x))
+            m = r.get("mode")
+            if prev is not None and m != prev:
+                MODEMAP.append((t, x, prev, m))
+            prev = m
     XMAP.sort()
+    MODEMAP.sort()
+
+
+def mode_change_near(x: float, lo: float = 80.0, hi: float = 40.0) -> int:
+    """The measured tick of the mode change closest to x, or -1 if none.
+
+    Window is asymmetric because a portal fires EARLY -- the player's box
+    reaches it first.
+    """
+    best, bestd = -1, None
+    for t, mx, _a, _b in MODEMAP:
+        if not (x - lo <= mx <= x + hi):
+            continue
+        d = abs(mx - x)
+        if bestd is None or d < bestd:
+            best, bestd = t, d
+    return best
 
 
 def orb_unit(x: float, kind: str, mode: str, mini: bool, drop: float
@@ -2503,6 +2537,548 @@ def build_crush() -> str:
         UNITS.append(u)
         x = x1 + 10 * GRID
     return header() + ";" + ";".join(parts) + ";"
+
+
+SPIKE30, SPIKE60 = 366, 367   # the two shz=1 (spiked) slope ids
+# ...and their PLAIN counterparts, the same two shapes with shz=0. 309 is lv16's
+# own plain twin (uid 3782/3783, co-located with the spiked 366 pair) and 484 is
+# the 60x30 the corpus uses; both are already on calib_slopespike's flag survey.
+PLAIN30, PLAIN60 = 309, 484
+# ...and the pair lv21 is built out of. 1338/1339 are a DIFFERENT plain family:
+# 202 of them carry that level's whole wave section (x 18915..26415) and NO other
+# level in the corpus has a single one. The plain rule was measured on 309 and
+# corroborated on 309/665, so applying it to 1338/1339 is a generalisation across
+# ids, and lv21 is exactly where that generalisation is cashed.
+SLOPE1338, SLOPE1339 = 1338, 1339
+
+# Base extent per id. Taken from the corpus dump, not assumed: 1339 is 30 WIDE by
+# 60 TALL (|m| = 2), which is the transpose of 367, so the two ids do not share a
+# gradient and the pair still separates vertical from perpendicular offset.
+SLOPE_DIMS = {SPIKE30: (30.0, 30.0), SPIKE60: (60.0, 30.0),
+              PLAIN30: (30.0, 30.0), PLAIN60: (60.0, 30.0),
+              SLOPE1338: (30.0, 30.0), SLOPE1339: (30.0, 60.0)}
+
+
+def slopespike_unit(x: float, oid: int, rot: float, fx: bool,
+                    fy: bool) -> tuple[list[str], float, dict]:
+    u"""ONE LONE SPIKED RAMP, hanging clear of everything else.
+
+    Nothing else is placed: no plain twin under it, no solid butted against it,
+    no floor of its own. That is the whole point. Every measurement of a spiked
+    ramp's lethal region so far has come from the corpus, where lv18 stacks 116
+    of its 154 spiked ramps on a plain one at the same (cx,cy) -- so "GD killed
+    the player inside a ramp" and "GD resolved the solid twin" are the same
+    observation there, and the five-point probe the kill test still quotes was
+    taken on such a pair (uid 2424 shz=0 / uid 2414 shz=1, both sdir=5).
+
+    The box centre sits 150 px above the ground, which leaves room to inject the
+    player both under the line and over it. The player never reaches it on its
+    own: a cube running the floor tops out at 120, so every unit survives to be
+    probed in one session and the sweep decides which one it is looking at by
+    injecting x.
+
+    WHICH sdir each (rot, flip) produces is NOT assumed here -- the rig reports
+    it, exactly as calib_slopeflags does. Read sdir/sup/sy0/sy1 back out of the
+    objrects dump and label the units from that.
+    """
+    w, h = SLOPE_DIMS[oid]
+    # The SLOT -- how much x this unit consumes, and therefore where every LATER
+    # unit sits -- is kept at the number the first version of this rig used, so
+    # adding ids cannot move a unit that has already been measured. It is not the
+    # shape's width: 309 is a 30x30 and has always been given a 60-wide slot.
+    # That is why `w` used to be recorded as 60 for it, which was simply wrong --
+    # the 2026-09-15 plain measurement read the real box (4215..4245) out of the
+    # rig's objrects dump, as this unit's docstring tells you to. w/h now report
+    # the shape and the slot does the spacing, so the label agrees with the dump.
+    slot = 30.0 if oid == SPIKE30 else 60.0
+    cx = x + slot / 2.0
+    cy = GROUND_TOP + 150.0
+    objs = [obj(oid, cx, cy, rot=rot, flip_x=fx, flip_y=fy)]
+    u = {"x0": x, "oid": oid, "rot": rot, "flip_x": int(fx), "flip_y": int(fy),
+         "cx": cx, "cy": cy, "w": w, "h": h,
+         "sx0": cx - w / 2.0, "sx1": cx + w / 2.0,
+         # three sample columns: a quarter in from each end and the middle. The
+         # ends are where a horizontal box edge and a line-parallel one differ
+         # most -- the middle is where the two forms agree and lv16 looked fine.
+         "probe_x": [round(cx - w / 4.0, 3), round(cx, 3),
+                     round(cx + w / 4.0, 3)],
+         # the line spans cy-15 .. cy+15, so a y sweep of +-40 around the centre
+         # covers both the lethal band and clear air on both sides
+         "probe_y": [cy - 40.0, cy + 40.0]}
+    return objs, x + slot + 6 * GRID, u
+
+
+def build_slopespike_mode(mode: str, mini: bool = False,
+                          flip_gravity: bool = False) -> str:
+    u"""Rig for THE LETHAL BOUNDARY OF A SPIKED RAMP (2026-09-15).
+
+    Two open questions, and the second is why this rig has to exist rather than
+    another corpus reading:
+
+      1. The boundary runs PARALLEL to the line, not along the box's floor. The
+         lv18 probe says so (5 points, offset 9.54 px) and the model still uses
+         the box edge on the floor branch.
+      2. **Vertical offset or PERPENDICULAR offset.** For |m| = 1 the two are the
+         same statement up to sqrt(2) -- 9.54 vertical = 17.35 along the normal --
+         and EVERY case measured so far has |m| = 1, so nothing in the corpus can
+         separate them. id 366 is the 30x30 (|m| = 1) and id 367 the 60x30
+         (|m| = 0.5), so the pair separates them here.
+
+    48 units per mode: six ids (two spiked, four plain) x four rotations x two
+    flips, appended in id order so earlier measurements keep their x. One mode
+    per file,
+    as the sawcal rigs do, so the mode is the header's and nothing has to pass a
+    portal to get it.
+
+    The verdict comes from py/hitbox_sweep.py (inject x and y, read life/death),
+    NOT from loading alone -- that is the difference from calib_slopeflags,
+    which is a geometry survey in which nothing is ridden.
+    """
+    UNITS.clear()
+    PLAN.clear()
+    objs: list[str] = []
+    x = 600.0
+    for oid in (SPIKE30, SPIKE60):
+        for rot in (0.0, 90.0, 180.0, 270.0):
+            for fx, fy in ((False, False), (False, True)):
+                part, x, u = slopespike_unit(x, oid, rot, fx, fy)
+                objs += part
+                u["mode"] = mode
+                u["mini"] = int(mini)
+                UNITS.append(u)
+    # ...AND THE PLAIN TWINS OF THE SAME TWO SHAPES. The model kills on a spiked
+    # ramp and never on a plain one (`if (!sp->slopeHazard) continue;`), but GD's
+    # gate reads `(m_slopeIsHazard == 0 && (A || B)) || player+0xc44`, so a plain
+    # ramp kills whenever A||B is false -- and +0xc44 is a field nothing ever
+    # sets. The corpus cannot settle it (the 7-point probe at lv16's (6708,293)
+    # only says A||B was true there), so the rig has to.
+    # APPENDED, not interleaved: x advances monotonically through the loops, so
+    # the sixteen spiked units keep the positions everything measured so far was
+    # taken at.
+    for oid in (PLAIN30, PLAIN60):
+        for rot in (0.0, 90.0, 180.0, 270.0):
+            for fx, fy in ((False, False), (False, True)):
+                part, x, u = slopespike_unit(x, oid, rot, fx, fy)
+                objs += part
+                u["mode"] = mode
+                u["mini"] = int(mini)
+                UNITS.append(u)
+    # ...AND lv21's OWN PLAIN FAMILY. The measured rule ("a plain ramp kills a
+    # wave", d = 4.985) was taken on 309 and corroborated on 309/665 in the
+    # corpus, and then applied to every shz=0 slope. lv21 is the only level that
+    # owns 1338/1339 -- 202 of them, spanning its whole wave section -- so it is
+    # the only level where that generalisation is cashed, and it cost 36
+    # iterations there the first time the rule shipped. Whether that cost is a
+    # correction or an over-kill is a question about THESE two ids, and nothing
+    # measured so far has touched them.
+    for oid in (SLOPE1338, SLOPE1339):
+        for rot in (0.0, 90.0, 180.0, 270.0):
+            for fx, fy in ((False, False), (False, True)):
+                part, x, u = slopespike_unit(x, oid, rot, fx, fy)
+                objs += part
+                u["mode"] = mode
+                u["mini"] = int(mini)
+                UNITS.append(u)
+    # A TERMINAL SPIKE, past every unit, and it is load-bearing rather than
+    # scenery. Serve mode parks at the head of the next attempt AFTER A DEATH
+    # (config.hpp: servemode) and that is where it reads cmd.txt -- so a rig the
+    # player SURVIVES runs to the end, the session is over, and every sweep
+    # afterwards fails with "the rerun never landed". Measured that way once.
+    # It sits at the far right so the no-input player dies only after passing
+    # all sixteen units, which keeps the level uncompletable without putting a
+    # hazard anywhere a probe might look. ("all sixteen" when this was written;
+    # it is all forty-eight now, and the argument is the same.)
+    objs.append(obj(SPIKE, x + 4 * GRID, GROUND_TOP + 6.0))
+    objs += floor_run(0, x + 300.0)
+    # --- the FLIPPED-GRAVITY twin (2026-09-17). A gravity portal on the floor
+    # before the first unit, and nothing else changes: every unit keeps its x, so
+    # a column measured on the plain rig and on this one differ in the player's
+    # gravity alone. lv17's spiked 367 (uid 8727, rot 180, sdir 3) measured a
+    # sloped edge 0.8-1.0 px thicker than this rig's identical unit under a normal
+    # wave, with the flipped wave also riding a plain twin -- this rig removes
+    # the twin and keeps the flip.
+    # A flipped player rises away from the floor spike above, so this rig also
+    # needs a spike HANGING where it rides, or the session never ends in a death
+    # and serve mode never parks (the first sweep of this rig failed exactly that
+    # way). Where it rides was measured, not assumed: the flipped wave climbs to
+    # y=380 and slides there -- the flying band's own ceiling (band 90..390) --
+    # so a ceiling laid higher is never reached (the second attempt put one at
+    # 490 and the level completed with no death). The spike hangs from 390, clear
+    # of every unit's probe band (units at GROUND_TOP+150, probes +-40).
+    if flip_gravity:
+        objs.append(obj(GRAV_FLIP, 300.0, GROUND_TOP + 15.0))
+        objs.append(obj(SPIKE, x + 4 * GRID, 390.0 - 6.0, rot=180.0))
+    return header(start_mode=mode, mini=mini) + ";" + ";".join(objs) + ";"
+
+
+def portalpress_unit(x: float, frm: str, to: str, offset: int,
+                     cell: str, air: bool = False
+                     ) -> tuple[list[str], float, dict]:
+    u"""ONE mode portal, with a ONE-TICK press placed relative to its tick.
+
+    Nothing else is in the unit: flat ground, no ramp, no size portal, no
+    hazard. That is the point. lv21's t=18,619 -- where this question came
+    from -- has a ramp exit, a mode portal and a SIZE portal all on the one
+    tick, and three explanations fit the one number.
+    """
+    objs: list[str] = [obj(MODE_PORTAL[frm], x + 2 * GRID, GROUND_TOP + 15.0)]
+    # The run-up is long enough for a flight mode to settle onto the floor
+    # (a UFO with no input rests there, onGround 1, vy 0) before the test.
+    x_test = x + 22 * GRID
+    objs.append(obj(MODE_PORTAL[to], x_test, GROUND_TOP + 15.0))
+    # THE PORTAL'S TICK IS MEASURED, never `tick_at(x_test)`. The first build
+    # of this rig used the latter and put all twenty-one presses ~25 ticks past
+    # the portal, so the sweep asked one question seven times per pair. Pass 1
+    # (no --xmap) is only used to produce the dump this reads.
+    pt = mode_change_near(x_test)
+    base = pt if pt >= 0 else tick_at(x_test)
+    t = base + offset
+    # AIR CELLS. Every cell of the first build met the portal standing on the
+    # floor, so the re-issued impulse always had the new mode's precondition
+    # satisfied and the rig could not see whether the model CHECKS it. It does
+    # not: step.hpp's `-> cube/robot` re-issue writes the jump without asking
+    # whether the player is grounded, and lv21 t=18,619 is a cube arriving at a
+    # portal in mid-air (it had just left a ramp) where GD does nothing and the
+    # model leaves with 9.136 = 11.420 * 8.944/11.180, its own mini cube jump.
+    # A setup press twelve ticks earlier puts the player in the air; the portal
+    # box is 86 tall (y 62..148), so a jump from the floor is still inside it.
+    # THE CELL IS ONLY VALID IF IT IS ACTUALLY AIRBORNE -- the reader has to
+    # check onGround at the portal tick and throw the cell away otherwise.
+    if air:
+        # 25, not 12: at 12 the setup press lands on the -12 CONTROL's own tick,
+        # so that cell stops being an independent control and just re-reads the
+        # setup. (It did, in the first air pass -- the cube->ufo -12 control came
+        # back with a grounded cube's 11.180.) A cube's jump takes about a
+        # hundred ticks to land, so at -25 the player is still airborne at the
+        # portal and both controls keep their own press.
+        PLAN.append((base - 25, 1))
+        PLAN.append((base - 24, 0))
+    # ONE tick, not the three rampjump uses: a press that is NOT consumed has
+    # to be unambiguous, and a held button lets a cube re-jump on landing.
+    PLAN.append((t, 1))
+    PLAN.append((t + 1, 0))
+    u = {"x0": x, "from": frm, "to": to, "offset": offset, "cell": cell,
+         "x_test": x_test, "press_t": t, "portal_t": pt, "air": int(air),
+         "portal_t_measured": pt >= 0}
+    # Settle: whatever the press did to y has to be over before the next unit.
+    # 40 grid cells = 1,200px = ~925 ticks, of which the run-up takes 22 and the
+    # rest is settling -- a cube's jump lands in about a hundred ticks, so this
+    # is still generous. It used to be 62, and THE RIG HAS A TICK BUDGET: the
+    # mod forces any attempt over at g_tick > 40000 (hooks_gamelayer.cpp, the
+    # zombie-glitch stall guard, written when "no legitimate attempt exceeds
+    # ~22k ticks"). At 62 cells the air variant pushed the rig to ~50k ticks and
+    # it was killed mid-run, walking flat ground at vy=0 -- which reads as a
+    # death in the rig rather than as a budget.
+    return objs, x + 40 * GRID, u
+
+
+def build_portalpress() -> str:
+    u"""WHICH BODY SPENDS A PRESS MADE ON A MODE PORTAL'S OWN TICK?
+
+    GD's tick is update -> collisions -> buttons, so a portal that fires in
+    collisions has already changed the body by the time the button is read. The
+    model reads the button FIRST. The two orders disagree only on the portal's
+    own tick, and that is one tick nobody has ever put a press on deliberately.
+
+    It matters because the DP will USE whatever the model offers. lv21's cold
+    spent 37 of its 44 rounds on one wall, and the first divergence on that
+    route is a mode portal at t=18,619 where the model comes out with vy 9.136
+    and GD with 3.324. The model's value is in the UFO-flap family; GD's is
+    not. But that tick also carries a ramp exit and a size portal, and the
+    plan's press does not visibly land on EITHER side at the two ticks before
+    it -- so the corpus cannot say what spent the press, or when. Hence a rig.
+
+    Per pair, seven cells:
+      2 CONTROLS -- press at portal_t -10 and +10. These prove the rig can see
+        a press at all, in each body, away from the seam. A pair whose controls
+        are silent measures nothing and is thrown away, not read as "no effect"
+        (the discipline build_ufoexit spells out).
+      5 SWEEP -- offsets -2..+2. The offsets are the instrument: which of them
+        produce the `from` body's answer and which the `to` body's locates the
+        seam AND any input lag at the same time, without either having to be
+        assumed. Assuming the lag is exactly what went wrong reading lv21.
+
+    Three pairs: ufo->cube is the corpus case; cube->ufo is it backwards (a
+    grounded cube's jump against a flap); ship->cube changes the body without
+    changing whether the press has an effect at all.
+    """
+    UNITS.clear()
+    PLAN.clear()
+    objs: list[str] = []
+    x = 90.0
+    for frm, to in (("ufo", "cube"), ("cube", "ufo"), ("ship", "cube")):
+        # The window is shifted left because pass 1 measured the input lag: a
+        # press row at T moves vy at T+1 for a cube and T+2 for a UFO. A window
+        # centred on the portal would put the lagged effect of the interesting
+        # presses outside it.
+        for offset, cell in ((-12, "control"), (-4, "sweep"), (-3, "sweep"),
+                             (-2, "sweep"), (-1, "sweep"), (0, "sweep"),
+                             (1, "sweep"), (2, "sweep"), (12, "control")):
+            part, x, u = portalpress_unit(x, frm, to, offset, cell)
+            objs += part
+            UNITS.append(u)
+    # ...and the same seam met IN MID-AIR. This is the half the ground cells
+    # cannot speak about: whether the press the new body receives still has to
+    # satisfy that body's own precondition. A cube's does -- it only jumps from
+    # the ground -- and the model's re-issue does not ask.
+    for frm, to in (("ufo", "cube"), ("cube", "ufo")):
+        for offset, cell in ((-12, "control"), (-1, "sweep"), (0, "sweep"),
+                             (12, "control")):
+            part, x, u = portalpress_unit(x, frm, to, offset, cell, air=True)
+            objs += part
+            UNITS.append(u)
+    objs += floor_run(0, x + 300.0)
+    return header(start_mode="cube") + ";" + ";".join(objs) + ";"
+
+
+def build_slopeup() -> str:
+    u"""A cube meets a ramp WHILE STILL RISING -- AND IT DOES NOT WORK.
+
+    KEPT AS A REJECTION, not as an instrument. The geometry does not pose the
+    question it was built for, and the reason generalises: while a ramp's surface
+    faces the player's gravity-up, a contact with s*v > 0 can only happen from
+    INSIDE the box, so a rising player meets the UNDERSIDE and this rig measures
+    head-bumps. Two cells push the player onto the box top (+42.9px), the rest
+    stop it dead with vy kept, and pass 1 dies -- which then exhausts the xmap, so
+    the last nine units all got the same press tick. That last part is how it was
+    caught: `ahead` goes up while `press_t` goes DOWN.
+    The underside is not unmeasured anyway --
+    notes/measure-slope-underside-gate-2026-09-05.md has the gate, including that
+    the 5.0 threshold is hitGround's and floor-only, so the underside has no vy
+    test at all. Read that before building anything here.
+
+    Original intent, left for whoever tries again:
+
+    kSlopeLandV is a SIGNED test -- GD's hitGround sets m_isOnGround only when
+    s*v <= 5.0 and above it the caller restores the old vy -- so a faller always
+    lands however fast, and the only refused side is a player LEAVING the
+    surface faster than 5. Nothing has ever been measured on that side. lv21
+    t=19,724 is one case of it (flipped gravity, s*v = +9.45): neither GD nor the
+    model lands, but GD still moves the player 3.534px onto the seat and the
+    model skips the reposition entirely.
+
+    An injected player cannot measure it: injection CARRIES onGround OVER, and
+    the slope gate reads the grounded state and two 0.1s timers, so every
+    injected cell is a player GD thinks is already standing (measured -- seven
+    cells, all useless). So the player has to get there on its own: it jumps off
+    the flat floor and meets a ramp mounted above it on the way up.
+
+    ONE ramp, at a fixed height, and the PRESS PHASE is the sweep: pressing
+    earlier puts the player further along its arc when it arrives at the ramp's
+    x, which walks the contact velocity from about +11 down through 0 and into
+    the falling half. That is a continuous sweep through the 5.0 boundary with a
+    single piece of geometry, and both sides of the boundary are in the same rig.
+
+    PREDICTION, registered before the run: contact vy above +5 repositions
+    without landing (vy kept, onGround 0); at or below +5 it lands (vy 0,
+    onGround 1). If the boundary lands anywhere else, kSlopeLandV's stated
+    meaning is wrong, not just its use.
+
+    The ramp's box bottom is at 150, thirty above the running player's box top
+    (120), so it is clear of the run-up and only the jump can reach it.
+    """
+    UNITS.clear()
+    PLAN.clear()
+    objs: list[str] = []
+    x = 90.0
+    BOX_BOTTOM = 150.0
+    for n in range(0, 26, 2):
+        x0 = x
+        x_ramp = x + 22 * GRID
+        # 309: plain (shz=0), 30x30, |m|=1, sup=1 -- a FLOOR ramp, the same
+        # family the seat was measured on.
+        objs.append(obj(PLAIN30, x_ramp, BOX_BOTTOM + 15.0))
+        t = tick_at(x_ramp) - n
+        PLAN.append((t, 1))
+        PLAN.append((t + 1, 0))
+        UNITS.append({"x0": x0, "x_ramp": x_ramp, "press_ahead": n,
+                      "press_t": t, "box_bottom": BOX_BOTTOM,
+                      "ramp_cy": BOX_BOTTOM + 15.0,
+                      "ramp_t": tick_at(x_ramp)})
+        x = x + 40 * GRID      # the tick budget -- see portalpress_unit
+    objs += floor_run(0, x + 300.0)
+    return header(start_mode="cube") + ";" + ";".join(objs) + ";"
+
+
+def build_slopeceil() -> str:
+    u"""DOES A RAMP CONTACT SEAT THE PLAYER BEFORE THE RIDE STARTS? -- AND THIS
+    SHAPE DOES NOT ANSWER IT EITHER. KEPT AS A REJECTION.
+
+    Measured: the cube dies. First unit, t=589, x=763.4, y=127.5, still rising at
+    +9.02 -- its box top reaches 142.5 where the ceiling ramp's line is at 142, so
+    it is 0.5px inside the solid and GD crushes it. Every phase of the sweep does
+    the same, and pass 1 ends at the first one.
+
+    That is a real answer to a smaller question -- a cube rising into a CEILING
+    ramp's solid is killed, not seated -- and it also says the analogy to lv21 was
+    wrong. lv21's player is UPSIDE DOWN, so for it the ramp's solid half and its
+    own "up" are on opposite sides; it enters the EMPTY triangle of a sup=1 floor
+    ramp. Reproducing that needs a gravity portal, a ceiling ride, and a floor
+    ramp below it, not a ceiling ramp with normal gravity. The flip is not
+    decoration here.
+
+    The original intent, kept for whoever builds that rig:
+
+    Two different events run when a player touches a ramp, and confusing them
+    made a rig measurement and a corpus tick look like a contradiction:
+
+      the seat        hitGround writes y once, on the RECT overlap, and raises
+                      m_isOnGround2 unconditionally. Whether it also lands --
+                      m_isOnGround, and the caller's vy restore -- is what the
+                      5.0 gate decides, on the SIGNED gravity-frame speed
+      the ride start   GD follows the line from the tick the CONTACT POINT
+                      `cx +- slopeXOffset(m,pH)` enters the span. For a cube at
+                      |m|=1 that is cx+6.213, nine px later than the box edge,
+                      and calib_ceilramp measured it 6/6 for the cube and 6/6
+                      for the UFO
+
+    lv21 t=19,724 is the seat: GD moves the player 3.534px on the tick the boxes
+    first overlap by 0.70px, keeps vy, leaves m_isOnGround at 0 and raises
+    m_isOnGround2. The model has no seat before its ride window, so it follows
+    seven ticks late -- and those seven ticks are the whole divergence that the
+    cold's 37-round wall sits under.
+
+    calib_ceilramp cannot settle it: its measurement is that the box edge is
+    NINE PX EARLY for the descent, which means GD did not seat at the box edge
+    THERE. What differs is how the boxes meet. On that rig the player travels
+    horizontally under a ceiling ramp, so the y overlap starts near zero; in lv21
+    the player is driven INTO the box (16.25px of y overlap against 0.70px of x).
+
+    So: the same approach as lv21, in a rig. The ramp is a CEILING one (rot 0 with
+    flip_y -> sup=0, sdir=1, line 255->225) hung low enough that the cube's jump
+    carries it into the empty half below the line while still rising at more than
+    5 -- which is the side of kSlopeLandV that refuses to land, so a seat there
+    cannot be confused with a landing. One ramp; the sweep is the press phase, as
+    in calib_slopeup, because that walks the contact velocity continuously.
+
+    A seat shows as a y step the tick's vy does not explain, with onGround still
+    0 and onGround2 raised. If none appears at any phase, lv21 has a further
+    ingredient and this rig says so rather than guessing one.
+    """
+    UNITS.clear()
+    PLAN.clear()
+    objs: list[str] = []
+    x = 90.0
+    BOX_BOTTOM = 140.0
+    for n in range(0, 26, 2):
+        x0 = x
+        x_ramp = x + 22 * GRID
+        objs.append(obj(PLAIN30, x_ramp, BOX_BOTTOM + 15.0, flip_y=True))
+        t = tick_at(x_ramp) - n
+        PLAN.append((t, 1))
+        PLAN.append((t + 1, 0))
+        UNITS.append({"x0": x0, "x_ramp": x_ramp, "press_ahead": n,
+                      "press_t": t, "box_bottom": BOX_BOTTOM,
+                      "ramp_cy": BOX_BOTTOM + 15.0,
+                      "ramp_t": tick_at(x_ramp), "sup": 0})
+        x = x + 40 * GRID      # the tick budget -- see portalpress_unit
+    objs += floor_run(0, x + 300.0)
+    return header(start_mode="cube") + ";" + ";".join(objs) + ";"
+
+
+def build_slopeflip(oid: int = PLAIN30, nbrs: bool = False,
+                    group: bool = False) -> str:
+    u"""lv21's OWN APPROACH, IN A RIG: a FLIPPED cube driven into the EMPTY half
+    of a FLOOR ramp.
+
+    Third attempt at one question -- does a ramp contact seat the player before
+    the ride starts? -- and the first with the right geometry. The two rejections
+    say why (both kept, with their own docstrings):
+
+      calib_slopeup    normal gravity, rising into a sup=1 ramp -> head-bump on
+                       the underside (+42.9px onto the box top, or stopped dead)
+      calib_slopeceil  normal gravity, rising into a sup=0 ramp -> DEAD, half a
+                       pixel inside the solid at t=589
+
+    Both fail the same way: with normal gravity, "moving toward the line against
+    my own gravity" puts the player into the SOLID half. lv21's player is upside
+    down, so the ramp's solid half and its own up are on opposite sides and it
+    enters the EMPTY triangle. The flip is load-bearing, not decoration.
+
+    So: flip at the start, ride the underside of a flat ceiling at 320, and jump
+    DOWNWARD into a sup=1 floor ramp whose box is 240..270 -- the empty side, near
+    the low end of its line. From y=305 a jump is -11.18 and the box's top edge
+    is 20px down, about eight ticks, by which time vy is near -9.45: s*v = +9.45,
+    which is lv21's own number and above the 5.0 that refuses to land. A seat
+    there therefore cannot be read as a landing.
+
+    The sweep is the press phase, as in calib_slopeup, which walks the contact
+    point along the span continuously instead of assuming where it lands.
+
+    What to read: a y step the tick's vy does not explain, with onGround still 0
+    and onGround2 raised. If the player dies instead, that is an answer too --
+    and it would mean lv21's survival needs a further ingredient.
+    """
+    UNITS.clear()
+    PLAN.clear()
+    objs: list[str] = []
+    x = 90.0
+    CEIL = 320.0            # underside of the flat ceiling; the flipped cube
+                            # rides at CEIL - 15 = 305
+    # THE KNOB IS THE RAMP'S HEIGHT, NOT THE PRESS PHASE.
+    # Phase alone cannot reproduce lv21: there the player travels at a y ALREADY
+    # inside the ramp's band (the tick before the contact has ZERO x overlap and
+    # ~18px of y overlap) and then clips in x by 0.70px, with its box bottom 11px
+    # ABOVE the line's low end -- so no part of it is in the solid. Coming down
+    # from above the band, x overlap and y overlap grow together: at the corner
+    # touch both are 0.5px, GD does NOT seat, and ten ticks later the box bottom
+    # has dropped below the rising line and GD kills (measured at cy=255).
+    # So place the band where the player already is on the arrival tick. At phase
+    # 32 it reaches the span at y=284.5 with its box at 269.5..299.5; putting the
+    # band bottom 11px under the box bottom -- 258.5, i.e. cy 273.5 -- reproduces
+    # lv21's numbers. The ceiling ride at 290..320 still clears the band top.
+    RAMP_CY = 273.5         # box 258.5..288.5, line 258.5->288.5 (sup=1)
+    objs.append(obj(GRAV_FLIP, x + 4 * GRID, GROUND_TOP + 15.0))
+    # THE PHASE WINDOW IS SHIFTED EARLY, AND THE EARLIEST CELL COMES FIRST.
+    # Measured on the first build (phases 0..26): the player reached the box at
+    # x=763, a step from the span's right edge at 765, where the ascending line
+    # has climbed to 268.4 -- so its box bottom at 267.5 was inside the SOLID and
+    # it died at t=589. lv21 enters at x0+0.7, where the line is still at its low
+    # end and the empty triangle is nearly the whole box. Pressing ~8 ticks before
+    # the LEFT edge is what puts the descent there, and the fall from the ceiling
+    # takes about that long, so the phase has to be 20-40 ticks ahead of the
+    # centre rather than 0-26.
+    # ...AND THE WINDOW IS ONE PHASE WIDE, BECAUSE THE CONTACT IS A CORNER.
+    # lv21's x overlap on the deciding tick is 0.70px against 16.25px of y: the
+    # player's bottom-right corner clips the ramp's top-left corner and NO part of
+    # its box is below the line. Give it more x overlap and the box straddles the
+    # rising line, part of it ends up in the solid, and GD kills -- measured twice
+    # here, at 13.5px of overlap (t=566) and at the span's far end (t=589).
+    # A death ends the attempt and therefore pass 1, so the rig cannot carry
+    # lethal phases at all: every cell has to be survivable. Back-computed from
+    # pass 1's own dump -- box right edge reaches 735 and box bottom reaches 270
+    # on the same tick when the press is 32 ticks ahead of the centre -- so this
+    # is one unit at that phase. Widen only after it is seen to survive.
+    for n in (32,):
+        x0 = x
+        x_ramp = x + 22 * GRID
+        # `group`: lv21's 1338 carries a group id even though grouptrace shows it
+        # never moves (key 57 in the level string). Being IN a group is a
+        # different object state from being static.
+        # `nbrs`: and it is not alone -- within 60px lv21 has a solid 467 COLUMN
+        # starting at the ramp's own cy and stacked upward, plus a thin 468 slab
+        # (30 x 1.5) 14.25px below that. Same offsets here.
+        objs.append(obj(oid, x_ramp, RAMP_CY,
+                        extra={57: "1"} if group else None))
+        if nbrs:
+            for k in range(5):
+                objs.append(obj(467, x_ramp + 30.0, RAMP_CY + k * 30.0))
+            objs.append(obj(468, x_ramp + 30.0, RAMP_CY - 14.25))
+        t = tick_at(x_ramp) - n
+        PLAN.append((t, 1))
+        PLAN.append((t + 1, 0))
+        UNITS.append({"x0": x0, "x_ramp": x_ramp, "press_ahead": n,
+                      "press_t": t, "ramp_cy": RAMP_CY, "ceil": CEIL,
+                      "ramp_t": tick_at(x_ramp), "sup": 1, "flip": 1,
+                      "oid": oid, "nbrs": int(nbrs), "group": int(group)})
+        x = x + 40 * GRID      # the tick budget -- see portalpress_unit
+    # The ceiling runs the whole rig: the ride has to survive between units, and
+    # a gap would drop the player onto the ramps from above, which is the
+    # rejected geometry again.
+    xx = x + 300.0
+    objs += floor_run(0, xx)
+    objs += floor_run(0, xx, y=CEIL + GRID / 2)
+    return header(start_mode="cube") + ";" + ";".join(objs) + ";"
 
 
 def build_empty() -> str:
@@ -4771,6 +5347,23 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "sawcal_wave_mini": lambda: build_sawcal_mode("wave", True),
             "sawcal_ship_mini": lambda: build_sawcal_mode("ship", True),
             "sawcal_cube_mini": lambda: build_sawcal_mode("cube", True),
+            # brief-2026-09-15. The lethal boundary of a SPIKED ramp, which no
+            # rig has ever put a player against (calib_slopeflags carries the
+            # two ids but rides nothing). Both ids in every file: 366 is |m| = 1
+            # and 367 is |m| = 0.5, which is what separates a vertical offset
+            # from a perpendicular one.
+            "portalpress": build_portalpress,
+            "slopeup": build_slopeup,
+            "slopeceil": build_slopeceil,
+            "slopeflip": build_slopeflip,
+            "slopeflip_1338": lambda: build_slopeflip(SLOPE1338),
+            "slopeflip_nbrs": lambda: build_slopeflip(SLOPE1338, nbrs=True),
+            "slopeflip_group": lambda: build_slopeflip(SLOPE1338, group=True),
+            "slopespike_wave": lambda: build_slopespike_mode("wave"),
+            "slopespike_ship": lambda: build_slopespike_mode("ship"),
+            "slopespike_cube": lambda: build_slopespike_mode("cube"),
+            "slopespike_wave_mini": lambda: build_slopespike_mode("wave", True),
+            "slopespike_wave_flip": lambda: build_slopespike_mode("wave", False, True),
             "expease": build_expease,
             "cprot": build_cprot,
             "cpride": build_cpride,

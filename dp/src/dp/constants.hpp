@@ -779,6 +779,13 @@ constexpr double kMiniContactHalf = 7.5;
 // SOLIDS ONLY. The hazard test keeps the contact half -- measured, see the
 // note at the wave's hazard branch.
 constexpr double kWaveKillHalf = 1.5;
+// [2026-09-15] kWaveRampKillHalf, the 9.54 bracketed between a corpus over-kill
+// and a corpus under-kill, IS GONE: calib_slopespike measured the rule, and it is
+// not a box half at any value. A spiked ramp's lethal region is bounded on the
+// sloped side by a PERPENDICULAR distance against the contact half (playerHalf,
+// so this 1.5 is not it either) and on the flat side by the inner kill box. The
+// outline, its two registered predictions and what is still unmeasured are at the
+// spiked-ramp kill test in step.hpp.
 // The dart's sprite rotation eases toward its travel angle by this fraction of
 // the remaining gap per tick. Measured, see the wave branch in stepOne.
 constexpr double kWaveRotK = 0.0625;

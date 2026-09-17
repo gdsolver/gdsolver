@@ -1131,6 +1131,14 @@ inline void addWorldArgs(std::vector<std::string>& a) {
         if (rows > 0 && g_cfg.dpBandTrack) {
             a.push_back("--bandtrack");
             a.push_back(bp);
+            // cfg `dpbandend=1`: ...and where that recording stops. The reader holds the last
+            // row indefinitely, which overrides the band a mode portal past the recording
+            // writes (bands.hpp g_bandTrackEnd has the lv10 measurement). n-1 is the last
+            // tick the loop above could have written.
+            if (g_cfg.dpBandEnd) {
+                a.push_back("--bandtrackend");
+                a.push_back(std::to_string(n - 1));
+            }
         }
     }
     // ...and where GD had the controls switched off (--ctrlwin, both ends
@@ -1400,6 +1408,20 @@ inline int robotHoverLeft(long long t0) {
         if (!prev || prev->onGround || prev->vy != cur->vy) break;
         --j;
     }
+    // cfg `dphoverstrict=1`: NO FLAT RUN AT ALL IS NOT A FULL BUDGET. When vy already differs from
+    // the tick before, the loop above stops at once and `left` came out as the whole 67 -- for a
+    // robot rising or falling under gravity, which is not hovering. A hover that begins exactly on
+    // t0 looks the same backwards, so the tick after decides: flat into t0+1 is a hover that has
+    // just started, anything else is not a hover.
+    // Measured on lv19 (2026-09-17): the anchor at t0=12,310 (robot, airborne, held, vy=2.014,
+    // changed from t0-1) was sent with 67; every fixup after it reads dvy=-0.194 per tick with the
+    // model level and GD falling -- the signature of a budget GD did not have -- and the cold run
+    // spent two iterations at x=17,600 on it.
+    if (g_cfg.dpHoverStrict && j == t0) {
+        const AnchorRow* next = anchors::row(t0 + 1);
+        const bool startsHere = next && !next->onGround && next->vy == cur->vy;
+        return startsHere ? kRobotHoverTicks : 0;
+    }
     const long long left = kRobotHoverTicks - (t0 - j);
     return left > 0 ? (int)left : 0;
 }
@@ -1417,11 +1439,35 @@ inline int heldBefore(const std::vector<InputCmd>& plan, long long t0) {
     return held;
 }
 
+// Does a SWING anchored at t0 still owe the flip of a press? The swing's press sets a pending
+// bit and the flip lands on the tick after its effect (dp: step.hpp's rHover block), and a
+// swing's input latency is 1, so a rising edge pressed at t0-1 has taken effect on t0 and not
+// flipped yet. dp's --replay derives this from the plan itself (cli.hpp preRise); a search
+// started from --start cannot, because the edge is in the kept prefix, and without the bit it
+// plans a swing that never flips.
+// Measured on lv22 (2026-09-17): `input=7239,1` / `input=7240,0`, GD's upsideDown 0 through
+// t=7240 and 1 from 7241. The anchor at t0=7240 said held=1 flip=0; the tail solved from it kept
+// the swing unflipped (y=390.55 at t=7300, clear of spike uid9601), came back SOLVED, and GD
+// flipped and died at x=9,890 -- the same plan, three times in one cold run. With the bit, the
+// same tail replayed from the same anchor matches GD on every tick 7241..7300 and dies on 9601.
+// Gated by cfg `dpswingpending`.
+inline int swingPendingAt(const std::vector<InputCmd>& plan, long long t0) {
+    int prev = 0, last = 0;
+    long long lastStep = -1;
+    for (const InputCmd& c : plan) {
+        if (c.step >= t0) break;
+        prev = last;
+        last = c.down ? 1 : 0;
+        lastStep = c.step;
+    }
+    return (lastStep == t0 - 1 && last == 1 && prev == 0) ? 1 : 0;
+}
+
 // The 27 fields of `--start`, in the order leveldp reads them:
 //   t0, x, y, vy, mode, grounded, held, flip, mini, dual, y2, v2, f2, g2, speed,
 //   robotHover, dashHeld, dashSlope, snapUid, snapDist, gframe, reversed,
 //   rot, rotNeg, boost, mode2, mini2
-inline std::string startArg(long long t0, const AnchorRow& r, int held) {
+inline std::string startArg(long long t0, const AnchorRow& r, int held, int swingPending = 0) {
     // GD's rotated frames do not map one-to-one onto the model's. Measured over all 2,069 ticks
     // of lv22's rotated section: GD frame 2 is the model's (frame 0, reversed), and GD frame 3
     // mirrors the vertical so the gravity flag flips with it. Passing the raw number puts the
@@ -1450,7 +1496,10 @@ inline std::string startArg(long long t0, const AnchorRow& r, int held) {
     // and the dash on the 17th, and crediting a hover to a dash is how the driver once got the
     // right trajectory from the wrong mechanism (lv21 x=18,105 -- a rot=0 ring holds vy at 0 and
     // draws exactly the same flat line as a hover at vy=0, right up to the 68th tick).
-    const int hover = r.dashing ? 0 : robotHoverLeft(t0);
+    // ...and a swing's pending flip rides the same field (rHover is robot-only in dp and free in
+    // mode 7; see swingPendingAt).
+    const int hover = r.dashing ? 0
+                    : (r.mode == 7 && swingPending) ? 1 : robotHoverLeft(t0);
     s += "," + std::to_string(hover) + "," + std::to_string(r.dashing)
        + "," + num(r.dashSlope);
     s += "," + std::to_string(r.snapUid) + "," + num(r.snapDist);
@@ -2583,7 +2632,8 @@ inline void recordFixups(long long deathTick) {
     // body and so cannot start inside a dual at all. startArg above passes the real pair, which
     // is the whole point of reading the state out of the game rather than out of a dump -- so a
     // dual anchor is just an anchor.
-    const std::string arg = startArg(t0, *r, heldBefore(g_plan, t0));
+    const std::string arg = startArg(t0, *r, heldBefore(g_plan, t0),
+                                     g_cfg.dpSwingPending ? swingPendingAt(g_plan, t0) : 0);
     std::string band;
     if (r->pmax > r->pmin) band = num(r->pmin) + "," + num(r->pmax);
     // TIME IT. Every other second of the loop is on the record -- the search prints `done in Ns`
@@ -2781,7 +2831,8 @@ inline bool runLadder(long long dt) {
             continue;
         }
         const int held = heldBefore(g_plan, t0);
-        const std::string arg = startArg(t0, *r, held);
+        const std::string arg = startArg(t0, *r, held,
+                                         g_cfg.dpSwingPending ? swingPendingAt(g_plan, t0) : 0);
         std::vector<std::string> a = baseArgs(g_tailPath);
         // The forcing slit rides ONLY the forced rung (the hint's re-anchor); every other
         // rung and every later solve is free to answer differently.

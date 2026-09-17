@@ -43,14 +43,22 @@ inline bool slopeIsCeiling(uint8_t dir) {
 // calib_slopeflags, where every one of 160 id/rotation/flip combinations
 // reported sup=1 on exactly that set.
 //   THE TWO JUSTIFICATIONS DO NOT HAVE THE SAME REACH, and the sentence above
-//   reads as if they do. calib_slopeflags.units.json is 160 units = TEN oids
+//   reads as if they do. calib_slopeflags.units.json was 160 units = TEN oids
 //   (309, 321, 323, 484, 665, 666, 1338, 1743, 1744, 1746) x 16 rot/flip
-//   combinations, AND ALL TEN ARE PLAIN SLOPES. The two SPIKED ids -- 366 and
-//   367, which are exactly the shz=1 population, 487 + 86 = 573 -- appear
-//   nowhere in data/rigs, in any .lvl or .json. So the rig has never put a
-//   spiked slope on the table; the corpus census below is what covers them.
-//   The claim still holds for spiked slopes (they are type-25 and every
-//   direction came out pure over all 3,091), but it holds on the census alone.
+//   combinations, AND ALL TEN WERE PLAIN SLOPES, with the two SPIKED ids -- 366
+//   and 367, exactly the shz=1 population, 487 + 86 = 573 -- nowhere in
+//   data/rigs.
+//   [2026-09-15] **THAT IS NO LONGER THE FILE.** The spiked pair was appended
+//   on 2026-09-07 (see build_slopeflags, which says so): the rig is now 192
+//   units = TWELVE oids x 16, with 32 of them oid 366/367, and both ids are in
+//   calib_slopeflags.lvl (16 each). The `sup`/`sdir` claim above therefore does
+//   have rig backing for the spiked slopes now, not only the census.
+//   WHAT IS STILL NOT MEASURED is a different thing, and it is worth saying
+//   separately so the next reader does not collapse them: slopeflags is a
+//   GEOMETRY survey -- nothing in it is ridden, and its verdict is objrects'
+//   sdir/sup/w/h/sy0/sy1. **No rig puts a player against a spiked ramp at all**,
+//   so the LETHAL BOUNDARY of one is still unmeasured; see the kill test in
+//   step.hpp, whose half is bracketed from the corpus rather than measured.
 //   SAMPLE SIZE UPDATED 2026-09-07: the prose said 2,631 type-25 objects; the
 //   22 dumps now hold 3,091, so the claim was re-derived rather than the count
 //   patched. All eight directions are still PURE, zero counterexamples:

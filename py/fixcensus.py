@@ -198,7 +198,8 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
 
 def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: runtmp.RunTmp,
                 eps: float, gd_ground: str = GD_GROUND_RAW,
-                all_hits: bool = False) -> list[dict]:
+                all_hits: bool = False,
+                extra: tuple[str, ...] = ()) -> list[dict]:
     """Anchor one section from the real GD state, replay it, hand it to eval_trace."""
     plan = plan_of(lv, str(DATA / "solution_lv{}_dp.txt"))
     gd = read_ref(lv)
@@ -234,6 +235,8 @@ def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: runtmp.RunTmp,
     # quick_regress uses, so the two instruments anchor identically). Without
     # it every re-entered pad in lv13/14/18/21 shows up here as a family.
     a += qr.pad_anchor_args(lv, t0, gd)
+    # --extra-flag: the arm under test, appended last like deathref's
+    a += list(extra)
     subprocess.run(a, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     trace = Path(str(base) + ".trace.csv")
     # Fingerprinted the moment our solver lets go of it, and re-read when the
@@ -247,6 +250,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--levels", type=int, nargs="*", default=list(range(1, 23)))
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
+    # A flag arm on one exe, the way deathref takes it. Without this the census
+    # could only measure a default, so every default-off model change was
+    # invisible to it however many families it moved.
+    ap.add_argument("--extra-flag", action="append", default=[], metavar="FLAG",
+                    help="extra leveldp flag for every section, repeatable; "
+                         "write it as --extra-flag=--slopelaw, or argparse "
+                         "reads the value as an option of its own. Refused "
+                         "with --bless: a baseline is the default's")
     ap.add_argument("--tmp", default=None,
                     help="where the section traces are written. THE DEFAULT IS "
                          "NO LONGER A SHARED DIRECTORY: with this unset the run "
@@ -329,6 +340,10 @@ def main(argv=None) -> int:
               f"(the baseline's family names are minted from the raw column; "
               f"blessing a {a.gd_ground} run would silently rename them)")
         return 2
+    if a.bless and a.extra_flag:
+        print("--bless is refused with --extra-flag (the baseline is the default "
+              "build's census; a flag arm is measured against it, not saved as it)")
+        return 2
     # THE RUN'S OWN OUTPUTS ARE THE OTHER CONTAMINATION CHANNEL, and the input
     # guard below cannot see them: a trace is not one of the run's declared
     # inputs. Unnamed, --tmp is now a directory only this run can name; named,
@@ -392,7 +407,8 @@ def census(a, tmp: runtmp.RunTmp) -> int:
     found: list[dict] = []
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
         futs = [ex.submit(seg_diverge, lv, t, a.seg_len, Path(a.leveldp),
-                          tmp, a.eps, a.gd_ground, a.all_hits)
+                          tmp, a.eps, a.gd_ground, a.all_hits,
+                          tuple(a.extra_flag))
                 for lv, t in jobs]
         for f in futs:
             found += f.result()
@@ -523,8 +539,9 @@ def census_report(found: list[dict], n_segs: int, elapsed: float, *,
         per_lv[d["lv"]] = per_lv.get(d["lv"], 0) + 1
 
     wtag = f" / {len(waived)} waived" if waived else ""
+    arm = f", {' '.join(a.extra_flag)}" if a.extra_flag else ""
     print(f"{n_segs} sections / {len(found)} divergences / "
-          f"{len(fams)} families{wtag} ({round(elapsed, 1)}s)")
+          f"{len(fams)} families{wtag} ({round(elapsed, 1)}s{arm})")
     print(f"  by size: A(<=0.3)={buck['A']}  B(0.3..2)={buck['B']}  "
           f"C(>2)={buck['C']}")
     print("  by level: " + " ".join(f"lv{k}x{v}" for k, v in

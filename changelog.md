@@ -1,3 +1,31 @@
+# v0.1.4
+
+ * **Slopes are acquired the way the game acquires them.** There was never a
+   contact point: the game probes a pixel either side, tests the rect one pixel
+   in, and seats the body on the line extended past the ramp's end. The model now
+   does the same, and the ramp kills follow their measured outlines -- a spiked
+   ramp kills at a perpendicular distance from the line, not by box overlap, for
+   the ship and for a flipped wave as well as the upright wave.
+ * **A spawned trigger acts on the group its remap names.** A Spawn can send the
+   moves it starts to a different group, and the model used to move the group the
+   triggers were written for. On Dash that left a sinking platform under no
+   trigger at all, playing to the clock of whichever run recorded it.
+ * **A touched platform moves when this run touches it**, not when the run that
+   recorded it did -- except where something else also moves it.
+ * **A flying band ends where its recording ends.** The band the camera held
+   was kept for every tick after the last one recorded, so a mode portal further
+   on could not change it: the solver planned against a floor or a ceiling the
+   game no longer had, and the plan died in the replay.
+ * A swing re-anchored on the tick its press takes effect keeps the flip that
+   press started, and a robot re-anchored in mid-air no longer gets a full hover
+   it does not have.
+ * Every one of these was measured first (calibration levels in `data/rigs`, the
+   game's own traces, and the disassembly) and each can still be turned off:
+   `--no-slopelaw`, `--no-spawnremap`, `--no-touchretime`, `--no-shipslopekill`,
+   `--no-waveflipkill`, and `dpswingpending=0`, `dphoverstrict=0`, `dpbandend=0`.
+ * The death counter counts deaths rather than calls to the function that kills,
+   and every death names the object that killed and which body died.
+
 # v0.1.3
 
  * **Solving a second level without restarting the game works.** One level's

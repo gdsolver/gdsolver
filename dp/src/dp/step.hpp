@@ -4979,6 +4979,24 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // seat, later `top` values never fall below it.
             bool pushOutSeat = false;
             double pushOutTop = -1e18;
+            // --slopelaw's candidate. Recorded here and applied AFTER the loop,
+            // for the reason pushOutSeat is deferred too: a seat written in the
+            // middle of the loop is read by everything that runs after it. The
+            // first version wrote y in place and cost lv20 t=5,278 -- where the
+            // existing path already seats the ball exactly as GD does (all three
+            // agree at 285.000 / vy 0) and then launches it at +2.762 on the next
+            // tick. Writing y first took the contact away from that path, and,
+            // because this block sets no state, every following tick looked like
+            // a fresh contact again: the body stayed pinned at 285.000 with vy 0
+            // for the rest of the level. The guard below is therefore not "did
+            // some particular rule fire" but "did the body move at all" --
+            // order-independent, and it cannot go stale when a rule is added.
+            bool lawSeat = false;
+            double lawTop = 0.0;
+            int lawUid = -1;
+            bool lawUnder = false;
+            const float yBeforeSlopes = c.y;
+            const uint8_t gBeforeSlopes = c.grounded;
             for (const Obj* sp : *K.slopes) {
                 // the wave does not ride anything -- it only ever dies
                 if (c.mode == 4) break;
@@ -6890,6 +6908,149 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                         slopeSeatTarget(sp, x, pH, true, seatOff));
                     }
                 }
+                // slope law (default on since v0.1.4, --no-slopelaw): GD's OWN acquisition, in place of
+                // --ceilpush's one-sided push-out. The predicate is not new
+                // here -- `slopeWouldAcquire` (slopes.hpp) has carried it since
+                // the 09-05 disassembly, for the solid-veto question. It was
+                // never asked the acquisition question, and the ride window
+                // `ok` was asked it instead.
+                //
+                // WHY THE WINDOW IS THE WRONG GATE FOR A FRESH CONTACT. GD's
+                // two-stage predicate (measure-swing-ramp-acquisition-2026-09-05
+                // section 4, measure-slope-underside-gate-2026-09-05) contains no
+                // contact point at all:
+                //   1. the fresh rect test, playerRect vs the object rect inset
+                //      1px top and bottom            0x38fc73 / 0x38fc7b je
+                //   2. `s*targetY > s*y` (floor) / `s*y > s*targetY` (underside),
+                //      both strict, with targetY built from slopeYPos at the
+                //      player's CENTRE x, EXTRAPOLATED past the span
+                //                                    0x38fea5 / 0x39000c
+                // Both reduce to one inequality: with sigma = isTop ? -1 : +1,
+                // acquire iff sigma*(targetY - y) > 0, which is exactly what
+                // slopeWouldAcquire returns. The ride window fits the rig
+                // (calib_ceilramp cube 6/6, UFO 6/6) because THERE the two
+                // candidates cross on the same tick -- stage 2 is what binds
+                // there, while on lv21 t=19,724 stage 1 binds and the window is
+                // 7 ticks late. 883 fresh calls in the rig's own `slp:` trace
+                // agree with this predicate 883/0, and its 20 acquisitions match
+                // the seat 20/0.
+                //
+                // `preVeto` is stage 0: preSlopeCollision's horizontal 1px probe
+                // (0x38f887 ... 0x38f88e jne). Reaching a probe makes the WHOLE
+                // routine a no-op, and the guard is `isTop ? objMaxY <= pos.y :
+                // pos.y <= objMinY + 1` -- the player's centre already past the
+                // rect's far edge. It is what keeps this off lv16 t=14,073's
+                // uid7124 (objMaxY 473.8 <= y 476.779), where --ceilpush seats
+                // 9.86px that GD does not and moves that reference's death 302
+                // ticks early. GD takes the ASCENDING neighbour uid7125 there
+                // instead, at line(extrapolated) + pH/cos t = 480.679 -- GD's own
+                // value to three decimals, and the level's pre-existing first
+                // divergence.
+                //
+                // `freeSide` is UNEXPLAINED-BUT-MEASURED: the body must be on the
+                // ramp's non-solid side. lv16 t=8,715 refutes the law without it
+                // (uid3765, the ship 6.09px ABOVE that ceiling ramp's line: the
+                // law seats it 7.44px down while GD leaves it riding the
+                // descending neighbour). The plausible counterpart is
+                // preSlopeCollision's OTHER probe -- the vertical strip at the
+                // high end, which routes the player through
+                // collidedWithObjectInternal as a wall -- but that path is not
+                // traced, so this conjunct is empirical. Do not read it as
+                // derived.
+                //
+                // Writes only y, exactly as --ceilpush does, so the two arms
+                // differ in the predicate and not in what they do. GD's
+                // acquisition also sets m_isOnSlope and enters the ride; that is
+                // a separate and much larger change.
+                if (g_slopeLaw && !okHere && !s.onSlope) {
+                    const double oMinSL = sp->cy - sp->hh;
+                    const double oMaxSL = sp->cy + sp->hh;
+                    const double lineSL = sp->sy0 + m * (x - x0);
+                    const bool preVeto = ceilRamp ? ((double)c.y >= oMaxSL)
+                                                  : ((double)c.y <= oMinSL + 1.0);
+                    // ...and preSlopeCollision's OTHER probe, the 1px VERTICAL
+                    // strip at the ramp's flat face. Same effect -- reaching it
+                    // returns 1 and the routine writes nothing -- and the face's
+                    // side is read off the direction: {2,3,4,6} carry it on the
+                    // LEFT, {0,1,5,7} on the right. The third term of each guard
+                    // (`m_isGoingLeft || m_isPlatformer || objDelta.x <>
+                    // speed*dt`) collapses on static geometry, where objDelta.x
+                    // is 0: the left-face form is then always satisfied, and the
+                    // right-face form only for a player travelling left.
+                    //
+                    // THIS REPLACES `freeSide`, which the first version of this
+                    // block carried as UNEXPLAINED-BUT-MEASURED. Its witness is
+                    // derived after all: lv16 t=8,715's uid3765 is sdir=3, a
+                    // left-face ramp whose minX 13,220 the ship's centre
+                    // (13,206.35) has not reached. `--nofreeside` drops the
+                    // empirical conjunct so the corpus can say whether anything
+                    // else was leaning on it.
+                    //
+                    // It costs nothing at the three acquisitions: lv21's uid26823
+                    // and the rig's uid34 are both sdir=1 (right face, and the
+                    // player is travelling right, so the guard is false), and
+                    // lv16's uid7125 is sdir=0 with its maxX ahead of the player.
+                    // It vetoes lv16 t=10,806's uid5229 (sdir=4, minX 16,590
+                    // against a centre of 16,581.64) -- the seat that starts the
+                    // 67-tick chain ending in the spiked death at t=10,875, and
+                    // the case the push-out gate below already records GD
+                    // refusing ("GD names uid5229 in its slp: line while never
+                    // moving y a single px").
+                    const uint8_t dSL = sp->slopeDir;
+                    const bool leftFace =
+                        (dSL == 2 || dSL == 3 || dSL == 4 || dSL == 6);
+                    const bool goingLeftSL =
+                        ((double)K.dxF < 0.0 || s.rev != 0);
+                    const bool vertProbe =
+                        leftFace ? (x < sp->cx - sp->hw)
+                                 : (goingLeftSL && sp->cx + sp->hw < x);
+                    const bool freeSide =
+                        g_noFreeSide ? true
+                        : ceilRamp ? ((double)c.y < lineSL)
+                                   : ((double)c.y > lineSL);
+                    if (!preVeto && !vertProbe && freeSide
+                        && slopeWouldAcquire(sp, x, (double)c.y, pH, false)) {
+                        const double tgtSL =
+                            slopeSeatTarget(sp, x, pH, ceilRamp, seatOff);
+                        if (g_slopeDbg)
+                            std::printf("slopelaw: t=%lld p%d uid=%d mode=%d "
+                                        "m=%.3f x=%.3f y=%.4f->%.4f line=%.4f "
+                                        "isTop=%d\n",
+                                        (long long)K.t, g_halfNow + 1, sp->uid,
+                                        (int)c.mode, m, x, (double)c.y, tgtSL,
+                                        lineSL, ceilRamp ? 1 : 0);
+                        // RECORDED, NOT WRITTEN -- applied after the loop, and
+                        // only if nothing else moved the body (see lawSeat's
+                        // declaration). The writes themselves are below.
+                        lawSeat = true;
+                        lawTop = tgtSL;
+                        lawUid = sp->uid;
+                        lawUnder = slopeUnderside(c.flip != 0, sp->slopeDir);
+                        // ...and what the acquisition writes BESIDES y. Two
+                        // independent witnesses, one per side, both of them the
+                        // measurement that produced this rule rather than a
+                        // consequence of it:
+                        //   floor  lv16 t=14,073 (uid7125, upright ship, vy
+                        //          -4.138): GD's dump turns onGround AND
+                        //          onGround2 to 1 and vy to 0 on the acquiring
+                        //          tick, and rides +1.613/tick from there. That
+                        //          is hitGround, reached from the floor branch,
+                        //          whose only gate is the SIGNED s*vy <= 5.0
+                        //          (0x39bfc0 vs the double at 0x622E98).
+                        //   under  calib_ceilramp dt=528 (uid34, upright cube,
+                        //          vy +0.103): GD's `slp:` line reads
+                        //          `vy=0.000 dvy=-0.103` -- the underside's
+                        //          `vy := min(vy,0)` at 0x390931, which needs no
+                        //          velocity gate.
+                        // lv21 t=19,724 is the third case and it constrains the
+                        // SIGN: flipped on a ceiling ramp is the FLOOR branch
+                        // (m_isUpsideDown XOR isTop = 0), s*vy = +9.452 > 5.0, so
+                        // GD seats without grounding and leaves vy alone -- which
+                        // is what its dump shows. A rule written with |s*vy| or
+                        // with the underside's clamp here would have moved that
+                        // tick's vy and been wrong.
+                    }
+                }
                 if (!okHere && ridesTop && !ceilRamp && !s.onSlope
                     && (x - xHiPO) * sgnPO > 0.0
                     && x + pH > x0 && x - pH < x1) {
@@ -8112,6 +8273,28 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     c.slopeUidNow = sp->uid;
                 }
             }
+            // --slopelaw's seat, applied only if the loop above left the body
+            // where it found it. Everything that resolves a ramp contact writes
+            // y (the ride's `top`, the push-out, the corner stands, the
+            // came-from-below clamp), so "y and grounded are untouched" is the
+            // one test that means "no ramp took this contact", without naming
+            // any of them. The state writes ride along here for the same reason
+            // the seat does: a landing applied mid-loop is read by the rules
+            // after it.
+            if (lawSeat && c.y == yBeforeSlopes && c.grounded == gBeforeSlopes) {
+                if (g_slopeDbg)
+                    std::printf("slopelawapply: t=%lld p%d uid=%d y=%.4f->%.4f\n",
+                                (long long)K.t, g_halfNow + 1, lawUid,
+                                (double)c.y, lawTop);
+                YSET(c.y) = (float)lawTop;
+                const double gsSL = c.flip ? -1.0 : 1.0;
+                if (lawUnder) {
+                    if (gsSL * (double)c.vy > 0.0) VYSET(c.vy) = 0.0f;
+                } else if (gsSL * (double)c.vy <= kSlopeLandV) {
+                    VYSET(c.vy) = 0.0f;
+                    c.grounded = 1;
+                }
+            }
             // Pass 2: only a SPIKED ramp kills. A plain one does not -- it lifts
             // the player out.
             //
@@ -8144,8 +8327,130 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // spiked ramps because it errs toward killing, which only costs
             // reachability; the parallel form needs one more sweep to pin down
             // (see docs/findings.md -- gradient and mini are unmeasured).
+            // [2026-09-14] **THE KILL BOX OF THIS MODE, NOT THE RIDE BOX.**
+            // `pH` above is the RIDE box, and it is kCubeHalf for every mode
+            // but the spider -- including the wave, which rides a ramp on the
+            // cube's 15.0 but is killed by a solid on 1.5 (kWaveKillHalf,
+            // bisected to 0.01 px on two levels, two ids, both sizes, both
+            // faces). Reusing the ride box here gave the wave a lethal slice
+            // 13.5 px taller than the one GD kills it in.
+            // Witness lv17_t11814, a dual section whose p2 is a wave climbing
+            // a spiked 45-degree ramp (uid5595): on 15.0 the model died at
+            // t=11,828 on the RAMP, 8 ticks before GD, which killed p2 at
+            // t=11,836 on the small spike uid5596 (id720, 2.4x3.2) past its
+            // top. On 1.5 the ramp no longer reaches p2 and the model dies at
+            // GD's own tick on GD's own object -- the death reference's match
+            // column reads `same`, not merely the same tick. 39/47 -> 40/47,
+            // nothing else moves, and the replay suite is row-identical.
+            // The ride box is deliberately left alone: seating a wave on 1.5
+            // is a different claim and no rig has measured it.
+            //
+            // [2026-09-15] **1.5 IS TOO SMALL, AND 15.0 WAS TOO BIG. THE
+            // BOUNDARY IS BRACKETED, NOT CHOSEN.** Both bounds are GD's own
+            // testimony about lv17:
+            //   upper  14.67  lv17_t11814, the floor ramp above. Above this the
+            //          model kills p2 before GD does (15.0 misses by 0.33 px).
+            //   lower   7.864 twenty kill=1 fixups from the cold run at
+            //          x=22,780..22,827 (uid 8727) and x=23,201..23,248
+            //          (uid 8844), every one a CEILING spiked ramp. A kill
+            //          fixup is GD ending the run on a transition the model
+            //          flew through, so at 1.5 the model under-kills there --
+            //          which the replay suite and the death references both
+            //          missed (the corpus has no death for a loosened rule to
+            //          fail to reproduce; only the loop sees it).
+            // 9.54 sits inside that window and is not picked out of it: it is
+            // the offset the lv18 point-probe measured for the lethal boundary
+            // of a spiked ramp (the five points in the note above -- the
+            // boundary runs PARALLEL to the line, 9.54 px under it). Using it
+            // as a half is still the wrong SHAPE; what is claimed here is only
+            // that it is inside a window derived from two independent sides.
+            // [2026-09-15] **THE OUTLINE IS MEASURED, ON calib_slopespike.**
+            // The bracketed 9.54 is gone, and so is the interval overlap: the
+            // lethal region of a spiked ramp is
+            //
+            //   x window   sx0 - ph  <=  x  <=  sx1 + ph        (ph = CONTACT half)
+            //   sloped side  the perpendicular distance from the player's CENTRE
+            //                to the surface LINE is at most ph, i.e. a boundary
+            //                parallel to the line, ph*sqrt(1+m^2) away in y --
+            //                and the line is EXTRAPOLATED past the box, not
+            //                clamped
+            //   capped       at the line's own high (floor ramp) or low (ceiling
+            //                ramp) end: the boundary never leaves
+            //                [min(sy0,sy1), max(sy0,sy1)]
+            //   flat side    the box's other face plus the INNER kill box
+            //
+            // ph is the contact half -- playerHalf, so 5.0 for a wave -- NOT the
+            // ride box pH this used to borrow, which is kCubeHalf for every mode
+            // but the spider. That single substitution is most of the old error:
+            // for a wave the x window was 10 px too wide on each side.
+            //
+            // The outline, floor ramp id 366 (box x 600..630, line 229->259):
+            //   x    595   596   ...  600   ...  615   ...  621   624   630   635
+            //   y_b  231.1 232.1      236.1     251.1     257.1 259.0 259.0 259.0
+            //   alive at x=594 and x=635.5 -> the window is 600-5 .. 630+5
+            // slope 1.000 through the box AND past its left edge (so the line is
+            // extrapolated), flat at 259 = sy1 from x=624 (where the parallel
+            // boundary would pass it). The ceiling unit is the mirror: its low
+            // edge sits at 221 = sy1 at both x=1886 and x=1892.
+            // Perpendicular, not vertical: d = 5.031 / 5.039 / 5.031 at
+            // |m| = 0.5 / 1.0 / 2.0 (ratio 1.579 against sqrt(5/2) = 1.581), and
+            // 14.955 for the ship. Two predictions registered before the run
+            // landed inside their brackets (|m|=0.5 at 230.37, ship at 214.8).
+            // The flat side: box top 255, wave dies to 256.50 and lives at
+            // 256.75 (+1.5 = kWaveKillHalf), ship to 259.5 and lives at 260.0
+            // (+4.5 = kCubeInner).
+            // A FIRST ATTEMPT AT THIS WENT 40/47 -> 38/47 because it dropped the
+            // x window and the caps and kept the clamped surf: the centre test
+            // then kills outside the triangle, which is what the note below
+            // about a zero-height slice at the low corner is about.
+            // STILL UNMEASURED: the spider's halves; the two |m|=2 FLOOR units
+            // disagree by 1.0 px (d 5.42 vs 4.98 around 5.03), 19 of the corpus'
+            // 573 spiked ramps being that steep; and the flat side of a FLOOR
+            // ramp is taken by symmetry with the ceiling one.
+            const double ph = playerHalf(c.mode, c.mini != 0);
+            const double inner = (c.mode == 4) ? kWaveKillHalf : kCubeInner;
+            // [2026-09-15] **A PLAIN RAMP KILLS A WAVE.** GD's gate is
+            //   if ((m_slopeIsHazard == 0 && (A || B)) || player+0xc44) -> live
+            //   A = !bVar9 && (m_isDart == 0 || m_stateDartSlide > 0)
+            //   B = m_isPlatformer != 0 || m_stateHitHead > 0
+            // so the hazard flag only decides for the modes A||B covers.
+            // [2026-09-16] THE LINE THAT USED TO STAND HERE WAS WRONG: "+0xc44
+            // is written once, to 0, in PlayerObject::PlayerObject and by
+            // nothing else -- a dead field". It is not dead. The game layer
+            // writes it, on both players:
+            //   0x14020b7f2  mov byte [rax + 0xc44], 1   ; rax = [rdi + 0xda8]
+            //   0x14020b80b  mov byte [rax + 0xc44], 0
+            //   0x1402d2fc6  mov byte [rcx + 0xc44], al  ; rcx = [rbx + 0xda0]
+            //   0x1402d2fda  mov byte [rcx + 0xc44], al  ; rcx = [rbx + 0xda8]
+            //                                            ; al = [rbx + 0x886]
+            // The claim came from scan_field_offset.py, which FAILS a
+            // known-answer control: the 09-05 underside note names two writes of
+            // 0 to +0xa0c at 0x390297 / 0x39095d, both confirmed with
+            // gddisasm_min (canary 2/2), and that script reports neither -- while
+            // also reporting eleven hits that are really 0xa0cb8 / 0xa0cbf /
+            // 0xa0c9e. Its counts are unusable in both directions. The sites
+            // above come from disp32_sites.py, which passes that control.
+            // WHAT THIS DOES NOT TOUCH: the rule below is measured directly on a
+            // rig (a wave dies on plain 309 at d = 4.985, a cube does not, and
+            // lv21's own 1338/1339 match 484 to 0.012px), so it does not rest on
+            // +0xc44 at all. WHAT IT DOES TOUCH: "the spiked kill is
+            // unconditional because the only escape hatch is dead" is no longer
+            // supported. When +0xc44 is set GD does not kill, and whether that
+            // happens on the corpus is UNMEASURED.
+            // Measured on calib_slopespike's plain
+            // 309 (box 4215..4245, line 225->255, so 240 at the middle):
+            //   wave   247.00 dead / 247.10 alive -> d = 4.985, the same offset
+            //          the spiked ramps gave (5.031..5.039)
+            //   cube   seventeen points 230..262, EVERY ONE ALIVE
+            // which is also why the note at this test could quote a lv16 probe
+            // of seven heights on a plain ramp with no death: it was a BALL.
+            // The exemption is real and it has to be modelled, or a wave riding
+            // a plain ramp dies: its seat IS this boundary (surf + ph/cos), so
+            // without `m_stateDartSlide > 0` GD would kill every slide. onSlope
+            // is the model's name for that state.
+            const bool plainKillsHere = (c.mode == 4) && !c.onSlope;
             for (const Obj* sp : *K.slopes) {
-                if (!sp->slopeHazard) continue;
+                if (!sp->slopeHazard && !plainKillsHere) continue;
                 const double sx0 = sp->cx - sp->hw, sx1 = sp->cx + sp->hw;
                 const double sm = (sp->sy1 - sp->sy0) / (sx1 - sx0);
                 // The solid half is the TRIANGLE inside the object's box, not
@@ -8153,10 +8458,24 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 // is part of the test. Without it the model killed everything
                 // under a floor ramp, which is most of a corridor, and lv18
                 // lost its whole frontier 400 px early.
-                if (x + pH > sx0 && x - pH < sx1) {
-                    // sampled at the player's CENTRE (see the pass-1 note)
-                    const double sxc = std::min(std::max(x, sx0), sx1);
-                    const double surf = sp->sy0 + sm * (sxc - sx0);
+                // The window is the wave's measured one (dead at 595.0 and 635.0
+                // against a box of 600..630, alive at 594 and 635.5) and, for
+                // every other mode, exactly the open test it had -- so that the
+                // modes whose outline is NOT measured keep their old behaviour
+                // down to the boundary case.
+                const bool inWin = (c.mode == 4)
+                    ? (x >= sx0 - ph && x <= sx1 + ph)
+                    : (x + pH > sx0 && x - pH < sx1);
+                if (inWin) {
+                    // sampled at the player's CENTRE (see the pass-1 note), and
+                    // EXTRAPOLATED past the box: measured on the rig's left side,
+                    // where the boundary keeps the line's slope out to sx0 - ph.
+                    // The caps below are what stops that extrapolation running
+                    // away, and they are measured too.
+                    const double surf = sp->sy0 + sm * (x - sx0);
+                    const double lineLo = std::min(sp->sy0, sp->sy1);
+                    const double lineHi = std::max(sp->sy0, sp->sy1);
+                    const double off = ph * std::sqrt(1.0 + sm * sm);
                     // The solid is the slice between the box's floor and the
                     // line, so the test is a real interval overlap, not "below
                     // the line". At a ramp's low corner that slice has ZERO
@@ -8181,13 +8500,77 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     const bool ceilSlope = (c.mode == 1)
                         ? slopeIsCeiling(sp->slopeDir)
                         : (sp->slopeDir == 1 || sp->slopeDir == 3);
-                    const double lo = ceilSlope
-                        ? std::max((double)c.y - pH, surf)
-                        : std::max((double)c.y - pH, sp->cy - sp->hh);
-                    const double hi = ceilSlope
-                        ? std::min((double)c.y + pH, sp->cy + sp->hh)
-                        : std::min((double)c.y + pH, surf);
-                    if (lo < hi - 0.001)
+                    // [2026-09-15] **THE MEASURED OUTLINE IS THE WAVE'S ONLY.**
+                    // The rig says the modes do NOT share d: against the same
+                    // ceiling unit (line 236, box 225..255) the boundary is
+                    //   wave  228.75 alive / 229.00 dead  -> d =  5.03
+                    //   ship  214.80 alive / 214.90 dead  -> d = 14.96
+                    //   cube  216     alive / 217     dead -> d = 13.79
+                    // The ship lands on playerHalf and the cube does not, which is
+                    // its own finding rather than noise: a cube ROTATES in the air
+                    // and a turned square's perpendicular support runs from 15 to
+                    // 21.2, so its d cannot be a constant at all. One column
+                    // cannot say which angle it caught.
+                    // Applied to every mode it cost lv16 six iterations and
+                    // fourteen fixups on the cold run -- 19 of the 32 sites kill
+                    // records, in cube/ship/ball/ufo and NOT ONE in a wave, which
+                    // is the fingerprint of a rule taken past its measurement.
+                    // So the wave keeps the measured outline and everything else
+                    // keeps the interval overlap it had. The flat side (the inner
+                    // kill box) IS measured for both, but it is not separable
+                    // from the sloped side here, so it travels with it.
+                    const double y0 = (double)c.y;
+                    bool hit;
+                    // --shipslopekill: the ship on the measured outline too. Its
+                    // own rig numbers are above (d = 14.96, on playerHalf; flat
+                    // side +4.5 = kCubeInner, both of which `ph` and `inner`
+                    // already carry), and it was held back only with the cube.
+                    // lv18 t=17,107 is what the interval form misses: a ship at
+                    // (23404.77, 390.83) under spiked ceiling ramp uid12096
+                    // (sy 416->386, line 411.23 there) is 14.42 px from the line
+                    // perpendicular -- GD destroys it with no object, the
+                    // interval test sees the ship's top at 405.83 below the line
+                    // and does not. Same trajectory with --slopelaw on and off.
+                    if (c.mode == 4 || (g_shipSlopeKill && c.mode == 1)) {
+                        // --waveflipkill: a FLIPPED wave's sloped edge sits
+                        // further out. Measured on calib_slopespike_wave and its
+                        // flipped-gravity twin (the same units at the same x, one
+                        // gravity portal apart), ceiling-type spiked ramps, three
+                        // columns each, 0.25 px steps:
+                        //   367 rot180 (m=0.5)  normal d 4.94-5.16   flipped 5.83-5.97
+                        //   366 rot180 (m=1)    normal d 4.98-5.16   flipped 5.69-5.86
+                        // Both flipped columns run parallel to the line and share
+                        // 5.83-5.86, so it is a constant perpendicular distance,
+                        // not a shifted sample point (a 1.74 px x shift predicted
+                        // 8.85 vertical on m=1; measured 8.04-8.29). The cap at
+                        // lineLo is the same flipped or not. lv17 x=22,782 (a
+                        // flipped wave under uid8727) measured 5.79-5.97, the
+                        // same number, riding a plain twin -- so riding is not it.
+                        // Only the ceiling-type branch: floor ramps under a flipped
+                        // wave are not measured.
+                        const double offW = (g_waveFlipKill && c.mode == 4 && c.flip
+                                             && ceilSlope)
+                            ? kWaveFlipSlopeKillD * std::sqrt(1.0 + sm * sm)
+                            : off;
+                        const double lo = ceilSlope
+                            ? std::max(surf - offW, lineLo)   // sloped, capped
+                            : sp->cy - sp->hh - inner;        // flat
+                        const double hi = ceilSlope
+                            ? sp->cy + sp->hh + inner         // flat
+                            : std::min(surf + off, lineHi);   // sloped, capped
+                        hit = (y0 >= lo && y0 <= hi);
+                    } else {
+                        const double sxc = std::min(std::max(x, sx0), sx1);
+                        const double sf = sp->sy0 + sm * (sxc - sx0);
+                        const double lo = ceilSlope
+                            ? std::max(y0 - pH, sf)
+                            : std::max(y0 - pH, sp->cy - sp->hh);
+                        const double hi = ceilSlope
+                            ? std::min(y0 + pH, sp->cy + sp->hh)
+                            : std::min(y0 + pH, sf);
+                        hit = (lo < hi - 0.001);
+                    }
+                    if (hit)
                         DIE(sp->slopeHazard ? "slope/spiked" : "slope/inside", sp);
                 }
             }
@@ -10205,7 +10588,34 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (impulsedThisTick && oldMode != c.mode) {
                     const double sgn = c.flip ? -1.0 : 1.0;
                     const double ms = c.mini ? kMiniImpulse : 1.0;
-                    if (c.mode == 0 || c.mode == 5) {  // -> cube / robot: a jump
+                    // ...BUT THE NEW MODE'S OWN PRECONDITION STILL APPLIES.
+                    // A cube jumps from the ground and nowhere else, and
+                    // re-issuing the press in its body does not change that.
+                    // Measured on calib_portalpress' air cells (2026-09-15),
+                    // both controls alive so the silence is a reading and not a
+                    // dead cell:
+                    //   ufo->cube, airborne at the portal
+                    //     -12 old body   UFO flaps in the air        6.871
+                    //      -1 / 0        NOTHING -- vy just takes the
+                    //                    portal's step and then cube gravity
+                    //     +12 new body   airborne cube, no effect
+                    //   cube->ufo, airborne
+                    //     -12 old body   airborne cube, no effect
+                    //      -1 / 0        UFO flaps                   6.871
+                    //     +12 new body   UFO flaps                   6.871
+                    // so the UFO's flap needs no ground and the cube's jump
+                    // does. Without this gate the model hands the DP a jump
+                    // from mid-air: lv21 t=18,619 is a cube arriving at the
+                    // portal off a ramp, where the model left with 9.136 --
+                    // exactly its own mini cube jump, 11.420 * 8.944/11.180 --
+                    // and GD left with 3.324. That one phantom step cost 37 of
+                    // that level's 44 cold rounds, all on the same wall.
+                    // The `-> ball` case below has always done this by
+                    // omission ("a ball tap only acts while ROLLING").
+                    if ((c.mode == 0 || c.mode == 5) && !c.grounded) {
+                        // nothing: the body that now owns the press cannot use
+                        // it here
+                    } else if (c.mode == 0 || c.mode == 5) {  // -> cube / robot: a jump
                         const CubePhys jph = cubePhysFor(useDx);
                         VYSET(c.vy) = (float)(jph.jump * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                        * (c.mode == 5 ? kRobotJumpScale : 1.0)
@@ -12018,12 +12428,33 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // measurement, the cost, and what 004b has to model first. The band it acted
     // in here is thin (`hh < |dy| < hh + kCrushHalf`), and none of the nine
     // probe points was taken in it, which is its own reason to wait.
+    // [2026-09-14] ...AND THE INNER BOX IS THE ONE THAT MODE ACTUALLY HAS.
+    // 4.5 is the CUBE's inner box. GD builds all of these with one function --
+    // getObjectRect(0.3, 0.3) -- so the inner box is 0.3 of the vehicle rect:
+    // cube 30x30 -> 9x9 -> half 4.5, wave 10x10 -> 3x3 -> half 1.5. It does not
+    // scale with vsize because PlayerObject::setScale bypasses the scale cache
+    // the explicit-multiplier overload reads, which is why the rig found 4.5 for
+    // the mini cube as well and read the whole family as size-independent.
+    // The wave's 1.5 is MEASURED on its own, and from the other side of the same
+    // box: kWaveKillHalf, bisected to 0.01 px on two levels, two object ids, both
+    // sizes and both faces. Its note already says this rule is "the same box seen
+    // from the side", so the two constants are one measurement.
+    // WHAT 4.5 COST THE WAVE: its centre sits only 5.0 from a face it is seated
+    // on, so a 4.5 box clears that face by 0.5 px (a cube clears it by 10.5) and
+    // the rule fired on a wave that was still legally riding. Four references --
+    // lv17_t7876, lv19_t19192, lv20_t2150, lv20_t2700, every one a wave -- died
+    // of `crush` exactly 2 ticks before GD, which killed them on the side test.
+    // 35/47 -> 39/47, and the one reference the rule kills correctly
+    // (lv19_t15353) is a ufo and is untouched.
+    // The spider's 27x27 would be 4.05 by the same mechanism. NOT changed here:
+    // nothing has measured it, and no reference moves either way.
+    const double crushHalf = (c.mode == 4) ? kWaveKillHalf : kCrushHalf;
     if (!dead && !g_noCrush && s.frame == 0) {
         const double cyF = (double)c.y;
         for (const Obj* o : *K.near)
             if (o->type == 0 && !o->slope && !o->oneway && !o->oriented
-                && std::fabs(x - o->cx) < o->hw + kCrushHalf + 1e-6
-                && std::fabs(cyF - o->cy) < o->hh + kCrushHalf + 1e-6) {
+                && std::fabs(x - o->cx) < o->hw + crushHalf + 1e-6
+                && std::fabs(cyF - o->cy) < o->hh + crushHalf + 1e-6) {
                 DIE("crush", o);
                 break;
             }

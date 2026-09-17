@@ -230,7 +230,51 @@ struct TrigRow {
     // Read only by --rotqtoggle: a group switched off makes GD's rotation queue
     // consume its 2900s without firing them (checkSpawnObjects 0x21aad8).
     int togon = -1;
+    // A Spawn's (1268) group remap, the 36th column: (named group -> group it
+    // acts on) for the triggers it spawns. Empty on other ids and on dumps that
+    // predate the column. Applied only under --spawnremap (see g_spawnRemap).
+    std::vector<std::pair<int, int>> remap;
 };
+
+// --spawnremap: follow a Spawn's group remap (property 442) in the chain walks.
+// A spawned trigger acts on the REMAPPED group. lv22's touch box uid17771
+// spawns group 493, whose two Moves name group 100 -- six decorations -- while
+// the remap sends them to group 508, the block row the ball lands on. Without
+// it that row is controlled by no box, so its recording plays on the recording
+// run's own clock, and a plan that touches the box 25 ticks earlier stands on a
+// platform that has not started to sink (measured on worker 98: the row moves
+// two ticks after the ball's rect first overlaps the box, landing or not).
+// The dump's field order was checked against the level string: of the four
+// ints per entry the first is the named group and the THIRD the target
+// ("100:100:508:0"), whatever the binding calls them. Only lv22 has remaps
+// (45 of 141 spawns), so this is inert on lv1-21. On by default since v0.1.4,
+// after cold runs judged it; --no-spawnremap turns it off.
+inline bool g_spawnRemap = true;
+
+// Apply a remap to a group id; unmapped ids pass through.
+inline int remapGroup(const std::vector<std::pair<int, int>>& rm, int g) {
+    for (const auto& p : rm)
+        if (p.first == g) return p.second;
+    return g;
+}
+
+// The remap a trigger hands to what IT spawns: its own entries first, then
+// whatever it inherited for ids it does not map itself. How GD merges nested
+// remaps (SpawnTriggerGameObject::updateRemapKeys) is NOT measured -- lv22's
+// remapping spawns sit at chain roots, so no measured case composes two.
+inline std::vector<std::pair<int, int>> composeRemap(
+        const std::vector<std::pair<int, int>>& own,
+        const std::vector<std::pair<int, int>>& inherited) {
+    if (own.empty()) return inherited;
+    std::vector<std::pair<int, int>> out;
+    for (const auto& p : own) out.push_back({p.first, remapGroup(inherited, p.second)});
+    for (const auto& p : inherited) {
+        bool shadowed = false;
+        for (const auto& q : own) shadowed |= (q.first == p.first);
+        if (!shadowed) out.push_back(p);
+    }
+    return out;
+}
 inline bool loadTrigRows(const std::string& path,
                          std::unordered_map<int, TrigRow>& trig) {
     std::ifstream in(path);
@@ -263,6 +307,19 @@ inline bool loadTrigRows(const std::string& path,
                 ++commas;
             }
             if (commas == 34 && p < line.size()) r.togon = std::atoi(line.c_str() + p);
+            // remap, the 36th column: "a:b:c:d;..." or "-". The source is the
+            // first field and the target the third (checked against lv22's
+            // level string, uid17771 = "100:100:508:0").
+            if (commas == 34 && (p = line.find(',', p)) != std::string::npos) {
+                std::stringstream es(line.substr(p + 1));
+                std::string ent;
+                while (std::getline(es, ent, ';')) {
+                    int a = 0, b = 0, c = 0, d = 0;
+                    if (std::sscanf(ent.c_str(), "%d:%d:%d:%d", &a, &b, &c, &d) == 4
+                        && a != 0 && c != 0)
+                        r.remap.push_back({a, c});
+                }
+            }
         }
         trig[r.uid] = r;
     }
@@ -325,6 +382,8 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
         struct Item {
             int group; float dx, dy; double dur; int ease; double erate;
             double lock, lockY;
+            // the remap the triggers in `group` act under (--spawnremap)
+            std::vector<std::pair<int, int>> remap;
         };
         // Seed with the BOX'S OWN move. A touch row is often a bare Spawn whose
         // effect is nested (all 3 of lv19's are), and starting the walk at zero
@@ -350,7 +409,9 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                                  rootMoves ? T.ease : 0,
                                  rootMoves ? T.erate : 2.0,
                                  T.lockx ? T.dur * 240.0 : 0.0,
-                                 T.locky ? T.dur * 240.0 : 0.0}};
+                                 T.locky ? T.dur * 240.0 : 0.0,
+                                 g_spawnRemap ? T.remap
+                                              : std::vector<std::pair<int, int>>{}}};
         // A group can contain the trigger that targets it, so the walk needs a
         // hard bound rather than a visited set (the same group legitimately
         // appears twice under different offsets).
@@ -415,7 +476,7 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                                         || t2->second.oy != 0.0 || turns);
                     const double d2 = t2->second.dur * 240.0;
                     const bool longer = moves && d2 >= it.dur;
-                    stack.push_back({t2->second.target,
+                    stack.push_back({remapGroup(it.remap, t2->second.target),
                                      it.dx + (float)t2->second.ox,
                                      it.dy + (float)t2->second.oy,
                                      longer ? d2 : it.dur,
@@ -424,7 +485,10 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                                      std::max(it.lock, t2->second.lockx
                                          ? t2->second.dur * 240.0 : 0.0),
                                      std::max(it.lockY, t2->second.locky
-                                         ? t2->second.dur * 240.0 : 0.0)});
+                                         ? t2->second.dur * 240.0 : 0.0),
+                                     g_spawnRemap
+                                         ? composeRemap(t2->second.remap, it.remap)
+                                         : std::vector<std::pair<int, int>>{}});
                 } else {
                     // Recorded WITH a zero offset too. m_moveOffset is empty for
                     // GD's "move to target" mode, and lv19's third touch trigger
@@ -538,6 +602,7 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
         struct Item {
             int group; float dx, dy; double dur; int ease; double erate;
             double lock, lockY;
+            std::vector<std::pair<int, int>> remap;   // as in the touch walk
         };
         const bool rootMoves = (T.ox != 0.0 || T.oy != 0.0);
         std::vector<Item> stack{{T.target, (float)T.ox, (float)T.oy,
@@ -568,7 +633,7 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
                     const bool moves = (t2->second.ox != 0.0 || t2->second.oy != 0.0);
                     const double d2 = t2->second.dur * 240.0;
                     const bool longer = moves && d2 >= it.dur;
-                    stack.push_back({t2->second.target,
+                    stack.push_back({remapGroup(it.remap, t2->second.target),
                                      it.dx + (float)t2->second.ox,
                                      it.dy + (float)t2->second.oy,
                                      longer ? d2 : it.dur,
@@ -577,7 +642,10 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
                                      std::max(it.lock, t2->second.lockx
                                          ? t2->second.dur * 240.0 : 0.0),
                                      std::max(it.lockY, t2->second.locky
-                                         ? t2->second.dur * 240.0 : 0.0)});
+                                         ? t2->second.dur * 240.0 : 0.0),
+                                     g_spawnRemap
+                                         ? composeRemap(t2->second.remap, it.remap)
+                                         : std::vector<std::pair<int, int>>{}});
                 } else {
                     at.ctl.push_back({uid, it.dx, it.dy, it.dur, it.ease,
                                       it.erate, it.lock, it.lockY});

@@ -630,7 +630,20 @@ inline void buildPois(GJBaseGameLayer* l) {
               // the disassembly finds the flag on the COMMAND (cmd+0x72), not
               // on the trigger -- so lv22's twelve Stops are dumped without
               // saying which of the three they are.
-              "sdelay,mvtgt,mvaxis,tmodctr,dirsnap,dirdist,dynmode,silent,togon\n";
+              "sdelay,mvtgt,mvaxis,tmodctr,dirsnap,dirdist,dynmode,silent,togon,"
+              // [2026-09-16] remap: a Spawn's (1268) group remap, property 442
+              // (SpawnTriggerGameObject::m_remapObjects). A spawned trigger
+              // acts on the REMAPPED group, not the one it names, so a chain
+              // walked without this moves the template's group and misses the
+              // real one. lv22's touch box uid17771 spawns group 493, whose
+              // Moves target group 100 (six decorations) -- remapped to 508,
+              // the block row the ball stands on. The level strings of lv1-22
+              // hold 45 remaps, all in lv22. Written as the four raw ints of
+              // each ChanceObject joined by ':' and entries by ';' ("-" when
+              // empty), because which field holds the source and which the
+              // target is checked against the level string, not assumed from
+              // the member names.
+              "remap\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -723,7 +736,20 @@ inline void buildPois(GJBaseGameLayer* l) {
                // firing them (checkSpawnObjects 0x21aad8). Appended at the end:
                // loadTrigRows reads the first 26 columns by position and nothing
                // else parses this file.
-               << (obj->m_objectID == 1049 ? (e->m_activateGroup ? 1 : 0) : -1) << "\n";
+               << (obj->m_objectID == 1049 ? (e->m_activateGroup ? 1 : 0) : -1) << ",";
+            {
+                std::string rm;
+                if (auto* sp = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj)) {
+                    for (auto const& c : sp->m_remapObjects) {
+                        if (!rm.empty()) rm += ";";
+                        rm += std::to_string(c.m_groupID) + ":"
+                            + std::to_string(c.m_oldGroupID) + ":"
+                            + std::to_string(c.m_chance) + ":"
+                            + std::to_string(c.m_unk00c);
+                    }
+                }
+                tf << (rm.empty() ? std::string("-") : rm) << "\n";
+            }
             ++nTrig;
         }
         log::info("triggers: {} triggers with a target, {} grouped objects",

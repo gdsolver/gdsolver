@@ -166,6 +166,33 @@ inline bool g_touchPreyButton = false;
 // GD's ceiling seat even where the ramp window has dropped the ramp. See the
 // branch beside the push-out gate in step.hpp.
 inline bool g_ceilPush = false;
+// slope law: the acquisition GD actually performs, in place of --ceilpush's
+// one-sided push-out. See step.hpp's site for what is measured and what is not.
+// On by default since v0.1.4; --no-slopelaw turns it off (--slopelaw is accepted
+// and does nothing).
+inline bool g_slopeLaw = true;
+// ship slope kill: the ship's spiked/plain ramp kill on the measured outline
+// (perpendicular d = playerHalf, flat side +kCubeInner) instead of the interval
+// overlap. See the note at the ramp kill in step.hpp. On by default since v0.1.4;
+// --no-shipslopekill turns it off.
+inline bool g_shipSlopeKill = true;
+// flipped wave slope kill: a flipped wave's ceiling-type spiked ramp kill at the
+// measured perpendicular distance kWaveFlipSlopeKillD instead of playerHalf. See
+// the note at the ramp kill in step.hpp. On by default since v0.1.4;
+// --no-waveflipkill turns it off.
+inline bool g_waveFlipKill = true;
+// --latgap: the search does not change the input on a tick no button edge can reach --
+// the tick after a mode portal from a latency-1 mode (cube/ball/wave/...) into a
+// latency-2 one (ship/UFO). The emitter maps such an edge to the press one tick earlier
+// (cli.hpp, the plan writer's two-pass latency), which GD and --replay apply one tick
+// LATE. Measured in cold runs: lv12 t=19,034 (ball -> ship at 19,033) and lv14 t=19,638
+// (cube -> ship at 19,637), both SOLVED plans whose own witness lived while --replay of
+// the emitted plan followed GD to its death. Off by default.
+inline bool g_latGap = false;
+// The overlap of the two flipped-wave brackets (m=0.5: 5.83-5.97, m=1: 5.69-5.86).
+constexpr double kWaveFlipSlopeKillD = 5.845;
+// --nofreeside: drop --slopelaw's one empirical conjunct (see step.hpp).
+inline bool g_noFreeSide = false;
 // --escrotahead (default off): do not escapee-prune a body in a turned frame while
 // a rotation is still ahead on the active queue channel. See the prune in step.hpp.
 inline bool g_escRotAhead = true;

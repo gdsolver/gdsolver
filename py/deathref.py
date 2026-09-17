@@ -73,6 +73,7 @@ import argparse
 import csv
 import json
 import re
+import statistics
 import subprocess
 import sys
 import time
@@ -271,13 +272,7 @@ def record_one(level: int, trunc: int, worker_id: int, a) -> dict:
                        else f"{rows} rows, ends at {max(gd or {0: 0})} not {expect}")
         return out
 
-    killer = ""
-    for l in lines:
-        if l.startswith(R.KILLER):
-            kv = R.parse_killer(l)
-            killer = (f"uid{kv.get('uid', '?')} id{kv.get('id', '?')} "
-                      f"type{kv.get('type', '?')} @{kv.get('ox', '?')},"
-                      f"{kv.get('oy', '?')}") if "uid" in kv else l[len(R.KILLER):].strip()
+    killer, other_format = select_killer(lines, death["tick"])
     out.update({
         "status": "OK", "death_tick": death["tick"], "death_x": death["x"],
         # the tick the MODEL has to die on (see frozen_from). `death_tick` stays
@@ -287,7 +282,51 @@ def record_one(level: int, trunc: int, worker_id: int, a) -> dict:
         "killer": killer, "seconds": round(time.time() - t_start, 1),
         "csv": csv_path(level, trunc).name, "plan": plan_path(level, trunc).name,
     })
+    if other_format:
+        out["killer_other_format"] = other_format
     return out
+
+
+def select_killer(lines: list[str], death_tick: int) -> tuple[str, int]:
+    """Pick the `killer:` line that names this death, and count the ones that
+    do not.
+
+    `destroyPlayer` prints `killer:` in two shapes (hooks_playlayer.cpp). The
+    one this harness reads is keyed `tick=` (the gatetrace form armed by
+    `gatetrace=<empty x window>`, see REPLAY_CFG); the other is keyed `t=`
+    (the hitboxtrace/dpsolve form) and, having no `tick` key, is not even a
+    candidate here -- it is skipped and counted instead. A line's own tick has
+    to match `death_tick` (the death this reference is keyed on, not just the
+    last killer: line in the session): a session can hold more than one death
+    (e.g. a t=1 instant death on a later retry within the same log), and
+    "whatever came last" would let that later, unrelated death overwrite the
+    reference's own killer. Returns (killer, other_format_count).
+    """
+    killer = ""
+    killer_fallback = ""
+    matched = False
+    other_format = 0
+    for l in lines:
+        if l.startswith(R.KILLER):
+            kv = R.parse_killer(l)
+            if "tick" not in kv:
+                other_format += 1
+                continue
+            built = (f"uid{kv.get('uid', '?')} id{kv.get('id', '?')} "
+                      f"type{kv.get('type', '?')} @{kv.get('ox', '?')},"
+                      f"{kv.get('oy', '?')} tick={kv.get('tick', '?')}"
+                     ) if "uid" in kv else l[len(R.KILLER):].strip()
+            killer_fallback = built
+            try:
+                line_tick = int(kv.get("tick", ""))
+            except ValueError:
+                line_tick = None
+            if line_tick is not None and line_tick == death_tick:
+                killer = built
+                matched = True
+    if not matched and killer_fallback:
+        killer = killer_fallback + " (unmatched)"
+    return killer, other_format
 
 
 def dedupe(found: list[dict], px: float) -> tuple[list[dict], list[dict]]:
@@ -611,6 +650,14 @@ def run_model(out: dict, lv: int, trunc: int, t0: int, gd: dict, full: Path,
     # to the cut, and the anchor sits past it. pad_anchor_args keys its cache
     # on the recording for exactly that reason.
     args += pad_anchor_args(lv, t0, gd)
+    # LAST, so a differential arm can be one flag on ONE exe instead of a build
+    # per arm. The header's `--leveldp <exe>` form still works and is still the
+    # right one for a changed default; this is for the "old exe + the flag"
+    # shape, which is the only one that proves the flag is what moved the
+    # verdict. The flags land in the report's header line, because an arm whose
+    # switches are not printed beside its numbers has been mistaken for the
+    # baseline before.
+    args += [str(f) for f in a.extra_flag]
 
     # stderr is folded into stdout, not discarded: leveldp reports a rejected
     # argument there (`startband: 90,90 is not a readable f,c pair` -- a band
@@ -623,6 +670,8 @@ def run_model(out: dict, lv: int, trunc: int, t0: int, gd: dict, full: Path,
     out["model_died"] = int(m.group(1)) if m else -1
     mc = re.search(r"REPLAY: cause=(\S+)", r.stdout)
     out["cause"] = mc.group(1) if mc else ""
+    mo = re.search(r"REPLAY: cause=\S+ obj=uid(-?\d+) id(-?\d+)", r.stdout)
+    out["model_killer"] = f"uid{mo.group(1)} id{mo.group(2)}" if mo else ""
     trace = Path(str(base) + ".trace.csv")
     # ALWAYS COUNT THE ROWS. A 1-row trace is an instant death at the anchor,
     # and read as "no divergence found" it looks exactly like perfect agreement.
@@ -677,11 +726,47 @@ def check(a) -> int:
     return report(now, a, time.time() - t_start)
 
 
+_RE_GD_KILLER_UID = re.compile(r"^uid(-?\d+) id(-?\d+)")
+# The @x,y GD's own killer field carries, for the uid-form rows only -- used to
+# check the reference's own health (killer position vs. its recorded death_x),
+# not to compare against the model.
+_RE_GD_KILLER_XY = re.compile(r"@(-?[\d.]+),(-?[\d.]+)")
+
+
+def gd_killer_short(killer: str) -> str:
+    """Shorten the reference's own `killer` field (from index.json) to the
+    two identifying tokens -- or "no-object" / "?" for the other shapes.
+
+    `no-object` is a convention difference, not a disagreement, and the match
+    column can never read `same` on those rows.  GD reaches destroyPlayer with
+    no object on the solid, slope and crush paths; the model has the object in
+    hand there and names it (`DIE("crush", o)`, `DIE("cube/solid-side", o)`,
+    `DIE("slope/spiked", sp)`).  The model's own object-free deaths are a
+    different set -- out-of-play, deadband, maxplayy, spider/no-target,
+    escapee-prune -- so the two sides only ever line up on rows where GD did
+    name an object.  Read the match column against that population, not
+    against the run total."""
+    # The recorder marks a killer it could not tie to the death's own tick. That
+    # line names whatever object the session last printed -- for a reference
+    # whose death prints nothing, the replay's opening ticks -- so the table must
+    # not hand it on as GD's verdict. The uid prefix is still there, and matching
+    # it first is what used to swallow the marker.
+    if killer.rstrip().endswith("(unmatched)"):
+        return "?unmatched"
+    m = _RE_GD_KILLER_UID.match(killer)
+    if m:
+        return f"uid{m.group(1)} id{m.group(2)}"
+    if "(no object)" in killer:
+        return "no-object"
+    return "?"
+
+
 def report(now: list[dict], a, elapsed: float) -> int:
     base = json.loads(BASELINE.read_text(encoding="utf-8")) \
         if BASELINE.exists() else {}
     print(f"{'reference':<16}{'anchor':<9}{'GD dies':<9}{'model':<9}"
-          f"{'rows':<7}{'verdict':<8}{'vs baseline':<20}note")
+          f"{'rows':<7}{'verdict':<8}{'vs baseline':<20}note"
+          f"\tgd_killer\tmodel_killer\tmatch")
     regressed, npass = [], 0
     for r in now:
         b = base.get(r["key"])
@@ -696,11 +781,57 @@ def report(now: list[dict], a, elapsed: float) -> int:
         if r["status"] == "PASS":
             npass += 1
         note = " ".join(x for x in (r["note"], r["cause"]) if x)
+        gd_killer = gd_killer_short(r.get("killer", ""))
+        model_killer = r.get("model_killer", "") or "none"
+        gd_has_uid = gd_killer.startswith("uid")
+        model_has_uid = bool(r.get("model_killer", ""))
+        # If the model's death and GD's death are not the same event -- a
+        # different tick (outside --slack) or a trajectory that had already
+        # diverged (firstdiv is set) -- the two deaths happened at different
+        # places, so the objects each side names are not comparable.
+        #
+        # That gate is strictly narrower than the PASS test in verdict_of, so
+        # `same`/`diff` can only ever appear on a row that already passed: this
+        # column CONFIRMS that a passing row agrees on the killer too, and it
+        # cannot diagnose a FAIL. Reading a `-cmp` as "the model blamed the
+        # wrong object" is the error -- it blamed an object at a death that
+        # happened somewhere else.
+        if not (gd_has_uid and model_has_uid):
+            match = "-"
+        elif abs(r["model_died"] - r["gd_died"]) > a.slack or r["firstdiv"] is not None:
+            match = "-cmp"
+        elif gd_killer == model_killer:
+            match = "same"
+        else:
+            match = "diff"
         print(f"{r['key']:<16}{r.get('anchor', '-'):<9}{r['gd_died']:<9}"
               f"{r['model_died']:<9}{r['trace_rows']:<7}{r['status']:<8}"
-              f"{vs:<20}{note}")
+              f"{vs:<20}{note}"
+              f"\t{gd_killer}\t{model_killer}\t{match}")
+    arm = f", {' '.join(a.extra_flag)}" if a.extra_flag else ""
     print(f"--- {npass}/{len(now)} PASS ({elapsed:.1f}s, "
-          f"{Path(a.leveldp).name}) ---")
+          f"{Path(a.leveldp).name}{arm}) ---")
+    idx = json.loads(INDEX.read_text(encoding="utf-8")) if INDEX.exists() else {}
+    diffs, skipped, unmatched = [], 0, 0
+    for r in now:
+        killer = idx.get(r["key"], {}).get("killer", "")
+        if not _RE_GD_KILLER_UID.match(killer):
+            continue
+        if killer.rstrip().endswith("(unmatched)"):
+            unmatched += 1
+        mxy = _RE_GD_KILLER_XY.search(killer)
+        death_x = idx.get(r["key"], {}).get("death_x")
+        if not mxy or death_x is None:
+            skipped += 1
+            continue
+        diffs.append((abs(death_x - float(mxy.group(1))), r["key"]))
+    if diffs:
+        dmax, kmax = max(diffs, key=lambda t: t[0])
+        dmed = statistics.median(d for d, _ in diffs)
+        tail = f" ({skipped} skipped)" if skipped else ""
+        tail += f" ({unmatched} unmatched)" if unmatched else ""
+        print(f"reference killer vs its own death: max {dmax:.1f}px ({kmax}), "
+              f"median {dmed:.1f}px over {len(diffs)} rows with a uid{tail}")
     if a.json_out:
         Path(a.json_out).write_text(
             json.dumps({"leveldp": str(a.leveldp), "seconds": elapsed,
@@ -740,6 +871,11 @@ def main(argv=None) -> int:
     ap.add_argument("--bless", action="store_true",
                     help="save the current ledger as the baseline")
     ap.add_argument("--json", dest="json_out", default="")
+    ap.add_argument("--extra-flag", action="append", default=[],
+                    metavar="FLAG",
+                    help="extra leveldp flag for the model side, repeatable; "
+                         "write it as --extra-flag=--ceilpush, or argparse "
+                         "reads the value as an option of its own")
     # --- record ---
     ap.add_argument("--trunc", nargs="*", type=int,
                     help="record exactly these truncation ticks, on ONE level "

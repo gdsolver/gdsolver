@@ -382,7 +382,15 @@ def report(results: list[dict], base: dict, a) -> int:
     for r in results:
         b = base.get(str(r["lv"]), {})
         mark = ""
-        if b.get("iters") and r["cleared"]:
+        # `is not None`, not truthiness: A BASELINE OF 0 IS A BASELINE. Eight of
+        # the 22 levels are free in the baseline (lv2/4/5/6/8/9/13/17), and under
+        # the old test every one of them was skipped entirely -- no delta printed
+        # and NO CAP CHECK -- so a level could go from 0 iterations to any number
+        # and the run still printed PASS without a word. Measured on 2026-09-14:
+        # lv17 went 0 -> 21 (0 -> 24 fixups) under the wave kill-box changes and
+        # the report said nothing, while lv18's +1 was annotated. iter_cap
+        # already handles the zero (it reads ITER_UNKNOWN there, a cap of 180).
+        if b.get("iters") is not None and r["cleared"]:
             d = r["iters"] - b["iters"]
             if d:
                 mark = f"  (baseline {b['iters']}, {d:+d})"

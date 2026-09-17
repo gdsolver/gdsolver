@@ -1,0 +1,132 @@
+[
+ {
+  "x0": 90.0,
+  "x_ramp": 750.0,
+  "press_ahead": 0,
+  "press_t": 578,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 578,
+  "sup": 0
+ },
+ {
+  "x0": 1290.0,
+  "x_ramp": 1950.0,
+  "press_ahead": 2,
+  "press_t": 1501,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 1503,
+  "sup": 0
+ },
+ {
+  "x0": 2490.0,
+  "x_ramp": 3150.0,
+  "press_ahead": 4,
+  "press_t": 2423,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 2427,
+  "sup": 0
+ },
+ {
+  "x0": 3690.0,
+  "x_ramp": 4350.0,
+  "press_ahead": 6,
+  "press_t": 3345,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 3351,
+  "sup": 0
+ },
+ {
+  "x0": 4890.0,
+  "x_ramp": 5550.0,
+  "press_ahead": 8,
+  "press_t": 4267,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 4275,
+  "sup": 0
+ },
+ {
+  "x0": 6090.0,
+  "x_ramp": 6750.0,
+  "press_ahead": 10,
+  "press_t": 5190,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 5200,
+  "sup": 0
+ },
+ {
+  "x0": 7290.0,
+  "x_ramp": 7950.0,
+  "press_ahead": 12,
+  "press_t": 6112,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 6124,
+  "sup": 0
+ },
+ {
+  "x0": 8490.0,
+  "x_ramp": 9150.0,
+  "press_ahead": 14,
+  "press_t": 7034,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 7048,
+  "sup": 0
+ },
+ {
+  "x0": 9690.0,
+  "x_ramp": 10350.0,
+  "press_ahead": 16,
+  "press_t": 7957,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 7973,
+  "sup": 0
+ },
+ {
+  "x0": 10890.0,
+  "x_ramp": 11550.0,
+  "press_ahead": 18,
+  "press_t": 8879,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 8897,
+  "sup": 0
+ },
+ {
+  "x0": 12090.0,
+  "x_ramp": 12750.0,
+  "press_ahead": 20,
+  "press_t": 9801,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 9821,
+  "sup": 0
+ },
+ {
+  "x0": 13290.0,
+  "x_ramp": 13950.0,
+  "press_ahead": 22,
+  "press_t": 10724,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 10746,
+  "sup": 0
+ },
+ {
+  "x0": 14490.0,
+  "x_ramp": 15150.0,
+  "press_ahead": 24,
+  "press_t": 11646,
+  "box_bottom": 140.0,
+  "ramp_cy": 155.0,
+  "ramp_t": 11670,
+  "sup": 0
+ }
+]

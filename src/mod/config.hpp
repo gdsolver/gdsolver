@@ -184,6 +184,18 @@ struct Config {
     // rotseed: line, marked queue=withheld, and gets no --rotqueue. The A/B arm for
     // whether the queue in the search is what an lv22 run piles up on.
     bool dpRotSeedAnchor = true;
+    // cfg `dpswingpending`: an anchor taken on the tick a SWING's press takes effect carries
+    // the pending flip in --start's 16th field (see swingPendingAt in repair.hpp). On by
+    // default since v0.1.4; `dpswingpending=0` turns it off.
+    bool dpSwingPending = true;
+    // cfg `dphoverstrict`: an anchored robot whose vy is not flat into t0 gets no hover budget
+    // unless the hover starts on t0 itself (see robotHoverLeft in repair.hpp). On by default
+    // since v0.1.4; `dphoverstrict=0` turns it off.
+    bool dpHoverStrict = true;
+    // cfg `dpbandend`: pass --bandtrackend with the last tick the recording behind
+    // dp_band.txt reached, so a portal past it sets the band instead of the held last row
+    // (dp/src/dp/bands.hpp g_bandTrackEnd). On by default since v0.1.4; `dpbandend=0` turns it off.
+    bool dpBandEnd = true;
     // cfg `dpsnapshot`: keep a copy of the file inputs every solver call read (the moving-
     // geometry groups, the camera band, the fixups, the replayed plan) and of every anchored
     // search's emitted plan, each named by its own size/fnv so it matches the call's

@@ -89,6 +89,19 @@ inline std::vector<BandTrackRow> g_bandTrack;
 // so a run that sees no D/N/U row behaves exactly as it did before the kinds
 // existed; the readers that want to see the other kinds ask bandTrackKindAt.
 inline std::vector<size_t> g_bandTrackIntervals;
+// --bandtrackend <t>: the last tick the recording behind --bandtrack reached. -1 =
+// not given, and the last row is held indefinitely as before.
+// Holding the last row keeps the frontier's neighbourhood fresh while the band is the
+// CAMERA's, but a mode portal past the recording sets a new band the recording
+// cannot know about, and the held row overrides the one the portal writes into the
+// State. Measured on lv10 (a cold run, both kill-only iterations of it): the
+// solve for it3 read a track ending at t=14,410 whose last row was 180..420; the
+// ship portal at t=17,707 (cy 301) sets 150..450, GD descends to y=173.7 and dies on
+// a spike at 154, the model rides the stale floor at y=195 and calls the plan SOLVED.
+// Re-walked with the recorder's track the model follows GD to 0.025 px and dies too.
+// it2 is the same shape (ball portal at t=14,150, stale ceiling 390, model 375 vs GD
+// 397). Past the end the lookups answer "no row", so the State's portal band decides.
+inline long long g_bandTrackEnd = -1;
 // [2026-08-22 r107] **Look up the row at t+1.** The 36 fixups at lv22's vertical
 // entrance (x 20,000..20,090, the section where the band rises at +1.4px/tick)
 // named it: GD's seat is
@@ -105,6 +118,7 @@ inline std::vector<size_t> g_bandTrackIntervals;
 // until the next. Callers pick the phase -- see bandTrackAt and the fly floor.
 inline bool bandTrackRowAt(long long t, double& fl, double& ce) {
     if (g_bandTrackIntervals.empty()) return false;
+    if (g_bandTrackEnd >= 0 && t > g_bandTrackEnd) return false;
     size_t lo = 0, hi = g_bandTrackIntervals.size();
     while (lo + 1 < hi) {
         const size_t m = (lo + hi) / 2;
@@ -124,6 +138,7 @@ inline bool bandTrackRowAt(long long t, double& fl, double& ce) {
 inline bool bandTrackKindAt(long long t, BandKind& kind, double& fl, double& ce,
                             long long& age) {
     if (g_bandTrack.empty()) return false;
+    if (g_bandTrackEnd >= 0 && t > g_bandTrackEnd) return false;
     size_t lo = 0, hi = g_bandTrack.size();
     while (lo + 1 < hi) {
         const size_t m = (lo + hi) / 2;

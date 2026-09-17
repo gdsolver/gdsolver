@@ -12,7 +12,7 @@ src/phase1.cpp). DO NOT CHANGE THEM ON A WHIM - change both sides together.
     stop:       attempt tick x y yvel mode ...
     inject:     t x y vy mode          (the tick key is `t`, not `tick`)
     clearcheck: x levelMaxX goalX margin tick solve
-    killer:     tick id type ox oy px py
+    killer:     tick who id type ox oy px py    (who=p1|p2|?; only for a call that killed)
     gt_last:    attempt rows depth     signal that grouptrace_last.txt is finalised
 """
 

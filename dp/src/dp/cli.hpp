@@ -164,6 +164,17 @@ inline int cliMain(int argc, char** argv) {
     // option there reads argv[i+1]), so a flag passed LAST would never be seen.
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--touch-from-anchor")) g_touchFromAnchor = true;
+        // On by default since v0.1.4: the plain names still parse (and change
+        // nothing), the --no- forms are the off arm.
+        if (!std::strcmp(argv[i], "--spawnremap")) g_spawnRemap = true;
+        if (!std::strcmp(argv[i], "--touchretime")) g_touchRetime = true;
+        if (!std::strcmp(argv[i], "--shipslopekill")) g_shipSlopeKill = true;
+        if (!std::strcmp(argv[i], "--waveflipkill")) g_waveFlipKill = true;
+        if (!std::strcmp(argv[i], "--no-spawnremap")) g_spawnRemap = false;
+        if (!std::strcmp(argv[i], "--no-touchretime")) g_touchRetime = false;
+        if (!std::strcmp(argv[i], "--no-shipslopekill")) g_shipSlopeKill = false;
+        if (!std::strcmp(argv[i], "--no-waveflipkill")) g_waveFlipKill = false;
+        if (!std::strcmp(argv[i], "--latgap")) g_latGap = true;
         if (!std::strcmp(argv[i], "--memstat")) g_memStat = true;
         // --firebcheck: count violations of fireB's invariant (a set bit with no
         // tick, or a tick with no bit) and print the totals at the end.
@@ -303,6 +314,9 @@ inline int cliMain(int argc, char** argv) {
             else std::fprintf(stderr, "leveldp: --touchprey=%s is not parent|button; using parent\n", v);
         }
         if (!std::strcmp(argv[i], "--ceilpush")) g_ceilPush = true;   // value-less, same reason
+        if (!std::strcmp(argv[i], "--slopelaw")) g_slopeLaw = true;   // value-less, same reason
+        if (!std::strcmp(argv[i], "--no-slopelaw")) g_slopeLaw = false;   // the off arm since v0.1.4
+        if (!std::strcmp(argv[i], "--nofreeside")) g_noFreeSide = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--escrotahead")) g_escRotAhead = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--bonkarm")) g_bonkArm = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--witnessframe")) g_witnessFrame = true;   // value-less, same reason
@@ -577,6 +591,8 @@ inline int cliMain(int argc, char** argv) {
                 std::fprintf(stderr, "bandtrack: cannot open %s\n", argv[i + 1]);
             }
         }
+        // --bandtrackend <t>: where the recording behind --bandtrack stops (bands.hpp)
+        if (!std::strcmp(argv[i], "--bandtrackend")) g_bandTrackEnd = std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--startband")) {
             // Three different facts used to leave through the same line: a
             // collapsed band, a pair the wrong way round, and a string that is
@@ -1084,6 +1100,7 @@ inline int cliMain(int argc, char** argv) {
         // every climb died under it while the machinery asked for capacity).
         // Auto-window exactly then: the levels below 33 triggers never trip this,
         // and early anchors keep the measured-safe plain list.
+        g_touchRetimeFrom = t0;   // --touchretime re-times only boxes entered from here on
         bool winTouch = g_touchFromAnchor;
         if (!winTouch && x0 > -1e17) {
             const std::vector<TouchTrig> plain =
@@ -3531,6 +3548,9 @@ inline int cliMain(int argc, char** argv) {
             if (input == 1 && s.mode == 0 && !s.grounded && orbsEmpty
                 && !s.dashing)
                 return;
+            // --latgap: no edge on a tick GD cannot put one (frames.hpp g_latGap)
+            if (g_latGap && s.latLock && input != (int)s.action)
+                return;
             Child& kid = kids[i];
             bool dead = false;
             kid.s = stepBoth(s, input, K, dead);
@@ -3557,6 +3577,10 @@ inline int cliMain(int argc, char** argv) {
             // hashed to the same cell -- which is the whole bug the rHover
             // note in keyOf describes.
             kid.s.action = (uint8_t)input;
+            if (g_latGap) {
+                const auto lat2 = [](uint8_t m) { return m == 1 || m == 3; };
+                kid.s.latLock = (lat2(kid.s.mode) && !lat2(s.mode) && !kid.s.dual) ? 1 : 0;
+            }
             // Route tightness rides along with the child (State c = s copies it
             // already, so this only adds this tick's own contribution). Read by
             // the goal pick below; nothing else looks at it.

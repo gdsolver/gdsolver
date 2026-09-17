@@ -373,16 +373,30 @@ class $modify(PlayLayer) {
         // Observation-only no-death (cfg `nodeath=1`). Hitboxes stay active, so portals and
         // triggers fire normally and the recording reaches the end in a single run
         if (g_cfg.noDeath) return;
-        // Count which player a death in a dual section came from (diagnostic)
+        // Count which player a death in a dual section came from (diagnostic).
+        // COUNTED AFTER THE ORIGINAL CALL, for the same reason the killer: line
+        // below is written there: `!wasDead` alone counts every destroyPlayer GD
+        // makes, and GD makes anti-cheat calls that kill nobody. Measured on
+        // calib_slopespike_wave, which completes at 100% with no `death:` line at
+        // all and still reported `deaths: p1=6`. So this counter was over the
+        // population "destroyPlayer was called", not "the player died" -- the
+        // defect the killer: line had until 3576515, left behind in the counter.
         bool wasDead = player->m_isDead;
-        if (!wasDead && player) {
-            if (player == m_player1) ++solver::g_deathsP1;
-            else if (player == m_player2) ++solver::g_deathsP2;
-            else ++solver::g_deathsOther;
-        }
-        // Direct evidence of what killed the player (only while measuring gatetrace)
-        if (!wasDead && player == m_player1 && solver::g_gateTrace) {
-            char kb[280];
+        // Direct evidence of what killed the player (only while measuring gatetrace).
+        // The line is BUILT here, before the original call, because px/py move inside
+        // it -- and WRITTEN after it, only for a call that actually put the player in
+        // the dead state. GD reaches destroyPlayer with anti-cheat pseudo-calls that
+        // kill nobody (the transition test below is the same one), and a line emitted
+        // for those reports "destroyPlayer was called", not "the player died": one
+        // replay opened with thirteen of them and carried the name of an object at
+        // x=0 to a death 15,000px later. Both bodies are named as well -- a dual
+        // section's p2 death ends the run just as p1's does, and restricting the line
+        // to p1 discarded the only record of who GD blamed there.
+        char kb[280];
+        const bool gateLine = !wasDead && solver::g_gateTrace;
+        if (gateLine) {
+            const char* who = player == m_player1 ? "p1"
+                            : player == m_player2 ? "p2" : "?";
             if (object) {
                 // Emit BOTH the position and the hitbox. For an object moved by a group,
                 // getPosition may stay at its entry value while only the rect moves (the
@@ -391,9 +405,9 @@ class $modify(PlayLayer) {
                 // object 441px away"
                 auto orr = object->getObjectRect();
                 snprintf(kb, sizeof(kb),
-                    "killer: tick=%lld uid=%d id=%d type=%d ox=%.1f oy=%.1f "
+                    "killer: tick=%lld who=%s uid=%d id=%d type=%d ox=%.1f oy=%.1f "
                     "rect=%.2f,%.2f,%.2f,%.2f on=%d px=%.1f py=%.1f",
-                    (long long)g_tick, object->m_uniqueID, object->m_objectID,
+                    (long long)g_tick, who, object->m_uniqueID, object->m_objectID,
                     (int)object->m_objectType,
                     object->getPositionX(), object->getPositionY(),
                     orr.origin.x, orr.origin.y, orr.size.width, orr.size.height,
@@ -402,16 +416,23 @@ class $modify(PlayLayer) {
                     player->getPositionX(), player->getPositionY());
             }
             else
-                snprintf(kb, sizeof(kb), "killer: tick=%lld (no object) px=%.1f py=%.1f",
-                    (long long)g_tick,
+                snprintf(kb, sizeof(kb),
+                    "killer: tick=%lld who=%s (no object) px=%.1f py=%.1f",
+                    (long long)g_tick, who,
                     player->getPositionX(), player->getPositionY());
-            writeResult(kb);
         }
         {
             // GD records the level's percentage from inside destroyPlayer; the guard makes it
             // take its own no-record path (see NoRecordGuard).
             NoRecordGuard nr(this);
             PlayLayer::destroyPlayer(player, object);
+        }
+        // ...and now the call has said whether it killed anybody.
+        if (gateLine && player->m_isDead) writeResult(kb);
+        if (!wasDead && player->m_isDead) {
+            if (player == m_player1) ++solver::g_deathsP1;
+            else if (player == m_player2) ++solver::g_deathsP2;
+            else ++solver::g_deathsOther;
         }
         restoreProgress();
         // In dual mode a p2 death also ends the run (restricting to p1, sections where only

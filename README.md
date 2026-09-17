@@ -37,24 +37,24 @@ custom levels, platformer mode and coins stand.
 
 ## Results
 
-The whole table is one cold regression run (2026-09-14) — `python
+The whole table is one cold regression run (2026-09-17) — `python
 py/cold_regress.py --one-session`, the whole suite inside a single game session,
 no plan and no solution file to start from — and it is run again on every change
 that reaches the loop.
 
 | # | Level | Repairs (v0.1.3) | Time (v0.1.3) | | # | Level | Repairs (v0.1.3) | Time (v0.1.3) |
 |--:|---|--:|--:|---|--:|---|--:|--:|
-| 1 | Stereo Madness | 1 (0) | 29 s (17 s) | | 12 | Theory of Everything | 3 (3) | 16 s (13 s) |
-| 2 | Back On Track | 0 (1) | 11 s (13 s) | | 13 | Electroman Adventures | 0 (0) | 16 s (15 s) |
-| 3 | Polargeist | 1 (0) | 22 s (14 s) | | 14 | Clubstep | 6 (7) | 35 s (30 s) |
-| 4 | Dry Out | 0 (0) | 12 s (12 s) | | 15 | Electrodynamix | 4 (2) | 23 s (19 s) |
-| 5 | Base After Base | 0 (3) | 14 s (16 s) | | 16 | Hexagon Force | 27 (55) | 3 m 28 s (4 m 13 s) |
-| 6 | Can't Let Go | 0 (0) | 12 s (12 s) | | 17 | Blast Processing | 0 (1) | 25 s (25 s) |
-| 7 | Jumper | 1 (2) | 20 s (23 s) | | 18 | Theory of Everything 2 | 8 (8) | 1 m 16 s (40 s) |
-| 8 | Time Machine | 0 (1) | 13 s (19 s) | | 19 | Geometrical Dominator | 6 (18) | 1 m 1 s (1 m 34 s) |
-| 9 | Cycles | 0 (3) | 11 s (16 s) | | 20 | Deadlocked | 49 (37) | 10 m 49 s (6 m 55 s) |
-| 10 | xStep | 5 (6) | 33 s (27 s) | | 21 | Fingerdash | 8 (30) | 2 m 38 s (3 m 47 s) |
-| 11 | Clutterfunk | 3 (1) | 40 s (18 s) | | 22 | Dash | 63 (57) | 13 m 25 s (7 m 48 s) |
+| 1 | Stereo Madness | 1 (0) | 30 s (17 s) | | 12 | Theory of Everything | 4 (3) | 18 s (13 s) |
+| 2 | Back On Track | 0 (1) | 11 s (13 s) | | 13 | Electroman Adventures | 0 (0) | 17 s (15 s) |
+| 3 | Polargeist | 1 (0) | 23 s (14 s) | | 14 | Clubstep | 3 (7) | 31 s (30 s) |
+| 4 | Dry Out | 0 (0) | 12 s (12 s) | | 15 | Electrodynamix | 5 (2) | 25 s (19 s) |
+| 5 | Base After Base | 0 (3) | 14 s (16 s) | | 16 | Hexagon Force | 14 (55) | 4 m 38 s (4 m 13 s) |
+| 6 | Can't Let Go | 0 (0) | 13 s (12 s) | | 17 | Blast Processing | 0 (1) | 27 s (25 s) |
+| 7 | Jumper | 1 (2) | 20 s (23 s) | | 18 | Theory of Everything 2 | 2 (8) | 57 s (40 s) |
+| 8 | Time Machine | 0 (1) | 15 s (19 s) | | 19 | Geometrical Dominator | 4 (18) | 1 m 22 s (1 m 34 s) |
+| 9 | Cycles | 0 (3) | 12 s (16 s) | | 20 | Deadlocked | 16 (37) | 3 m 38 s (6 m 55 s) |
+| 10 | xStep | 1 (6) | 26 s (27 s) | | 21 | Fingerdash | 5 (30) | 1 m 54 s (3 m 47 s) |
+| 11 | Clutterfunk | 2 (1) | 34 s (18 s) | | 22 | Dash | 45 (57) | 12 m 13 s (7 m 48 s) |
 
 In brackets: the same two numbers as `v0.1.3` published them (2026-08-31,
 measured 2026-08-29). That run gave each level its own game session, so the two
@@ -78,7 +78,7 @@ real one.
 
 **Time** comes from that same run — 8 solver threads on a 16-core desktop — and
 it counts everything from the level being built to the solution being written;
-the 22 add up to the 38 minutes the suite took. Read it as a guide and not as a
+the 22 add up to the 30 minutes the suite took. Read it as a guide and not as a
 contract: the clock is not what the regression compares, the repair count is, and
 only that one is deterministic.
 
@@ -196,9 +196,9 @@ Read that as a claim about *parts*, not about dates. What costs rounds is a
 mechanic the model has not been measured against, and mechanics arrived with
 versions, which is the only reason the era works as a proxy at all — and the
 order does not actually follow the versions. Dash, which is 2.2, is the most
-expensive at 63 rounds, but the next two are both 1.x: Deadlocked needs 49 and
-Hexagon Force 27, the latter because of its dual section. Fingerdash, which is
-2.0, needs 8, and Blast Processing, two versions after Hexagon Force, solves on
+expensive at 45 rounds, but the next two are both 1.x: Deadlocked needs 16 and
+Hexagon Force 14, the latter because of its dual section. Fingerdash, which is
+2.0, needs 5, and Blast Processing, two versions after Hexagon Force, solves on
 the first plan. A 2.2 level that happens to be a plain cube level may well do the
 same, and a 1.6 level with a dual may not.
 
