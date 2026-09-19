@@ -1,11 +1,12 @@
 """Paths to the repository, the build outputs and the machine-local trees.
 
 Everything here is derived from the location of this file, so a clone works
-without editing. Four environment variables override the machine-local parts:
+without editing. Five environment variables override the machine-local parts:
 
     GDSOLVER_LAB       private tree: official-level dumps, gdref, fixups_log
                        archives, development notes            (default <repo>/../GD-lab)
     GDSOLVER_WORKERS   root of the isolated GD instances      (default <repo>/../GD-workers)
+    GDSOLVER_GD_BASE   the frozen game build the workers run  (default <workers>/base-<gd.win>)
     GDSOLVER_LEVELDP   the solver executable to drive         (default <repo>/build/dp/...)
     GD_DIR             the Geometry Dash installation         (used by py/dev.py)
 """
@@ -53,13 +54,23 @@ DOCS = REPO / "docs"
 # Geode's CMake writes build/<mod.id>.geode, so the package name follows the id.
 # Read it rather than repeating it: the name was spelled out in four places and
 # every one of them would have gone on deploying a file that no longer existed.
-MOD_ID = json.loads((REPO / "mod.json").read_text(encoding="utf-8"))["id"]
+_MOD_JSON = json.loads((REPO / "mod.json").read_text(encoding="utf-8"))
+MOD_ID = _MOD_JSON["id"]
 BUILD_MOD = REPO / "build" / f"{MOD_ID}.geode"
+# The build of the game the mod targets, and so the one every measurement here
+# was taken on. The bindings and Geode's own load check follow it.
+GD_VERSION = _MOD_JSON["gd"]["win"]
+GEODE_VERSION = _MOD_JSON["geode"]
 # Where a measurement session snapshots the .geode it is using, so that a
 # rebuild of the mainline does not swap the binary under a running measurement.
 MOD_CACHE = REPO / "mcp" / ".cache"
 
 WORKERS_ROOT = _machine_local("GD-workers", "GDSOLVER_WORKERS")
+# The frozen copy of that build which the workers are seeded from and checked
+# against at every launch (gdtas/gdbase.py). One directory per build, so a
+# mod.json naming a new build finds nothing until that build is frozen too.
+GD_BASE = Path(os.environ.get("GDSOLVER_GD_BASE")
+               or WORKERS_ROOT / f"base-{GD_VERSION}")
 # The range the mainline batch (cold_regress and friends) claims as its pool.
 # Two GD processes sharing one data root mix their result.txt, so the resident
 # side (the MCP server) has to use ids outside this range.

@@ -1,5 +1,6 @@
 #pragma once
 // Session lifecycle: configuration from the UI, live commands, loadConfig, endSession.
+#include "mod/dp_bridge.hpp"
 #include "mod/plan_io.hpp"
 
 namespace p1 {
@@ -256,6 +257,15 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
         if (g_cfg.dpSolve) grouptrace::g_on = true;
     }
     else if (key == "dphorizon") cfgNum(key, val, g_cfg.dpHorizon);
+    else if (key == "dpstephorizon") cfgNum(key, val, g_cfg.dpStepHorizon);
+    else if (key == "dpfastveto") g_cfg.dpFastVeto = (val == "1");
+    else if (key == "dpfastvetoall") g_cfg.dpFastVetoAll = (val == "1");
+    else if (key == "dprejoinwatch") g_cfg.dpRejoinWatch = (val == "1");
+    else if (key == "dprejoinuse") g_cfg.dpRejoinUse = (val == "1");
+    else if (key == "dprejoinchain") g_cfg.dpRejoinChain = (val == "1");
+    else if (key == "dprejoinfull") g_cfg.dpRejoinFull = (val == "1");
+    else if (key == "dpoffboardkill") g_cfg.dpOffBoardKill = (val == "1");
+    else if (key == "dpadaptivehorizon") g_cfg.dpAdaptiveHorizon = (val == "1");
     else if (key == "dpmaxiters") cfgNum(key, val, g_cfg.dpMaxIters);
     else if (key == "dpseedplan") g_cfg.dpSeedPlan = val;
     else if (key == "dpshow") cfgNum(key, val, g_cfg.dpShow);
@@ -275,6 +285,7 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
     else if (key == "dphoverstrict") g_cfg.dpHoverStrict = (val != "0");
     else if (key == "dpbandend") g_cfg.dpBandEnd = (val != "0");
     else if (key == "dpsnapshot") g_cfg.dpSnapshot = (val == "1");
+    else if (key == "dpcheck") g_cfg.dpCheck = (val == "1");
     else if (key == "dprotqtoggle") g_cfg.dpRotQToggle = (val == "1");
     else if (key == "dpwatchfired") {
         g_cfg.dpWatchFired.clear();
@@ -767,6 +778,10 @@ inline void endSession(const std::string& why) {
     }
     g_realtimeOverride = true;
     watchSpeedSet(WATCH_SPEED_1X);
+    // A search waiting for checkpoint judgements (cfg `dpcheck`) would wait forever once nothing
+    // flies them: release it. Harmless when nothing is waiting.
+    dpbridge::checkSubscribe(false);
+    dpbridge::cancelSearch(true);
     g_sessionOver = true;
     writeResult("session_end: " + why);
     flushAll();

@@ -35,6 +35,52 @@
 
 namespace dp {
 
+// ---- per-tick input levels -> the plan's `input=press,level` edges --------------------------
+//
+// ONE copy of this conversion, because two callers now depend on it agreeing with itself: the
+// plan writer at the end of cliMain, and the common-prefix publisher inside the layer loop
+// (dp/progress.hpp). The prefix is only usable if the inputs the caller flies are the ones the
+// emitted plan WOULD have carried for those ticks -- an edge placed one tick out is 2 ticks of
+// dy at the seam (the measured lv20 case in the writer's own note below), and the caller would
+// be testing a plan the search never proposed.
+//
+// It is a left-to-right scan carrying `prev`, so running it over a PREFIX of `lvl` gives
+// exactly the leading edges it gives over the whole of `lvl`: every index it reads
+// (`i - 1`, `i - lat0`) is smaller than `i`, so nothing behind the cut is consulted.
+struct PlanEdge {
+    long long press;   // the tick the button changes state on
+    int level;         // ...and to what
+};
+
+// `modeAt[i]` is the mode at the END of tick t0+i+1, `prevHeld` the button state the plan
+// starts from and `initMode` the anchor's mode (used when the lookback reaches before tick 0).
+inline std::vector<PlanEdge> planEdges(const std::vector<uint8_t>& lvl,
+                                       const std::vector<uint8_t>& modeAt, long long t0,
+                                       int prevHeld, uint8_t initMode, bool oldLatency) {
+    std::vector<PlanEdge> out;
+    int prev = prevHeld;
+    for (size_t i = 0; i < lvl.size(); ++i) {
+        if (lvl[i] == prev) continue;
+        const long long effect = t0 + (long long)i + 1;
+        auto latOf = [](uint8_t m) { return (m == 1 || m == 3) ? 2 : 1; };
+        auto modeAtTick = [&](long long j) -> uint8_t {
+            if (j < 0) return initMode;
+            if ((size_t)j >= modeAt.size()) return modeAt.empty() ? initMode : modeAt.back();
+            return modeAt[(size_t)j];
+        };
+        int lat;
+        if (oldLatency) {
+            lat = latOf(modeAt[i]);
+        } else {
+            const int lat0 = latOf(modeAtTick((long long)i - 1));
+            lat = latOf(modeAtTick((long long)i - lat0));
+        }
+        out.push_back(PlanEdge{effect - lat, (int)lvl[i]});
+        prev = lvl[i];
+    }
+    return out;
+}
+
 inline int cliMain(int argc, char** argv) {
     // Whatever the last call concluded must not be readable as this one's answer. Cleared here
     // rather than at the search, so an early return (bad arguments, unreadable level) also
@@ -176,6 +222,8 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--no-waveflipkill")) g_waveFlipKill = false;
         if (!std::strcmp(argv[i], "--latgap")) g_latGap = true;
         if (!std::strcmp(argv[i], "--memstat")) g_memStat = true;
+        // --phaseprof: wall time per phase of the layer loop, printed once at the end. Print only.
+        if (!std::strcmp(argv[i], "--phaseprof")) g_phaseProf = true;
         // --firebcheck: count violations of fireB's invariant (a set bit with no
         // tick, or a tick with no bit) and print the totals at the end.
         if (!std::strcmp(argv[i], "--firebcheck")) g_fireBCheck = true;
@@ -233,6 +281,17 @@ inline int cliMain(int argc, char** argv) {
                 std::printf("refwatch: %zu reference rows\n", g_refRows.size());
             }
         }
+        // --rejoinwatch <trace.csv> / --rejoinafter <tick>: print only (refwatch.hpp).
+        if (!std::strcmp(argv[i], "--rejoinwatch") && i + 1 < argc) {
+            if (!loadTraceInto(argv[i + 1], g_rjRows))
+                std::printf("rejoin: cannot read %s\n", argv[i + 1]);
+            else
+                g_rjOn = true;
+        }
+        if (!std::strcmp(argv[i], "--rejoinuse")) g_rjUse = true;
+        if (!std::strcmp(argv[i], "--rejoinfull")) g_rjFull = true;
+        if (!std::strcmp(argv[i], "--rejoinafter") && i + 1 < argc)
+            g_rjAfter = std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--refeps") && i + 1 < argc)
             g_refEps = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--no-miniwave")) g_noMiniWave = true;
@@ -734,6 +793,8 @@ inline int cliMain(int argc, char** argv) {
         }
         if (!std::strcmp(argv[i], "--dynhazpad")) g_dynHazPad = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--maxplayy")) g_maxPlayY = std::atof(argv[i + 1]);
+        if (!std::strcmp(argv[i], "--offboard") && i + 1 < argc)
+            g_offBoardMargin = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--shiftdbg")) g_shiftDbgUid = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--deadband")) {
             double a0 = 0, a1 = 0, b0 = -1e18, b1 = 1e18; int md = -1;
@@ -2215,6 +2276,25 @@ inline int cliMain(int argc, char** argv) {
     std::vector<State> cur, nxt;
     std::vector<Node> arena;
     arena.push_back(Node{0});
+    // The mode of the state each arena node was created for, parallel to `arena` and ONLY
+    // filled when the checkpoint channel has a subscriber (dp/progress.hpp). A checkpoint's
+    // `input=` edges have to carry the plan writer's per-mode latency, and the writer reads
+    // that off `modeAt`, which does not exist until the witness resim runs at the end of the
+    // call. The lineage's own modes are the same sequence and they are available now.
+    // Costs one byte per node while a subscriber is listening and nothing at all otherwise --
+    // which is why it is a side vector and not three spare bits of Node: Node's parent field is
+    // 31 bits wide and the arena has been measured at 147.9M nodes.
+    const bool checkWanted = g_check.enabled.load(std::memory_order_relaxed);
+    std::vector<uint8_t> arenaMode;
+    if (checkWanted) arenaMode.push_back(0);   // the root, which no state owns
+    // This call's checkpoints, not the previous call's -- and cleared again on the way OUT, so a
+    // finished call leaves nothing behind that still looks live, and a judgement that arrives for
+    // it afterwards is refused (dp/progress.hpp SearchCheckpoints::pass).
+    struct CheckGuard {
+        bool on;
+        ~CheckGuard() { if (on) g_check.reset(); }
+    } checkGuard{checkWanted};
+    if (checkWanted) g_check.reset();
     // NOTE: init keeps being amended below (band seed, anchor dx). The root
     // state is pushed AFTER the last amendment -- it used to be pushed here,
     // which silently dropped the seeded band and the anchor dx from the
@@ -3162,10 +3242,32 @@ inline int cliMain(int argc, char** argv) {
     }
     cur.push_back(init);   // root state, AFTER every init amendment (see above)
     // Announce the search to anything watching from another thread (dp/progress.hpp). The end
-    // is announced from the guard below, so that every way out of the loop clears it
-    g_progress.begin(t0, horizon > 0 ? t0 + horizon : tEnd);
+    // is announced from the guard below, so that every way out of the loop clears it.
+    //
+    // THE LAST LAYER THIS LOOP CAN PROCESS, which is not `t0 + horizon`. The horizon bounds the
+    // PLAN, not the search: the loop runs on to t0 + 2*horizon and only then takes a survivor
+    // (the survivor guarantee below), and it can never run past tEnd either way. Announcing
+    // t0 + horizon gave the mod's search bar a denominator it is wrong on both sides of --
+    // under the short horizon (3,000) the tick runs PAST it, and under the full one (level
+    // length + 2,000) an anchored tail at t0=18,000 announced 44,000-odd while the loop stops
+    // at tEnd around 21,000, so the bar could never fill. Nothing the CLI prints reads this
+    // field (it is written here and read only through dpbridge::progress), so the printed
+    // output is unchanged.
+    g_progress.begin(t0, horizon > 0 ? std::min(tEnd, t0 + 2 * horizon) : tEnd);
     struct ProgressGuard { ~ProgressGuard() { g_progress.end(); } } progressGuard;
+    // --phaseprof buckets: 0 group setup, 1 step, 2 dedupe/merge, 3 cap, 4 gc, 5 mem+checkpoints,
+    // 6 the rest of the layer (progress, prints, next layer's top).
+    double pp[7] = {0, 0, 0, 0, 0, 0, 0};
+    auto ppLast = std::chrono::steady_clock::now();
+    auto ppMark = [&](int b) {
+        if (!g_phaseProf) return;
+        const auto n = std::chrono::steady_clock::now();
+        pp[b] += std::chrono::duration<double>(n - ppLast).count();
+        ppLast = n;
+    };
+    const auto ppStart = std::chrono::steady_clock::now();
     for (long long t = t0 + 1; t <= tEnd && !solved; ++t) {
+        ppMark(6);
         nxt.clear();
         // ---- reference watch, part 1: where is it now (--refwatch) ---------
         // Locate the reference's PARENT in the frontier before the layer runs.
@@ -3284,6 +3386,7 @@ inline int cliMain(int argc, char** argv) {
         auto emit = [&](State s, const State& from, uint8_t action, uint64_t k) {
             auto finish = [&](State& stored) {
                 arena.push_back(Node{from.parent | ((uint32_t)action << 31)});
+                if (checkWanted) arenaMode.push_back(s.mode);
                 s.parent = (uint32_t)(arena.size() - 1);
                 s.action = action;
                 stored = s;
@@ -3510,6 +3613,7 @@ inline int cliMain(int argc, char** argv) {
         seen.clear();   // per GROUP, not per layer (see the note above)
         (void)x; (void)xPrev;
         const StepCtx K{x, xPrev, dxUsed, t, &near, &ports, &pads, &orbs, &slps, &spds, &SP, &SPmini, &UP, &UPmini, &trigs};
+        ppMark(0);
         // ---- phase 1: STEP every state of this group (parallel) -------------
         // Stepping is pure -- it reads the shared windows and writes only its
         // own child -- so it parallelises exactly. The dedupe, the arena and
@@ -3632,6 +3736,7 @@ inline int cliMain(int argc, char** argv) {
             pool->parallelFor(kids.size(), stepKid);
         else
             for (size_t i = 0; i < kids.size(); ++i) stepKid(i);
+        ppMark(1);
         // --rotwatch: the rotations this group's children actually took, counted
         // serially after the parallel step. Print only.
         if (g_rotWatchLo >= 0 && t >= g_rotWatchLo && t <= g_rotWatchHi) {
@@ -3804,6 +3909,7 @@ inline int cliMain(int argc, char** argv) {
                 const State& from = cur[gidx[src >> 1]];
                 const uint8_t action = (uint8_t)(src & 1);
                 arena.push_back(Node{from.parent | ((uint32_t)action << 31)});
+                if (checkWanted) arenaMode.push_back(kids[src].s.mode);
                 nxt.push_back(kids[src].s);
                 nxt.back().parent = (uint32_t)(arena.size() - 1);
                 nxt.back().action = action;
@@ -3829,6 +3935,7 @@ inline int cliMain(int argc, char** argv) {
                     const uint8_t action = (uint8_t)(g & 1);
                     arena.push_back(
                         Node{from.parent | ((uint32_t)action << 31)});
+                    if (checkWanted) arenaMode.push_back(kids[g].s.mode);
                     goalState = kids[g].s;
                     goalState.parent = (uint32_t)(arena.size() - 1);
                     goalState.action = action;
@@ -3966,6 +4073,7 @@ inline int cliMain(int argc, char** argv) {
                 g_trigReported |= m;
             }
         }
+        ppMark(2);
         // ---- stride cap, PER CLASS ------------------------------------------
         // A "class" is what makes two states play a different game: mode, size,
         // gravity, dual, speed. The cap used to be one stride over the whole
@@ -4166,6 +4274,38 @@ inline int cliMain(int argc, char** argv) {
         // far back they are actually different (--clearprobe only; reads the
         // arena, changes nothing).
         if (g_clearProbe && solved) measureGoalDiversity(nxt, arena, goalX);
+        if (g_rjOn) {
+            if ((long long)t == g_rjAfter) {
+                const auto rr = g_rjRows.find((long long)t);
+                const int oi = rr == g_rjRows.end() ? -1 : refFind(nxt, rr->second);
+                g_rjOldNode = oi >= 0 ? nxt[(size_t)oi].parent : 0xffffffffu;
+                std::printf("rejoin: the old path is %s the frontier at its death tick %lld\n",
+                            oi >= 0 ? "in" : "NOT in", (long long)t);
+            }
+            const long long tt = (long long)t;
+            const int ji = rejoinLayer(nxt, tt, [&](const State& s) {
+                if (g_rjOldNode == 0xffffffffu) return false;
+                uint32_t n = s.parent;
+                for (long long k = tt; k > g_rjAfter; --k) n = arena[n].parent();
+                return n == g_rjOldNode;
+            }, [&](const State& s, const RefRow& r) {
+                return !g_rjFull || (r.haveKey && keyOf(s, tt) == r.key);
+            });
+            // ...and only onto an old plan that goes on: a trace that ends a tick past the join
+            // (the old plan was a PARTIAL that died there) would turn a dead end into a SOLVED.
+            const bool rjGoesOn = !g_rjRows.empty() && g_rjRows.rbegin()->first - tt >= kRjMinTail;
+            if (g_rjUse && ji >= 0 && !solved && rjGoesOn) {
+                solved = true;
+                goalState = nxt[(size_t)ji];
+                planCut = 0;
+                g_rjJoinT = tt;
+                g_outcome.rejoinT = tt;
+                bestT = tt;
+                std::printf("rejoin: JOINED the old plan at t=%lld (%lld ticks past its death), "
+                            "stopping the search here\n", tt, tt - g_rjAfter);
+                break;
+            }
+        }
         if (qfHere)
             std::printf("qfold: t=%lld frontier=%zu kept=%zu lostq=%lld keys=%lld\n",
                         (long long)t, qfPre, nxt.size(), qfLost, qfKeys);
@@ -4200,6 +4340,7 @@ inline int cliMain(int argc, char** argv) {
             planCut = t0 + horizon;
             break;
         }
+        ppMark(3);
         // ---- mark-compact GC ----
         // The arena is append-only and keeps every dead lineage's whole
         // ancestor chain; on lv16 cap=40000 it reached 147.9M nodes (564 MiB)
@@ -4224,6 +4365,13 @@ inline int cliMain(int argc, char** argv) {
             std::vector<uint32_t> remap(arena.size(), 0);
             std::vector<Node> na;
             na.reserve(keep);
+            // The mode side vector is indexed by the same numbers, so it is compacted in the
+            // same pass or it would describe the nodes the arena used to hold. Nothing that has
+            // ALREADY been published can be reached from here -- a published prefix is ticks
+            // and levels, never indices (dp/progress.hpp) -- so this only has to keep the live
+            // array consistent for the next LCA walk.
+            std::vector<uint8_t> nm;
+            if (checkWanted) nm.reserve(keep);
             for (size_t i = 0; i < arena.size(); ++i) {
                 if (!mark[i]) continue;
                 remap[i] = (uint32_t)na.size();
@@ -4231,18 +4379,26 @@ inline int cliMain(int argc, char** argv) {
                 // remap[parent()] is already final here
                 na.push_back(Node{remap[arena[i].parent()]
                                   | ((uint32_t)arena[i].action() << 31)});
+                if (checkWanted) nm.push_back(arenaMode[i]);
             }
             const size_t before = arena.size();
             arena.swap(na);
             na = std::vector<Node>();   // release the old allocation NOW
+            if (checkWanted) {
+                arenaMode.swap(nm);
+                nm = std::vector<uint8_t>();
+            }
             for (State& s : cur) s.parent = remap[s.parent];
             for (State& s : nxt) s.parent = remap[s.parent];
+            if (g_rjOldNode != 0xffffffffu)
+                g_rjOldNode = mark[g_rjOldNode] ? remap[g_rjOldNode] : 0xffffffffu;
             gcNext = std::max(g_gcNodes, arena.size() * 2);
             std::printf("gc t=%lld arena %zu -> %zu nodes (%.1f%% live)\n", t,
                         before, arena.size(),
                         100.0 * (double)arena.size() / (double)before);
             std::fflush(stdout);
         }
+        ppMark(4);
         // ---- memory budget ----
         // Estimate the search's own structures and stop GROWING before the OS
         // stops us (the lv16 run died as exit 255 with zero diagnostics). The
@@ -4250,7 +4406,9 @@ inline int cliMain(int argc, char** argv) {
         // still be alive (t-t0)/2 ticks past its end, i.e. the same contract
         // as the horizon cut, just with a smaller effective horizon.
         if (g_memLimitMiB > 0 && !solved && (t & 127) == 0 && t - t0 > 2) {
-            const size_t est = arena.capacity() * sizeof(Node)
+            // arenaMode is empty with no subscriber, so this term is 0 and the estimate --
+            // and therefore the tick this limit fires on -- is exactly what it was.
+            const size_t est = arena.capacity() * sizeof(Node) + arenaMode.capacity()
                                + (cur.capacity() + nxt.capacity()) * sizeof(State)
                                + seen.bucket_count() * 8 + seen.size() * 48;
             if (est > g_memLimitMiB * (size_t)1048576) {
@@ -4265,6 +4423,45 @@ inline int cliMain(int argc, char** argv) {
                 break;
             }
         }
+        // ---- checkpoints (dp/progress.hpp) ----
+        //
+        // At a checkpoint layer, publish the lineage of the frontier's FIRST state, cut at this
+        // layer, for the caller to fly. The first state because the frontier's order is a
+        // function of the search alone, so the same call publishes the same lineage every time
+        // -- which state is flown matters less than that the choice never depends on the clock.
+        // Every state in `cur` is alive in the model through tick t, so the game killing this
+        // lineage at or before t is a disagreement with the model by construction.
+        if (checkWanted && !solved && !cur.empty() && isCheckpointLayer(t - t0)) {
+            std::vector<uint8_t> plvl, pmode;
+            plvl.reserve((size_t)(t - t0));
+            pmode.reserve((size_t)(t - t0));
+            for (uint32_t i = cur.front().parent; i != 0; i = arena[i].parent()) {
+                plvl.push_back(arena[i].action());
+                pmode.push_back(arenaMode[i]);
+            }
+            std::reverse(plvl.begin(), plvl.end());
+            std::reverse(pmode.begin(), pmode.end());
+            SearchCheckpoints::Point p;
+            p.t0 = t0;
+            p.tick = t0 + (long long)plvl.size();
+            for (const PlanEdge& e :
+                 planEdges(plvl, pmode, t0, (int)init.held, init.mode, g_oldLatency))
+                p.edges.emplace_back(e.press, e.level);
+            g_check.publish(std::move(p));
+        }
+        // ---- the caller has stopped caring ----
+        // Read every layer: once the game has refuted a checkpoint, every layer after it is paid
+        // for and thrown away. One relaxed load, and only with a subscriber.
+        if (checkWanted && g_check.cancel.load(std::memory_order_relaxed)) {
+            std::printf("CANCELLED: at t=%lld (search abandoned by the caller)\n", t);
+            std::fflush(stdout);
+            g_outcome.verdict = VerdictCancelled;
+            g_outcome.cancelT = t;
+            g_outcome.deepT = bestT;
+            g_outcome.deepX = bestX;
+            return 3;    // distinct from FAILED (1) and from --replay's unreadable plan (2)
+        }
+        ppMark(5);
         // Publish where the loop has got to. Every layer, not every 500th: this is what a UI
         // watching from another thread samples, and the printed line below is far too coarse
         // to look alive on screen (see dp/progress.hpp)
@@ -4433,6 +4630,42 @@ inline int cliMain(int argc, char** argv) {
         std::printf("refwatch: %s\n",
                     g_refLostAt < 0 ? "CARRIED to the end"
                                     : "lost (see the line above)");
+    if (g_phaseProf) {
+        ppMark(6);
+        const double tot = std::chrono::duration<double>(std::chrono::steady_clock::now() - ppStart).count();
+        std::printf("phaseprof: layers=%lld total=%.2fs setup=%.2f step=%.2f dedupe=%.2f cap=%.2f "
+                    "gc=%.2f mem=%.2f rest=%.2f\n", bestT - t0, tot, pp[0], pp[1], pp[2], pp[3], pp[4],
+                    pp[5], pp[6]);
+    }
+    if (g_rjOn)
+        std::printf("rejoin: t0=%lld after=%lld reached=%lld layers=%lld exact=%lld(m%d,n%lld) "
+                    "near2=%lld(m%d,n%lld) near8=%lld(m%d,n%lld)\n",
+                    t0, g_rjAfter, bestT, g_rjLayers,
+                    g_rjFirst[0], g_rjMode[0], g_rjLayersNear[0],
+                    g_rjFirst[1], g_rjMode[1], g_rjLayersNear[1],
+                    g_rjFirst[2], g_rjMode[2], g_rjLayersNear[2]);
+    // ---- no answer before every checkpoint is judged (dp/progress.hpp) ----
+    // The search is over, but the caller may still be flying checkpoints it published. Wait for
+    // every one of them: if the game refutes one, the caller throws this whole call away, and an
+    // answer handed back first would make the outcome depend on which of the two finished first.
+    // The flights are the game replaying a few thousand ticks; the search is not blocked while
+    // they run, only its answer is. `enabled` going off (the session ended) releases the wait.
+    if (checkWanted) {
+        while (g_check.enabled.load(std::memory_order_acquire)
+               && !g_check.cancel.load(std::memory_order_acquire)
+               && g_check.judged.load(std::memory_order_acquire) < g_check.published())
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        if (g_check.cancel.load(std::memory_order_acquire)) {
+            std::printf("CANCELLED: after the search, waiting on a checkpoint (search abandoned "
+                        "by the caller)\n");
+            std::fflush(stdout);
+            g_outcome.verdict = VerdictCancelled;
+            g_outcome.cancelT = bestT;
+            g_outcome.deepT = bestT;
+            g_outcome.deepX = bestX;
+            return 3;
+        }
+    }
     // The frontier died before the cut. That is still useful to the driver: the
     // deepest surviving branch is the best guess at how to get near the wall,
     // and replaying it in GD is how the wall gets localized at all. Emit it
@@ -4479,6 +4712,22 @@ inline int cliMain(int argc, char** argv) {
     // t0+i+1, so keeping (planCut - t0) entries ends the plan exactly at planCut.
     if (planCut > 0 && (long long)lvl.size() > planCut - t0)
         lvl.resize((size_t)std::max<long long>(0, planCut - t0));
+    // --rejoinuse: the search stopped on the old plan's trajectory at g_rjJoinT; the rest is the
+    // old plan's own input levels, read off its trace (act at tick k steps into tick k, which is
+    // lvl[k - t0 - 1]). The witness walk below covers the joined plan whole.
+    if (g_rjJoinT >= 0 && (long long)lvl.size() == g_rjJoinT - t0) {
+        size_t added = 0;
+        for (long long k = g_rjJoinT + 1;; ++k) {
+            const auto it = g_rjRows.find(k);
+            if (it == g_rjRows.end() || it->second.act < 0) break;
+            lvl.push_back((uint8_t)it->second.act);
+            ++added;
+        }
+        std::printf("rejoin: the plan carries on with %zu ticks of the old plan's inputs\n", added);
+    } else if (g_rjJoinT >= 0) {
+        std::printf("rejoin: the prefix is %zu ticks, not %lld - not joined\n", lvl.size(),
+                    g_rjJoinT - t0);
+    }
     std::vector<uint8_t> modeAt(lvl.size(), 0);  // filled by the resim below
 
     // re-simulate the witness and write its per-tick trace (for diffing
@@ -4515,8 +4764,11 @@ inline int cliMain(int argc, char** argv) {
         // OFF a walk rather than DERIVED from something adjacent. Deriving is
         // what --spentrot has to do from the dump's frame transitions, and it
         // cannot see the entries that change no frame (2899 and chanOnly).
+        // `dead`, appended last for the same reason as the columns above: the walk's own kill on
+        // the tick, so a later reader (--rejoinuse) can tell the walk's deaths from its corpse
+        // rows -- the walk runs on through a kill, and y/vy alone do not say where it fired.
         tr << "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,frame"
-              ",rotspent,rotchan,rotrev\n";
+              ",rotspent,rotchan,rotrev,dead,key\n";
         std::ofstream sn;
         if (!snapLogPath.empty()) {
             sn.open(snapLogPath);
@@ -4690,7 +4942,32 @@ inline int cliMain(int argc, char** argv) {
                << ',' << s.y2 << ',' << s.vy2 << ',' << (int)s.flip2 << ','
                << (int)lvl[i] << ',' << (int)s.flip << ',' << (int)s.frame
                << ',' << s.rotSpent << ',' << (int)s.rotChan
-               << ',' << (unsigned)s.rotRev << "\n";
+               << ',' << (unsigned)s.rotRev << ',' << (rdead ? 1 : 0)
+               << ',' << (unsigned long long)keyOf(s, (long long)t) << "\n";
+            // --rejoinuse: past the join the walk must retrace the old plan's walk -- the same
+            // fields on every tick the old trace has, and no kill it did not have. The first tick
+            // it does not is the join failing its own premise (repair.hpp refuses the join).
+            if (g_rjJoinT >= 0 && (long long)t > g_rjJoinT && g_outcome.rejoinBadT < 0) {
+                const auto ot = g_rjRows.find((long long)t);
+                if (ot != g_rjRows.end()) {
+                    const RefRow& o = ot->second;
+                    const char* why = nullptr;
+                    if ((o.mode >= 0 && (int)s.mode != o.mode) || (o.flip >= 0 && (int)s.flip != o.flip)
+                        || (o.frame >= 0 && (int)s.frame != o.frame))
+                        why = "mode/flip/frame";
+                    else if (std::fabs((double)s.y - o.y) > g_refEps
+                             || std::fabs((double)s.vy - o.vy) > g_refEps)
+                        why = "y/vy";
+                    else if (rdead && o.dead == 0)
+                        why = "a kill the old walk did not have";
+                    if (why) {
+                        g_outcome.rejoinBadT = (long long)t;
+                        g_outcome.rejoinBadWhy = why;
+                        std::printf("rejoin: the joined walk leaves the old one at t=%lld (%s)\n",
+                                    (long long)t, why);
+                    }
+                }
+            }
         }
         g_snapOut = nullptr;
     }
@@ -4733,49 +5010,39 @@ inline int cliMain(int argc, char** argv) {
     // caller guess) also puts the latency where the latency logic already
     // lives: `latOf` below is per-mode, and the driver's fixed t0-1 is only
     // ever right for ship/UFO (lat 2).
-    int prev = (int)init.held, edges = 0;
-    for (size_t i = 0; i < lvl.size(); ++i) {
-        if (lvl[i] != prev) {
-            const long long effect = t0 + (long long)i + 1;
-            // ...and the UFO is mode 3, which this test was missing: it got the
-            // cube's +1 and every flap in the plan came out one tick late in GD.
-            // Measured on lv12: pressed at t=170, GD flapped at t=172.
-            // The mode that decides the latency is the one the input is applied
-            // UNDER, i.e. the mode at the START of that tick -- modeAt[i] is
-            // the mode at its END, which on a mode-portal tick is already the
-            // NEW one. lv19 t=19,525 is exactly that tick: the input is a
-            // WAVE's (lat 1) but the state ends as a UFO (lat 2), the edge was
-            // emitted one tick early, and GD turned the wave down one tick
-            // before the model did. The model then floated 1.3 px higher,
-            // fired the UFO portal at (27,315,333) that GD does not reach, and
-            // every cold run oscillated between x=27,297 and x=27,328.
-            // The mode that decides the latency is the one GD is in when the
-            // BUTTON is pressed, which is `lat` ticks before the effect -- not
-            // modeAt[i], the mode the tick ENDS in. On a mode-portal tick those
-            // differ, and lv19 t=19,525 is exactly that tick: the input is a
-            // WAVE's (lat 1) but the state ends as a UFO (lat 2), so the edge
-            // went out one tick early, GD turned the wave down a tick before
-            // the model did, the model floated 1.3 px higher and fired the UFO
-            // portal at (27,315,333) that GD never reaches. Every cold run
-            // oscillated between x=27,297 and x=27,328.
-            // Resolved in two passes because `lat` picks its own lookback:
-            // start from the mode at the START of the effect tick, then take
-            // the mode at the tick that guess points at.
-            auto latOf = [](uint8_t m) { return (m == 1 || m == 3) ? 2 : 1; };
-            auto modeAtTick = [&](long long j) -> uint8_t {
-                if (j < 0) return init.mode;
-                if ((size_t)j >= modeAt.size()) return modeAt.back();
-                return modeAt[(size_t)j];
-            };
-            int lat;
-            if (g_oldLatency) {
-                lat = latOf(modeAt[i]);
-            } else {
-                const int lat0 = latOf(modeAtTick((long long)i - 1));
-                lat = latOf(modeAtTick((long long)i - lat0));
-            }
-            out << "input=" << (effect - lat) << ',' << (int)lvl[i] << "\n";
-            prev = lvl[i];
+    // The scan itself now lives in planEdges (top of this file), because the common-prefix
+    // publisher inside the layer loop has to produce the same edges for the same ticks. The
+    // note below is about the RULE, and is kept here where the plan is written.
+    int edges = 0;
+    {
+        // ...and the UFO is mode 3, which this test was missing: it got the
+        // cube's +1 and every flap in the plan came out one tick late in GD.
+        // Measured on lv12: pressed at t=170, GD flapped at t=172.
+        // The mode that decides the latency is the one the input is applied
+        // UNDER, i.e. the mode at the START of that tick -- modeAt[i] is
+        // the mode at its END, which on a mode-portal tick is already the
+        // NEW one. lv19 t=19,525 is exactly that tick: the input is a
+        // WAVE's (lat 1) but the state ends as a UFO (lat 2), the edge was
+        // emitted one tick early, and GD turned the wave down one tick
+        // before the model did. The model then floated 1.3 px higher,
+        // fired the UFO portal at (27,315,333) that GD does not reach, and
+        // every cold run oscillated between x=27,297 and x=27,328.
+        // The mode that decides the latency is the one GD is in when the
+        // BUTTON is pressed, which is `lat` ticks before the effect -- not
+        // modeAt[i], the mode the tick ENDS in. On a mode-portal tick those
+        // differ, and lv19 t=19,525 is exactly that tick: the input is a
+        // WAVE's (lat 1) but the state ends as a UFO (lat 2), so the edge
+        // went out one tick early, GD turned the wave down a tick before
+        // the model did, the model floated 1.3 px higher and fired the UFO
+        // portal at (27,315,333) that GD never reaches. Every cold run
+        // oscillated between x=27,297 and x=27,328.
+        // Resolved in two passes because `lat` picks its own lookback:
+        // start from the mode at the START of the effect tick, then take
+        // the mode at the tick that guess points at.
+        const std::vector<PlanEdge> pe =
+            planEdges(lvl, modeAt, t0, (int)init.held, init.mode, g_oldLatency);
+        for (const PlanEdge& e : pe) {
+            out << "input=" << e.press << ',' << e.level << "\n";
             ++edges;
         }
     }

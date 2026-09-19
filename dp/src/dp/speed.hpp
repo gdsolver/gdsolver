@@ -295,6 +295,12 @@ inline int g_dynamicLevelHeight = 0;
 // injection-bisected to 0.4px at two x) and lv9 (default 2,790: y=1,010
 // lives).
 inline double g_maxPlayY = 1e18;
+// --offboard <margin> (EXPERIMENT): the repair loop's own definition of a run that has left the
+// playfield (repair.hpp offBoardTick: world y more than `margin` outside the recorded band at that
+// tick), applied in the search. GD does not kill there; the loop credits the death there instead.
+// Without it the search keeps offering arcs through the sky that the loop scores as dead on
+// arrival -- lv22 t~2677, 70 rounds with nothing learnt (2026-09-19). 0 = off.
+inline double g_offBoardMargin = 0.0;
 inline int g_shiftDbgUid = -1;       // --shiftdbg <uid>
 inline bool g_shiftDbgDone = false;
 

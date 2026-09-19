@@ -319,6 +319,7 @@ inline void resetInvocationState() {
     g_fixRobotJump = 0;
     g_dynamicLevelHeight = 0;
     g_maxPlayY = 1e18;
+    g_offBoardMargin = 0.0;
     g_shiftDbgUid = -1;
     g_shiftDbgDone = false;
 
@@ -331,6 +332,10 @@ inline void resetInvocationState() {
     // thread_pool.hpp
     g_aliveCap = 16000;
     g_memStat = false;
+    g_phaseProf = false;
+    // progress.hpp's checkpoint channel is NOT reset here: its `enabled`/`cancel` belong to the
+    // CALLER -- the mod clears `cancel` before every solve and turns `enabled` on for the session,
+    // and a per-invocation reset would silently undo both.
     g_gcNodes = 8000000;
     g_memLimitMiB = 6144;
     g_portalDodgeMin = 0.1;
@@ -388,6 +393,15 @@ inline void resetInvocationState() {
     // corrupt one.
     g_refWatch = false;
     g_refRows.clear();
+    g_rjOn = false;
+    g_rjRows.clear();
+    g_rjAfter = -1;
+    for (int k = 0; k < 3; ++k) { g_rjFirst[k] = -1; g_rjMode[k] = -1; g_rjLayersNear[k] = 0; }
+    g_rjLayers = 0;
+    g_rjOldNode = 0xffffffffu;
+    g_rjUse = false;
+    g_rjFull = false;
+    g_rjJoinT = -1;
     g_refEps = 0.01;
     g_refDriftVy = 0.0;
     g_refDriftY = 0.0;

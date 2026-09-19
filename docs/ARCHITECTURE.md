@@ -168,6 +168,20 @@ dead bands, touch triggers that must be entered, a ladder of anchor depths and
 phantom-death detection. All of those the loop drives itself. The section solver
 in §3.1 is not one of them — it is started by hand and ends the run.
 
+Two things decide how much each repair costs. **The plan length** (cfg
+`dpstephorizon`, `dpadaptivehorizon`): a replay the game ends within one step
+(3,000 ticks) of its anchor says the model is wrong there, so the next solve plans
+one step and lets the game check it; a replay that outlives its step, or a wall the
+run stops at twice, gets a plan to the end of the level. **The rejoin** (cfg
+`dprejoinwatch`, `dprejoinuse`, dp's `--rejoinwatch` / `--rejoinuse`): the model's
+trace of the plan that died is handed to the next search, and when a state that did
+not pass through the death comes back onto that trace (same y, velocity, mode,
+gravity and frame), the search stops there and the plan carries on with the old
+plan's inputs. The game still flies all of it; the rejoin only skips solving again
+what the search would have re-derived. On the 22-level suite in one session the
+suite went from 30 minutes (v0.1.4) to 19; the rejoin alone took it from 1,437 s to
+1,120 s.
+
 Every run is *cold*: no seeds, no previous solutions, no external inputs. The
 fixups of a run live only in that run.
 

@@ -97,6 +97,50 @@ struct Config {
     // the plan simply stops there and the player dies where it ran out -- measured on lv1,
     // x=4,092 of 26,724, i.e. exactly the 15% that looked like a solver failure.
     int dpHorizon = 0;
+    // THE PLAN LENGTH AND THE REJOIN (default on since 2026-09-19). On the 22-level cold run in
+    // one session, measured with nothing else running on the machine: step + adaptive length +
+    // fast veto 1,437 s; plus the rejoin 1,120 s (and 1,123 s on a second run, every round of
+    // every level identical). The previous habit (plan the whole level, shorten after stalls)
+    // was published at 30 minutes for v0.1.4; measured next to the step length on a machine that
+    // was also running other work it was 2,199 s against 1,629 s. Each is a cfg so a diagnostic
+    // run can turn it off (value 0).
+    //
+    // cfg `dpstephorizon`: plan this many ticks at a time and keep the whole-level plan
+    // (dphorizon) for when the run is stuck -- the inverse of the old habit. 0 = the old habit.
+    // The no-death recording pass and the restart from the start still use the whole level.
+    int dpStepHorizon = 3000;
+    // cfg `dpfastveto`: a round that flew EXACTLY the plan the round before flew, and died on the
+    // same tick, drops the veto box at once instead of waiting for the fourth hit -- the search is
+    // deterministic, so the repeat is not new evidence.
+    bool dpFastVeto = true;
+    // cfg `dpfastvetoall` (off, measured inert under the adaptive length): the same, against every
+    // plan this level has flown rather than only the last round's.
+    bool dpFastVetoAll = false;
+    // cfg `dprejoinwatch`: hand dp the model's trace of the plan that last died (--rejoinwatch).
+    // On its own it only prints how soon the next search comes back onto that plan.
+    bool dpRejoinWatch = true;
+    // cfg `dprejoinuse` (needs dprejoinwatch): stop the search where a state that did not go
+    // through the old death comes back onto the old plan's trajectory, and keep the old plan's
+    // inputs from there on (dp's --rejoinuse). The layers past the join were 31-45% of the search
+    // on lv16/20/22; lv16 258 -> 163 s, lv22 385 -> 222 s. Its one measured loss is lv20
+    // (212 -> 247 s): the old plan's continuation past the join died 44 ticks on, in ground the
+    // game had never flown.
+    bool dpRejoinUse = true;
+    // cfg `dprejoinchain`: also join a plan that was itself a join. Off was measured and is worse:
+    // it did not repair lv20, and on lv22 the changed route fell into the off-board hole
+    // dpoffboardkill describes.
+    bool dpRejoinChain = true;
+    // cfg `dprejoinfull` (off, measured worse): an exact rejoin also needs the search's dedupe key
+    // to match. It removed most of lv22's joins -- equal on y/vy/mode but not on the key, and still
+    // good in the game -- and lv22 went 222 -> 507 s.
+    bool dpRejoinFull = false;
+    // cfg `dpoffboardkill` (off): pass the loop's playfield bound to the search (--offboard). It
+    // closes an off-board stall the default route does not reach, and costs lv22 34 s on it.
+    bool dpOffBoardKill = false;
+    // cfg `dpadaptivehorizon` (needs dpstephorizon): choose the next plan length from where the
+    // game ended the last one. Killed within the step of its anchor = the model is wrong here, plan
+    // the step; alive past it = the model is right here, plan the level.
+    bool dpAdaptiveHorizon = true;
     // How many repair iterations the loop may spend before it reports the wall (Stage C).
     // A report, not a failure: "stopped at iteration N, deepest t=..." is the diagnostic the
     // level is asking for. 40 undercounted a level the loop can actually clear: with the phantom
@@ -203,6 +247,15 @@ struct Config {
     // cannot be rebuilt offline with the inputs it actually had. Off by default: it only
     // writes files and log lines, and costs disk (lv22 keeps ~20 group versions).
     bool dpSnapshot = false;
+    // cfg `dpcheck`: while a search runs, the game flies the search's checkpoints -- at fixed
+    // layers past the anchor, the lineage of the frontier's first state -- and a checkpoint the
+    // game kills cancels the search, runs the fixup recorder on that flight and solves the same
+    // question again (dpsolve::ckConsider in repair.hpp, dp/progress.hpp). The outcome does not
+    // depend on timing: checkpoints are layers, flights are judged in order, and the search holds
+    // its answer until all of them are judged. It is NOT the same run as with this off -- the
+    // model learns from flights the loop would never have made -- so two runs with it on are the
+    // comparison, not one with and one without.
+    bool dpCheck = false;
     // cfg `dpwatchfired=<uid>[,<uid>...]`: the dump's `firedw` column carries each listed
     // object's +0x28e byte (the flag checkSpawnObjects tests before it calls triggerObject)
     // on every tick. Empty by default, and then the column reads "-". Print only.

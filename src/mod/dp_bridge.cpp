@@ -1,4 +1,4 @@
-﻿// The one translation unit that compiles the solver core (dp/) inside the mod.
+// The one translation unit that compiles the solver core (dp/) inside the mod.
 //
 // NOTHING from Geode or cocos may be included here, and nothing here may include a mod header
 // that does: the dp headers are written for a plain C++ toolchain, and the Windows/cocos
@@ -79,6 +79,7 @@ SolveOutcome outcome() {
     o.deepT = dp::g_outcome.deepT;
     o.deepX = dp::g_outcome.deepX;
     o.capHits = dp::g_outcome.capHits;
+    o.cancelT = dp::g_outcome.cancelT;
     o.resimDead = dp::g_outcome.resimDead;
     o.resimFirst = dp::g_outcome.resimFirst;
     o.resimWhy = dp::g_outcome.resimWhy;
@@ -88,6 +89,9 @@ SolveOutcome outcome() {
     o.resimTrig = dp::g_outcome.resimTrig;
     o.resimFrame = dp::g_outcome.resimFrame;
     o.replayDiedT = dp::g_outcome.replayDiedT;
+    o.rejoinT = dp::g_outcome.rejoinT;
+    o.rejoinBadT = dp::g_outcome.rejoinBadT;
+    o.rejoinBadWhy = dp::g_outcome.rejoinBadWhy;
     o.needTrigMask = dp::g_outcome.needTrigMask;
     o.needTrigPassed = dp::g_outcome.needTrigPassed;
     o.seedRotQ = dp::g_outcome.seedRotQ;
@@ -98,6 +102,37 @@ SolveOutcome outcome() {
     return o;
 }
 
+void checkSubscribe(bool on) {
+    dp::g_check.enabled.store(on, std::memory_order_release);
+    if (!on) dp::g_check.reset();
+}
+
+bool nextCheckpoint(SolveCheckpoint& out) {
+    // One lock for the call id, the judged count and the point: reset() changes all three under
+    // it, so reading them apart could pair an index from one call with a point from the next.
+    std::lock_guard<std::mutex> g(dp::g_check.m);
+    const size_t idx = dp::g_check.judged.load(std::memory_order_acquire);
+    if (idx >= dp::g_check.points.size()) return false;
+    const dp::SearchCheckpoints::Point& p = dp::g_check.points[idx];
+    out.call = (unsigned long long)dp::g_check.call.load(std::memory_order_acquire);
+    out.index = idx;
+    out.t0 = p.t0;
+    out.tick = p.tick;
+    out.edges = p.edges;
+    return true;
+}
+
+unsigned long long checkCall() {
+    return (unsigned long long)dp::g_check.call.load(std::memory_order_acquire);
+}
+
+bool passCheckpoint(unsigned long long call, std::size_t index) {
+    return dp::g_check.pass((uint64_t)call, index);
+}
+
+void cancelSearch(bool on) {
+    dp::g_check.cancel.store(on, std::memory_order_release);
+}
 std::string coreVersion() {
     // No version string exists in dp/ yet; the compile stamp of this TU is what identifies
     // the core that is linked in, and it moves whenever dp/ is rebuilt

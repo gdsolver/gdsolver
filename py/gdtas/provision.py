@@ -3,7 +3,8 @@
     python -m gdtas.provision --worker-id 98
 
 A worker is "a renamed GD + a dedicated Geode root + a dedicated save + a dedicated
-data root". Resources is a junction to the original GD, so the real size is ~80MB.
+data root". Resources is a junction to the frozen build (gdtas.gdbase), so the real
+size is ~80MB.
 """
 
 from __future__ import annotations
@@ -16,7 +17,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .paths import WORKERS_ROOT, gd_save_root, worker_manifest
+from .gdbase import check_worker
+from .paths import GD_BASE, WORKERS_ROOT, gd_save_root, worker_manifest
 from .worker import CREATE_NO_WINDOW, WorkerError, processes_under, repair_save
 
 
@@ -54,8 +56,11 @@ def create_worker(worker_id: int, from_worker_id: int = 96,
         raise WorkerError(f"worker-{from_worker_id} is running (PID {busy}). "
                           "Name a different, idle worker to clone from.")
 
-    man = worker_manifest(from_worker_id, workers_root)
-    base_game = Path(man["base_game_dir"])
+    # Always the frozen build, whatever the source's worker.json says: a source
+    # seeded before the base existed still names the Steam install there.
+    worker_manifest(from_worker_id, workers_root)   # fails early without one
+    base_game = GD_BASE / "game"
+    check_worker(src, src / f"GeometryDash-worker-{from_worker_id}.exe")
     dst.mkdir(parents=True)
     # Resources is a junction. Following it through would copy 1.5GB, so exclude it
     # and re-create a junction to the same target instead.

@@ -139,7 +139,7 @@ This server is **a tool for observation, not a tool for solving**.
 ## Usage
 
 Create the worker once, on the first run (~70MB each; Resources is a junction to the
-original GD):
+frozen GD build that `python -m gdtas.gdbase freeze` makes, never to the Steam install):
 
 ```powershell
 $env:PYTHONPATH="$PWD\mcp;$PWD\py"    # from the repository root

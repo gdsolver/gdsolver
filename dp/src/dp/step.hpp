@@ -1242,6 +1242,22 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             return c;
         }
     }
+    // --offboard (EXPERIMENT; speed.hpp): the loop's playfield bound, against the recorded band's
+    // row at this tick -- the row offBoardTick reads for the attempt, in world y.
+    if (g_offBoardMargin > 0.0) {
+        double fl = 0.0, ce = 0.0;
+        if (bandTrackRowAt(K.t, fl, ce)) {
+            double wy = (double)s.y;
+            if (s.frame & 3) {
+                double wx;
+                fromFrame((int)s.frame, x, (double)s.y, wx, wy);
+            }
+            if (wy > ce + g_offBoardMargin || wy < fl - g_offBoardMargin) {
+                dead = true; g_deadWhy = "offboard"; g_deadObj = nullptr;
+                return c;
+            }
+        }
+    }
     // Player half sizes for THIS tick. Mini shrinks every box, so the rest of
     // the body reads them from here instead of from the constants. The size
     // portal is resolved at the end of the tick, so a change only takes effect

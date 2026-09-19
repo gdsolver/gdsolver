@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // Live progress of the layer loop, for whoever is watching from another thread.
 //
 // The CLI reports progress by printing a line every 500 ticks; in the mod the solver runs on a
@@ -8,7 +8,13 @@
 //
 // Written by the search, read by anyone. Nothing in the search ever reads them back, so the
 // stores are relaxed: a UI that samples a tick late is not wrong in any way that matters.
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "dp/constants.hpp"
 
@@ -20,7 +26,12 @@ struct SearchProgress {
     // would read it as "already a third of the way". The span is horizon - from.
     std::atomic<long long> from{0};
     std::atomic<long long> tick{0};      // the layer being processed
-    std::atomic<long long> horizon{0};   // the last layer it will process
+    // The last layer the loop CAN process, so that tick/horizon is a fraction that reaches 1
+    // exactly when the search runs out of layers. It is not `--horizon`: that bounds the PLAN,
+    // and the loop deliberately runs on to t0 + 2*horizon before taking a survivor, or stops
+    // earlier at the end of the level. A search that solves, empties its frontier or trips the
+    // memory budget still ends before this -- the bar is an upper bound, not a promise.
+    std::atomic<long long> horizon{0};
     std::atomic<double> x{0.0};          // frontier leader's x
     std::atomic<size_t> alive{0};        // states in the frontier
     std::atomic<bool> running{false};
@@ -43,6 +54,100 @@ struct SearchProgress {
 
 inline SearchProgress g_progress;
 
+// ---- checkpoints: candidate lineages for the caller to fly, and the caller's off switch ----
+//
+// A caller that can fly a plan while the search runs (the mod's repair loop) asks the game early
+// whether the model is right, instead of waiting for the whole search and flying its answer.
+// At fixed LAYERS of the search (kCheckpointOffsets below, counted from the anchor) the search
+// publishes the lineage of its frontier's first state, cut at that layer. The caller flies the
+// checkpoints IN ORDER and judges each one: it survived to its last tick, or the game killed it
+// strictly inside. A kill means the model was wrong somewhere on that lineage, so the caller
+// cancels the search, learns from the death, and solves the same question again.
+//
+// WHY IT IS DETERMINISTIC. Everything that decides the outcome is a function of the search and
+// the game, never of the clock:
+//
+//   * a checkpoint is a LAYER, not a moment, and its lineage is read on the search thread at that
+//     layer -- the same call publishes the same checkpoints every time;
+//   * the caller judges checkpoints in order, one flight each, and never skips one because it is
+//     behind -- skipping on a backlog is exactly how wall time would get back in;
+//   * the search does not finish until every checkpoint it published has been judged
+//     (waitForJudgement in cli.hpp). A search that reaches the goal while flights are still in the
+//     air waits for them, so "the search finished first" and "the game refuted it first" cannot
+//     race. A cancelled search is thrown away whole, so how far it had got when the cancel landed
+//     changes nothing but the wall clock.
+//
+// An earlier version published the frontier's lowest common ancestor instead (every plan the call
+// can still emit starts with it, so a death inside it is a death of the call's answer). It was
+// sound but slow: on lv22 the frontier stayed forked for 1,450-11,600 ticks past the deaths it
+// needed to cover, and a cancelled call had no verdict for the ladder to book (2026-09-17). A
+// checkpoint makes the weaker claim -- "the model is wrong on this lineage" -- and the caller acts
+// on it by learning and re-solving rather than by standing in for the call's answer.
+//
+// Rules the publisher keeps:
+//
+//   * NO ARENA INDEX CROSSES THIS BOUNDARY. The lineage is materialised into `input=` edges on the
+//     search thread before the lock is taken; the mark-compact GC renumbers nodes.
+//   * `enabled` keeps this free when nobody is listening: with no subscriber the search publishes
+//     nothing, waits for nothing and prints nothing, so the CLI's work and output are unchanged.
+
+// Layers past the anchor at which a checkpoint is published: doubling to 4,800, then every 4,800.
+// Deaths cluster within a few hundred ticks of the anchor, and every flight replays the level
+// from its start, so a dense late schedule would cost game time and buy little.
+inline bool isCheckpointLayer(long long d) {
+    if (d == 150 || d == 300 || d == 600 || d == 1200 || d == 2400) return true;
+    return d >= 4800 && d % 4800 == 0;
+}
+
+struct SearchCheckpoints {
+    struct Point {
+        long long t0 = 0;      // the anchor the search runs from (--start's tick)
+        long long tick = 0;    // the checkpoint layer: the last tick the lineage carries
+        // `input=press,level`, through the plan writer's own latency conversion (planEdges)
+        std::vector<std::pair<long long, int>> edges;
+    };
+    std::atomic<bool> enabled{false};   // a subscriber exists
+    std::atomic<bool> cancel{false};    // the caller has stopped caring about this search
+    // WHICH CALL OWNS THE CHANNEL. Bumped by reset(), which cliMain runs at the start of every
+    // call AND on the way out of it. A judgement names the call it is about, and one for a call
+    // that has already returned is refused.
+    std::atomic<uint64_t> call{0};
+    // How many of this call's checkpoints the caller has judged as surviving. Reset with the call.
+    std::atomic<size_t> judged{0};
+    std::mutex m;
+    std::vector<Point> points;          // this call's checkpoints, in publication order
+    uint64_t seq = 0;                   // never restarts, so two calls never share an id
+
+    void reset() {
+        std::lock_guard<std::mutex> g(m);
+        points.clear();
+        ++seq;
+        call.store(seq, std::memory_order_release);
+        judged.store(0, std::memory_order_release);
+    }
+    void publish(Point p) {
+        std::lock_guard<std::mutex> g(m);
+        points.push_back(std::move(p));
+    }
+    size_t published() {
+        std::lock_guard<std::mutex> g(m);
+        return points.size();
+    }
+    // The caller's verdict that checkpoint `index` of call `c` survived. Accepted only in order and
+    // only for the call that owns the channel; returns whether it was accepted.
+    bool pass(uint64_t c, size_t index) {
+        std::lock_guard<std::mutex> g(m);
+        if (call.load(std::memory_order_acquire) != c) return false;
+        if (index != judged.load(std::memory_order_acquire) || index >= points.size()) return false;
+        judged.store(index + 1, std::memory_order_release);
+        return true;
+    }
+};
+
+inline SearchCheckpoints g_check;
+// --phaseprof (cli.hpp): per-phase wall time of the layer loop. Print only.
+inline bool g_phaseProf = false;
+
 // What the search concluded, for a caller that has no pipe to read.
 //
 // The CLI says this in three printed lines -- `PARTIAL: frontier died at ...`, `FAILED: ...`,
@@ -55,13 +160,25 @@ inline SearchProgress g_progress;
 // Read after the call returns (the worker thread's completion flag is the synchronisation), so
 // plain fields are enough -- unlike SearchProgress above, nothing samples these while the
 // search is running.
-enum Verdict { VerdictFailed = 0, VerdictPartial = 1, VerdictSolved = 2 };
+// VerdictCancelled is not a failure: the caller asked for the search to stop (g_check.cancel)
+// because the game refuted one of its checkpoints. No plan file is written for it, and a caller
+// must not read it as "this anchor has nothing".
+enum Verdict {
+    VerdictFailed = 0,
+    VerdictPartial = 1,
+    VerdictSolved = 2,
+    VerdictCancelled = 3
+};
 
 struct SearchOutcome {
     int verdict = VerdictFailed;
     long long deepT = -1;    // where the frontier died (PARTIAL / FAILED); -1 = never reported
     double deepX = -1.0;
     long long capHits = -1;  // -1 = no capstat line, i.e. the layer loop never ran
+    // VerdictCancelled only: the layer the search was on when it noticed the cancel. -1 = the
+    // call was never cancelled. The caller logs it so a cancelled round says how much of the
+    // search was paid for before the game refuted it.
+    long long cancelT = -1;
     // Ticks of the emitted plan on which the model fired a kill, counted on the
     // witness resim -- the ONE walk of the final plan (cli.hpp). -1 means the
     // walk never ran, which is not the same as 0 and must not read as clean.
@@ -91,6 +208,12 @@ struct SearchOutcome {
     // there is no divergence to scan for, and the record to make is a revival of the last
     // common transition.
     long long replayDiedT = -1;
+    // --rejoinuse: the tick the search joined the old plan at, -1 = it did not.
+    long long rejoinT = -1;
+    // ...and the first tick past the join where the joined plan's walk stops retracing the old
+    // plan's (a field differs, or it dies where the old walk did not). -1 = it never does.
+    long long rejoinBadT = -1;
+    const char* rejoinBadWhy = nullptr;   // string literal
     // Touch boxes this call REQUIRED the route to enter, and which of them the anchor is
     // already past. A requirement the anchor cannot possibly satisfy empties the frontier
     // before a single tick runs, and from outside that is indistinguishable from a physics
@@ -120,7 +243,8 @@ struct SearchOutcome {
 
     void reset() {
         verdict = VerdictFailed;
-        deepT = -1; deepX = -1.0; capHits = -1; replayDiedT = -1;
+        deepT = -1; deepX = -1.0; capHits = -1; replayDiedT = -1; cancelT = -1; rejoinT = -1;
+        rejoinBadT = -1; rejoinBadWhy = nullptr;
         resimDead = -1; resimFirst = -1; resimWhy = nullptr;
         resimUid = -1; resimObjX = 0.f; resimObjY = 0.f; resimTrig = 0;
         resimFrame = -1;

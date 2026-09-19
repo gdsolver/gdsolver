@@ -45,6 +45,13 @@ struct RefRow {
     // thousands of px and it accounted for most of the first sweep's
     // `cannot-reproduce` count.
     int frame = -1;
+    int dead = -1;   // the witness walk's own kill on this tick (1/0); -1 = no such column
+    // The search's own dedupe key of the walk's state on this tick (keyOf), and whether the trace
+    // carried it. --rejoinfull requires it to match: y, vy, mode, flip and frame are what the trace
+    // shows, and a state equal on those can still differ in what the key holds (held, grounded,
+    // the trigger and orb bits) -- lv20's t=17137 join left the old walk the very next tick.
+    uint64_t key = 0;
+    bool haveKey = false;
     bool have = false;
 };
 
@@ -86,8 +93,29 @@ inline uint64_t g_refKidKey[2] = {0, 0};
 inline State g_refKidState[2]{};
 inline long long g_refLostAt = -1;
 
+// --rejoinwatch <trace.csv> --rejoinafter <tick> (print only): the model's trace of
+// the plan the game last flew, and the tick it died on. Past that tick, how soon does the new
+// search's frontier come back onto the old trajectory -- exactly, within 2 px / 0.5 vy, within
+// 8 px / 2 vy? The earliest such tick bounds how much of the old plan's tail a search that joined
+// it could have kept instead of solving again. Same mode, flip and frame only; y and vy compared
+// as refMatches compares them.
+inline bool g_rjOn = false;
+inline std::map<long long, RefRow> g_rjRows;
+inline long long g_rjAfter = -1;
+inline long long g_rjFirst[3] = {-1, -1, -1};   // exact, near2, near8
+inline int g_rjMode[3] = {-1, -1, -1};
+inline long long g_rjLayers = 0, g_rjLayersNear[3] = {0, 0, 0};
+inline uint32_t g_rjOldNode = 0xffffffffu;   // arena node of the old path at the death tick
+// --rejoinuse: stop at the first exact rejoin and emit the new prefix followed by
+// the old trace's own inputs (its `act` column) from the next tick on.
+inline bool g_rjUse = false;
+inline bool g_rjFull = false;   // --rejoinfull: an exact rejoin also needs the dedupe key to match
+inline long long g_rjJoinT = -1;
+
 // Read the model's own trace of the reference replay.
-inline bool loadRefTrace(const char* path) {
+inline bool loadTraceInto(const char* path, std::map<long long, RefRow>& rows);
+inline bool loadRefTrace(const char* path) { return loadTraceInto(path, g_refRows); }
+inline bool loadTraceInto(const char* path, std::map<long long, RefRow>& rows) {
     std::ifstream f(path);
     if (!f) return false;
     std::string line;
@@ -105,7 +133,7 @@ inline bool loadRefTrace(const char* path) {
     };
     const int cT = col("tick"), cX = col("x"), cY = col("y"),
               cV = col("vy"), cM = col("mode"), cA = col("act"),
-              cF = col("flip"), cFr = col("frame");
+              cF = col("flip"), cFr = col("frame"), cD = col("dead"), cK = col("key");
     if (cT < 0 || cY < 0 || cV < 0) return false;
     while (std::getline(f, line)) {
         std::vector<std::string> v;
@@ -122,9 +150,14 @@ inline bool loadRefTrace(const char* path) {
         r.act = cA >= 0 && (int)v.size() > cA ? std::atoi(v[(size_t)cA].c_str()) : -1;
         r.flip = cF >= 0 && (int)v.size() > cF ? std::atoi(v[(size_t)cF].c_str()) : -1;
         r.frame = cFr >= 0 && (int)v.size() > cFr ? std::atoi(v[(size_t)cFr].c_str()) : -1;
-        g_refRows[std::atoll(v[(size_t)cT].c_str())] = r;
+        r.dead = cD >= 0 && (int)v.size() > cD ? std::atoi(v[(size_t)cD].c_str()) : -1;
+        if (cK >= 0 && (int)v.size() > cK && !v[(size_t)cK].empty()) {
+            r.key = std::strtoull(v[(size_t)cK].c_str(), nullptr, 10);
+            r.haveKey = true;
+        }
+        rows[std::atoll(v[(size_t)cT].c_str())] = r;
     }
-    return !g_refRows.empty();
+    return !rows.empty();
 }
 
 // Is this state the reference row? Mode is compared when the trace carries it:
@@ -172,6 +205,52 @@ inline bool refMatches(const State& s, const RefRow& r) {
     if (r.frame < 0) refWorldOf(s, wy, wvy);
     return std::fabs(wy - r.y) <= g_refEps
         && std::fabs(wvy - r.vy) <= g_refEps;
+}
+
+// The old plan's own path is usually still IN the new search -- the game killed it, the model
+// did not -- so the frontier "matches" the old trace right after the death by simply being it.
+// A rejoin is a state that was NOT on the old path at the death tick and comes back onto the old
+// trace later. `fromOld(s)` answers "does s descend from the old path's state at the death tick"
+// (an arena walk, cli.hpp); only the first few candidates per tier are walked, and only within
+// kRjWindow ticks of the death, to bound that walk.
+constexpr long long kRjWindow = 3000;
+constexpr int kRjWalks = 4;
+constexpr long long kRjMinTail = 600;   // --rejoinuse: ticks the old plan must go on past a join
+// Returns the index in `v` of the first exact rejoin found on this layer, -1 if none.
+template <class FromOld, class SameKey>
+inline int rejoinLayer(const std::vector<State>& v, long long t, FromOld fromOld, SameKey sameKey) {
+    if (!g_rjOn || t <= g_rjAfter || t > g_rjAfter + kRjWindow) return -1;
+    const auto it = g_rjRows.find(t);
+    if (it == g_rjRows.end()) return -1;
+    int exactIdx = -1;
+    const RefRow& r = it->second;
+    ++g_rjLayers;
+    int walks[3] = {0, 0, 0};
+    bool hit[3] = {false, false, false};
+    for (size_t si = 0; si < v.size(); ++si) {
+        const State& s = v[si];
+        if (r.mode >= 0 && (int)s.mode != r.mode) continue;
+        if (r.flip >= 0 && (int)s.flip != r.flip) continue;
+        if (r.frame >= 0 && (int)s.frame != r.frame) continue;
+        double wy = (double)s.y, wvy = (double)s.vy;
+        if (r.frame < 0) refWorldOf(s, wy, wvy);
+        const double dy = std::fabs(wy - r.y), dv = std::fabs(wvy - r.vy);
+        const bool in[3] = {dy <= g_refEps && dv <= g_refEps && sameKey(s, r),
+                            dy <= 2.0 && dv <= 0.5, dy <= 8.0 && dv <= 2.0};
+        int k = 0;
+        while (k < 3 && !in[k]) ++k;          // the tightest tier this state is in
+        if (k == 3 || hit[k] || walks[k] >= kRjWalks) continue;
+        ++walks[k];
+        if (fromOld(s)) continue;
+        for (int j = k; j < 3; ++j) hit[j] = true;
+        if (hit[0]) { exactIdx = (int)si; break; }
+    }
+    for (int k = 0; k < 3; ++k)
+        if (hit[k]) {
+            ++g_rjLayersNear[k];
+            if (g_rjFirst[k] < 0) { g_rjFirst[k] = t; g_rjMode[k] = r.mode; }
+        }
+    return exactIdx;
 }
 
 inline int refFind(const std::vector<State>& v, const RefRow& r) {

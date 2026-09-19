@@ -491,6 +491,19 @@ class $modify(PlayLayer) {
         hookdepth::Guard hg(hookdepth::COMPLETE);
         stallwatch::Mark sm(stallwatch::COMPLETE);
         ev("levelComplete");
+        // A completion raised before the attempt has run a single tick belongs to the attempt
+        // before it. Measured on lv2 with checkpoint flights on (cfg `dpcheck`, 2026-09-19):
+        // `complete: attempt=14 step=0 tick=0 x=347` as the loop started its first plan, refused
+        // as a false clear and filed as a death at t=0, which left the ladder nothing to stand
+        // on. The likely source (inferred from the checkpoint layers, not traced): the job's
+        // last flight was held at t=19,200, inside the end portal's run-in (the level clears at
+        // 19,272), and its completion arrived after the restart. No tick has been flown, so
+        // there is nothing to judge.
+        if (g_cfg.dpSolve && g_cfg.dpCheck && g_started && g_tick == 0) {
+            writeResult("dpsolve:   [check] ignoring a completion raised before the attempt's "
+                        "first tick - it belongs to the attempt before");
+            return;
+        }
         // False-clear detection: depending on session state GD's levelComplete can be called
         // mid-level. So that "a clear while not near the end" can be judged mechanically,
         // always record the x at the moment the guard looks (a different moment from the x
@@ -627,6 +640,12 @@ class $modify(PlayLayer) {
                 dpsolve::onDeath(g_tick, cx);
                 return;
             }
+            // A checkpoint flight (cfg `dpcheck`) can be what reached the end while a search is
+            // still out. That is a real clear of the plan GD just flew, so it is filed like any
+            // other below; the search in flight is abandoned (dpsolve::ckClearedDuringJob).
+            bool byFlight = false;
+            if (g_cfg.dpSolve && g_cfg.dpCheck && !g_dpShowSolution && dpsolve::g_running.load())
+                byFlight = dpsolve::ckClearedDuringJob();
             // A plan that has just been SEEN to clear the level is a solution; file it under
             // the name Replay mode looks for, so the next visit does not have to solve again.
             // Only here: a plan that has not cleared is not a solution, whatever else it is.
@@ -643,6 +662,8 @@ class $modify(PlayLayer) {
                 // the run's own history over the level. Written on the clear, alongside the
                 // solution, for the same reason: this is the moment both are true.
                 // "itermap saved", never "iteration ...": see the note at the giveUp() copy.
+                // The clearing round's own tail first -- no death puts it there.
+                dpsolve::mapClear(g_tick, byFlight);
                 if (itermap::save(g_cfg.levelId, true))
                     writeResult("dpsolve: itermap saved -> "
                                 + itermap::pathFor(g_cfg.levelId));

@@ -1,5 +1,8 @@
 #pragma once
 #include <chrono>
+#include <mutex>         // the checkpoint death handover (g_ckMx)
+#include <set>
+#include <thread>        // the solver worker
 #include <xmmintrin.h>   // _mm_getcsr: see the fpenv line in logSolverArgs
 // Stage C: the repair loop, inside the game.
 //
@@ -436,6 +439,41 @@ inline int g_horizon = 0;
 inline bool g_argsLogged = false;  // the `solver args:` line has been printed for THIS session
 inline std::string g_argsLast;     // ...and what it said, so a CHANGE gets its own line
 
+// ---- checkpoint flights: the game checks the search while it runs (cfg `dpcheck`) ----
+// The argument is at ckConsider() below and in dp/progress.hpp; these are the fields. All of them
+// belong to the MAIN thread except where a comment says otherwise.
+inline bool g_ckFlying = false;          // an attempt flying a checkpoint is in the air
+inline bool g_ckInstalled = false;       // ...and g_cfg.inputs is that flight, not g_plan
+inline unsigned long long g_ckCall = 0;  // the solve call that published it
+inline size_t g_ckIndex = 0;             // ...its position in that call's order
+inline long long g_ckT0 = -1;            // the anchor it was searched from
+inline long long g_ckEnd = -1;           // the last tick its inputs cover
+inline std::vector<InputCmd> g_ckPlan;   // exactly what GD was handed
+// The plan the ladder splices its tails into, read ON THE MAIN THREAD at spawn(): runLadder reads
+// g_plan for the same purpose on the worker, and a flight is spliced exactly the same way.
+inline std::vector<InputCmd> g_ckBase;
+inline size_t g_ckFlights = 0, g_ckPassed = 0, g_ckDeaths = 0;   // per job, for the summary line
+// A refuted checkpoint, handed from the death hook (main thread) to the worker, which runs the
+// fixup recorder on it once the search has stopped. The attempt's recorded rows travel with it:
+// GD resets the level about a second after a death and starts refilling anchors::g_live.
+struct CkDeath {
+    bool ready = false;
+    unsigned long long call = 0;
+    size_t index = 0;
+    long long t0 = 0, end = 0, deathT = 0;
+    float deathX = 0.f;
+    std::vector<InputCmd> plan;
+    std::vector<AnchorRow> rows;
+};
+inline std::mutex g_ckMx;                // guards g_ckDeath and g_ckDeaf
+inline CkDeath g_ckDeath;
+// Death ticks this job has already cancelled and learnt from once (see ckLearn for why once). A
+// flight that dies on one of them again is passed instead. A fixed rule, so it is as deterministic
+// as the rest; cleared with the job.
+inline std::set<long long> g_ckDeaf;
+// Worker thread only: the recorder is running on a checkpoint death, not on the loop's own. Keeps
+// the loop's per-iteration side effects (the kill-only veto credit) out of it.
+inline bool g_ckInner = false;
 // ---- what the loop knows between iterations ----
 inline int g_iter = 0;
 inline std::vector<InputCmd> g_plan;      // the plan currently installed
@@ -448,6 +486,10 @@ inline long long g_bestDeath = -1;        // ...and how far it got
 inline int g_curBackoff = kBackOff;
 inline bool g_lastTailSolved = false;     // the tail spliced last time reached the end
 inline int g_followSolved = 0;            // regressions followed on a solved branch
+// The deepest death a solved-branch follow has reached on THIS WALL (since the run last got
+// deeper), -1 = none yet. What counts as progress along the branch is beating this, not beating
+// the round before -- see the follow branch in onDeath for the two-death cycle it closes.
+inline long long g_followPeak = -1;
 inline int g_followForced = 0;            // ...and on the forced (portal) route -- see the grace
 inline long long g_lastDeath = -1;
 inline float g_lastDeathX = 0.f;      // ...and where (the void-attempt repeat scoring)
@@ -616,6 +658,17 @@ inline int g_stallRuns = 0;          // iterations since the run last got deeper
 inline bool g_needUnseen = false;    // go and touch doors whose effect has not been seen
 inline int g_horizonFull = 0;        // a plan that covers the level
 inline int g_horizonNow = 0;         // ...and what is being asked for right now
+// cfg dpstephorizon: the plan length the loop returns to after progress, and the
+// length it shortens to when stuck. Both are the whole level / kHorizonShort unless the cfg is set.
+inline bool g_triedWholeLevel = false;   // this wall's one whole-level escalation (step mode)
+// cfg dpfastveto: the plan the last round flew and the tick it died on.
+inline std::string g_prevFlownFnv;
+inline int g_wallRepeats = 0;   // cfg dpadaptivehorizon: stops in a row at one wall
+inline long long g_prevFlownDeath = -1;
+// EXPERIMENT (cfg dpfastvetoall): every (plan, death tick) this level has flown, not just the last
+// round's. lv22 control, 2026-09-19: one SOLVED tail was searched again and died on the same tick
+// three times, two rounds apart (a PARTIAL round in between), and the last-round check never saw it.
+inline std::set<std::pair<std::string, long long>> g_flownDeaths;
 
 // How many fruitless iterations before each switch is thrown. Small: the cost of turning one on
 // late is a few iterations, and the cost of having it on when it is not needed is every
@@ -634,6 +687,10 @@ constexpr int kStallToCap = 5;
 // search, so when the model keeps being wrong the answer is to ask the game more often, not to
 // spend longer being wrong.
 constexpr int kHorizonShort = 3000;
+// cfg dpstephorizon: the plan length after progress, and the length a stall or an
+// escalation shortens to. Unset, these are exactly the loop's own: the whole level and 3000.
+inline int horizonDefault() { return g_cfg.dpStepHorizon > 0 ? g_cfg.dpStepHorizon : g_horizonFull; }
+inline int horizonShort() { return g_cfg.dpStepHorizon > 0 ? g_cfg.dpStepHorizon : kHorizonShort; }
 
 // How far outside GD's own flight band still counts as being on the playfield. Legitimate play
 // does leave the band -- verified runs clear its ceiling by up to 1,083 px in rotated sections
@@ -1324,6 +1381,14 @@ inline void logSolverArgs(const std::vector<std::string>& a) {
     }
 }
 
+inline long long g_rjAfterTick = -1;   // cfg dprejoinwatch: the death the trace ends in
+// cfg dprejoinuse: whether the last tail a rung returned was a join, and -- taken at the
+// death -- whether the plan that died was one. A join is not joined again: in the first measured
+// run every repeat of lv20's and lv22's early walls was a join onto the plan the previous join had
+// made, dying again a few dozen ticks on (lv20 +5 rounds; lv22 t=1941/1941/1828 twice).
+inline bool g_rjTailJoined = false;
+inline bool g_rjOldIsJoin = false;
+inline std::string rejoinTracePath() { return std::string(DATA_DIR) + "/dp_rejoin.trace.csv"; }
 inline std::vector<std::string> baseArgs(const std::string& out) {
     const bool tiered = g_capTier > 0;
     std::vector<std::string> a{"--out", out,
@@ -1347,6 +1412,23 @@ inline std::vector<std::string> baseArgs(const std::string& out) {
         a.push_back(band);
     }
     addWorldArgs(a);
+    // cfg dprejoinwatch: the model's trace of the plan that last died,
+    // for dp's --rejoinwatch (refwatch.hpp).
+    if (g_cfg.dpRejoinWatch && g_rjAfterTick >= 0
+        && std::filesystem::exists(rejoinTracePath(), ec)) {
+        a.push_back("--rejoinwatch");
+        a.push_back(rejoinTracePath());
+        a.push_back("--rejoinafter");
+        a.push_back(std::to_string(g_rjAfterTick));
+        if (g_cfg.dpRejoinUse && (g_cfg.dpRejoinChain || !g_rjOldIsJoin)) a.push_back("--rejoinuse");
+        if (g_cfg.dpRejoinFull) a.push_back("--rejoinfull");
+    }
+    // EXPERIMENT (cfg dpoffboardkill): the search applies this loop's own playfield bound
+    // (offBoardTick / kOffBoard), so it stops offering arcs the loop scores as dead on arrival.
+    if (g_cfg.dpOffBoardKill) {
+        a.push_back("--offboard");
+        a.push_back(num(kOffBoard));
+    }
     for (const std::string& s : g_cfg.dpArgs) a.push_back(s);
     // Say once what the solver is actually being told. Everything above is assembled from a
     // dozen switches and files, and when a run behaves unlike another the first question is
@@ -2321,8 +2403,10 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
     const bool physAgrees =
         std::fabs(eDy) < kNoopEps && std::fabs(eDvy) < kNoopEps
         && (!dual || (std::fabs(eDy2) < kNoopEps && std::fabs(eDvy2) < kNoopEps));
+    // !g_ckInner: a checkpoint death is not a death of the loop's plan, and the veto credit below
+    // is booked against the loop's own last death (g_lastDeathX).
     if (!noop && kill != 0 && physAgrees && g_lastTailSolved && !g_phantomLifted
-        && g_killVetoIter != g_iter) {
+        && g_killVetoIter != g_iter && !g_ckInner) {
         g_killVetoIter = g_iter;
         const long long site = (long long)std::floor((double)g_lastDeathX / 8.0);
         const int n = ++g_phantomHits[site];
@@ -2663,6 +2747,64 @@ inline void recordFixups(long long deathTick) {
     }
 }
 
+// ---- learning from a refuted checkpoint (worker thread) ----
+//
+// Called by the job after a search came back cancelled. Runs the ordinary fixup recorder on the
+// flight the game refuted -- its plan and its recorded rows, swapped in for the loop's own for the
+// length of the call and swapped back after -- and says whether the model learnt anything. The
+// caller then solves the same question again; the death tick is noted, so a flight that dies on it
+// again is passed instead of cancelling forever.
+//
+// Returns false only when there was no refuted checkpoint to learn from, i.e. the cancel came from
+// something else (the session ending). The caller treats that as the end of the job.
+inline bool ckLearn(int& learnt) {
+    learnt = 0;
+    CkDeath d;
+    {
+        std::lock_guard<std::mutex> g(g_ckMx);
+        if (!g_ckDeath.ready) return false;
+        d = std::move(g_ckDeath);
+        g_ckDeath = CkDeath{};
+    }
+    // Nothing can be flying now: the search that published the checkpoint has returned, and the
+    // next one has not started. So nothing can raise a cancel that this would wipe.
+    dpbridge::cancelSearch(false);
+    const int before = g_fixupCount;
+    // The recorder replays g_planPath, reads heldBefore(g_plan, ...) and reads the dead attempt's
+    // rows. All three are the loop's own for the rest of the job, so they are lent, not replaced.
+    writeInputsFile(g_planPath, d.plan);
+    std::vector<InputCmd> ownPlan;
+    ownPlan.swap(g_plan);
+    g_plan = d.plan;
+    anchors::g_dead.swap(d.rows);
+    g_ckInner = true;
+    recordFixups(d.deathT);
+    g_ckInner = false;
+    anchors::g_dead.swap(d.rows);
+    g_plan.swap(ownPlan);
+    learnt = g_fixupCount - before;
+    char b[256];
+    snprintf(b, sizeof(b), "dpsolve:   [check] checkpoint #%zu (t0=%lld..%lld) died at t=%lld "
+             "x=%.1f: %d new record(s) - solving it again; this death is passed from now on",
+             d.index, d.t0, d.end, d.deathT, (double)d.deathX, learnt);
+    writeResult(b);
+    // ONE CANCEL PER DEATH TICK PER JOB, whether or not the recorder wrote anything. Measured on
+    // lv22 (2026-09-17, first run with this on): the rung at t0=230 was cancelled 33 times for
+    // the same death at t=662. The recorder wrote 3-4 new records every time, and every time the
+    // re-solved search put its first state on a lineage that died at t=662 again -- records that
+    // are real and still do not move the frontier's first choice. The loop itself learns once
+    // from a death and then re-anchors onto a different question; this does the same.
+    {
+        std::lock_guard<std::mutex> g(g_ckMx);
+        g_ckDeaf.insert(d.deathT);
+    }
+    return true;
+}
+
+// How many times one rung may be cancelled and solved again. Each retry needs a new fixup record
+// or a newly passed death tick, so this is a backstop against a bug, not a budget.
+constexpr int kCkRetriesPerRung = 64;
+
 // ---- mode portals the run went past without taking ----
 //
 // A route that crosses a mode portal and does not come out in that mode is flying a section
@@ -2783,6 +2925,8 @@ inline bool runLadder(long long dt) {
     long long chosenT = -1;
     int chosenBackoff = 0;
     bool solvedTail = false;
+    size_t ckRung = (size_t)-1;   // the rung the checkpoint retries below are counting
+    int ckRetries = 0;
     // Indexed rather than range-for: a rung that turns out to have been asked an unanswerable
     // question is retried once, after the question is fixed (see the needtrig drop below).
     for (size_t rungIdx = 0; rungIdx < rungs.size(); ++rungIdx) {
@@ -2892,7 +3036,46 @@ inline bool runLadder(long long dt) {
                         + (n.empty() ? std::string("-") : n + " " + fileSig(g_tailPath)));
         }
         const dpbridge::SolveOutcome o = dpbridge::outcome();
-        std::vector<InputCmd> cand;
+        // A CHECKPOINT OF THIS RUNG WAS REFUTED (cfg `dpcheck`). The game killed a lineage the
+        // model believed in, so the model is wrong somewhere on it: learn from that death and ask
+        // this same rung again, with everything else about the ladder exactly as it was. The
+        // rung's verdict comes from the search that finally runs to the end, so the splice below
+        // and every reader of it see an ordinary answer.
+        if (o.verdict == dpbridge::OutcomeCancelled) {
+            int learnt = 0;
+            if (!ckLearn(learnt)) {
+                writeResult("dpsolve:   [check] the search was cancelled with no refuted "
+                            "checkpoint waiting (the session is ending) - leaving the job");
+                return false;
+            }
+            if (ckRung != rungIdx) { ckRung = rungIdx; ckRetries = 0; }
+            if (++ckRetries <= kCkRetriesPerRung) {
+                --rungIdx;     // size_t: wraps at 0 and the ++ in the for brings it back
+                continue;
+            }
+            writeResult("dpsolve:   [check] this rung was cancelled "
+                        + std::to_string(kCkRetriesPerRung)
+                        + " times - treating it as doomed and backing off");
+            continue;
+        }
+        // cfg dprejoinuse: a joined tail is flown as it is. Two refusal rules were
+        // measured and dropped (2026-09-19, lv16/20/22): refusing a join whose own walk dies, and
+        // refusing one whose walk stops retracing the old plan's. Both refused most of lv22's
+        // joins -- the old trace was walked under an older model, so the new walk departs from it
+        // as a matter of course -- and each refusal paid a second search: lv22 went 249 s -> 462 s
+        // and 526 s. What is kept is only the note, and which tail is a join (see g_rjOldIsJoin).
+        g_rjTailJoined = o.rejoinT >= 0;
+        if (o.rejoinT >= 0) {
+            char jb[224];
+            if (o.rejoinBadT >= 0)
+                snprintf(jb, sizeof(jb), "dpsolve:   [rejoin] joined the plan that last died at "
+                         "t=%lld (its walk leaves the old one at t=%lld: %s)", o.rejoinT,
+                         o.rejoinBadT, o.rejoinBadWhy ? o.rejoinBadWhy : "?");
+            else
+                snprintf(jb, sizeof(jb), "dpsolve:   [rejoin] joined the plan that last died at "
+                         "t=%lld", o.rejoinT);
+            writeResult(jb);
+        }        std::vector<InputCmd> cand;
         loadInputsFile(g_tailPath, cand);
         // A tail with no inputs at all is a legal plan -- "never press" is what some stretches
         // want -- so the file's EXISTENCE is the test, not whether it parsed any lines.
@@ -3131,7 +3314,24 @@ inline void spawn(int kind, long long arg, const char* phase) {
     g_finished = false;
     g_rc = -1;
     g_haveNewPlan = false;
-    g_t0 = std::chrono::steady_clock::now();
+    // Checkpoint flights belong to one job. Cleared HERE, on the main thread, before the worker
+    // exists: `cancel` is set by the main thread and read by the worker, so clearing it inside the
+    // worker could wipe a cancel the main thread had just raised.
+    g_ckFlying = false;
+    g_ckInstalled = false;
+    g_ckCall = 0;
+    g_ckIndex = 0;
+    g_ckT0 = -1;
+    g_ckEnd = -1;
+    g_ckPlan.clear();
+    g_ckBase = g_plan;
+    g_ckFlights = g_ckPassed = g_ckDeaths = 0;
+    {
+        std::lock_guard<std::mutex> g(g_ckMx);
+        g_ckDeath = CkDeath{};
+        g_ckDeaf.clear();
+    }
+    dpbridge::cancelSearch(false);    g_t0 = std::chrono::steady_clock::now();
     g_dpSolving = true;    // the badge and the session HUD say SOLVING from here
     // Hold the level still while the solver works. Without this the player runs into the first
     // hazard over and over for the length of the solve, which is exactly what it looks like
@@ -3143,12 +3343,26 @@ inline void spawn(int kind, long long arg, const char* phase) {
         bool ok = false;
         try {
             if (kind == JobFirstSolve) {
-                std::error_code ec;
-                std::filesystem::remove(g_planPath, ec);
-                const std::vector<std::string> a0 = baseArgs(g_planPath);
-                logSolverArgs(a0);
-                g_rc = dpbridge::solveInProcess(g_csv, a0);
-                ok = loadInputsFile(g_planPath, g_plan);
+                // A refuted checkpoint (cfg `dpcheck`) cancels this search; learn from it and
+                // solve again, as a ladder rung does. The argv is rebuilt each time: the first
+                // record creates the fixups file, and baseArgs only passes a file that exists.
+                bool cancelledOut = false;
+                for (int tries = 0;; ++tries) {
+                    std::error_code ec;
+                    std::filesystem::remove(g_planPath, ec);
+                    const std::vector<std::string> a0 = baseArgs(g_planPath);
+                    logSolverArgs(a0);
+                    g_rc = dpbridge::solveInProcess(g_csv, a0);
+                    if (dpbridge::outcome().verdict != dpbridge::OutcomeCancelled) break;
+                    int learnt = 0;
+                    if (!ckLearn(learnt) || tries + 1 >= kCkRetriesPerRung) {
+                        writeResult("dpsolve:   [check] the first solve was cancelled and is not "
+                                    "being retried");
+                        cancelledOut = true;
+                        break;
+                    }
+                }
+                ok = !cancelledOut && loadInputsFile(g_planPath, g_plan);
             } else if (kind == JobSeedPlan) {
                 g_rc = 0;
                 ok = loadInputsFile(g_cfg.dpSeedPlan, g_plan);
@@ -3274,7 +3488,18 @@ inline void start(GJBaseGameLayer* l) {
     // level before it, with no "dpsolve: start" line ever logged for the new session -- the
     // giveaway that start() had taken the queued branch and skipped its own reset.
     ++g_generation;
-    if (g_running.load()) { g_pendingLayer = l; return; }
+    if (g_running.load()) {
+        // ...and the level is held still until it runs. Left running, the new level's first
+        // attempt dies within a frame's batch, onDeath takes it as a round of a session that has
+        // not started, spawns a job for it -- and the slot is never free at a frame boundary
+        // again, so the queued start never runs. Measured with checkpoint flights on (2026-09-19,
+        // lv4 -> lv5 in one game): a flight cleared lv4 while its search was still out, and lv5
+        // was then "solved" with lv4's plan and csv for 17 rounds.
+        g_pendingLayer = l;
+        g_paused = true;
+        writeResult("dpsolve: start queued behind a job still running");
+        return;
+    }
     g_pendingLayer = nullptr;
     std::ostringstream oss;
     solver::writeObjRects(oss, l);
@@ -3289,6 +3514,11 @@ inline void start(GJBaseGameLayer* l) {
     }
     g_triedMissedPortal = false;
     g_forceAnchorT = -1;
+    // Subscribe (or not) for the whole session. With no subscriber the solver publishes no
+    // checkpoint and waits for nothing, so a session with `dpcheck` off runs the search it has
+    // always run. Set here, before any solve is spawned: dp reads it once per call.
+    dpbridge::checkSubscribe(g_cfg.dpCheck);
+    dpbridge::cancelSearch(false);
     g_planPath = std::string(DATA_DIR) + "/dp_plan.txt";
     g_tailPath = std::string(DATA_DIR) + "/dp_tail.txt";
     // Fixups are per RUN. A solve starts from the untouched model, so what a previous run
@@ -3363,7 +3593,20 @@ inline void start(GJBaseGameLayer* l) {
         if (g_horizonFull < 3000) g_horizonFull = 3000;
     }
     g_horizon = g_horizonFull;     // the bound the no-death pass is allowed
-    g_horizonNow = g_horizonFull;
+    // Adaptive mode opens with the whole level: nothing is known yet about where the model is wrong.
+    g_horizonNow = g_cfg.dpAdaptiveHorizon ? g_horizonFull : horizonDefault();
+    g_wallRepeats = 0;
+    g_triedWholeLevel = false;
+    g_prevFlownFnv.clear();
+    g_prevFlownDeath = -1;
+    g_flownDeaths.clear();
+    g_rjAfterTick = -1;
+    g_rjTailJoined = false;
+    g_rjOldIsJoin = false;
+    {
+        std::error_code ec;
+        std::filesystem::remove(rejoinTracePath(), ec);
+    }
     g_stallRuns = 0;
     g_needUnseen = false;
     g_iter = 0;
@@ -3376,6 +3619,7 @@ inline void start(GJBaseGameLayer* l) {
     g_curBackoff = kBackOff;
     g_lastTailSolved = false;
     g_followSolved = 0;
+    g_followPeak = -1;
     g_followForced = 0;
     g_anchorT = -1;
     g_lastDeathX = 0.f;   // inert while g_lastDeath gates its only reader, but it is the same
@@ -3664,10 +3908,215 @@ inline bool liftPhantomVetoes(const char* where) {
     return true;
 }
 
+// ---- checkpoint flights (cfg `dpcheck`, default off) ------------------------------------------
+//
+// THE PROBLEM. A whole-level search costs 45-60 s on lv22, and the game then kills the plan
+// 100-1500 ticks past the anchor. On the 2026-09-17 blessed cold run, 33 of lv22's 44 rounds
+// taught the model something (a new fixup record), and the 523 s of search before those rounds
+// was spent almost entirely past the point where the game would have shown the model wrong.
+//
+// WHAT THIS DOES. While a search runs, the game flies the search's checkpoints (dp/progress.hpp):
+// at fixed layers past the anchor, the lineage of the frontier's first state. A checkpoint that
+// survives to its last tick is passed. One the game kills strictly inside is a disagreement with
+// the model -- every frontier state is alive in the model through its layer -- so the search is
+// cancelled, the fixup recorder runs on that flight, and the same question is solved again
+// (ckLearn, runLadder). The loop's own rounds, verdicts and bookkeeping are untouched: they only
+// ever see the search that ran to the end.
+//
+// WHY THE OUTCOME DOES NOT DEPEND ON TIMING. Checkpoints are layers, flights are judged in order,
+// and dp holds its answer until every published checkpoint is judged -- so the sequence of flights,
+// deaths and records is a function of the model and the game alone. The first version of this
+// flew the frontier's common prefix and ended the round on a death; it was measured and not kept
+// (lv22, 2026-09-17: the frontier stayed forked for thousands of ticks past the deaths, and a
+// cancelled rung had no verdict for the ladder to book).
+//
+// A flight that dies AT or PAST its last tick, or on a tick this job has already learnt from, is
+// passed: the first is the plan running out, the second would cancel again and again.
+
+// End of a physics tick. A flight whose inputs have run out is held right there and passed:
+// left to run on, it either dies a death that means nothing or wanders into the stall guard.
+inline void ckTick(long long t) {
+    if (!g_ckFlying) return;
+    if (dpbridge::checkCall() != g_ckCall) {
+        // Cannot happen while dp waits for its judgements; said out loud if it ever does.
+        g_ckFlying = false;
+        g_paused = true;
+        writeResult("dpsolve:   [check] the call that published this checkpoint has returned - "
+                    "dropping the flight");
+        return;
+    }
+    if (t < g_ckEnd) return;
+    g_ckFlying = false;
+    g_paused = true;
+    ++g_ckPassed;
+    if (!dpbridge::passCheckpoint(g_ckCall, g_ckIndex))
+        writeResult("dpsolve:   [check] a passed checkpoint was refused by the search");
+}
+
+// A death while a job is out. Only a flight's death means anything; everything else is ignored,
+// as it always was.
+inline void ckOnDeath(long long dt, float deathX) {
+    if (!g_cfg.dpCheck || !g_ckFlying) return;
+    g_ckFlying = false;
+    g_paused = true;
+    char b[256];
+    if (dpbridge::checkCall() != g_ckCall) {
+        writeResult("dpsolve:   [check] died on a checkpoint whose call has returned - ignored");
+        return;
+    }
+    bool deaf = false;
+    {
+        std::lock_guard<std::mutex> g(g_ckMx);
+        deaf = g_ckDeaf.count(dt) != 0;
+    }
+    if (dt >= g_ckEnd || deaf) {
+        snprintf(b, sizeof(b), "dpsolve:   [check] checkpoint #%zu (t0=%lld..%lld) died at t=%lld "
+                 "- passed (%s)", g_ckIndex, g_ckT0, g_ckEnd, dt,
+                 deaf ? "this job already learnt from this death" : "its inputs had run out");
+        writeResult(b);
+        ++g_ckPassed;
+        if (!dpbridge::passCheckpoint(g_ckCall, g_ckIndex))
+            writeResult("dpsolve:   [check] a passed checkpoint was refused by the search");
+        return;
+    }
+    ++g_ckDeaths;
+    {
+        // Hand the attempt over NOW: GD restarts the level about a second after a death and the
+        // restart empties anchors::g_live.
+        std::lock_guard<std::mutex> g(g_ckMx);
+        g_ckDeath = CkDeath{};
+        g_ckDeath.ready = true;
+        g_ckDeath.call = g_ckCall;
+        g_ckDeath.index = g_ckIndex;
+        g_ckDeath.t0 = g_ckT0;
+        g_ckDeath.end = g_ckEnd;
+        g_ckDeath.deathT = dt;
+        g_ckDeath.deathX = deathX;
+        g_ckDeath.plan = g_ckPlan;
+        g_ckDeath.rows.swap(anchors::g_live);
+    }
+    dpbridge::cancelSearch(true);
+}
+
+// A flight reached the end of the level. That is a real clear of the plan GD just flew -- the
+// ordinary completion path files it as the solution -- so the job in flight is abandoned: its
+// search is cancelled with no refuted checkpoint waiting, which ends it, and the collect in
+// poll() discards whatever it returns. Returns false when no flight is in the air, in which case
+// a completion during a job is not the mod's to take (and cannot happen: the level is held still).
+inline bool g_ckAbandonJob = false;
+inline bool ckClearedDuringJob() {
+    if (!g_cfg.dpCheck || !g_ckFlying) return false;
+    g_ckFlying = false;
+    g_ckAbandonJob = true;
+    char b[192];
+    snprintf(b, sizeof(b), "dpsolve:   [check] checkpoint #%zu (t0=%lld..%lld) cleared the level - "
+             "abandoning the search in flight", g_ckIndex, g_ckT0, g_ckEnd);
+    writeResult(b);
+    dpbridge::cancelSearch(true);
+    return true;
+}
+
+// Once per frame while a job is out: fly the next checkpoint if one is waiting and nothing is in
+// the air. Every checkpoint gets its own flight, in order -- a backlog is never skipped, because
+// skipping on a backlog is how the clock would get back into the outcome.
+inline void ckConsider() {
+    if (!g_cfg.dpCheck || g_ckFlying) return;
+    if (!g_running.load() || g_finished.load()) return;
+    if (g_stop || g_sessionOver || !g_started || g_deepActive || g_dpShowSolution) return;
+    auto* pl = PlayLayer::get();
+    if (!pl) return;
+    dpbridge::SolveCheckpoint cp;
+    if (!dpbridge::nextCheckpoint(cp)) return;
+    // Spliced exactly as the ladder splices a tail: the installed plan up to (not including) the
+    // anchor, then the checkpoint's own edges. A lineage's first edge can be pressed up to `lat`
+    // ticks before its effect, so the seam can run backwards by a tick -- hence the sort.
+    std::vector<InputCmd> plan;
+    for (const InputCmd& c : g_ckBase) {
+        if (c.step >= cp.t0) break;
+        plan.push_back(c);
+    }
+    for (const std::pair<long long, int>& e : cp.edges)
+        plan.push_back(InputCmd{(int)e.first, e.second != 0});
+    std::sort(plan.begin(), plan.end(),
+              [](const InputCmd& a, const InputCmd& c) { return a.step < c.step; });
+    g_ckCall = cp.call;
+    g_ckIndex = cp.index;
+    g_ckT0 = cp.t0;
+    g_ckEnd = cp.tick;
+    g_ckPlan = plan;
+    g_ckFlying = true;
+    g_ckInstalled = true;
+    ++g_ckFlights;
+    g_cfg.inputs = plan;
+    g_paused = false;
+    pl->resetLevel();
+}
+
+// ---- the map's tails (itermap.hpp) ----
+//
+// One round's tail: what the attempt recorded in `rows` flew, from the tick it was spliced at to
+// the tick it ended on. Recording only, like everything else the map is given.
+//
+// THE STRIDE GROWS WITH THE TAIL rather than the tail being cut at the point budget. A fixed
+// stride under a fixed cap drew the first 9,600 ticks of a tail and nothing after them, and a tail
+// is that long whenever the splice is early -- the first round's starts at 0. Measured on lv14
+// (2026-09-19): round 2 flew t=5,531..19,758 and its line stopped at x=19,644, 6,000 px short of
+// where it died. The last row is always added, so a line ends where its round ended rather than
+// up to a stride before it.
+inline void mapTail(const std::vector<AnchorRow>& rows, int iter, int kind, long long p0,
+                    long long p1) {
+    if (p0 < 0) p0 = 0;
+    if (p1 > 400000) p1 = 400000;
+    if (p1 >= (long long)rows.size()) p1 = (long long)rows.size() - 1;
+    if (p1 <= p0) return;
+    // Two short of the budget: the stride can land one point per `room`, plus the start, plus the
+    // last row -- so the cap in addPathPoint never drops the end.
+    const long long room = (long long)itermap::kPathMaxPts - 2;
+    const long long step = std::max<long long>(itermap::kPathStep, (p1 - p0 + room - 1) / room);
+    itermap::beginPath(iter, kind);
+    long long last = -1;
+    for (long long k = p0; k <= p1; k += step)
+        if (rows[(size_t)k].valid) {
+            itermap::addPathPoint(rows[(size_t)k].x, rows[(size_t)k].y);
+            last = k;
+        }
+    for (long long k = p1; k > last; --k)
+        if (rows[(size_t)k].valid) {
+            itermap::addPathPoint(rows[(size_t)k].x, rows[(size_t)k].y);
+            break;
+        }
+    itermap::endPath();
+}
+
+// The round that CLEARED. Every other round is put on the map by onDeath, and this one never
+// dies -- so the map drew every tail but the one that got through, and the trajectory stopped at
+// the last death as if the level ended there (reported 2026-09-19 on lv1/14/18; lv1's line ended
+// at x=9,413, its only death). Called from levelComplete on the loop's own clear, before the map
+// is saved. The recording is still the live one: only a death banks an attempt.
+//
+// Scored `deeper`, which is what it is, so the colour key needs nothing new; it is the one tail
+// with no death mark at its end. A checkpoint flight (cfg `dpcheck`) that clears was spliced at
+// its checkpoint's t0, not at the loop's anchor -- `byFlight` says which.
+//
+// A clear on the FIRST plan too, where this tail is the whole map: from tick 0 to the finish,
+// with no death or fixup beside it (itermap::emptyLocked counts it, so the map is saved).
+inline void mapClear(long long t, bool byFlight) {
+    mapTail(anchors::g_live, g_iter + 1, itermap::KindDeeper, byFlight ? g_ckT0 : g_anchorT, t);
+}
+
 inline void onDeath(long long dt, float deathX) {
     // Once the solve is over, a death is just a death: the showing of the solution is a plain
     // replay and must not restart the search behind it
-    if (!g_cfg.dpSolve || g_dpShowSolution || g_stop || g_running.load()) return;
+    if (!g_cfg.dpSolve || g_dpShowSolution || g_stop) return;
+    // A session whose start is still queued (see start()) has no rounds yet.
+    if (g_pendingLayer) return;
+    // A death while a job is in flight is never a death of the loop's plan -- the level is held
+    // still. The one that can happen is a checkpoint flight's (cfg `dpcheck`), and ckOnDeath
+    // decides what that one means.
+    if (g_running.load()) {
+        ckOnDeath(dt, deathX);
+        return;
+    }
     // A VOID attempt: a death in the first moments of a run that recorded (nearly)
     // nothing, while the banked recording is rich. The measured producer (lv8/11/17,
     // 2026-08-25) is the stall guard's deferred reset on a zombie attempt: the level's
@@ -3790,11 +4239,54 @@ inline void onDeath(long long dt, float deathX) {
     // when fingerprinting is off, and this is not a diagnostic.
     g_flownPlan = g_plan;
     logFingerprint(dt, deathX);
+    // cfg dprejoinwatch: keep the model's trace of the plan that just died -- the
+    // newer of the first solve's and the last tail's -- before the next search overwrites it.
+    if (g_cfg.dpRejoinWatch) {
+        std::error_code ec;
+        const std::string pt = g_planPath + ".trace.csv", tt = g_tailPath + ".trace.csv";
+        const bool hp = std::filesystem::exists(pt, ec), ht = std::filesystem::exists(tt, ec);
+        std::string src;
+        if (hp && ht)
+            src = std::filesystem::last_write_time(tt, ec) > std::filesystem::last_write_time(pt, ec)
+                  ? tt : pt;
+        else if (hp) src = pt;
+        else if (ht) src = tt;
+        if (!src.empty()
+            && std::filesystem::copy_file(src, rejoinTracePath(),
+                                          std::filesystem::copy_options::overwrite_existing, ec))
+            g_rjAfterTick = dt;
+        else
+            g_rjAfterTick = -1;
+        g_rjOldIsJoin = g_rjTailJoined;   // the plan that just died: was its tail a join?
+        if (g_rjOldIsJoin)
+            writeResult("dpsolve:   [rejoin] the plan that died was itself a join - the next "
+                        "searches do not join it");
+    }
     // Another death in the same tick bucket; enough of them are veto credit
     // on their own (the note at g_deathRuns).
     const int sameDeaths = ++g_deathRuns[dt / 4];
+    // cfg dpfastveto: the plan the round before flew, flown again and killed on the
+    // same tick. The search is deterministic and the model did not move, so waiting for more hits
+    // at this site is waiting for the same answer: measured on lv22 (step horizon, 2026-09-19),
+    // three sites each repeated one plan 3-4 times, about 23 s of search a round, before the
+    // fourth hit dropped the box that got the run past them.
+    bool repeatSame = false;
+    {
+        const std::string fnv = planFnv(g_plan);
+        repeatSame = g_cfg.dpFastVeto && fnv == g_prevFlownFnv && dt == g_prevFlownDeath;
+        g_prevFlownFnv = fnv;
+        g_prevFlownDeath = dt;
+        if (g_cfg.dpFastVetoAll && !repeatSame && !g_flownDeaths.emplace(fnv, dt).second) {
+            repeatSame = true;
+            writeResult("dpsolve:   [veto] this plan already died on this tick in an earlier round - "
+                        "a deterministic repeat, not new evidence");
+        } else if (repeatSame) {
+            writeResult("dpsolve:   [veto] the same plan died on the same tick as the round before - "
+                        "a deterministic repeat, not new evidence");
+        }
+    }
     checkPhantom(dt, (double)deathX, wasWedged || sameDeaths >= 8,
-                 sameDeaths >= 8);
+                 sameDeaths >= 8 || repeatSame);
     // A wedge IS the signature the missed-portal hint waits for -- a run alive past a mode
     // portal in a mode the section was not built for, frozen instead of killed -- so the hint
     // fires here directly instead of waiting the hours it takes the ladder to exhaust every
@@ -3850,12 +4342,17 @@ inline void onDeath(long long dt, float deathX) {
             writeResult("dpsolve:   deeper - back to the cheap search");
             g_capTier = 0;
         }
-        if (g_horizonNow != g_horizonFull) {
-            snprintf(b, sizeof(b), "dpsolve:   deeper at t=%lld - back to planning the whole "
-                     "level (%d ticks)", dt, g_horizonFull);
+        if (g_horizonNow != horizonDefault()) {
+            if (horizonDefault() == g_horizonFull)
+                snprintf(b, sizeof(b), "dpsolve:   deeper at t=%lld - back to planning the whole "
+                         "level (%d ticks)", dt, g_horizonFull);
+            else
+                snprintf(b, sizeof(b), "dpsolve:   deeper at t=%lld - back to planning %d ticks "
+                         "at a time", dt, horizonDefault());
             writeResult(b);
-            g_horizonNow = g_horizonFull;
+            g_horizonNow = horizonDefault();
         }
+        g_triedWholeLevel = false;   // a new wall gets its own whole-level try (step mode)
         g_bestDeath = dt;
         g_best = g_plan;
         g_spentAnchors.clear();     // a different wall; nothing is known about its anchors
@@ -3875,11 +4372,35 @@ inline void onDeath(long long dt, float deathX) {
         anchors::ladderOn(false);
         g_curBackoff = kBackOff;
         g_followSolved = 0;
+        g_followPeak = -1;     // a new wall: nothing has been followed on it yet
         g_followForced = 0;    // the route made progress; the normal flow owns it now
         outcome = itermap::KindDeeper;
-    } else if (g_lastTailSolved && (dt > g_lastDeath || g_followSolved < 4)) {
+    } else if (g_lastTailSolved
+               && (dt > std::max(g_lastDeath, g_followPeak) || g_followSolved < 4)) {
+        // THE GRACE IS PER WALL. Progress along a solved branch keeps the grace whole, but
+        // progress means reaching further than the branch has reached on this wall -- not
+        // further than the round before. Measured on lv22 (2026-09-17, a probe arm that booked
+        // its cancelled rungs as SOLVED): the branch settled into two deaths, t=2,164 and
+        // t=3,014, and every rise from the shallow one back to the deep one read as progress
+        // and reset the count, so the 4-round grace never ran out -- 26 rounds in the same
+        // pair before the run was stopped. Nothing about that shape needs the probe: any two
+        // solved tails that alternate would do it. Against the peak, the second visit to
+        // t=3,014 is a repeat, the count reaches 4 after four such rounds, and the loop
+        // rewinds as it does for any stalled branch.
+        //
+        // On the 22 blessed cold logs (2026-09-17 run) this rule decides no round differently:
+        // follow rounds exist only on lv16 (1), lv20 (6) and lv22 (6), and none of them rises
+        // to a death at or below an earlier one on the same wall.
+        const long long ref = std::max(g_lastDeath, g_followPeak);
         outcome = itermap::KindFollow;
-        g_followSolved = (dt > g_lastDeath) ? 0 : g_followSolved + 1;
+        if (dt > g_lastDeath && dt <= ref) {
+            snprintf(b, sizeof(b), "dpsolve:   t=%lld is above the last death (t=%lld) but not "
+                     "above this wall's follow peak (t=%lld) - a repeat, not progress", dt,
+                     g_lastDeath, ref);
+            writeResult(b);
+        }
+        g_followSolved = (dt > ref) ? 0 : g_followSolved + 1;
+        g_followPeak = std::max(g_followPeak, dt);
         snprintf(b, sizeof(b), "dpsolve:   regression to t=%lld on a solved branch - following "
                  "it (%d/4, best %lld)", dt, g_followSolved, g_bestDeath);
         writeResult(b);
@@ -3929,14 +4450,15 @@ inline void onDeath(long long dt, float deathX) {
             writeResult("dpsolve:   stuck - from here the search must also enter the doors "
                         "whose effect it has not seen");
         }
-        if (g_stallRuns >= kStallToShorten && g_horizonNow == g_horizonFull) {
+        if (g_stallRuns >= kStallToShorten && g_horizonNow == g_horizonFull
+            && horizonShort() != g_horizonFull) {
             // Ask for less, and find out sooner whether it is true. Planning the whole level
             // each time is only worth it while the model is right about the whole level; once
             // it is demonstrably wrong somewhere, a shorter plan gets checked in the game
             // sooner and the loop learns from the game instead of from the model.
-            g_horizonNow = kHorizonShort;
+            g_horizonNow = horizonShort();
             snprintf(b, sizeof(b), "dpsolve:   %d rounds without progress - planning %d ticks "
-                     "at a time so the game checks each step", g_stallRuns, kHorizonShort);
+                     "at a time so the game checks each step", g_stallRuns, horizonShort());
             writeResult(b);
         }
         // [2026-08-23] Capacity was escalated here too, on a plain stall. Reverted: it is the
@@ -3966,16 +4488,32 @@ inline void onDeath(long long dt, float deathX) {
         // The tail this round flew, straight out of the recorder that is already sitting here --
         // the same rows the ladder re-anchors on. From the splice point, because that is where
         // this round stops being every other round (see itermap::Path).
-        {
-            const long long p0 = (g_anchorT > 0) ? g_anchorT : 0;
-            const long long p1 = std::min(dt, 400000LL);
-            itermap::beginPath(g_iter, outcome);
-            for (long long k = p0; k <= p1; k += itermap::kPathStep)
-                if (const AnchorRow* r = anchors::row(k)) itermap::addPathPoint(r->x, r->y);
-            itermap::endPath();
-        }
+        mapTail(*anchors::g_src, g_iter, outcome, g_anchorT, dt);
         anchors::g_src = savedSrcIm;
         itermap::addDeath(g_iter, dt, deathX, dy, outcome, g_anchorT, g_anchorX, g_curBackoff);
+    }
+    // cfg dpadaptivehorizon: the next plan's length, from how far past its anchor the
+    // game let this one get. Measured over 22 levels (2026-09-19): planning the step everywhere
+    // halved the search where the model is often wrong (lv16, lv22) and cost a round every 3,000
+    // ticks where it is right (4-6 extra rounds on every easy level). This asks the run itself
+    // which of the two it is in, here, rather than a table of levels.
+    if (g_cfg.dpAdaptiveHorizon && g_cfg.dpStepHorizon > 0) {
+        const long long ran = dt - std::max<long long>(0, g_anchorT);
+        // ...and a wall the run keeps stopping at. On lv21 (2026-09-19) the step plans died 6-98
+        // ticks past their anchors at t=11,270 six rounds running: close to the anchor, so the rule
+        // above kept planning short, while the way past it was a lane only the whole-level lookahead
+        // picked. The second stop in a row at the same wall asks for the whole level.
+        const bool sameWall = (outcome != itermap::KindDeeper) && g_lastDeath >= 0
+                              && std::llabs(dt - g_lastDeath) <= 8;
+        g_wallRepeats = sameWall ? g_wallRepeats + 1 : 0;
+        const int want = (ran < g_cfg.dpStepHorizon && g_wallRepeats < 2) ? g_cfg.dpStepHorizon
+                                                                            : g_horizonFull;
+        if (want != g_horizonNow) {
+            snprintf(b, sizeof(b), "dpsolve:   the game ended the plan %lld ticks past its anchor "
+                     "- planning %d ticks next", ran, want);
+            writeResult(b);
+            g_horizonNow = want;
+        }
     }
     g_lastDeath = dt;
     g_lastDeathX = deathX;
@@ -4096,11 +4634,21 @@ inline bool escalate() {
         g_needUnseen = true;
         writeResult("dpsolve:   no anchor - trying again with the doors the search has not "
                     "entered");
-    } else if (g_horizonNow == g_horizonFull) {
+    } else if (g_cfg.dpStepHorizon <= 0 && g_horizonNow == g_horizonFull) {
         g_horizonNow = kHorizonShort;
         char b[192];
         snprintf(b, sizeof(b), "dpsolve:   no anchor - trying again in %d-tick steps, so the "
                  "game checks each one", kHorizonShort);
+        writeResult(b);
+    } else if (g_cfg.dpStepHorizon > 0 && g_horizonNow != g_horizonFull && !g_triedWholeLevel) {
+        // cfg dpstephorizon: the inverse of the step above. The run plans in steps by
+        // default, so when no anchor works the thing to try is the whole-level lookahead, which
+        // picks the branch that can still reach the end. Once per wall.
+        g_triedWholeLevel = true;
+        g_horizonNow = g_horizonFull;
+        char b[192];
+        snprintf(b, sizeof(b), "dpsolve:   no anchor - trying again planning the whole level "
+                 "(%d ticks)", g_horizonFull);
         writeResult(b);
     } else if (g_needTrigSuspect & ~g_needTrigDropped) {
         // Now. The run has stopped getting anywhere, so the pressure those boxes were applying
@@ -4230,6 +4778,11 @@ inline void poll() {
         GJBaseGameLayer* l = g_pendingLayer;
         g_pendingLayer = nullptr;
         if (g_started && !g_sessionOver && g_cfg.dpSolve && PlayLayer::get() == l) start(l);
+        else
+            writeResult(std::string("dpsolve: a queued start was dropped (started=")
+                        + (g_started ? "1" : "0") + " over=" + (g_sessionOver ? "1" : "0")
+                        + " solve=" + (g_cfg.dpSolve ? "1" : "0") + " sameLayer="
+                        + (PlayLayer::get() == l ? "1" : "0") + ")");
     }
     // A no-death pass that is not getting to the end. It cannot die, so nothing else will stop
     // it: a player wedged against a wall runs the tick counter forever. The level's own length
@@ -4369,9 +4922,32 @@ inline void poll() {
         if (auto* pl = PlayLayer::get()) pl->resetLevel();
         return;
     }
+    // While a job is out, the level does not have to sit still: fly the search's checkpoints
+    // (ckConsider above). Below this line the job has finished.
+    ckConsider();
     if (!g_running.load() || !g_finished.load()) return;
     g_running = false;
     g_finished = false;
+    // Whatever the job concluded, no flight outlives it. If one had replaced the installed plan in
+    // g_cfg.inputs, every path below either installs a plan of its own or wants the loop's own
+    // plan back -- a checkpoint's lineage must not be left behind as "the plan".
+    const bool hadFlight = g_ckInstalled;
+    g_ckFlying = false;
+    g_ckInstalled = false;
+    if (g_cfg.dpCheck) {
+        char cb[160];
+        snprintf(cb, sizeof(cb), "dpsolve:   [check] this job: %zu flight(s), %zu passed, "
+                 "%zu refuted", g_ckFlights, g_ckPassed, g_ckDeaths);
+        writeResult(cb);
+    }
+    // A flight cleared the level and the completion path has taken it (ckClearedDuringJob); what
+    // the abandoned search returned is not an answer to anything any more.
+    if (g_ckAbandonJob) {
+        g_ckAbandonJob = false;
+        writeResult("dpsolve:   [check] the job was abandoned for a checkpoint clear - its result "
+                    "is discarded");
+        return;
+    }
     if (g_resultGeneration != g_generation.load()
         || !g_started || g_sessionOver || !g_cfg.dpSolve) {
         // An orphaned worker (spawn() detaches; nothing can cancel it) from a session that has
@@ -4396,6 +4972,7 @@ inline void poll() {
     writeResult(b);
     g_dpSolving = false;
     if (!g_haveNewPlan || g_plan.empty()) {
+        if (hadFlight) g_cfg.inputs = g_plan;   // never leave a flight installed as the plan
         g_paused = false;      // never leave the game frozen because the solve failed
         // Before conceding: everything that changes how the search is set up gets a turn.
         if (g_iter > 0 && escalate()) return;

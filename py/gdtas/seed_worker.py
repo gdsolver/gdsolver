@@ -3,8 +3,9 @@
     python -m gdtas.seed_worker --worker-id 96
 
 `provision` clones an existing worker, so it is no use once they are all gone. This
-one assembles the first machine out of Steam's GD install + the Geode SDK binaries +
-a built MOD. After that, multiply with `provision --from-worker-id 96`.
+one assembles the first machine out of the frozen GD build (gdtas.gdbase, not the
+Steam install, which moves on with every update) + the Geode SDK binaries + a built
+MOD. After that, multiply with `provision --from-worker-id 96`.
 
 Written on 2026-08-21, when D: (a USB SSD) died, ``D:\\GD-workers`` became entirely
 unreadable, and not a single clone source was left.
@@ -20,12 +21,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .paths import BUILD_MOD, REPO, WORKERS_ROOT, gd_save_root
+from .paths import BUILD_MOD, GD_BASE, REPO, WORKERS_ROOT, gd_save_root
 from .worker import CREATE_NO_WINDOW, WorkerError, repair_save
 
-# Steam's default location. Can be overridden with --base-game.
-DEFAULT_BASE_GAME = Path(
-    r"C:\Program Files (x86)\Steam\steamapps\common\Geometry Dash")
+# The frozen build (`python -m gdtas.gdbase freeze` makes it). Can be overridden
+# with --base-game, but a worker seeded from anything else will not launch.
+DEFAULT_BASE_GAME = GD_BASE / "game"
 # The Geode loader lives in the SDK's bin (keep the version in step with mod.json).
 DEFAULT_SDK = Path.home() / "Documents" / "Geode"
 LOADER_FILES = ("Geode.dll", "XInput1_4.dll", "GeodeUpdater.exe")

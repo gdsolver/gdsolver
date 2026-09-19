@@ -1,3 +1,36 @@
+# v0.1.5
+
+ * **Each repair costs less.** The whole suite in one game session went from 30
+   minutes to 19, and Dash from twelve minutes to under four. Two changes to the
+   loop, both on by default and both switchable off for a diagnostic run:
+   * *The plan length follows the game's last verdict.* While replays keep dying
+     within 3,000 ticks of their anchor the loop plans one such step at a time and
+     lets the game check it; once a plan outlives its step, or a wall stops the run
+     twice, it plans the rest of the level (`dpstephorizon`, `dpadaptivehorizon`).
+     A round that flies exactly the previous round's plan and dies on the same
+     tick closes that spot at once instead of on the fourth try: the search is
+     deterministic, so the repeat is not new evidence (`dpfastveto`).
+   * *A repair rejoins the plan that died.* The next search is handed the model's
+     trace of that plan, and when a state that did not go through the death comes
+     back onto it, the search stops there and the old plan's inputs are kept from
+     that point on (`dprejoinwatch`, `dprejoinuse`, `dprejoinchain`). The game
+     still flies all of it. On Hexagon Force and Dash, 37-45 % of the search's
+     layers had been re-deriving what came after such a point. Its one measured loss is
+     Deadlocked, where the old plan's continuation died a few dozen ticks past the
+     join, in ground the game had never flown.
+ * **Checkpoint flights** (cfg `dpcheck`, off): while a search runs, the game can
+   fly the search's checkpoints and cancel it on a death, deterministically. Two
+   faults on levels whose first search reaches the goal are fixed -- a completion
+   left over from a held flight read as a death at tick 0, and a flight that
+   cleared the level left the next level's start waiting forever. It stays off:
+   with the new plan length it made the suite slower, not faster.
+ * A solved branch that is being followed gets its grace per wall, not per round:
+   two tails alternating between a shallow and a deep death reset it forever.
+ * The search bar's denominator is the layer the search will actually stop at.
+ * Workers run a frozen copy of the game build, checked at every launch, so a
+   Steam update cannot change the game under them unnoticed.
+ * The iteration map draws every round's tail to its end, the clearing round
+   included.
 # v0.1.4
 
  * **Slopes are acquired the way the game acquires them.** There was never a

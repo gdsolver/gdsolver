@@ -91,7 +91,11 @@ struct Veto {
 // prefix GD has already verified and re-solves only what comes after, so the rounds are the SAME
 // trajectory up to their splice point and differ only past it. Drawing them whole would draw one
 // line sixty times over and a fan at the end; drawing the tails draws the fan, which is the part
-// that says anything. It is also bounded: the ladder reaches back at most 3,600 ticks.
+// that says anything.
+//
+// NOT bounded by the ladder's reach, which is what this note used to claim. The first round's
+// tail starts at tick 0, a round spliced early flies most of the level, and the round that clears
+// flies to the finish line (dpsolve::mapTail / mapClear) -- so a tail can be a whole level long.
 //
 // This replaces the straight line the map used to draw from anchor to death. That line was a
 // chord of this curve -- right about the two ends and about nothing in between.
@@ -103,7 +107,12 @@ struct Path {
 // Every eighth tick: about 10 px at speed 1 and 40 at speed 4, which is smooth enough for a line
 // and keeps the whole fan of a hard level to a few tens of thousands of segments.
 constexpr int kPathStep = 8;
-constexpr size_t kPathMaxPts = 1200;   // a runaway tail must not eat the file
+// A runaway tail must not eat the file -- but this is a budget for the STRIDE, not a place to cut:
+// a tail that would not fit is sampled more coarsely (dpsolve::mapTail), never truncated. At 1,200
+// with the stride fixed it was a cut, and every tail past 9,600 ticks lost its end (lv14's round 2
+// stopped drawing 6,000 px short of its death, 2026-09-19). 4,000 holds a whole official level
+// (<= ~25,000 ticks) at the full stride.
+constexpr size_t kPathMaxPts = 4000;
 
 inline std::vector<Death> g_deaths;
 inline std::vector<Fixup> g_fixups;
@@ -410,11 +419,17 @@ inline std::string pathFor(int levelId) {
     return std::string(DATA_DIR) + name;
 }
 
+// Whether there is anything to save, load or draw. A TAIL COUNTS: a level cleared on the first
+// plan has no death and no fixup, only the clearing round's tail -- and when this asked about
+// deaths and fixups alone, that map was never saved and said "nothing recorded" over a level
+// the run had flown end to end (reported 2026-09-19). The caller holds g_mu.
+inline bool emptyLocked() { return g_deaths.empty() && g_fixups.empty() && g_paths.empty(); }
+
 // Written at the end of a solve, whichever way it ended. `key=value` lines in the same style as
 // the plan files, so it stays greppable and a converter can produce one from a log.
 inline bool save(int levelId, bool cleared) {
     std::lock_guard<std::mutex> lk(g_mu);
-    if (g_deaths.empty() && g_fixups.empty()) return false;
+    if (emptyLocked()) return false;
     g_cleared = cleared;
     const std::string path = pathFor(levelId);
     std::ofstream f(path, std::ios::trunc);
@@ -510,7 +525,7 @@ inline bool load(int levelId) {
     }
     g_mapLevel = levelId;
     ++g_generation;
-    return !g_deaths.empty() || !g_fixups.empty();
+    return !emptyLocked();
 }
 
 // Called from the overlay pass (main thread) and from the key. Reads the file at most once per
@@ -527,7 +542,7 @@ inline void ensureLoaded(int levelId) {
     }
     {
         std::lock_guard<std::mutex> lk(g_mu);
-        if (!g_deaths.empty() || !g_fixups.empty()) {         // this run owns the map
+        if (!emptyLocked()) {                                  // this run owns the map
             g_loadTried = levelId;
             return;
         }
@@ -1039,7 +1054,7 @@ inline void summary(char* out, size_t cap, float px, float levelLen) {
     // "Nothing recorded and nothing loaded", not "no file loaded": a solve in progress has rounds
     // in memory and no file yet, and that is exactly when watching the map grow is worth
     // something.
-    if (g_deaths.empty() && g_fixups.empty()) {
+    if (emptyLocked()) {
         snprintf(out + n, cap - n,
                  "ITERATION MAP  nothing recorded for this level\n"
                  "  (solve it once, or build a map from a log with py/itermap_from_log.py)");

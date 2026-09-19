@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // The mod's view of the solver core (dp/).
 //
 // Narrow on purpose, and free of BOTH Geode and dp types. dp/ is compiled in its own
@@ -10,6 +10,7 @@
 // writes to disk for the CLI, so the two share one parser and one model.
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dpbridge {
@@ -60,13 +61,19 @@ SolveProgress progress();
 // The repair loop needs all four: `verdict` decides whether the tail can be spliced, `deepT`
 // is how far the model thinks it gets (a doomed tail that reaches past the current wall is
 // still progress), and `capHits` says whether a bigger capacity could change the answer.
-enum { OutcomeFailed = 0, OutcomePartial = 1, OutcomeSolved = 2 };
+// OutcomeCancelled is NOT "this anchor has nothing": the caller stopped the search itself
+// (cancelSearch below) because the game refuted one of its checkpoints. No plan file is
+// written for it, and a caller that reads it as a failure would escalate or give up on an anchor
+// that was never answered.
+enum { OutcomeFailed = 0, OutcomePartial = 1, OutcomeSolved = 2, OutcomeCancelled = 3 };
 
 struct SolveOutcome {
     int verdict = OutcomeFailed;
     long long deepT = -1;
     double deepX = -1.0;
     long long capHits = -1;
+    // OutcomeCancelled only: the layer the search was on when it saw the cancel. -1 otherwise.
+    long long cancelT = -1;
     // Ticks of the emitted plan on which the model itself fired a kill, counted
     // on the plan's own walk. -1 = the walk never ran, which is NOT zero.
     long long resimDead = -1, resimFirst = -1;
@@ -79,6 +86,9 @@ struct SolveOutcome {
     unsigned resimTrig = 0;
     int resimFrame = -1;              // the frame resimObjX/Y are read in
     long long replayDiedT = -1;   // --replay only: where the model died, -1 = it survived
+    long long rejoinT = -1;       // --rejoinuse: where the search joined, -1 = no
+    long long rejoinBadT = -1;    // ...and where the joined walk left the old plan's, -1 = never
+    const char* rejoinBadWhy = nullptr;
     // Touch boxes the call required, and those the anchor already sits past. A required box
     // behind the anchor can never be entered, so the frontier is empty before the first tick --
     // which looks exactly like an impassable level unless you can see this.
@@ -98,4 +108,37 @@ struct SolveOutcome {
 };
 SolveOutcome outcome();
 
+// ---- checkpoints: lineages to fly while the search is still running ------------------------
+//
+// At fixed layers past its anchor the search publishes the lineage of its frontier's first state,
+// cut at that layer (dp/progress.hpp has the schedule and the argument). The caller flies them in
+// order and judges each: passCheckpoint when the flight reached its last tick alive, cancelSearch
+// when the game killed it strictly inside. The search does not return an answer until every
+// checkpoint it published has been judged, so nothing about the outcome depends on which thread
+// got there first. No arena index crosses this seam; a checkpoint is ticks and input edges.
+struct SolveCheckpoint {
+    unsigned long long call = 0;   // the solve call that published it
+    std::size_t index = 0;         // its position in that call's order
+    long long t0 = 0;              // the anchor the call searches from
+    long long tick = 0;            // the last tick its inputs cover
+    // `input=press,level`, through the plan writer's own per-mode latency conversion.
+    std::vector<std::pair<long long, int>> edges;
+};
+
+// Turn the channel on for this process. With it off the search does no extra work, waits for
+// nothing and prints nothing, so the CLI's output is what it was without any of this.
+void checkSubscribe(bool on);
+// The next checkpoint to judge in the call that owns the channel -- read with the call id and the
+// judged count under one lock, so the three always belong together. False when there is none yet.
+bool nextCheckpoint(SolveCheckpoint& out);
+// Just the owning call's id, with no lock: cheap enough to ask on every physics tick.
+unsigned long long checkCall();
+// The verdict that checkpoint `index` of `call` survived. Refused (false) for a call that no
+// longer owns the channel or for an index out of order.
+bool passCheckpoint(unsigned long long call, std::size_t index);
+
+// Ask the search in flight to stop. It leaves the layer loop at the next layer (or its wait for
+// judgements), publishes OutcomeCancelled, writes no plan and returns a distinct rc. Cleared by
+// the caller before the next search call.
+void cancelSearch(bool on);
 }  // namespace dpbridge

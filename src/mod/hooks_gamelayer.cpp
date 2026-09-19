@@ -4358,6 +4358,12 @@ class $modify(GJBaseGameLayer) {
         // repair loop resumes the search from.
         if (g_started && !g_sessionOver && g_cfg.dpSolve && m_player1)
             anchors::record(this, g_tick);
+        // ...and, while a checkpoint flight is in the air (cfg `dpcheck`), the tick its inputs run
+        // out on. Here rather than at the frame boundary: one frame of the fast loop is thousands
+        // of ticks, and an inputless flight left to drift that far either dies a death that means
+        // nothing or walks into the stall guard (repair.hpp ckTick).
+        if (g_started && !g_sessionOver && g_cfg.dpSolve && g_cfg.dpCheck)
+            dpsolve::ckTick(g_tick);
         // ...and the seek bar's own, much smaller record: one x per tick, which is what turns
         // "five seconds earlier" into a place on the bar. Not the anchors buffer, which is
         // twenty-odd fields wide and only exists during a solve.

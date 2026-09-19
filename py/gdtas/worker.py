@@ -37,6 +37,7 @@ from . import gdsave
 from .gdsave import MINIMAL_SAVE_XML as _MINIMAL_SAVE_XML
 from .gdsave import decode_save as _decode_save
 from .gdsave import encode_save as _encode_save
+from .gdbase import check_worker
 from .paths import (BUILD_MOD, MOD_CACHE, MOD_ID, WORKERS_ROOT, gd_save_root,
                     worker_manifest)
 
@@ -298,6 +299,7 @@ class _WorkerBase:
 
     def _prepare(self, mod_file: Path) -> str:
         """Shared work done just before launch. Returns the hash of the .geode used."""
+        check_worker(self.root, self.exe)   # the frozen build, or no launch at all
         snap, digest = snapshot_mod(mod_file)
         mods = self.root / "geode" / "mods"
         mods.mkdir(parents=True, exist_ok=True)
