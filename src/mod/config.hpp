@@ -438,6 +438,10 @@ struct Config {
     bool vyTestOn = false;
     bool coinMode = false;   // enable our own coin-pickup detection (for coin verification
                              // during replay)
+    // cfg `areaenv=0` turns off the recording of where GD's own random numbers can put an Area
+    // Move's objects (solver/areaenv.hpp); the recording then holds this game's rects, as before.
+    // A diagnostic switch: without it the plan depends on the seeds of the game that recorded it.
+    bool areaEnv = true;
     // Music handling. continuous=keep the song playing / mute=silent / normal=untouched
     std::string music = "continuous";
     std::vector<InputCmd> inputs;

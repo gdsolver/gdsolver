@@ -37,32 +37,33 @@ custom levels, platformer mode and coins stand.
 
 ## Results
 
-The whole table is one cold regression run (2026-09-19) — `python
+The whole table is one cold regression run (2026-09-20) — `python
 py/cold_regress.py --one-session`, the whole suite inside a single game session,
 no plan and no solution file to start from — and it is run again on every change
 that reaches the loop.
 
-| # | Level | Repairs (v0.1.4) | Time (v0.1.4) | | # | Level | Repairs (v0.1.4) | Time (v0.1.4) |
+| # | Level | Repairs (v0.1.5) | Time (v0.1.5) | | # | Level | Repairs (v0.1.5) | Time (v0.1.5) |
 |--:|---|--:|--:|---|--:|---|--:|--:|
-| 1 | Stereo Madness | 1 (1) | 20 s (30 s) | | 12 | Theory of Everything | 5 (4) | 19 s (18 s) |
-| 2 | Back On Track | 0 (0) | 12 s (11 s) | | 13 | Electroman Adventures | 0 (0) | 17 s (17 s) |
-| 3 | Polargeist | 1 (1) | 15 s (23 s) | | 14 | Clubstep | 3 (3) | 22 s (31 s) |
-| 4 | Dry Out | 0 (0) | 12 s (12 s) | | 15 | Electrodynamix | 5 (5) | 24 s (25 s) |
-| 5 | Base After Base | 0 (0) | 14 s (14 s) | | 16 | Hexagon Force | 12 (14) | 2 m 44 s (4 m 38 s) |
-| 6 | Can't Let Go | 0 (0) | 12 s (13 s) | | 17 | Blast Processing | 0 (0) | 28 s (27 s) |
-| 7 | Jumper | 1 (1) | 19 s (20 s) | | 18 | Theory of Everything 2 | 12 (2) | 54 s (57 s) |
-| 8 | Time Machine | 0 (0) | 15 s (15 s) | | 19 | Geometrical Dominator | 5 (4) | 59 s (1 m 22 s) |
-| 9 | Cycles | 0 (0) | 11 s (12 s) | | 20 | Deadlocked | 21 (16) | 4 m 9 s (3 m 38 s) |
-| 10 | xStep | 1 (1) | 27 s (26 s) | | 21 | Fingerdash | 4 (5) | 1 m 21 s (1 m 54 s) |
-| 11 | Clutterfunk | 4 (2) | 32 s (34 s) | | 22 | Dash | 39 (45) | 3 m 43 s (12 m 13 s) |
+| 1 | Stereo Madness | 1 (1) | 19 s (20 s) | | 12 | Theory of Everything | 5 (5) | 20 s (19 s) |
+| 2 | Back On Track | 0 (0) | 11 s (12 s) | | 13 | Electroman Adventures | 0 (0) | 17 s (17 s) |
+| 3 | Polargeist | 1 (1) | 16 s (15 s) | | 14 | Clubstep | 3 (3) | 22 s (22 s) |
+| 4 | Dry Out | 0 (0) | 12 s (12 s) | | 15 | Electrodynamix | 5 (5) | 23 s (24 s) |
+| 5 | Base After Base | 0 (0) | 14 s (14 s) | | 16 | Hexagon Force | 12 (12) | 2 m 34 s (2 m 44 s) |
+| 6 | Can't Let Go | 0 (0) | 13 s (12 s) | | 17 | Blast Processing | 0 (0) | 27 s (28 s) |
+| 7 | Jumper | 1 (1) | 18 s (19 s) | | 18 | Theory of Everything 2 | 12 (12) | 53 s (54 s) |
+| 8 | Time Machine | 0 (0) | 15 s (15 s) | | 19 | Geometrical Dominator | 5 (5) | 59 s (59 s) |
+| 9 | Cycles | 0 (0) | 11 s (11 s) | | 20 | Deadlocked | 21 (21) | 4 m 8 s (4 m 9 s) |
+| 10 | xStep | 1 (1) | 27 s (27 s) | | 21 | Fingerdash | 4 (4) | 1 m 22 s (1 m 21 s) |
+| 11 | Clutterfunk | 4 (4) | 32 s (32 s) | | 22 | Dash | 46 (39) | 5 m 2 s (3 m 43 s) |
 
-In brackets: the same two numbers as `v0.1.4` published them (2026-09-17), from
+In brackets: the same two numbers as `v0.1.5` published them (2026-09-19), from
 a run of the same kind — one game session for the whole suite. A bracket is there
 to say where the project was standing, not to be subtracted from the figure
 beside it: a repair count is not a score, and a different route through the
-search gives a different count for the same build. Most of this release's gain is
-the loop spending less per repair (see [How it works](#how-it-works)): Dash's 39
-repairs cost a third of what its 45 did.
+search gives a different count for the same build. This release changes one
+level: Dash's 46 repairs (39) are what it costs to treat every place the game's
+own random numbers can put a block as deadly (see [How it works](#how-it-works)).
+The other 21 made exactly the same decisions as in `v0.1.5`, round for round.
 
 **Repairs** is how many times the loop had to go back: solve, replay, die,
 re-anchor on the game's real state, solve the tail. `0` means the very first
@@ -79,7 +80,7 @@ real one.
 
 **Time** comes from that same run — 8 solver threads on a 16-core desktop — and
 it counts everything from the level being built to the solution being written;
-the 22 add up to the 19 minutes the suite took. Read it as a guide and not as a
+the 22 add up to the 20 minutes the suite took. Read it as a guide and not as a
 contract: the clock is not what the regression compares, the repair count is, and
 only that one is deterministic.
 
@@ -140,6 +141,18 @@ game check each step; once a plan outlives its step, it plans the rest of the
 level. And a repair does not have to solve everything past the death again: when
 the new search comes back onto the trajectory of the plan that died, it stops
 there and keeps that plan's inputs from that point on.
+
+One kind of geometry is not recorded where it was. An Area Move can give its
+distance, length, offset, angle or x/y moves a variance, and the game picks the
+value from two random seeds it never resets — so the block lands somewhere else
+on every attempt, after every level played before it, and on every machine that
+replays the solution. For such an object the mod records instead the box it can
+be anywhere in, worked out from the game's own arithmetic and checked against the
+game on every frame, and the model treats the whole box as deadly while the
+object is solid. A solution therefore does not depend on the seeds, and a level
+that cannot be passed that way is reported as not solved. Area Rotate and Area
+Scale with a variance are not covered yet (the `areaenv:` line counts them), and
+neither is an Advanced Follow's.
 
 There is also a **section solver**, which drops the model for one stuck section
 and lets the game itself be the transition function, searching forward from a

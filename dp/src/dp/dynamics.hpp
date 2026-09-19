@@ -8,7 +8,10 @@ namespace dp {
 // they are not the shape -- see Obj::oriented and the note on the portal test.
 // Recordings made before the column existed load with rot = 0, i.e. exactly the
 // old behaviour.
-struct DynSample { int t; float cx, cy, hw, hh; uint8_t on; float rot = 0.f; };
+// `env`: the row is not the object's rect but the box GD's own random numbers can put it in
+// (the MOD's areaenv.hpp, --groups' ninth column). The level loader turns such rows into a
+// hazard twin of the object (see envTwinUid).
+struct DynSample { int t; float cx, cy, hw, hh; uint8_t on; float rot = 0.f; uint8_t env = 0; };
 // [2026-08-22 r104] Interpolate linearly between the recording's rows
 // (--no-dyninterp turns it off). Default ON: restores smooth motion to moving
 // geometry that grouptrace's 0.05px threshold turned into a staircase.

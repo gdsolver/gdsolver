@@ -58,6 +58,10 @@ struct Tracked {
     // the reliable way.
     float rot = 0;
     int on = -1;   // negation of GameObject::m_isGroupDisabled (toggle)
+    // 1 = the row is the box GD's random numbers can put the object in, not its rect
+    // (areaenv.hpp). Written as a ninth column, only on such rows, so a level without them
+    // records the same bytes as before the column existed.
+    int env = 0;
     bool emitted = false;
 };
 
@@ -115,6 +119,7 @@ constexpr float kEps = 0.05f;
 
 inline void reset() {
     g_objs.clear();
+    areaenv::clear();   // keyed by GameObject*, which die with the level
     g_owner = nullptr;
     g_rows = 0;
     g_lastTick = -1;
@@ -133,6 +138,7 @@ inline bool owns(GJBaseGameLayer* l) { return l && g_owner == l; }
 // static dump is correct).
 inline void build(GJBaseGameLayer* l) {
     reset();
+    areaenv::resetTallies();
     if (!g_on || !l || !l->m_objects) return;
     g_owner = l;
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
@@ -272,15 +278,26 @@ inline void tick(long long t) {
         // wall that does not move". The on column is its effective state
         const int on = (tr.obj->m_isGroupDisabled
                         || tr.obj->m_isGroupDisabledTemp) ? 0 : 1;
-        if (tr.emitted && on == tr.on && std::fabs(cx - tr.cx) < kEps
-            && std::fabs(cy - tr.cy) < kEps && std::fabs(w - tr.w) < kEps
-            && std::fabs(h - tr.h) < kEps && std::fabs(rot - tr.rot) < kEps)
+        // Placed by an Area Move with a variance: the rect depends on GD's random numbers, so
+        // write the box of every place it can be instead (areaenv.hpp). The rect itself must
+        // not reach the file -- it is the one thing that differs between two games.
+        float ex = cx, ey = cy, ew = w, eh = h;
+        const int env = areaenv::envelope(tr.obj, ex, ey, ew, eh) ? 1 : 0;
+        if (tr.emitted && on == tr.on && env == tr.env && std::fabs(ex - tr.cx) < kEps
+            && std::fabs(ey - tr.cy) < kEps && std::fabs(ew - tr.w) < kEps
+            && std::fabs(eh - tr.h) < kEps && std::fabs(rot - tr.rot) < kEps)
             continue;
-        tr.cx = cx; tr.cy = cy; tr.w = w; tr.h = h; tr.rot = rot; tr.on = on;
+        tr.cx = ex; tr.cy = ey; tr.w = ew; tr.h = eh; tr.rot = rot; tr.on = on; tr.env = env;
         tr.emitted = true;
         char b[160];
-        snprintf(b, sizeof(b), "%lld,%d,%.3f,%.3f,%.3f,%.3f,%d,%.3f\n", t, tr.uid,
-                 cx, cy, w, h, on, rot);
+        if (env) {
+            snprintf(b, sizeof(b), "%lld,%d,%.3f,%.3f,%.3f,%.3f,%d,%.3f,1\n", t, tr.uid,
+                     ex, ey, ew, eh, on, rot);
+            ++areaenv::g_rows;
+        } else {
+            snprintf(b, sizeof(b), "%lld,%d,%.3f,%.3f,%.3f,%.3f,%d,%.3f\n", t, tr.uid,
+                     cx, cy, w, h, on, rot);
+        }
         g_out << b;
         ++g_rows;
         g_lastTick = t;

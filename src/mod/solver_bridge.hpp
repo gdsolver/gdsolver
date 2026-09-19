@@ -12,6 +12,7 @@ namespace p1 {
 // gatetrace)
 #include "solver/solver.hpp"
 
+#include "solver/areaenv.hpp"
 #include "solver/grouptrace.hpp"
 #include "solver/clearance.hpp"
 #include "solver/psnap.hpp"

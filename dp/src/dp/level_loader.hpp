@@ -72,6 +72,44 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                 const std::vector<TouchTrig>* tt = nullptr,
                 const std::vector<AutoTrig>* at = nullptr) {
     Level L;
+    // Rows the MOD marked `env` (DynSample::env): an Area Move with a variance puts the object
+    // somewhere in that box, and where depends on GD's own random seeds, which differ from one
+    // game to the next and between the recording and any replay. No position inside it is safe
+    // to plan against, so the whole box is deadly while the object is enabled: the object gets a
+    // hazard twin that follows the box, and does not collide itself on those ticks. (User
+    // ruling 2026-09-19: everything the seeds can reach counts as a death, and a level that
+    // cannot be passed that way has no solution.) Solids and hazards only -- see the NEAR
+    // routing below; anything else keeps its rows as recorded and is counted.
+    GroupTimeline envSplit;
+    std::unordered_map<int, int> envTwin;   // uid -> its twin's uid
+    const GroupTimeline* const gtAsRecorded = gt;
+    if (gt) {
+        std::vector<int> withEnv;
+        for (const auto& kv : *gt)
+            for (const DynSample& s : kv.second)
+                if (s.env) { withEnv.push_back(kv.first); break; }
+        if (!withEnv.empty()) {
+            envSplit = *gt;
+            for (int uid : withEnv) {
+                std::vector<DynSample> twin;
+                {
+                    std::vector<DynSample>& own = envSplit[uid];
+                    twin.reserve(own.size());
+                    for (DynSample& s : own) {
+                        DynSample h = s;
+                        h.on = s.env ? s.on : 0;
+                        h.rot = 0.f;   // the box is axis-aligned already
+                        h.env = 0;
+                        twin.push_back(h);
+                        if (s.env) s.on = 0;
+                    }
+                }
+                envSplit[envTwinUid(uid)] = std::move(twin);   // after `own` is done with
+                envTwin[uid] = envTwinUid(uid);
+            }
+        }
+    }
+    int envTwins = 0, envOther = 0;
     g_forceFields.clear();
     g_forceBoxes.clear();
     g_flipHeadBoxes.clear();
@@ -975,7 +1013,28 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             // and would surface only as "the 4,889 death is gone", which is exactly
             // what a truncated level looks like too.
             if (g_dropNoCollide && o.id == kNoCollideId) continue;
-            emit(Dynamics::NEAR, o);
+            const auto tw = envTwin.empty() ? envTwin.end() : envTwin.find(o.uid);
+            if (tw == envTwin.end()) {
+                emit(Dynamics::NEAR, o);
+            } else {
+                // Placed by GD's random numbers (envSplit above): the object without its box
+                // ticks, then its hazard twin on them. emit reads `gt`, so both go through the
+                // split timeline and nothing else does.
+                gt = &envSplit;
+                emit(Dynamics::NEAR, o);
+                Obj h = o;
+                h.type = 2;
+                h.uid = tw->second;
+                h.radius = 0.0;
+                h.oneway = 0;
+                h.obbOk = 0;
+                h.oriented = 0;
+                h.slope = 0;
+                h.slopeHazard = 0;
+                emit(Dynamics::NEAR, h);
+                gt = gtAsRecorded;
+                ++envTwins;
+            }
         }
         // type 3 = InverseGravityPortal. It was MISSING here, so every blue
         // gravity portal in the game was invisible to the model: 109 of them
@@ -1367,6 +1426,13 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                         qVy(force * forceUnitFor(5, 1.29825f).v),
                         qVy(force * forceUnitFor(7, 1.29825f).v));
         }
+    }
+    if (!envTwin.empty()) {
+        envOther = (int)envTwin.size() - envTwins;
+        std::printf("groups: %d objects placed by GD's random numbers -> hazard twins%s\n",
+                    envTwins,
+                    envOther ? " (and some that are not solids or hazards: rows kept as "
+                               "recorded, NOT treated as deadly)" : "");
     }
     auto byX = [](const Obj& a, const Obj& b) { return a.cx < b.cx; };
     std::sort(L.objs.begin(), L.objs.end(), byX);

@@ -22,6 +22,11 @@ namespace dp {
 // recording wins wherever it reaches (its last tick). Beyond that the bootstrap
 // fills in, and beyond THAT every object holds its last known rect.
 using GroupTimeline = std::unordered_map<int, std::vector<DynSample>>;
+
+// The uid the level loader gives an object's hazard twin (DynSample::env). Far above any real
+// m_uniqueID, and readable in a death report: 100006272 is the box of uid 6272.
+constexpr int kEnvTwinUidBase = 100000000;
+inline int envTwinUid(int uid) { return kEnvTwinUidBase + uid; }
 inline GroupTimeline loadGroupTimeline(const std::string& path) {
     GroupTimeline g;
     std::ifstream in(path);
@@ -33,17 +38,19 @@ inline GroupTimeline loadGroupTimeline(const std::string& path) {
     std::getline(in, line);   // header
     long long rows = 0;
     while (std::getline(in, line)) {
-        int t = 0, uid = 0, on = 1;
+        int t = 0, uid = 0, on = 1, env = 0;
         float cx = 0, cy = 0, w = 0, h = 0, rot = 0;
         // a run that is cut off mid-write leaves one short line; skip it.
         // `on` and `rot` are optional so a trace recorded before those columns
         // existed still loads (as "always there, never turned", which is what it
-        // used to mean).
-        const int n = std::sscanf(line.c_str(), "%d,%d,%f,%f,%f,%f,%d,%f", &t,
-                                  &uid, &cx, &cy, &w, &h, &on, &rot);
+        // used to mean). `env` is written only on the rows that have it (the box
+        // GD's random numbers can put the object in, DynSample::env), always
+        // after a `rot`.
+        const int n = std::sscanf(line.c_str(), "%d,%d,%f,%f,%f,%f,%d,%f,%d", &t,
+                                  &uid, &cx, &cy, &w, &h, &on, &rot, &env);
         if (n < 6) continue;
         g[uid].push_back({t, cx, cy, w * 0.5f, h * 0.5f,
-                          (uint8_t)(on ? 1 : 0), rot});
+                          (uint8_t)(on ? 1 : 0), rot, (uint8_t)(env ? 1 : 0)});
         ++rows;
     }
     for (auto& kv : g)

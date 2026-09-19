@@ -1,3 +1,18 @@
+# v0.1.6
+
+ * **Nothing the game's own random numbers decide is planned against.** An Area
+   Move can give its distance, length, offset, angle or x/y moves a variance, and
+   the game takes the value from two random seeds it never resets. Such a block
+   sits somewhere else on every attempt, after every level played before it in
+   the same game, and on every machine that replays the solution: on Dash, 13
+   blocks landed up to 278 px apart, and solving Fingerdash first moved them by
+   up to 2 px, so the suite in one session and a game per level were not solving
+   quite the same level. The mod now records, for such an object, the box it can
+   be anywhere in — the game's own arithmetic, read from the binary and checked
+   against the game on every object it moves (the `areaenv:` line) — and the
+   model treats the whole box as deadly while the object is solid. Dash clears in
+   46 repairs instead of 39; the other 21 levels make the same decisions as
+   before. cfg `areaenv=0` records the rects as before.
 # v0.1.5
 
  * **Each repair costs less.** The whole suite in one game session went from 30

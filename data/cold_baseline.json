@@ -56,8 +56,8 @@
   "iters": 4
  },
  "22": {
-  "fp": "it=39 plan=1892/5f50f3e2 att=69 t=19084 x=21689.334 band1=480.0,780.0 fix=47/5811/91b9d3ac horizon=3000 backoff=96 live=23044613/1cc75cb8 deep=-",
-  "iters": 39
+  "fp": "it=46 plan=1136/9d685a7b att=79 t=19738 x=21654.947 band1=480.0,780.0 fix=60/7440/b03bfdba horizon=3000 backoff=24 live=23084049/93bdaa8a deep=-",
+  "iters": 46
  },
  "3": {
   "fp": "it=1 plan=1226/df353ed7 att=2 t=7897 x=10256.058 band1=90.0,90.0 fix=0/- horizon=29985 backoff=6 live=- deep=-",

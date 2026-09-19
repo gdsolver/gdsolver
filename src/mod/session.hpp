@@ -314,6 +314,8 @@ inline void loadConfig() {
         auto key = line.substr(0, eq);
         auto val = line.substr(eq + 1);
         if (loadDpCfg(key, val)) continue;
+        // Not in the chain below, which is at MSVC's block-nesting ceiling (C1061).
+        if (key == "areaenv") { g_cfg.areaEnv = (val == "1"); continue; }
         if (key == "enabled") g_cfg.enabled = (val == "1");
         else if (key == "level") cfgNum(key, val, g_cfg.levelId);
         // `levels=1,2,3`: solve these in this order, in ONE game (see suite:: in config.hpp).
@@ -748,6 +750,9 @@ inline void endSession(const std::string& why) {
     // session; anything else names the field that leaked. `restored` counts the writes GD
     // made outside the guarded block (the inline attempt counter) and that were put back --
     // it is what stops "none" from being vacuous.
+    // The Area Move envelope's own check (solver/areaenv.hpp): printed whenever an Area Move ran,
+    // so a level that has one says whether its prediction matched the game.
+    if (areaenv::g_objects > 0 || areaenv::g_unenveloped > 0) writeResult(areaenv::summary());
     restoreProgress();
     writeResult("level record changed: "
         + progressDiff(g_progressAtStart, sampleProgress(g_progressLevel))
