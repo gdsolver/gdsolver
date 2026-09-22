@@ -150,10 +150,8 @@ inline bool slopeNudgeMode(int mode) {
 // the corpus census in measure-boostlatch-2026-09-06 (lv16 8,913-8,918, both
 // halves, and lv16 14,366-14,370).
 inline bool boostLatchMode(int mode) {
-    // --no-boostlatch: the pre-2026-09-06 scope, where only the swing carried
-    // the exemption. Every one of the sites below reads this helper, so the
-    // flag restores the old behaviour exactly.
-    if (g_noBoostLatch) return mode == 7;
+    // (The pre-2026-09-06 scope, where only the swing carried the exemption, was
+    // the --no-boostlatch arm; it is gone since the flag clean-up.)
     return mode == 1 || mode == 3 || mode == 7;
 }
 
@@ -353,7 +351,7 @@ inline bool slopeVetoesSolid(const Obj* o, const std::vector<const Obj*>* slopes
                              double px, double py, double pHalfW, double pHalfH,
                              bool faceIsTop, double prevX, double prevY,
                              int curSlopeUid) {
-    if (g_noSlopeVeto || !slopes || o->type != 0) return false;
+    if (!slopes || o->type != 0) return false;
     const double sx0 = o->cx - o->hw, sx1 = o->cx + o->hw;
     const double sy0 = o->cy - o->hh, sy1 = o->cy + o->hh;
     for (const Obj* R : *slopes) {

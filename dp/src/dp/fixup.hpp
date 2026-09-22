@@ -156,11 +156,15 @@ inline const Fixup* findFixup(const std::vector<Fixup>& v, const State& s,
 // state -- so no DELTA applies while a dynamic object is within reach;
 // moving-geometry trajectories come from the recordings and the trigger
 // definitions instead.
-// KILLS are exempt. A phase-wrong kill costs one route point and the search
-// replans around it; a GATED kill leaves a phantom survival open forever --
-// the lv22 corridor deaths at (9,827, y~1,738) and (8,286, y~1,072) are dyn
-// kills, and with them gated the cold run sat in that oscillation past the
-// point earlier runs had learnt their way out of it.
+// KILLS ARE NOT EXEMPT, whatever this note used to say: stepBoth refuses the
+// whole lookup here, kills included, and its note carries the measurement that
+// chose that (the kills-exempt variant sat pinned in the lv22 corridor). The
+// case for exempting them is still worth keeping in view: a phase-wrong kill
+// costs one route point and the search replans around it, while a GATED kill
+// leaves a phantom survival open -- the lv22 corridor deaths at (9,827,
+// y~1,738) and (8,286, y~1,072) are dyn kills, and so were GD's deaths at
+// t=2,416 and 2,842 under the ceiling of group 265, which the gate held off
+// until the ceiling's own timing was right (the autonomous lag, dynamics.hpp).
 inline bool nearDynObject(const State& s, const StepCtx& K) {
     for (const Obj* o : *K.near)
         if (o->dynObj
@@ -282,9 +286,9 @@ inline void fxDescribe(const State& s, int input, const StepCtx& K,
     }
 }
 
-// markTouched's preY under --touchprey (see g_touchPreyButton).
+// markTouched's preY: the button's own row (--touchprey=button; the parent
+// arm, the previous row's y, is gone since the flag clean-up).
 inline double touchPreY(const State& s, const State& c, bool set, double y) {
-    if (!g_touchPreyButton) return (double)s.y;
     return set ? y : (double)c.y;
 }
 
@@ -294,7 +298,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     // Out-parameter, not a global: phase 1 steps the layer in parallel.
     bool p1FlippedGravity = false;
     if (g_touchCensus) g_tcBranch = 0;
-    if (g_touchPreyButton) g_preBtnSet = false;
+    g_preBtnSet = false;
     State c = stepOne(s, input, K, d1, &p1FlippedGravity);
     if (g_touchCensus) g_tcBranchP1 = g_tcBranch;
     // p1's pre-button y, saved before p2's stepOne can overwrite it
@@ -343,18 +347,26 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     // The gate is GD's: dual, and the six mode bytes equal between the bodies
     // (wave is not compared -- so a cube and a wave still count as matching,
     // which is the asm's own shape, not a simplification).
-    // Not applied when p1's firing was the same-box case: r101's skip in the
-    // portal pass already models that round-trip, and this would count it twice.
+    // (It used to stand aside for r101's same-box skip in the portal pass; that
+    // skip was the --no-dualcouple arm and is gone since the flag clean-up.)
     // p2's own portal on the same tick then finds itself already at the target
     // and no-ops, so nothing double-flips.
-    if (!g_noDualFlip && p1FlippedGravity && s.dual
+    // --dualcouple [2026-09-19]: GD's partner call SETS the other body to the
+    // inverse of the new polarity and halves only if that changed it; a plain
+    // toggle would equal that only for a mirrored pair. See the p2 -> p1 half after
+    // p2's step.
+    if (p1FlippedGravity && s.dual
         && sameModeFlags(s.mode, s.mode2)) {
-        sb.flip = (uint8_t)!sb.flip;
-        sb.vy = (float)((double)sb.vy * 0.5);
+        const uint8_t want = (uint8_t)!c.flip;
+        if (sb.flip != want) {
+            sb.flip = want;
+            sb.vy = (float)((double)sb.vy * 0.5);
+        }
     }
     bool d2 = false;
+    bool p2FlippedGravity = false;
     g_halfNow = 1;
-    State cb = stepOne(sb, input, K, d2);
+    State cb = stepOne(sb, input, K, d2, &p2FlippedGravity);
     g_halfNow = 0;
     swapHalves(cb);
     // shared fields (x, speed, dual) come from the first half; the second half
@@ -388,6 +400,23 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     // the suppression the latch was supposed to do.
     c.portalLatch2 = cb.portalLatch2;
     for (int i = 0; i < 4; ++i) c.usedPad2[i] = cb.usedPad2[i];
+    // --dualcouple: ...and p2's own flip reaches p1 the same way. GD processes
+    // p1 first, so p1 has already integrated when p2's gravity portal calls it:
+    // the halving lands on p1's finished vy. lv16 t=13,496 (dual mini ship
+    // pair, blue gravity portal uid6748): p1 is already normal and does not
+    // fire; p2 fires 1->0 and sets p1 0->1, vy (-0.842 + 0.101) * 0.5 =
+    // -0.3705, GD's value. The same two calls give r101's round trip when both
+    // bodies start flipped (p1 fires 1->0, the partner call leaves p2 alone,
+    // p2 fires and sets p1 back to 1: vy * 1/4), which is why the portal pass
+    // no longer has r101's same-box skip.
+    if (p2FlippedGravity && s.dual
+        && sameModeFlags(s.mode, s.mode2)) {
+        const uint8_t want = (uint8_t)!c.flip2;
+        if (c.flip != want) {
+            c.flip = want;
+            c.vy = (float)((double)c.vy * 0.5);
+        }
+    }
     // Dual mode portal: GD re-MIRRORS the pair. playerWillSwitchMode
     // (0x212ef0) runs per toucher; for the SECOND one the other player is
     // already in the portal's target mode, and it then calls

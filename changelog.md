@@ -1,3 +1,43 @@
+# v0.2.0
+
+ * **Coins.** A **Coins** switch on the panel makes the goal the end of the level
+   *and* every coin in it (cfg `coinroute`, dp `--coins`). The collected set is
+   part of the search state, a coin counts when the player's own box overlaps it
+   where its group has put it, and a state that leaves one behind is dead; the
+   item counters that gate a coin (Fingerdash's and Dash's third) are modelled,
+   and a replay that passes a coin the game did not credit is ended there and
+   repaired. All 22 official levels clear cold with 3/3 coins, and those
+   solutions are tracked as `data/solution_lv<N>_coins.txt` — each replays to a
+   clear with the game's own count at 3/3. Coins collected while the mod drives
+   are never awarded.
+ * **The seam between recordings.** Past the tick where the last replay died,
+   the model plans against a recording of the level played with no input. That
+   recording reaches each trigger a little later than a real run, so an object
+   still moving at the seam is now joined to it at the shift where the two agree
+   (Fingerdash's rotating bars had jumped eight ticks back there); and the tick
+   the game killed the player on is now held one row, since the model decides
+   that kill on its next row (Deadlocked's spikes follow the player, and in the
+   input-free recording they were elsewhere and switched off). Deaths that had
+   repeated round after round in both places are gone.
+ * **Moving geometry is dated more faithfully** — an object moved by both a
+   touch box and an autonomous trigger dates each from its own motion, a touch
+   box the attempt entered is dated from its entry tick, and an anchor in a
+   rotated section windows the touch boxes by world x — along with many smaller
+   measured corrections to the model since v0.1.6. The repair counts moved on
+   ten levels as a result (see the table in the README).
+ * **Removed switches.** Switches whose off arm had become dead code are gone,
+   and passing one is refused by name instead of being ignored: dp exits with
+   code 2, and a session whose `autorun.cfg` names a removed key stops before it
+   solves.
+ * **Regression.** Coin runs have their own baseline
+   (`data/cold_baseline_coins.json`, with each level's coin count). Iteration
+   counts are reported and no longer fail a run. A run records the game
+   profile's resolution and refuses to compare with a baseline measured at
+   another one: GD's saw radius follows that setting (one of Deadlocked's saws
+   reaches 21.87 px at index 25 and 21.96 at index 8), and the published results
+   and solutions were measured at index 25. A baseline can be adopted from a
+   reviewed one-session run (`--adopt`) instead of being blessed in the same run.
+
 # v0.1.6
 
  * **Nothing the game's own random numbers decide is planned against.** An Area

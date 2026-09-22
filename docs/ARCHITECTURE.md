@@ -31,8 +31,14 @@ why those are out of scope rather than merely unmeasured.
 Two facts make the game a usable oracle for that question:
 
 * **Determinism** — with input precision set to *click on steps*, the same input
-  sequence yields the same trace, independent of frame rate, window size or
-  graphics settings. This is measured, not assumed; everything below rests on it.
+  sequence yields the same trace, independent of frame rate. This is measured, not
+  assumed; everything below rests on it. It holds for fixed settings, and one
+  graphics setting is not neutral: the resolution option changes the hit radius
+  the game gives saws (lv20's id 187 is 21.87 at resolution index 25 and 21.96 at
+  index 8), which is enough to change a cold run's first plan. So traces, plans and
+  baselines compare only at one resolution: the results here are measured at
+  index 25, and the cold regression records the index and refuses to compare
+  across it.
 * **x is essentially a clock** — re-anchoring the search on a later tick costs nothing in
   terms of path choice, so a plan can be verified in the game and repaired
   from the first point of disagreement.
@@ -300,9 +306,23 @@ measuring is also the boundary of what is supported.
   the two only correlate because mechanics arrived with versions. A supported
   subset has to be defined in objects and modes; a version is a first guess at
   which of them a level contains.
-* **The objective is survival**: alive at the end of the level, nothing else.
-  Where the coins are is always exported, and there is a pickup test that never
-  consults GD's own coin state, so it still works while every award is blocked —
-  but it is off unless `coinMode` asks for it, because no part of the solve reads
-  it. Coins are not in the search state, and a plan that collects one did so by
-  accident.
+* **The objective is survival, or survival and every coin**: alive at the end of
+  the level, and with the panel's Coins switch (cfg `coinroute`, dp `--coins`)
+  also every coin in it. With coins on, the collected set is part of the search
+  state, a coin is collected when the player's own rect overlaps it where its
+  group has put it, and a state that leaves an uncollected coin behind is dead;
+  the search is not steered towards a coin, the goal is simply not reached
+  without it. The loop ends a replay that passes a coin GD did not credit and
+  repairs it from there. All 22 official levels clear with 3/3 that way; without
+  coins, a plan that collects one did so by accident — 24 of the 66, as it turns
+  out. Where the coins are is always exported, and `coinMode` turns on two witnesses
+  that both work while every award is blocked: the mod's own pickup test (a
+  distance from the coin's loaded position) and GD's own, hooked at
+  `GJBaseGameLayer::pickupItem`, which is where `collisionCheckObjects` credits a
+  coin. They are reported side by side (`coin:` / `coingd:` / `coincmp:`) because
+  the first is a claim about the second, and comparing them is what says whether
+  a route that plans to collect a coin would actually be paid for it. The
+  measurement so far: the same verdict on 20 of 24, never a pickup GD did not
+  credit, and 4 real ones missed — see COIN_RADIUS in `src/solver/solver.hpp`.
+  `itemcnt:` reports GD's item counters, which is what actually gates the coins
+  that have to be made to appear (lv21's third and lv22's third).

@@ -43,22 +43,39 @@ inline bool uiConfigureSession(int levelId) {
         // repaired and tried again. The loop closes the session itself, on a clear or when it
         // gives up
         g_cfg.maxAttempts = 1000000;
-        log::info("panel: solve lv{} in-process", levelId);
+        // Coins on: the goal is the end AND every coin (cfg coinroute, which implies GD's own
+        // pickup detection), and the result is filed as the coin solution.
+        if (g_uiCoins) {
+            g_cfg.coinRoute = true;
+            g_cfg.coinMode = true;
+            g_cfg.coinFiles = true;
+        }
+        log::info("panel: solve lv{} in-process{}", levelId, g_uiCoins ? " with coins" : "");
     } else {
         char name[128];
-        snprintf(name, sizeof(name), "solution_lv%d_dp.txt", levelId);
+        snprintf(name, sizeof(name), g_uiCoins ? "solution_lv%d_coins.txt"
+                                               : "solution_lv%d_dp.txt", levelId);
         std::vector<InputCmd> plan;
         if (!loadInputsFile(std::string(DATA_DIR) + "/" + name, plan)) {
             // Say so on screen as well: silently falling back to normal play looks exactly
             // like "the mod did nothing", which is what it looked like the first time
             log::info("panel: no solution file for lv{} ({}) -> normal play", levelId, name);
-            notify::show("gdsolver: no solution file for this level - "
-                         "switch the panel to Solve", NotificationIcon::Warning, 4.f);
+            notify::show(g_uiCoins ? "gdsolver: no coin solution file for this level - "
+                                     "switch the panel to Solve with Coins On"
+                                   : "gdsolver: no solution file for this level - "
+                                     "switch the panel to Solve",
+                         NotificationIcon::Warning, 4.f);
             return false;
         }
         uiSessionBase(levelId);
         g_cfg.inputs = std::move(plan);
         g_cfg.maxAttempts = 1;
+        // Coins on: GD's own pickups are reported (`coingd:`, and the count at the clear), so the
+        // replay says in the log what the eye sees on screen.
+        if (g_uiCoins) {
+            g_cfg.coinMode = true;
+            g_cfg.coinFiles = true;
+        }
         log::info("panel: replay lv{} from {}", levelId, name);
     }
     openFiles();
@@ -258,32 +275,22 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
     }
     else if (key == "dphorizon") cfgNum(key, val, g_cfg.dpHorizon);
     else if (key == "dpstephorizon") cfgNum(key, val, g_cfg.dpStepHorizon);
-    else if (key == "dpfastveto") g_cfg.dpFastVeto = (val == "1");
     else if (key == "dpfastvetoall") g_cfg.dpFastVetoAll = (val == "1");
-    else if (key == "dprejoinwatch") g_cfg.dpRejoinWatch = (val == "1");
-    else if (key == "dprejoinuse") g_cfg.dpRejoinUse = (val == "1");
-    else if (key == "dprejoinchain") g_cfg.dpRejoinChain = (val == "1");
     else if (key == "dprejoinfull") g_cfg.dpRejoinFull = (val == "1");
     else if (key == "dpoffboardkill") g_cfg.dpOffBoardKill = (val == "1");
-    else if (key == "dpadaptivehorizon") g_cfg.dpAdaptiveHorizon = (val == "1");
     else if (key == "dpmaxiters") cfgNum(key, val, g_cfg.dpMaxIters);
     else if (key == "dpseedplan") g_cfg.dpSeedPlan = val;
     else if (key == "dpshow") cfgNum(key, val, g_cfg.dpShow);
     else if (key == "dpfixups") g_cfg.dpFixups = (val == "1");
-    else if (key == "dpfixp2") g_cfg.dpFixP2 = (val == "1");
     else if (key == "dpworld") g_cfg.dpWorld = (val == "1");
     else if (key == "dpgroups") g_cfg.dpGroups = (val == "1");
     else if (key == "dpbandtrack") g_cfg.dpBandTrack = (val == "1");
-    else if (key == "dpctrlwin") g_cfg.dpCtrlWin = (val == "1");
     else if (key == "dprotseed") {
-        g_cfg.dpRotSeed = val == "A" ? 1 : val == "E" ? 2 : val == "F" ? 3 : 0;
+        g_cfg.dpRotSeed = val == "A" ? 1 : val == "E" ? 2 : val == "F" ? 3 : val == "S" ? 4 : 0;
         if (g_cfg.dpRotSeed == 0 && val != "off" && val != "0")
-            writeResult("cfg: dprotseed=" + val + " is not one of off|A|E|F - left off");
+            writeResult("cfg: dprotseed=" + val + " is not one of off|A|E|F|S - left off");
     }
     else if (key == "dprotseedanchor") g_cfg.dpRotSeedAnchor = (val != "0");
-    else if (key == "dpswingpending") g_cfg.dpSwingPending = (val != "0");
-    else if (key == "dphoverstrict") g_cfg.dpHoverStrict = (val != "0");
-    else if (key == "dpbandend") g_cfg.dpBandEnd = (val != "0");
     else if (key == "dpsnapshot") g_cfg.dpSnapshot = (val == "1");
     else if (key == "dpcheck") g_cfg.dpCheck = (val == "1");
     else if (key == "dprotqtoggle") g_cfg.dpRotQToggle = (val == "1");
@@ -299,21 +306,130 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
         }
     }
     else if (key == "dpfingerprint") g_cfg.dpFingerprint = (val == "1");
+    else if (key == "dptouchseednow") g_cfg.dpTouchSeedNow = (val == "1");
     else if (key == "dparg") g_cfg.dpArgs.push_back(val);
     else return false;
     return true;
 }
 
+// Trace-only keys. They live outside loadConfig's else-if chain because that chain is at
+// MSVC's block-nesting limit (C1061): one more `else if` there does not compile.
+inline bool loadTraceCfg(const std::string& key, const std::string& val) {
+    if (key == "presstrace") {
+        auto c = val.find(',');
+        if (c != std::string::npos) {
+            long long a = 0, b = -1;
+            if (cfgNum(key, val.substr(0, c), a) && cfgNum(key, val.substr(c + 1), b)) {
+                g_pressT0 = a;
+                g_pressT1 = b;
+            }
+        }
+        return true;
+    }
+    if (key == "rngfresh") {
+        g_rngFresh = (val == "1");
+        return true;
+    }
+    if (key == "rngseed") {
+        auto c = val.find(',');
+        long long a = 0, b = 0;
+        if (c != std::string::npos && cfgNum(key, val.substr(0, c), a)
+            && cfgNum(key, val.substr(c + 1), b)) {
+            g_rngSeedSet = true;
+            g_rngSeedEE0 = a;
+            g_rngSeedEF8 = b;
+        }
+        return true;
+    }
+    if (key == "areatrace") {
+        // t0,t1,uid[,uid...]
+        std::vector<long long> v;
+        std::stringstream ss(val);
+        for (std::string item; std::getline(ss, item, ',');) {
+            long long n = 0;
+            if (!cfgNum(key, item, n)) return true;
+            v.push_back(n);
+        }
+        if (v.size() >= 3) {
+            g_areaT0 = v[0];
+            g_areaT1 = v[1];
+            g_areaUids.clear();
+            for (size_t i = 2; i < v.size(); ++i) g_areaUids.push_back((int)v[i]);
+        }
+        return true;
+    }
+    if (key == "sticktrace") {
+        auto c = val.find(',');
+        if (c != std::string::npos) {
+            long long a = 0, b = -1;
+            if (cfgNum(key, val.substr(0, c), a) && cfgNum(key, val.substr(c + 1), b)) {
+                g_stickT0 = a;
+                g_stickT1 = b;
+            }
+        }
+        return true;
+    }
+    if (key == "slopetrace") {
+        auto c = val.find(',');
+        if (c != std::string::npos) {
+            long long a = 0, b = -1;
+            if (cfgNum(key, val.substr(0, c), a) && cfgNum(key, val.substr(c + 1), b)) {
+                g_slopeT0 = a;
+                g_slopeT1 = b;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 inline void loadConfig() {
     std::ifstream f(std::string(DATA_DIR) + "/autorun.cfg");
     if (!f.is_open()) return;
+    g_cfgRemoved.clear();
     std::string line;
     while (std::getline(f, line)) {
         auto eq = line.find('=');
         if (eq == std::string::npos) continue;
         auto key = line.substr(0, eq);
         auto val = line.substr(eq + 1);
+        // KEYS REMOVED IN A RELEASE CLEAN-UP. Each switched the loop back to a behaviour that
+        // had been measured and replaced. Columns: the key, the commit that removed it, and the
+        // earlier one that folded it into the default. A file
+        // that still names one is asking for something that no longer exists, so it is
+        // refused by name (dpsolve::start will not solve) rather than ignored.
+        {
+            static const char* const kRemovedCfg[][3] = {
+                {"dpadaptivehorizon", "9cb6587", "7613353"},
+                {"dpbandend", "9cb6587", "7613353"},
+                {"dpctrlwin", "9cb6587", "7613353"},
+                {"dpfastveto", "9cb6587", "7613353"},
+                {"dpfixp2", "9cb6587", "7613353"},
+                {"dphoverstrict", "9cb6587", "7613353"},
+                {"dprejoinchain", "9cb6587", "7613353"},
+                {"dprejoinuse", "9cb6587", "7613353"},
+                {"dprejoinwatch", "9cb6587", "7613353"},
+                {"dpswingpending", "9cb6587", "7613353"},
+                {"histpayload", "9cb6587", "7613353"},
+                // the 0.2.0 clean-up
+                {"dptouchentered", "36b14f7", "671e60d"},
+                {"dptouchenteredtick", "36b14f7", "671e60d"},
+                {"dpgroupholddeath", "36b14f7", "671e60d"},
+            };
+            bool removed = false;
+            for (const auto& r : kRemovedCfg)
+                if (key == r[0]) {
+                    // Said by dpsolve::start: result.txt is started afresh after this file
+                    // is read, so a line written here would not survive.
+                    g_cfgRemoved.push_back(key + " was removed in " + std::string(r[1])
+                                           + "; the behaviour is fixed (since "
+                                           + std::string(r[2]) + ")");
+                    removed = true;
+                }
+            if (removed) continue;
+        }
         if (loadDpCfg(key, val)) continue;
+        if (loadTraceCfg(key, val)) continue;
         // Not in the chain below, which is at MSVC's block-nesting ceiling (C1061).
         if (key == "areaenv") { g_cfg.areaEnv = (val == "1"); continue; }
         if (key == "enabled") g_cfg.enabled = (val == "1");
@@ -458,8 +574,14 @@ inline void loadConfig() {
         // `fieldprobe` shares this branch rather than taking one of its own: the chain is at
         // MSVC's C1061 nesting ceiling (see the note above at "touchpayload"), so a plain
         // `else if` here does not fail this key -- it fails the whole mod build.
-        else if (key == "hitboxtrace" || key == "fieldprobe")
-            (key == "hitboxtrace" ? g_cfg.hitboxTrace : g_cfg.fieldProbe) = (val == "1");
+        // killersite rides this branch rather than adding another `else if`:
+        // the chain is at MSVC's block-nesting limit (C1061), which is what the
+        // note above means by "fails the whole mod build".
+        else if (key == "hitboxtrace" || key == "fieldprobe"
+                 || key == "killersite")
+            (key == "hitboxtrace" ? g_cfg.hitboxTrace
+             : key == "fieldprobe" ? g_cfg.fieldProbe
+             : g_cfg.killerSite) = (val == "1");
         else if (key == "hbfrom") g_cfg.hbFrom = std::atoll(val.c_str());
         else if (key == "hbto") g_cfg.hbTo = std::atoll(val.c_str());
         else if (key == "watchuid") g_cfg.watchUid = std::atoi(val.c_str());
@@ -605,7 +727,14 @@ inline void loadConfig() {
         else if (key == "uisim") g_uiSession = (val == "1"); // for tests: treat autorun as panel
         // For tests: supply the panel mode from cfg (0=Normal 1=Replay)
         else if (key == "uimode") cfgNum(key, val, g_uiMode);
-        else if (key == "coins") g_cfg.coinMode = (val == "1");
+        // One branch for both keys: this else-if chain is at MSVC's block-nesting limit (C1061),
+        // so a new key joins an existing branch. coinroute implies coins whatever the order.
+        else if (key == "coins" || key == "coinroute" || key == "coinwatch") {
+            if (key == "coinroute") g_cfg.coinRoute = (val == "1");
+            else if (key == "coinwatch") g_cfg.coinWatch = (val == "1");
+            else g_cfg.coinMode = (val == "1");
+            if (g_cfg.coinRoute) g_cfg.coinMode = true;
+        }
         else if (key == "toggle") {
             auto comma = val.find(',');
             int at = 0;
@@ -752,7 +881,8 @@ inline void endSession(const std::string& why) {
     // it is what stops "none" from being vacuous.
     // The Area Move envelope's own check (solver/areaenv.hpp): printed whenever an Area Move ran,
     // so a level that has one says whether its prediction matched the game.
-    if (areaenv::g_objects > 0 || areaenv::g_unenveloped > 0) writeResult(areaenv::summary());
+    if (areaenv::g_objects > 0 || areaenv::g_unenveloped > 0 || areaenv::solverKills() > 0)
+        writeResult(areaenv::summary());
     restoreProgress();
     writeResult("level record changed: "
         + progressDiff(g_progressAtStart, sampleProgress(g_progressLevel))

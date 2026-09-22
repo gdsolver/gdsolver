@@ -9,12 +9,25 @@ using namespace p1;
 // On level entry (PlayLayer::init) the session is configured automatically with the current
 // mode. Kept across scenes with SceneManager, and hidden everywhere else.
 // 0=Normal (normal play) 1=Replay (a stored solution) 2=Solve (the mod solves it here and now).
+// Under Replay and Solve a second switch, Coins On/Off, makes the session about the level's coins
+// (g_uiCoins): Solve routes for every coin, Replay plays the coin solution.
 // The modes and their names live in fxcensus.hpp, next to g_uiMode -- the session setup needs
 // them and comes earlier in the include chain.
 
 class SolverPanelLayer : public cocos2d::CCLayer {
 public:
     cocos2d::CCLabelBMFont* m_modeLabel = nullptr;
+    // The Coins switch (g_uiCoins). Its own button under the mode, so the mode cycle stays the
+    // three it always was; hidden in Normal, where it means nothing.
+    cocos2d::CCLabelBMFont* m_coinLabel = nullptr;
+    cocos2d::CCMenuItemLabel* m_coinItem = nullptr;
+
+    static const char* coinText() { return g_uiCoins ? "Coins: On" : "Coins: Off"; }
+
+    void syncCoins() {
+        if (m_coinLabel) m_coinLabel->setString(coinText());
+        if (m_coinItem) m_coinItem->setVisible(g_uiMode != UI_MODE_NORMAL);
+    }
 
     static SolverPanelLayer* create() {
         auto* r = new SolverPanelLayer();
@@ -30,7 +43,9 @@ public:
         auto* tag = CCLabelBMFont::create("GDSOLVER", "bigFont.fnt");
         tag->setScale(0.3f);
         tag->setAnchorPoint({0.f, 0.5f});
-        tag->setPosition({10.f, 52.f});
+        // Three rows since the Coins switch; the lowest used to sit at y=14 and its label was cut
+        // off by the bottom edge of the window, so the stack starts higher.
+        tag->setPosition({10.f, 66.f});
         tag->setOpacity(140);
         tag->setID("panel-tag"_spr);
         this->addChild(tag);
@@ -39,12 +54,20 @@ public:
         auto* item = CCMenuItemLabel::create(m_modeLabel, this,
             menu_selector(SolverPanelLayer::onMode));
         item->setAnchorPoint({0.f, 0.5f});
-        auto* menu = CCMenu::create(item, nullptr);
+        m_coinLabel = CCLabelBMFont::create(coinText(), "bigFont.fnt");
+        m_coinLabel->setScale(0.4f);
+        m_coinItem = CCMenuItemLabel::create(m_coinLabel, this,
+            menu_selector(SolverPanelLayer::onCoins));
+        m_coinItem->setAnchorPoint({0.f, 0.5f});
+        auto* menu = CCMenu::create(item, m_coinItem, nullptr);
         menu->setID("panel-menu"_spr);
         item->setID("mode-button"_spr);
+        m_coinItem->setID("coins-button"_spr);
         menu->setPosition({0, 0});
-        item->setPosition({10.f, 32.f});
+        item->setPosition({10.f, 46.f});
+        m_coinItem->setPosition({10.f, 24.f});
         this->addChild(menu);
+        syncCoins();
         this->scheduleUpdate();
         return true;
     }
@@ -52,6 +75,12 @@ public:
     void onMode(CCObject*) {
         g_uiMode = (g_uiMode + 1) % UI_MODE_COUNT;
         if (m_modeLabel) m_modeLabel->setString(uiModeName(g_uiMode));
+        syncCoins();
+    }
+
+    void onCoins(CCObject*) {
+        g_uiCoins = !g_uiCoins;
+        syncCoins();
     }
 };
 

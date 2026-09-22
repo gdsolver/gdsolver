@@ -187,6 +187,116 @@ class $modify(GJBaseGameLayer) {
         }
         return GJBaseGameLayer::damagingObjectsInRect(rect, enabledGroups);
     }
+    // ---- WHO SAYS A COIN WAS COLLECTED (cfg `coins=1`) ----------------------
+    //
+    // Until now the only witness was the mod's own test: "the player's centre came
+    // within 20 px of where the coin was when the level loaded" (the block near
+    // g_coinPickupTick below, and COIN_RADIUS in solver.hpp). Its comment claims the
+    // radius is conservative enough that a detection implies GD collected it too --
+    // an assertion nothing had ever checked. A route planned to collect coins rests
+    // entirely on that claim, so it has to become a measurement.
+    //
+    // GD's own statement is this call, and it was read out of the binary rather than
+    // picked by name. collisionCheckObjects (win 0x214960) reaches a coin on two
+    // branches and both end the same way:
+    //     call hasUniqueCoin ; test al,al ; jne skip ; call pickupItem
+    // at 0x215c39/0x215c48 and 0x215cef/0x215cfe. The hasUniqueCoin guard is what
+    // makes this exactly-once per coin: the second contact skips the call. The
+    // function whose NAME looks right, collectedObject, is `win inline` in the
+    // 2.2081 bindings and cannot be hooked at all.
+    //
+    // OBSERVE ONLY -- the original always runs. It writes GD's in-level "already
+    // collected" dictionary, so suppressing it would change the game instead of
+    // measuring it, and it is not where a coin is earned: the awards still die at
+    // storeSecretCoin / storeUserCoin / checkCoinAchievement (hooks_system.cpp), and
+    // the session's `level record changed:` line is the proof that they did.
+    void pickupItem(EffectGameObject* object) {
+        if (object && g_started && !g_sessionOver && g_cfg.coinMode) {
+            // Matched by uid, not by position: a coin under group control is not
+            // where the level dump put it, which is the whole reason this hook
+            // exists rather than a second coordinate test.
+            const int uid = object->m_uniqueID;
+            size_t i = 0;
+            for (; i < solver::g_coins.size(); ++i)
+                if (solver::g_coins[i].uid == uid) break;
+            const bool known = i < solver::g_coins.size();
+            if (known) {
+                if (i < solver::g_coinGdTick.size() && solver::g_coinGdTick[i] < 0)
+                    solver::g_coinGdTick[i] = g_tick;
+            } else {
+                ++solver::g_coinGdUnmatched;
+            }
+            if (++solver::g_coinLogLines <= 400) {
+                auto p = object->getPosition();
+                float px = 0.f, py = 0.f;
+                if (m_player1) { px = m_player1->getPositionX(); py = m_player1->getPositionY(); }
+                char b[224];
+                snprintf(b, sizeof(b),
+                         "coingd: t=%lld uid=%d id=%d obj=(%.2f,%.2f) player=(%.2f,%.2f) "
+                         "coin=%d secretid=%d item=%d",
+                         (long long)g_tick, uid, object->m_objectID, p.x, p.y, px, py,
+                         known ? (int)i : -1, object->m_secretCoinID, object->m_itemID);
+                writeResult(b);
+            }
+        }
+        GJBaseGameLayer::pickupItem(object);
+    }
+    // GD's own item counters (cfg `coins=1`, `itemcnt:` line).
+    //
+    // Not needed to compare the two coin verdicts, but it is the same question one
+    // level down and the same hook group: what makes lv21's third coin appear is
+    // "ten of the id-1840 collectibles", and lv22's third is a collision count --
+    // both are item counters, and this is the single function that writes them
+    // (win 0x233ec0, five call sites). One line per change is the difference
+    // between "the route missed the gate" and "the model cannot express it".
+    // ...and the gate in FRONT of pickupItem. collisionCheckObjects asks this
+    // first (`call hasUniqueCoin; test al,al; jne skip`), so a coin GD counts as
+    // ALREADY TAKEN is never credited however exactly the player passes through
+    // it -- which from outside looks exactly like a coin that cannot be
+    // collected at all. Measured on lv21 (2026-09-20): the player was put
+    // through the third coin's centre (|dx| 1, |dy| 5) with the coin's own group
+    // enabled, and nothing was credited.
+    //
+    // ...WHICH MAKES A COIN SESSION DEPEND ON THE PLAYER'S SAVE. On an install whose save already
+    // holds a level's coins, every one of them answers "taken", nothing is credited, and a coin
+    // solve can only ever end at the missed-coin request: measured on lv1 (2026-09-22), all three
+    // coins -> 1, 79 attempts ended at the first one with the player passing 16 px from its
+    // centre, where the same plan on an empty save is credited. So while the mod is driving a
+    // coin session, the level's own coins (solver::g_coins) are asked as if the save held none --
+    // GD then collects them as on a new save. Nothing reaches the save for it: coin storage and
+    // the level's record are blocked for the whole of a driven session (hooks_system.cpp).
+    bool hasUniqueCoin(EffectGameObject* object) {
+        const bool r = GJBaseGameLayer::hasUniqueCoin(object);
+        bool ours = false;
+        if (object && r && g_started && !g_sessionOver && g_cfg.coinMode && botDriving())
+            for (const auto& c : solver::g_coins)
+                if (c.uid == object->m_uniqueID) { ours = true; break; }
+        if (object && g_started && !g_sessionOver && g_cfg.coinMode
+            && ++solver::g_coinLogLines <= 400) {
+            char ub[192];
+            snprintf(ub, sizeof(ub), "coinunique: t=%lld uid=%d id=%d -> %d%s",
+                     (long long)g_tick, object->m_uniqueID, object->m_objectID,
+                     r ? 1 : 0, ours ? " (in the save; asked as 0 for this session)" : "");
+            writeResult(ub);
+        }
+        return ours ? false : r;
+    }
+    void updateCounters(int itemId, int value) {
+        // The value itself, for the anchor to carry (solver::g_itemCounts). The
+        // line below is capped at 400 for the log's sake; the table is not --
+        // a counter that stopped being recorded at the cap would tell a
+        // re-anchored search the wrong number.
+        if (g_started && !g_sessionOver && g_cfg.coinRoute)
+            solver::g_itemCounts[itemId] = value;
+        if (g_started && !g_sessionOver && g_cfg.coinMode
+            && ++solver::g_coinLogLines <= 400) {
+            char b[128];
+            snprintf(b, sizeof(b), "itemcnt: t=%lld item=%d v=%d",
+                     (long long)g_tick, itemId, value);
+            writeResult(b);
+        }
+        GJBaseGameLayer::updateCounters(itemId, value);
+    }
     // When and by which object the rotate trigger fired (cfg `hitboxtrace=1`, `rot:` line).
     //
     // The model's crossing test runs in the progress coordinate of the rotation frame,
@@ -4344,6 +4454,42 @@ class $modify(GJBaseGameLayer) {
             bool normalMotion = solver::g_prevTickX > -1e8f
                 && dxTick > 0.2f && dxTick < 5.0f && !completed && !uncontrolled;
             solver::g_prevTickX = px;
+            // WHERE EACH COIN IS, not where it loaded, said once as the player
+            // comes level with it. The two differ whenever a group has moved it,
+            // and every other line here prints the load-time row -- which is how
+            // lv21's third coin read as "sitting at (21813,191) and refusing to
+            // be collected" when the question was whether it is there at all.
+            // Sized here rather than at the attempt head: the coins are not
+            // extracted until buildPois runs, which is later in that same reset.
+            if (solver::g_coinLiveSaid.size() != solver::g_coins.size())
+                solver::g_coinLiveSaid.assign(solver::g_coins.size(), 0);
+            // cfg `coinwatch=1`: say it every 1,200 ticks instead of once, so a
+            // coin whose rect MOVES during the run is caught at the tick it
+            // moves rather than at the one tick the player happens to pass it.
+            for (size_t i = 0; i < solver::g_coins.size(); ++i) {
+                const bool watch = g_cfg.coinWatch && (g_tick % 1200) == 0;
+                if (solver::g_coinLiveSaid[i] && !watch) continue;
+                if (!watch && std::abs(px - solver::g_coins[i].x) > 80.f) continue;
+                solver::g_coinLiveSaid[i] = 1;
+                if (auto* arr = this->m_objects)
+                    for (auto* o : CCArrayExt<GameObject*>(arr)) {
+                        if (!o || o->m_uniqueID != solver::g_coins[i].uid) continue;
+                        const auto lp = o->getPosition();
+                        const auto lr = o->getObjectRect();
+                        char lb[208];
+                        snprintf(lb, sizeof(lb),
+                                 "coinlive: t=%lld uid=%d load=(%.1f,%.1f) pos=(%.2f,%.2f) "
+                                 "rect=(%.2f,%.2f) %.1fx%.1f disabled=%d",
+                                 (long long)g_tick, solver::g_coins[i].uid,
+                                 solver::g_coins[i].x, solver::g_coins[i].y, lp.x, lp.y,
+                                 lr.origin.x + lr.size.width * 0.5f,
+                                 lr.origin.y + lr.size.height * 0.5f,
+                                 lr.size.width, lr.size.height,
+                                 o->m_isGroupDisabled ? 1 : 0);
+                        writeResult(lb);
+                        break;
+                    }
+            }
             for (size_t i = 0; i < solver::g_coins.size()
                  && normalMotion && i < solver::g_coinPickupTick.size(); ++i) {
                 if (solver::g_coinPickupTick[i] >= 0) continue;
@@ -4352,12 +4498,133 @@ class $modify(GJBaseGameLayer) {
                     solver::g_coinPickupTick[i] = g_tick;
             }
         }
+        // cfg `coinroute`: an attempt that has passed a coin GD never credited cannot become an
+        // all-coins clear, so it ends here -- reported first, then killed, the same order as
+        // `stopat` above so the death: line that follows can be told apart. The bound is the
+        // search's own miss prune (dp cli.hpp): past the coin's far edge by the player's half,
+        // where no overlap is possible any more. 15 is the largest half any mode has, so a smaller
+        // body is let go a little late, never early. Not while a job is in flight: the level is
+        // held still then, and a checkpoint flight's deaths mean something else (ckOnDeath).
+        if (g_started && !g_sessionOver && g_cfg.coinRoute && m_player1 && !m_player1->m_isDead
+            && !solver::g_coinMissFired && !solver::g_hasRotGameplay
+            && !dpsolve::g_recordAttempt && !dpsolve::g_running.load()
+            // ...and only for a plan that CLAIMS every coin. The loop flies its
+            // partial plans too -- that is how it learns where the route goes --
+            // and a partial plan misses coins by construction, so ending those
+            // attempts at the first coin stops the loop from ever seeing past
+            // it. Measured on lv21 (2026-09-20): the flown plan's own model
+            // trace was 38 px below the third coin, i.e. the model never claimed
+            // it, and the attempt was still cut there every round.
+            && dpsolve::g_planClaimsGoal) {
+            bool completed = false;
+            if (auto* pl = PlayLayer::get()) completed = pl->m_hasCompletedLevel;
+            const float px = m_player1->getPositionX();
+            for (size_t i = 0; !completed && i < solver::g_coins.size()
+                               && i < solver::g_coinGdTick.size(); ++i) {
+                if (solver::g_coinGdTick[i] >= 0) continue;
+                const auto& c = solver::g_coins[i];
+                if (px <= c.x + c.hw + 15.f) continue;
+                char mb[192];
+                snprintf(mb, sizeof(mb), "coinmiss: t=%lld x=%.2f y=%.2f coin=%zu uid=%d at "
+                         "(%.1f,%.1f)", (long long)g_tick, px, m_player1->getPositionY(), i,
+                         c.uid, c.x, c.y);
+                writeResult(mb);
+                solver::g_coinMissFired = true;   // once per attempt, however GD answers
+                if (g_cfg.dpSolve) dpsolve::g_coinMissPending = true;   // only onDeath reads it
+                if (auto* pl = PlayLayer::get()) pl->destroyPlayer(m_player1, m_player1);
+                break;
+            }
+        }
+        // ...and a coin that only a counting tap's gate switches on, once GD has
+        // passed the Stop that shuts the tap's window with the count still short,
+        // or -- the count made -- the coin's far edge on that same channel's run
+        // without the coin (solver::g_coinGates, handed over by dp: lv22's ship
+        // glides 66 px under its third coin there). The search prunes the same
+        // branch (dp cli.hpp); this is its twin on the flown attempt. Unlike the
+        // miss above it holds on a level with rotated gameplay: the Stop fires
+        // once, so turning round does not open the window again. "Passed" is
+        // read the way GD's own queue walk reads it -- the stop's channel active
+        // (layer+0x33c, as the dump's rotch column reads it) and the player's
+        // world coordinate past the point in that channel's direction.
+        if (g_started && !g_sessionOver && g_cfg.coinRoute && m_player1 && !m_player1->m_isDead
+            && !solver::g_coinMissFired && !solver::g_coinGates.empty()
+            && !dpsolve::g_recordAttempt && !dpsolve::g_running.load()
+            && dpsolve::g_planClaimsGoal) {
+            const int ch =
+                *reinterpret_cast<int const*>(reinterpret_cast<char const*>(this) + 0x33c);
+            const double wx = m_player1->getPositionX(), wy = m_player1->getPositionY();
+            for (const solver::CoinGate& g : solver::g_coinGates) {
+                if (ch != g.chan) continue;
+                auto passed = [&](double px, double py) {
+                    return g.dir == 1 ? wy >= py
+                         : g.dir == 2 ? wy <= py
+                         : g.dir == 3 ? wx <= px
+                                      : wx >= px;
+                };
+                bool got = false;
+                for (size_t i = 0; i < solver::g_coins.size() && i < solver::g_coinGdTick.size(); ++i)
+                    if (solver::g_coins[i].uid == g.uid && solver::g_coinGdTick[i] >= 0) got = true;
+                if (got) continue;
+                const auto it = solver::g_itemCounts.find(g.item);
+                const int have = it == solver::g_itemCounts.end() ? 0 : it->second;
+                // the shut point with the count short, or -- the gate having
+                // opened -- the coin's far edge on the same run without it
+                const bool shortAtShut = passed(g.x, g.y) && have < g.need;
+                const bool pastCoin = g.miss && passed(g.mx, g.my);
+                if (!shortAtShut && !pastCoin) continue;
+                char mb[256];
+                snprintf(mb, sizeof(mb), "coingatemiss: t=%lld x=%.2f y=%.2f coin uid=%d: %s"
+                         " (item %d is %d of %d; chan %d, shut (%.0f,%.0f), far edge (%.0f,%.0f))",
+                         (long long)g_tick, wx, wy, g.uid,
+                         shortAtShut ? "window shut short" : "passed the coin",
+                         g.item, have, g.need, g.chan, g.x, g.y, g.mx, g.my);
+                writeResult(mb);
+                solver::g_coinMissFired = true;   // once per attempt, as the miss above
+                if (g_cfg.dpSolve) dpsolve::g_coinMissPending = true;
+                if (auto* pl = PlayLayer::get()) pl->destroyPlayer(m_player1, m_player1);
+                break;
+            }
+        }
         // End-of-tick record of what a re-anchor would need (Stage C). Same instant as the dump
         // row below and for the same reason -- the state has to be settled -- but deliberately
         // NOT behind `notrace`: the dump is a diagnostic, this is what the next iteration of the
         // repair loop resumes the search from.
         if (g_started && !g_sessionOver && g_cfg.dpSolve && m_player1)
             anchors::record(this, g_tick);
+        // cfg `areatrace`: the listed objects' positions at this same instant (see g_areaT0).
+        // The pointers are looked up again whenever the object array changes (a new level in
+        // a one-session run) or the window starts.
+        if (g_started && !g_sessionOver && !g_areaUids.empty() && this->m_objects
+            && g_tick >= g_areaT0 && g_tick <= g_areaT1) {
+            if (g_areaArr != this->m_objects || g_tick == g_areaT0
+                || g_areaObjs.size() != g_areaUids.size()) {
+                g_areaArr = this->m_objects;
+                g_areaObjs.assign(g_areaUids.size(), nullptr);
+                for (unsigned i = 0; i < g_areaArr->count(); ++i) {
+                    auto* o = static_cast<GameObject*>(g_areaArr->objectAtIndex(i));
+                    if (!o) continue;
+                    for (size_t k = 0; k < g_areaUids.size(); ++k)
+                        if (o->m_uniqueID == g_areaUids[k]) g_areaObjs[k] = o;
+                }
+            }
+            for (size_t k = 0; k < g_areaObjs.size(); ++k) {
+                if (!g_areaObjs[k]) continue;
+                // The rect's centre, which is what grouptrace records and what collisions
+                // use. getPosition() alone does not move under an Area Move: the area
+                // effect is applied as an offset the position does not include (measured on
+                // lv22 uid 6269: position fixed at 16155 while the rect went to 16369).
+                const auto r = g_areaObjs[k]->getObjectRect();
+                const auto pos = g_areaObjs[k]->getPosition();
+                char ab[160];
+                snprintf(ab, sizeof(ab), "area: t=%lld uid=%d cx=%.4f cy=%.4f px=%.4f py=%.4f",
+                         (long long)g_tick, g_areaUids[k],
+                         r.origin.x + r.size.width * 0.5, r.origin.y + r.size.height * 0.5,
+                         pos.x, pos.y);
+                writeResult(ab);
+            }
+        }
+        // cfg `slopetrace`: the slope-ride bytes at this same instant (see g_slopeT0).
+        if (g_started && !g_sessionOver) anchors::slopeTrace(this, g_tick);
         // ...and, while a checkpoint flight is in the air (cfg `dpcheck`), the tick its inputs run
         // out on. Here rather than at the frame boundary: one frame of the fast loop is thousands
         // of ticks, and an inputless flight left to drift that far either dies a death that means

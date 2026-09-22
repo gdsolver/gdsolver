@@ -110,6 +110,11 @@ inline const char* uiModeName(int m) {
 }
 
 inline int g_uiMode = UI_MODE_NORMAL;
+// ...and the panel's second switch, shown only in Replay and Solve: whether that session is about
+// the level's coins. Solve then routes for every coin as well as the end (cfg coinroute), and
+// Replay plays the coin solution rather than the plain one. The two kinds of solution are kept in
+// separate files (Config::coinFiles), so neither mode overwrites the other's.
+inline bool g_uiCoins = false;
 
 // F8: temporarily toggle between fast mode and realtime (spectating hotkey)
 inline bool g_realtimeOverride = false;

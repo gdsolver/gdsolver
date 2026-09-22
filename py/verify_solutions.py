@@ -41,13 +41,23 @@ class Verdict:
     clear: bool
     detail: str
     worker: int
+    coins: list[str]
+
+
+# The three lines the coin observation emits (mod side: hooks_playlayer.cpp).
+# `coin:` is the mod's own 20 px test, `coingd:` is GD's own pickupItem call, and
+# `coincmp:` is the two put side by side.
+COIN_PREFIXES = ("coin:", "coingd:", "coincmp:")
 
 
 def verify_one(worker_id: int, path: Path, level: int, timeout_s: float,
-               workers_root: Path) -> Verdict:
+               workers_root: Path, force_coins: bool = False) -> Verdict:
     # a coin solution claims "clear + all coins", so make it report the count too.
     # the coin gate is inside solve=1, so coins=1 does not change a bare replay.
-    coins = "coins=1" if "_coins" in path.name else "coins=0"
+    # --coins turns it on for EVERY file, which is how the coin observation is
+    # measured against runs that were never planned to collect anything: what a
+    # solution picks up by accident is exactly the baseline the routing work needs.
+    coins = "coins=1" if (force_coins or "_coins" in path.name) else "coins=0"
     cfg = [
         "enabled=1", f"level={level}", "attempts=1", "quitwhendone=1",
         "blockinput=1", "cbs=0", "cos=1", "notrace=1",
@@ -58,7 +68,9 @@ def verify_one(worker_id: int, path: Path, level: int, timeout_s: float,
     clear, detail = results.clear_verdict(r.lines)
     if r.timed_out and not clear:
         detail = f"TIMEOUT ({detail})"
-    return Verdict(path.name, level, clear, detail or "", worker_id)
+    coin_lines = [ln.strip() for ln in r.lines
+                  if ln.strip().startswith(COIN_PREFIXES)]
+    return Verdict(path.name, level, clear, detail or "", worker_id, coin_lines)
 
 
 def main(argv=None) -> int:
@@ -73,6 +85,9 @@ def main(argv=None) -> int:
     ap.add_argument("--pool", nargs="+", type=int,
                     default=[90, 91, 92, 93, 94, 95, 96, 97])
     ap.add_argument("--no-free-memory", action="store_true")
+    ap.add_argument("--coins", action="store_true",
+                    help="run every file with coins=1 and report the coin lines "
+                         "(the mod's own pickup test beside GD's own)")
     a = ap.parse_args(argv)
 
     workers_root = Path(a.workers_root)
@@ -106,9 +121,9 @@ def main(argv=None) -> int:
         out = []
         for p, lv in buckets[w]:
             try:
-                out.append(verify_one(w, p, lv, timeout_s, workers_root))
+                out.append(verify_one(w, p, lv, timeout_s, workers_root, a.coins))
             except Exception as e:                       # noqa: BLE001
-                out.append(Verdict(p.name, lv, False, f"ERROR {e}", w))
+                out.append(Verdict(p.name, lv, False, f"ERROR {e}", w, []))
         return out
 
     verdicts: list[Verdict] = []
@@ -120,6 +135,15 @@ def main(argv=None) -> int:
     for v in sorted(verdicts, key=lambda v: (v.level, v.file)):
         lines.append(f"{v.level:<4} {v.file:<40} {'OK' if v.clear else 'FAIL':<5} "
                      f"{v.detail}")
+        # The coin lines belong under their own run: a level that reports none
+        # while --coins was asked for is itself a finding (the level never
+        # completed, or the mod never built the coin list), so say so rather
+        # than leaving a silent gap.
+        if a.coins:
+            if v.coins:
+                lines += [f"       {ln}" for ln in v.coins]
+            else:
+                lines.append("       (no coin lines)")
     fails = sum(1 for v in verdicts if not v.clear)
     lines.append(f"--- {len(verdicts) - fails} OK / {fails} FAIL ---")
     Path(a.out).write_text("\n".join(lines) + "\n", encoding="utf-8")

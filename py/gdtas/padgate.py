@@ -274,7 +274,7 @@ SOURCE_SPANS: dict[str, tuple[str, str, str]] = {
     ),
     "oriented box from the bound": (
         "dp/src/dp/level_loader.hpp",
-        r"^\s*if \(g_oriented && o\.radius == 0\.0",
+        r"^\s*if \(o\.radius == 0\.0 && !o\.slope",
         r"^\s*o\.rc = std::cos\(thc\); o\.rs = std::sin\(thc\);",
     ),
     "padPlayerRotMode": (
@@ -290,13 +290,18 @@ SOURCE_SPANS: dict[str, tuple[str, str, str]] = {
 # `if (g_noSatRotRaw && s.mode == 0)`, which is the whole diff inside it. The
 # other three spans did not move, and this alarm firing is what sent the
 # transcription (`sat_angle`) after the C++ rather than leaving it behind.
+# Re-pinned at the flag clean-up (5c44e5d, bf6e11d), where two spans lost a
+# switch this leaf never transcribed: the pad span its `else if (g_noPadObb)
+# { }` line (the --no-padobb raw-angle arm), and the oriented box its
+# `g_oriented &&` conjunct (always on; from_objrects_row already assumed it).
+# Each is the whole diff inside its span, so the transcription stands.
 PINNED_FINGERPRINTS: dict[str, str] = {
     "obbSat/orientedHit": "dfdb012e89906db3",
-    "pad gate angle + call": "716e422ff69e6a4e",
-    "oriented box from the bound": "10fc68d7604a7684",
+    "pad gate angle + call": "66cb72959b8534fa",
+    "oriented box from the bound": "8a362ae519cde9e1",
     "padPlayerRotMode": "067068fc6e480d00",
 }
-PINNED_AT = "6a3c721, pad span re-pinned at the g_noSatRotRaw landing"
+PINNED_AT = "6a3c721, pad and oriented-box spans re-pinned at the flag clean-up"
 
 
 def _strip_cpp_comments(src: str) -> list[str]:

@@ -96,9 +96,19 @@ SolveOutcome outcome() {
     o.needTrigPassed = dp::g_outcome.needTrigPassed;
     o.seedRotQ = dp::g_outcome.seedRotQ;
     o.rotQOrder = dp::g_outcome.rotQOrder;
+    o.coinGates = dp::g_outcome.coinGates;
     o.startRotHit = dp::g_outcome.startRotHit;
     o.startRotGiven = dp::g_outcome.startRotGiven;
     o.startRotMiss = dp::g_outcome.startRotMiss;
+    o.trigWinTouch = dp::g_outcome.trigWinTouch;
+    o.trigTotal = dp::g_outcome.trigTotal;
+    o.trigRelevantN = dp::g_outcome.trigRelevantN;
+    o.trigKept = dp::g_outcome.trigKept;
+    o.trigDroppedRelevant = dp::g_outcome.trigDroppedRelevant;
+    o.trigDroppedBehind = dp::g_outcome.trigDroppedBehind;
+    o.trigDroppedAhead = dp::g_outcome.trigDroppedAhead;
+    o.trigMaxKeptX = dp::g_outcome.trigMaxKeptX;
+    o.trigMapSig = dp::g_outcome.trigMapSig;
     return o;
 }
 
@@ -132,6 +142,9 @@ bool passCheckpoint(unsigned long long call, std::size_t index) {
 
 void cancelSearch(bool on) {
     dp::g_check.cancel.store(on, std::memory_order_release);
+}
+long long envKillsTotal() {
+    return dp::g_envKills.load(std::memory_order_relaxed);
 }
 std::string coreVersion() {
     // No version string exists in dp/ yet; the compile stamp of this TU is what identifies

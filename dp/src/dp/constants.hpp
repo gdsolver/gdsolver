@@ -98,25 +98,24 @@ constexpr int kRobotHoverTicks = 67;
 //   gate     a tap in MID-AIR does nothing (13 ticks of undisturbed free fall
 //            after one). GD only calls spiderTestJump from the grounded branch
 //            of updateJump, same as the cube's jump.
-// A/B switches for bisecting a regression. Not knobs: both default to OFF and
-// exist so that "which of today's changes broke lv18" can be answered by two
-// runs instead of two rebuilds.
-inline bool g_noMiniWave = false;   // --no-miniwave
+// An A/B switch for bisecting a regression. Not a knob: it defaults to OFF and
+// exists so that "which of today's changes broke lv18" can be answered by two
+// runs instead of two rebuilds. (Its partner --no-miniwave is gone since the flag clean-up.)
 inline bool g_oldLatency = false;   // --old-latency
-// --no-ringmode: restore "a held button fires a ring in every mode". GD closes
-// the CONTACT path in ship/UFO/wave/swing (playerTouchedRing's last gate), so
-// in those four a ring only fires from the press itself. This exists because a
-// change that only ever REMOVES firings cannot be told from "no change" by a
-// suite that reports the same numbers either way -- the two arms have to be one
-// build apart, not one rebuild apart.
-inline bool g_noRingMode = false;   // --no-ringmode
-// --no-pressspent: restore "a ring only asks whether a RING already spent this
-// hold" (the pre-2026-09-05 gate, `!s.ringHold`). GD's latch is +0x986, which
-// every consumer clears, so the grounded jump spends the press too. Exists for
-// the same reason as --no-ringmode: the change only ever REMOVES firings, and
-// on this corpus it removes exactly one, so the two arms have to be one build
-// apart rather than one rebuild apart to be told from "no change" at all.
-inline bool g_noPressSpent = false; // --no-pressspent
+// Rings in flight: GD closes the CONTACT path in ship/UFO/wave/swing
+// (playerTouchedRing's last gate), so there a ring fires only from the press
+// itself. (--no-ringmode, held-fires-in-every-mode, is gone since the flag clean-up.)
+// --oriringnow: a ROTATED ring (Obj::oriented) is decided by the row after the
+// press alone, not by whichever of the press row and that row is nearer (the
+// ring loop's `usePre`). On since AUD-20260921-21, and always on since the flag
+// clean-up. The measurement is at the ring loop.
+// --swingpushtol: the swing's push-out onto a face needs the face within
+// kLandTol, as GD's face pick does; beyond it the contact is a side hit.
+// Off by default until measured; see the push-out branch in step.hpp.
+inline bool g_swingPushTol = false;   // --swingpushtol
+// A ring's press latch is GD's +0x986, which every consumer clears, so the
+// grounded jump spends the press too. (--no-pressspent, the pre-2026-09-05
+// `!s.ringHold` gate, is gone since the flag clean-up.)
 // Deaths during the PLAN RECONSTRUCTION, which is a different question from
 // deaths during the search. 2026-09-08, lv22@5400 at cap 8000: the search never
 // put a state on the spike uid 5897 (0 of ~1,478 evaluations), the reconstructed
@@ -148,15 +147,15 @@ inline long long g_resimDead = 0;
 // (State::armT) instead of the `robot || mini cube` proxy. See the bonk gate in
 // step.hpp. Declared here, beside kArmTicks, because the search key reads it too.
 inline bool g_bonkArm = false;
-// --witnessframe (default off): the witness walk binds the geometry of the frame the
+// --witnessframe: the witness walk binds the geometry of the frame the
 // call STARTS in, as --replay does, instead of frame 0. Not print-only: the walk also
 // fills modeAt, which sets the emitted plan's edge latencies. See cli.hpp at rLf.
-inline bool g_witnessFrame = true;
+// Always on; the switch is gone since the flag clean-up.
 // --vetophys (default off): a SOLVED whose correctly bound witness walk dies of a
 // physical cause (hazard / solid-side / crush) is published as the PARTIAL at that
 // death. See the demotion after the witness walk in cli.hpp.
 inline bool g_vetoPhys = false;
-// --dropnocollide (default off): do not ingest id-1910 as a collidable solid.
+// --dropnocollide: do not ingest id-1910 as a collidable solid.
 //
 // Measured (ledger run D): GD sets [obj+0x515] on lv22's uid 4705 (id 1910) and
 // collidedWithObjectInternal returns false for it regardless of geometry -- 50 of 81
@@ -170,8 +169,7 @@ inline bool g_vetoPhys = false;
 // real condition. id 1910 occurs exactly once in the corpus -- this object -- so the
 // exclusion is one object wide, not a class rule. Match on the id COLUMN only: the same
 // dump carries an unrelated uid 1910 (id 1268, type 20), and a loose numeric match would
-// silently drop the wrong row.
-inline bool g_dropNoCollide = true;
+// silently drop the wrong row. Always on; the switch is gone since the flag clean-up.
 inline constexpr int kNoCollideId = 1910;
 // --verdictinfo (default off): when a SOLVED plan's own witness walk died, print one
 // `vinfo:` line carrying the verdict beside that death -- tick, cause, uid, object,
@@ -202,6 +200,36 @@ inline const char* g_resimWhy = nullptr;
 // the search and another for the resim, and on lv20 that is the whole
 // disagreement. -1 = off; set to the tick to look at.
 inline long long g_trigDbgT = -1;
+// --coindbg <tick>: where the model put each coin at that tick, and which ones
+// its mask left switched off (cli.hpp). The mod prints GD's own answer as
+// `coinlive:`, so the pair SAYS whether the two disagree about a coin's
+// position, where otherwise it can only be inferred from a refused credit.
+// -1 = off.
+inline long long g_coinDbgT = -1;
+// One "I have this one" line per coin under --coindbg, not one per state: the
+// search reaches the same collection from thousands of branches.
+inline unsigned char g_coinSaid[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+// ...and one per pickup, for the same reason (g_collect is capped at 16).
+inline unsigned char g_itemSaid[16] = {};
+// --coindbg: the CLOSEST any state got to each coin while inside its x bound.
+// "Never collected" has three readings -- the x bound was never entered, or it
+// was entered but no state came within the y bound, or a state was inside both
+// and the collect still did not happen -- and the layer lines cannot separate
+// them, because they print a min/max ENVELOPE of y rather than whether any
+// state sits in the coin's band. This is the number that does. -1 = the x bound
+// was never entered.
+inline double g_coinNearDy[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+inline double g_coinNearX[8] = {};
+inline double g_coinNearY[8] = {};
+inline long long g_coinNearT[8] = {};
+// ...AND THE DENOMINATOR, because "never entered" is the shape of 0 this
+// project keeps mis-reading: it reads the same whether no state entered the
+// bound or the search never got that far. g_coinSeen is how many states were
+// examined inside the x bound (0 is the interesting case) and g_coinProbeMaxX
+// is the deepest x the coin test itself ever saw, so a 0 can be told from a
+// "not yet" on the line that reports it.
+inline long long g_coinSeen[8] = {};
+inline double g_coinProbeMaxX = -1e18;
 // How often does the group's collapse of the firing tick actually collapse
 // anything? `gFire` is max(trigT) over the members (cli.hpp:2974) and the group
 // key already pins `trig`, so the masks always agree -- the spread is in trigT
@@ -214,7 +242,7 @@ inline long long g_gfireSum = 0;      // sum of (max-min) over those
 inline int g_gfireMax = 0;            // widest spread seen, in ticks
 inline int g_resimUid = -1;
 inline float g_resimObjX = 0.f, g_resimObjY = 0.f;
-inline uint32_t g_resimTrig = 0;   // the walk's own trigger mask at that tick
+inline TouchMask g_resimTrig = 0;  // the walk's own trigger mask at that tick
 // ...and the FRAME the walk was in. g_resimObjX/Y are read in whatever frame
 // the resim currently occupies (the loop re-binds rLf = &frameLevel(L,
 // c.frame)), so two walks that report different positions may be reporting the
@@ -240,50 +268,34 @@ inline void noteReconDeath(const char* why) {
 // blanket switch because the search evaluates many states per tick and an
 // unconditional print buries the answer.
 inline int g_hazDbgUid = -1;        // --hazdbg
-// --no-portalseat: restore "a mode portal never seats on its own tick" (the
-// pre-2026-09-05 behaviour). GD runs the activation pass before the solid
-// pass, so a body that becomes a cube inside a flat solid is resolved on that
-// tick; the model picks its landing branch from the mode ENTERING the tick
-// (step.hpp:1521) and so could not. A/B switch, one build apart.
-inline bool g_noPortalSeat = false; // --no-portalseat
-// --no-forceorder: fold the force field/box contribution into the acceleration
-// BEFORE the terminal clamp (the pre-2026-09-05 order). GD adds it after, in
-// PlayerObject::update rather than updateJump, and does not clamp it.
-inline bool g_noForceOrder = false; // --no-forceorder
-// --no-rot2900halve: a same-frame 2900 turn that changes the polarity does not
-// halve vy (the pre-2026-09-05 behaviour). GD reaches it through flipGravity,
-// whose mulsd 0.5 @0x39a2dc runs on any real polarity change.
-inline bool g_noRot2900Halve = false; // --no-rot2900halve
-// --no-portallatch: a gravity portal can fire on every pass (the
-// pre-2026-09-05 behaviour). GD latches it on the first OVERLAP, so the second
-// pass finds hasBeenActivated already up and does nothing.
-inline bool g_noPortalLatch = false; // --no-portallatch
+// --hazaabb: a turned hazard's stage 1 is its AABB, as in GD (see hazardHit in
+// object.hpp for the measurement). Off by default.
+inline bool g_hazAabb = false;
+// A mode portal seats on its own tick: GD runs the activation pass before the
+// solid pass. (--no-portalseat is gone since the flag clean-up.)
+// Force fields add AFTER the terminal clamp, unclamped (PlayerObject::update, not
+// updateJump). (--no-forceorder, the pre-2026-09-05 order, is gone since the flag clean-up.)
+// A same-frame 2900 turn that changes the polarity halves vy: flipGravity's
+// mulsd 0.5 @0x39a2dc. (--no-rot2900halve is gone since the flag clean-up.)
+// A gravity portal latches on its first OVERLAP (hasBeenActivated).
+// (--no-portallatch, fire on every pass, is gone since the flag clean-up.)
 // WHICH HALF stepOne is running, for the --slopedbg prints only. Nothing reads
 // it as physics. A per-tick diagnostic line cannot be counted on a dual level
 // without it: stepOne runs twice with swapHalves between, so a portal each half
 // passes ONCE looks exactly like one the same body passed twice, and reading it
 // the second way is what put a retracted witness into 283e8a4 (see 87049e5).
 inline int g_halfNow = 0;
-// --no-ceilseat: a ceiling ramp only ever pushes the player OUT of itself (the
-// pre-2026-09-05 behaviour), never acquires it from below. GD's underside gate
-// takes it while the player is still under the line, within tol_u, and lifts it
-// on. See the site in step.hpp for the band and why the press is the whole gate.
-inline bool g_noCeilSeat = false; // --no-ceilseat
+// A ceiling ramp acquires from below: GD's underside gate takes the player
+// under the line within tol_u (the site in step.hpp). (--no-ceilseat is
+// gone since the flag clean-up.)
 
-// --no-slopeveto: solids are resolved even where a ramp beside them is already
-// governing the surface (the pre-2026-09-05 behaviour). GD's own scan sits in
-// collidedWithObjectInternal ahead of the solid; see slopeVetoesSolid for the
-// predicate, which scores 1,673 of 1,673 overlapping ticks on the rigs
-// calib_slopeveto/2 and matches all 14 corpus ticks the hit-flag census found.
-inline bool g_noSlopeVeto = false; // --no-slopeveto
+// A ramp already governing the surface vetoes the solid (slopeVetoesSolid:
+// 1,673 of 1,673 rig ticks, all 14 corpus ticks). (--no-slopeveto is
+// gone since the flag clean-up.)
 
-// --no-slopefreshrect: a FRESH ramp contact is acquired without GD's inset-rect
-// reach test (the pre-2026-09-05 behaviour). collidedWithSlopeInternal splits on
-// m_wasOnSlope at 0x38fc0e and, for a new contact, intersects the player's rect
-// with the OBJECT rect inset 1 px top and bottom (0x38fc3c-0x38fc7b) before
-// anything else can run. See the site in step.hpp for the witness and the phase
-// rule; the same test is already spelled out in slopeWouldAcquire.
-inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
+// A FRESH ramp contact passes GD's inset-rect reach test first (0x38fc0e,
+// 0x38fc3c-0x38fc7b; slopeWouldAcquire). (--no-slopefreshrect is
+// gone since the flag clean-up.)
 
 // --no-slopeseat: a ramp seats the player at the surface sampled at an x
 // CLAMPED into the ramp's span, plus/minus a flat player half (the
@@ -295,8 +307,8 @@ inline bool g_noSlopeFreshRect = false; // --no-slopefreshrect
 // witness. The two agree everywhere except on the ENTRY side of a ramp.
 inline bool g_noSlopeSeat = false; // --no-slopeseat
 
-// --no-ufolandtol: the UFO keeps kShipLandTol (6.0) as its floor acquisition
-// allowance, the pre-2026-09-06 behaviour. That 6.0 was never measured -- the
+// The UFO's floor acquisition allowance used to be kShipLandTol (6.0), before
+// 2026-09-06 (the --no-ufolandtol arm, gone since the flag clean-up). That 6.0 was never measured -- the
 // site's own comment said so ("kShipLandTol (6.0) stays for the UFO, whose own
 // acquisition has NOT BEEN MEASURED this way"), the ship having been measured
 // down to 0.001 while the UFO was left alone.
@@ -318,7 +330,6 @@ inline bool g_noSlopeSeat = false; // --no-slopeseat
 // disjunct, so nothing keeps its seat by a second path, and no UFO row anywhere
 // has a gap in (0, 1.0], which is the only interval where "assume the band
 // applies" and "clamp to zero" could have disagreed.
-inline bool g_noUfoLandTol = false; // --no-ufolandtol
 
 // A NORMAL-SIZE UFO that flaps while seated on a floor ramp leaves at this
 // value instead of its plain 6.871. Measured on the calibration rig
@@ -342,10 +353,32 @@ inline bool g_noUfoLandTol = false; // --no-ufolandtol
 // which |m| >= 1 <=> w = 30 without exception. Separating them needs a 60x60 or
 // a 30x15 slope, i.e. an object these levels never use. Guessing between the
 // two would put a width rule into the model under a gradient's name.
-inline bool g_noUfoRampFlap = false; // --no-uforampflap
+// (The --no-uforampflap arm is gone since the flag clean-up.)
 
-// --no-ridelandlaunch: the slope-exit launch fires off any CONTACT, the
-// pre-2026-09-06 behaviour, instead of only off a ride that became a landing.
+// --shipheldflap: a ship->UFO portal buffers the flap for a held button too, as
+// wave->UFO already does. Measured on lv14 (2026-09-18, cfg `presstrace`): the
+// press at t=14,189 sets +0x985/+0x986, the SHIP's updates leave +0x986 alone for
+// two ticks, and the UFO's first update after the portal (id111 at 18461) consumes
+// it and flaps (vy 0.788 -> 6.648); released before the portal, +0x986 is cleared
+// with the button and nothing fires. The model buffered only a fresh edge on the
+// portal tick, so a press one tick before the portal was lost.
+// A press that STARTED in a consuming mode is excluded through pressSpent: on the
+// rig calib_heldflap (2026-09-18) a grounded cube pressed two ticks before the ship
+// portal jumps, +0x986 goes to 0, and held through ship into UFO it stays 0 and
+// nothing flaps; pressed inside the ship, the same hold flaps (vy 6.871) on the
+// UFO's first update. wave->UFO has no such gate and is unmeasured for it.
+// On since 2026-09-19, with the anchor's press-latch payload that feeds it;
+// always on since the flag clean-up.
+
+// --wavespentgate: the same gate on the wave->UFO buffered flap, which is on by
+// default. The wave twin of calib_heldflap (2026-09-18, presstrace): pressed inside
+// the wave and held, the UFO's first update flaps (6.871); pressed as a grounded
+// cube (the jump spends +0x986) and held through the wave, +0x986 stays 0 and the
+// UFO does not flap (vy 1.298 -> 1.212) -- where the model flapped to 6.871.
+// On since 2026-09-19; always on since the flag clean-up.
+
+// The slope-exit launch fires only off a ride that became a landing (before
+// 2026-09-06 any CONTACT did; the --no-ridelandlaunch arm is gone since the flag clean-up).
 // GD's launch comes out of the ride; a contact that never landed has no ride to
 // launch from. Witness lv19 t=14,633: the UFO meets the ramp at svy +6.323,
 // fails the |vy| <= 5.0 hitGround gate (which this model already implements at
@@ -359,65 +392,45 @@ inline bool g_noUfoRampFlap = false; // --no-uforampflap
 // lv16 t=8,913, whose launch GD makes and whose model value already matches.
 // With rideLanded the reach is one row, and lv16 8,913 and lv17 18,573 both
 // keep theirs.
-inline bool g_noRideLandLaunch = false; // --no-ridelandlaunch
 constexpr double kUfoRampFlap = 8.0;
 
-// --no-rampfirst: keep the model's own resolution order -- every solid
-// resolved before the ramp block runs, and never revisited -- instead of GD's
-// ramp-then-solid. GJBaseGameLayer::checkCollisions (0x2137f0) is two passes:
+// GD resolves ramp-then-solid (the model's own order, every solid first, was the
+// --no-rampfirst arm, gone since the flag clean-up). GJBaseGameLayer::checkCollisions (0x2137f0) is two passes:
 // the bucket scan resolves slopes (type 0x19) and teleports (0x1c) in place,
 // while solids (type 0 / 0x15) and hazards are only pushed onto a list and
 // resolved afterwards through PlayerObject::collidedWithObject (0x214687), so
 // in GD a solid always sees the seat the ramp already wrote. See the rule at
 // the end of the slope block in step.hpp for the witness (lv16 t=4,142) and
 // for what it deliberately does not cover.
-inline bool g_noRampFirst = false; // --no-rampfirst
 
-// --no-slopenudge: a ramp contact keeps the pre-2026-09-06 velocity rules --
-// the gradient-signed +-2.0 writes at the three ceiling/ride sites, the ship's
-// kShipRampG ladder and the swing's walkIn0 one -- instead of GD's own
-// V3/V4/V5 (see slopeNudge in slopes.hpp and the site in step.hpp). Kept as the
-// A/B arm: the whole 22-level replay suite has to be byte-identical with it.
-inline bool g_noSlopeNudge = false; // --no-slopenudge
+// A ramp contact takes GD's own V3/V4/V5 velocity writes (slopeNudge in
+// slopes.hpp). (--no-slopenudge, the pre-2026-09-06 +-2.0 / kShipRampG / walkIn0
+// rules, is gone since the flag clean-up.)
 
-// --no-mpushreach: the flight loop's mover-catch (`fly/mpush`) seats at ANY
-// penetration, the pre-2026-09-06 behaviour, instead of GD's reach-back
-// `kShipLandTol + |dcy|/0.25` (see the site in step.hpp). Kept as the A/B arm:
-// the whole 22-level replay suite has to be byte-identical with it.
-inline bool g_noMpushReach = false; // --no-mpushreach
+// The flight loop's mover-catch (`fly/mpush`) seats within GD's reach-back
+// `kShipLandTol + |dcy|/0.25`. (--no-mpushreach, any penetration, is
+// gone since the flag clean-up.)
 
-// --no-boostlatch: GD's velocity-limit exemption (State::boost) is carried by
-// the SWING ONLY, as it was before 2026-09-06. The byte [player+0x952] has no
+// GD's velocity-limit exemption (State::boost) is carried by ship, UFO and
+// swing (swing only before 2026-09-06; --no-boostlatch is gone since the flag clean-up). The byte [player+0x952] has no
 // mode test at any of its ten writers and is read by the ship's acceleration
 // selector (0x38c5be / 0x38c5d8) and by the terminal clamp shared by ship, UFO
 // and swing (0x38ca9f), so the real scope is those three -- see boostLatchMode
 // in slopes.hpp for the reading and the sites in step.hpp for the consumers.
-// Kept as the A/B arm: with it the whole 22-level replay suite has to be
-// byte-identical to the build before the change.
-inline bool g_noBoostLatch = false; // --no-boostlatch
 
-// --no-ringfirsttouch: when several rings touch on the same tick the model
-// picks the LOWEST UID, the pre-2026-09-06 behaviour, instead of preferring the
-// one that was already in contact on the previous tick. GD's container
+// When several rings touch on the same tick GD fires the one touched FIRST (the
+// lowest uid, before 2026-09-06, was --no-ringfirsttouch, gone since the flag clean-up). GD's container
 // `PlayerObject +0xa38` (m_touchedRings) is appended to only on a ring's FIRST
 // contact (playerTouchedRing 0x217e40, containsObject 0x217ea1 / addObject
 // 0x217eb5) and is pruned in place, order preserved, at every tick's head
 // (resetTouchedRings(p,0) 0x3982e0), so pushButton's forward walk (0x3980b7)
 // fires the FIRST-TOUCHED ring; ascending uid is only the same-tick tie-break
 // (the bucket sort 0x2143a6 / comparator 0x205210). See the site in step.hpp.
-// Kept as the A/B arm: with it the whole 22-level replay suite has to be
-// byte-identical to the build before the change.
-inline bool g_noRingFirstTouch = false; // --no-ringfirsttouch
 
-// --no-padobb: a rotated PAD is judged against the raw player rotation, with no
-// override at all (the pre-2026-09-06 behaviour). It is the OUTER arm of the
-// three; g_noPadPlayerRot below wins over it, so passing both reproduces the
-// build that shipped the axis-aligned player square. See the site in step.hpp.
-inline bool g_noPadObb = false;         // --no-padobb
+// (--no-padobb, the raw player rotation for a rotated pad, is gone since the flag clean-up.)
 
-// --no-ballcorng: the BALL's hang window keeps the constant 1.5 grace on its
-// exit end (the pre-2026-09-06 behaviour) instead of one tick's movement
-// |useDx|, which is what the ship (r68/r74) and the swing (r71c/r74) already
+// The BALL's hang window takes one tick's movement |useDx| as the grace on its
+// exit end (a constant 1.5 before 2026-09-06; --no-ballcorng is gone since the flag clean-up), which is what the ship (r68/r74) and the swing (r71c/r74) already
 // use. Two witnesses bracket the grace from opposite sides and leave no
 // constant available:
 //   lv17 t=18,571/18,572  full ball,  m=-1, x1=24,120, xoff 6.213, dx 1.29825
@@ -431,14 +444,10 @@ inline bool g_noPadObb = false;         // --no-padobb
 // reverse-travel mirror (okLo) is NOT converted: it has zero witnesses in the
 // whole corpus, and an untested arm is better left where it was measured to be
 // harmless. See the site in step.hpp.
-inline bool g_noBallCornG = false;      // --no-ballcorng
 
-// --no-padspinpre: a pad's same-tick rotation step turns toward the gravity at
-// the END of the tick (the pre-2026-09-06 behaviour) instead of the gravity at
-// the moment GD called runNormalRotation. Only a GRAVITY pad can tell the two
-// apart, since nothing else moves the gravity within the tick. See the site in
-// step.hpp for the 116 witnesses and the two samples in the comment there.
-inline bool g_noPadSpinPre = false;     // --no-padspinpre
+// A pad's same-tick rotation step turns toward the gravity at the moment GD
+// called runNormalRotation (116 witnesses, the site in step.hpp). (--no-padspinpre,
+// the end-of-tick gravity, is gone since the flag clean-up.)
 
 // --no-satrotraw: the four oriented-contact sites in step.hpp advance `s.rot`
 // by one spin step before handing it to the SAT (the pre-2026-09-06 behaviour)
@@ -575,9 +584,7 @@ inline bool padPlayerRotMode(uint8_t mode) {
     return mode == 0 || mode == 1 || mode == 4;   // cube / ship / wave
 }
 
-// --no-dualflip: the partner is not fired (the pre-2026-09-05 behaviour, where
-// each half re-derived the flip inside its own stepOne, one integration late).
-inline bool g_noDualFlip = false; // --no-dualflip
+// (--no-dualflip, a dual's flip not reaching the partner, is gone since the flag clean-up.)
 // GD's gate for firing the partner: the two bodies' SIX mode bytes must match.
 // Written as GD writes it rather than as  == b, because the difference is
 // real -- wave is not among the six, so a cube and a wave both read false on
@@ -589,21 +596,15 @@ inline bool sameModeFlags(uint8_t a, uint8_t b) {
         if ((a == kCmp[i]) != (b == kCmp[i])) return false;
     return true;
 }
-// --no-r52gravhold: drop r52 (a gravity portal right after a rotation-frame
-// change does not fire if the player was already inside it). The arm exists to
-// ask whether the portal latch has made r52 a fossil: r52 was measured on
-// lv22 t=6,323 uid 13833, which the latch now spends at t=6,300. It is not
-// SUBSUMED, though -- r52 also covers type 3, which the latch does not -- so
-// the question is empirical.
-inline bool g_noR52GravHold = false; // --no-r52gravhold
+// r52 (a gravity portal right after a rotation-frame change does not fire if the
+// player was already inside it) is not subsumed by the portal latch: it also
+// covers type 3. (--no-r52gravhold is gone since the flag clean-up.)
 // The gravity-frame speed at or below which a ramp CONTACT becomes a LANDING.
 // GD's own: hitGround sets m_isOnGround only when s*v <= this (comisd against
 // the double @0x622E98); above it the caller restores the old vy (0x3907dd).
 // Not fitted -- read from the binary.
 constexpr double kSlopeLandV = 5.0;
-// --no-slopeland5: a ramp contact always lands, whatever the speed (the
-// pre-2026-09-05 behaviour).
-inline bool g_noSlopeLand5 = false; // --no-slopeland5
+// (--no-slopeland5, a ramp contact that always lands, is gone since the flag clean-up.)
 // --old-slope: A/B escape hatch (same convention as --old-latency). Restores
 // the pre-2026-08-04 slope exit: ball = tap-anchored line / mini x0.625, and
 // NO ride-time ramp. See slopeExitVy / slopeRampFactor for why the new form
@@ -870,6 +871,25 @@ constexpr double kHazHalf = 15.0;
 // instead of argued from the tick rate.
 constexpr int kSubSteps = 8;
 constexpr double kHazMargin = 0.0;
+// --hazaftersolid (cube): test the hazards AFTER the solid loop, from where the solids left
+// the player, instead of inside it in object order. GD's checkCollisions (0x2137f0) runs its
+// hazard stage after the solid loop: at 0x214752 it re-reads player->getObjectRect(), i.e. the
+// position after the push-out and the landing snap (lab: hazard-kill-rect-2026-09-04.md Q4).
+// The model's cube loop tested a hazard the moment it came up in K.near, so a spike sorted
+// before the block the cube lands on was tested against the fall's integrated y, below the
+// block's top. Measured on lv2 t=16,179 (a route to the third coin): the cube lands on a low
+// block at y=114; the model's sweep reached 111.894, 0.506 px into the floor spike beside it
+// (id 9 at 21,015,92, top 97.4), and killed on its last two samples -- GD lands and lives, and
+// clears the level from there.
+// Default since 2026-09-20, always on since the flag clean-up: the replay suite is unchanged
+// either way (1,116/1,116 -- no verified solution lands this shape), the 47 reference deaths
+// stay at 41/47 with no reference lost, and a cold run clears 22/22 with six levels taking a
+// different route. What it buys is the order GD actually uses.
+// --flyhazaftersolid: the same change on the FLYING branch (ship/UFO/wave/swing), which was
+// left alone when the cube side landed. GD's hazard stage is after the solid loop for every
+// mode, so the same hole should be there -- but nothing has measured it, so this one is off
+// by default until it is.
+inline bool g_flyHazAfterSolid = false;
 // Cube: how far below a surface the foot may already be and still be pushed up.
 // 3.0 was a guess and it was too small: lv6 t=13606 has GD landing the cube on
 // the ledge at x=17700 (top y=180) with the foot 3.29 px below it, and the model
@@ -932,10 +952,7 @@ inline double kRotPerpWin = 150.0;
 // How deep a top face may sit (how far below the line) and still be grabbed as a
 // "step" while riding. Midpoint of the measured boundary (3.100, 3.200] on the
 // ridestep calibration rig. --stepdepth A/Bs it.
-// [2026-08-21 diagnostic] A/B switch that cuts the ship ladder of hanging rides
-// (r88). Default false = rule on. Exists only to measure where a cold run's cost
-// is attributed.
-inline bool g_noHangLadder = false;
+// (--nohangladder, which cut the hanging ride's ship ladder r88, is gone since the flag clean-up.)
 // [2026-08-22 r106] Inner-box half-size for the crush (squeeze). Measured on the
 // calib_crush calibration rig: "instant death when the inner box (centre +-4.5)
 // touches the interior of a solid". The boundaries are
@@ -947,8 +964,7 @@ inline bool g_noHangLadder = false;
 // Independent corroboration: the kLandTol sweep's "d=10.5 (centred) dies on the
 // injection tick (the crush side fires first)" = the centre is the same 4.5 from the
 // slab's top face. The existing cube/solid-side killing at xpen ~11 (= 15 - 4.5 +
-// alpha) is the same box seen from the side. --nocrush A/Bs it.
-inline bool g_noCrush = false;
+// alpha) is the same box seen from the side. (--nocrush is gone since the flag clean-up.)
 inline double kCrushHalf = 4.5;
 inline double kStepDepth = 3.15;
 // Ship: MEASURED, not guessed. State-injection sweep at lv4's ledge x=17250
@@ -963,6 +979,100 @@ inline double kStepDepth = 3.15;
 // kill test than the outer box it rides on; the model kills there instead,
 // which is conservative (it never plans a route that GD would end).
 constexpr double kShipLandTol = 6.0;
+// --ceilrideslope: the flight ceiling ride (fly/ceilride) does not fire while a
+// ceiling ramp is pressing the player (see the branch in step.hpp). Off by default.
+// The 6.0 above was re-measured on 2026-09-18 on calib_slabside (a UFO on the floor
+// entering a 30x1.5 slab sideways): head 6.0 px into it is pushed out, 6.1 is not.
+inline bool g_ceilRideSlope = false;
+// --lawseatonslope: a ride's slopeT starts from the --slopelaw seat, not from the
+// model's landing (State::seatT). Off by default.
+inline bool g_lawSeatOnSlope = false;
+// --ceilpinmin: a flight pin under a ceiling that moved toward gravity this tick
+// sets vy to min(vy, -1) when the updated vy points with gravity, and 0 otherwise,
+// instead of the face's dcy/0.25 (see the ceiling-ride branch). On since
+// 2026-09-19; always on since the flag clean-up.
+// --pinminnoswing: --ceilpinmin's two arms (the entry at any depth, the min
+// clamp) leave the swing out. Its witnesses are a ship (lv19) and a UFO (lv20);
+// on lv22's swing corridor the search frontier dies with it and not without
+// (the anchor-2070 call of the bfa39aa Wine cold). Off by default.
+inline bool g_pinMinNoSwing = false;
+// --mpushsign: a flight push-out onto a rising face keeps max(vy, face) only when
+// the updated vy already rises, the player was not on a ramp and the face is not
+// faster than 5.0; otherwise vy = 0 (see the mpush branch). Always on since the
+// flag clean-up.
+// --mpushlaunch: postCollision's launch from last tick's c6 when contact with a
+// face rising faster than 5.0 ends (State::prevC6q). Always on since the flag
+// clean-up.
+// --upceilv3: the ceiling ramp underside's min(vy, 0) also on a push-out, not
+// only on a contact reached from below. On since 2026-09-19; always on since the flag clean-up.
+// --ceillimrelease: a `slope/ceillim` contact starts the ceiling ramp's ride
+// count, so the tick it ends gets the slope-exit launch (`ceil/release`), as
+// `slope/upceil` already does. Always on since the flag clean-up.
+// --releaseceilpress: no downhill release on a tick a ceiling ramp is pressing
+// the body (GD's one isOnSlope bit stays set). On since 2026-09-19; always on
+// since the flag clean-up.
+// --cubeceilgrace: the cube family's ceiling-ramp seat inside 0.1 s of a mode
+// switch or gravity flip (State::modeT / flipT). Always on since the flag
+// clean-up.
+// --ceilreleasemode: the ceiling release keeps the ride's clock across a
+// floor->underside hand-over and uses the mode of the press (State::ceilMode).
+// Always on since the flag clean-up.
+// --ceilveto: the flight loop's slope-adjacency veto is asked per face, the
+// ceiling ride reading the head's (step.hpp, the veto above fly/land).
+// --ceilcont: a flight body seated on a ceiling ramp last tick keeps that ramp
+// past its span, on the line extrapolated to the centre x (step.hpp, before the
+// slope passes). The two are one unit: --ceilveto alone moves lv16's 19,104 to
+// 19,106 and --ceilcont closes that.
+// --dualcouple: a dual's gravity flip reaches the partner in both directions as
+// GD's partner call does (set to the inverse, halve only on a change), in place
+// of r101's same-box skip (fixup.hpp stepBoth).
+// All three on since 2026-09-19 (they read only this tick's state, geometry
+// and load-time tables, so an anchor loses nothing they use), and always on
+// since the flag clean-up.
+// --stickground: the ride's stick-to-the-line holds only a body that is
+// grounded, not one whose ramp contact came in above the landing gate
+// (step.hpp, stickToSlope). Always on since the flag clean-up.
+// --hangland: a fresh contact of a flipped flight body with a ceiling ramp's
+// gravity-facing side zeroes vy when the gravity-frame speed is within the 5.0
+// landing gate (step.hpp, the flipped ceiling branch). Always on since the flag
+// clean-up.
+// --tpgroundvy: a cube or robot standing on an object keeps the tick's gravity
+// step through a teleport (747 and 2902), as GD's solid clamp runs after it
+// (step.hpp, the teleport branch). On since 2026-09-19 (it reads `grounded`,
+// which --start carries); always on since the flag clean-up.
+// --tpbandskip: the tick after a teleport skips the ball/spider band clamps
+// (State::tpSkip, GD's player+0x560). --ballceilpos: an upright ball/spider is
+// clamped under the BAND's ceiling by position, keeping a downward vy, where
+// the clamp used to need vy > 0. Measured together (lv20 t=9,233..9,235) and
+// meant to be used together: either alone clamps a tick early or not at all.
+// ON BY DEFAULT since 2026-09-20 (audit AUD-20260920-08), AS ONE UNIT. GD's y
+// at t=9,235 is exactly `pmax - pHalf` = 510 - 9 -- it pins an upright ball
+// under the band's ceiling BY POSITION while vy is still downward, and the tick
+// right after a teleport skips that clamp. Accepted as a pair and not as two
+// improvements: --ballceilpos alone was measured to make the census WORSE
+// (18 -> 19, 2026-09-19 16:57). Both halves always on since the flag clean-up.
+// --stickrelease: the downhill release is undone when a solid moving away from
+// the player is within 5*dt of its foot -- GD's postCollision stick re-land
+// runs after the release stamp (step.hpp, the release branch).
+// ON BY DEFAULT since 2026-09-20 (audit AUD-20260920-08), PAIRED WITH
+// --recinterp. Measured on the game at lv22 t=6,680: GD seats the ball on the
+// moving solid uid6067 exactly 15.000 above its top and an injected y=365 falls
+// back to the same face, and the pair reproduces that to 0.003 px. The pair is
+// the unit because the recorder wrote no row for uid6067 on that tick, so
+// without --recinterp `dcy` is exactly 0 and this branch's gate never opens --
+// the flag alone fixes the sectioned instruments and does nothing at all in a
+// run from t=0. Both always on since the flag clean-up.
+// SCOPE (audit AUD-20260920-09): the acceptance rests on the local t=6,680
+// measurement and the corpus/census/deathref/cold gates. It does NOT rest on
+// "lv22's first whole-run divergence moved to 11,342" -- that instrument does
+// not load 120 of the level's 152 touch triggers past x=2,283.
+// --stickseam: in a frame whose vertical axis is world x (1 and 3), a rider
+// carried by a receding floor loses support for one tick when it leaves the
+// solid its ride is tied to (State::groundUid). GD's stick re-land follows one
+// ground object and its fallback (+0x600, pre-registered by checkCollisions)
+// compares world y only, so it never fires there (measured with cfg
+// `sticktrace`, lv22 t=6,122; frame 0 rescues at the same kind of step).
+// Always on since the flag clean-up.
 // How deep the horizontal overlap must be before GD resolves a solid it did not
 // see the ship fly into, as a multiple of the player's half width. Bracketed by
 // the two 0->1 transitions of the hooked collidedWithObject return on lv11:
@@ -980,6 +1090,39 @@ constexpr double kSolidResolveX = 1.75;
 // into the block and dies of the overlap, which is exactly what it did.
 // --ceilpin restores it for A/B. `held` reads ceilPin, which only this branch
 // sets, so it is gone too.
+// --coins: make the level's coins part of the goal. Off by default, and when it
+// is off State::coins stays 0, so the dedupe key, the cap families and the goal
+// test are all bit-identical to a run without the feature.
+inline bool g_coinRoute = false;
+// --coinmargin: how far INSIDE a coin's (or a pickup's) box the model has to be
+// before it counts the thing as taken. **0 by default, which is GD's own rule.**
+//
+// It was briefly 3. The reasoning was that a plan allowed to graze the boundary
+// has a verdict that flips on a fraction of a pixel -- lv21's route passed a
+// coin at |dy| = 25.5 against a bound of 25 and GD credited nothing. But the
+// 0.5 px was a TRAJECTORY difference, not a plan that aimed at the edge, and
+// the fix for a trajectory difference is the fixup recorder (which now runs on
+// a missed coin too). A margin instead shrinks the target: the wave's coin
+// bound is only 25 px, so 3 takes an eighth of the window away, and every coin
+// route through a wave section is the one that needs it most.
+// Kept as a knob because "how tight is too tight to plan" is a real question,
+// but it is not answered by a number nobody measured.
+inline double kCoinMargin = 0.0;
+// --coindbg: per touch bit, (the highest count already printed for that Count
+// trigger) + 1, so the `countgate:` line appears once per distinct n. Global
+// and reset, not a function-local static: a second solve in the same process
+// would otherwise print nothing for any count the first one had reached.
+inline std::atomic<int> g_countSaid[kTouchBits] = {};
+// --coinmask: the collected set an anchored (--start) search begins with.
+inline int g_coinMaskSeed = 0;
+// --coinskip: coins that are not a goal this run, seeded as collected on every
+// call so neither the goal test nor the miss prunes ask for them.
+inline int g_coinSkip = 0;
+// --itembase "<item>:<n>,...": what GD's item counters already held at that
+// anchor. A Count trigger compares the COUNT, and the pickups behind an anchor
+// are not in the window State::items numbers, so the history arrives as a
+// number and the bits only ever add to it.
+inline std::vector<std::pair<int, int>> g_itemBase;
 inline bool g_ceilPin = false;
 // Ship zones have an invisible ceiling. It was modelled as "ship portal cy +
 // 120" from a single lv1 measurement (portal cy 255, ceiling 375.000) -- but
@@ -1000,8 +1143,18 @@ inline bool g_ceilPin = false;
 // and no level-derived rule reproduces it -- neither maxY nor the ship zone's
 // own highest surface (lv1 zone 450 -> 375, lv2 zone 390 -> 375). But lv1/lv2
 // need it, because without it the DP spends its frontier on high routes that
-// GD then refuses. So it is a knob with a default, not a constant: `--shipceil`
-// raises it for levels whose ship really does fly higher.
+// GD then refuses.
+//
+// [2026-08-31] ALL OF THE ABOVE IS HISTORY, AND THIS VALUE IS INERT. It is read
+// in exactly two places (step.hpp's two band sites and cli.hpp's --start seed)
+// and every one of them is gated on `g_shipCeilSet`, which only the --shipceil
+// flag ever set -- and that flag is now gone, because nothing in the pipeline
+// passed it. What the model actually uses is bandFor(the firing portal's cy, H),
+// and that is not a fallback but the better answer: GD reports [90,390] in lv1's
+// first ship zone and bandFor(239, 300) gives exactly that, while the branch
+// portal at cy=405 gives [240,540] -- a route this hard 375 would have forbidden
+// outright. The reverted experiment recorded above removed the clamp WITHOUT
+// putting the derived band in its place, which is why it read as a regression.
 inline double g_shipCeil = 375.0;
 // ...and the flying modes have a hard FLOOR too, which is not the world's.
 // Measured on lv12's UFO section through the gd MCP: injecting the UFO at y=60
@@ -1027,10 +1180,15 @@ inline double g_shipCeil = 375.0;
 // Two sections, three bounds, exact on all of them. The same arithmetic also
 // reproduces the ship bound that was tuned by hand long ago: lv1's ship portal
 // sits at cy = 255, and 255 + 135 - 15 = 375 -- exactly g_shipCeil's default.
-// The knobs below stay as overrides (0 = derive).
+// THE DERIVATION IS THE RULE; the two below were its overrides and are now
+// inert, for the same reason as g_shipCeil (their flags are gone, and nothing
+// had been passing them). Left in place, read where they always were, so that
+// deleting them is a separate and obvious change.
 constexpr double kFlyBandBelow = 165.0;
 constexpr double kFlyBandAbove = 135.0;
 inline double g_flyFloor = 0.0;
-inline double g_ufoCeil = 0.0;   // 0 = fall back to g_shipCeil
+// 0 = no override. (It never was a "fall back to g_shipCeil": no such fallback
+// exists in the code, and that comment had been wrong for as long as it stood.)
+inline double g_ufoCeil = 0.0;
 
 }  // namespace dp

@@ -116,12 +116,59 @@ class $modify(PlayerObject) {
         PlayerObject::playDeathEffect();
     }
 
+    // cfg `presstrace=t0,t1`: the press latch bytes, the ground flag and vy (see g_pressT0).
+    void pressLine(const char* where) {
+        if (g_tick < g_pressT0 || g_tick > g_pressT1 || !g_started || g_sessionOver) return;
+        const unsigned char* raw = reinterpret_cast<const unsigned char*>(this);
+        char b[200];
+        snprintf(b, sizeof(b),
+                 "press: t=%lld at=%s b985=%d b986=%d b98a=%d onGround=%d vy=%.4f y=%.4f",
+                 (long long)g_tick, where, (int)raw[0x985], (int)raw[0x986], (int)raw[0x98a],
+                 (int)raw[0x9c1], (double)this->m_yVelocity, this->getPositionY());
+        writeResult(b);
+    }
+
     void update(float dt) {
         auto* l = GJBaseGameLayer::get();
         bool isP1 = l && this == l->m_player1;
         if (isP1) ev("PO_update_pre", dt);
+        if (isP1) pressLine("update-in");
         PlayerObject::update(dt);
+        if (isP1) pressLine("update-out");
         if (isP1) traceModifierCounters(this);
+    }
+
+    // cfg `sticktrace=t0,t1`: postCollision's ground-object bookkeeping (see g_stickT0).
+    // g608 = +0x608 (the ground object), s600 = +0x600 (checkCollisions' pre-registered
+    // fallback), f658 = +0x658 (set when the stick re-lands), slope = +0x5e8, ax = +0x9c3
+    // (the vertical-axis byte of a rotated frame), og = +0x9c1. q5b8 is the raw difference
+    // of the two qwords at +0x5b8 and +0x5c0 -- the bottom collision log whose emptiness the
+    // stick tests (0x38e841); read as a vector that is 8 bytes per entry, unverified.
+    void stickLine(const char* where) {
+        if (g_tick < g_stickT0 || g_tick > g_stickT1 || !g_started || g_sessionOver) return;
+        const unsigned char* raw = reinterpret_cast<const unsigned char*>(this);
+        auto uidAt = [raw](size_t off) -> int {
+            auto* o = *reinterpret_cast<GameObject* const*>(raw + off);
+            return o ? o->m_uniqueID : -1;
+        };
+        const long long q0 = *reinterpret_cast<const long long*>(raw + 0x5b8);
+        const long long q1 = *reinterpret_cast<const long long*>(raw + 0x5c0);
+        char b[288];
+        snprintf(b, sizeof(b),
+                 "stick: t=%lld dt=%lld at=%s g608=%d s600=%d f658=%d slope=%d q5b8=%lld "
+                 "ax=%d og=%d x=%.4f y=%.4f vy=%.4f",
+                 (long long)g_tick, (long long)g_tick + 1, where, uidAt(0x608), uidAt(0x600),
+                 (int)raw[0x658], uidAt(0x5e8), q1 - q0, (int)raw[0x9c3], (int)raw[0x9c1],
+                 this->getPositionX(), this->getPositionY(), (double)this->m_yVelocity);
+        writeResult(b);
+    }
+
+    void postCollision(float dt, bool betweenSteps) {
+        auto* l = GJBaseGameLayer::get();
+        const bool isP1 = l && this == l->m_player1;
+        if (isP1) { stickLine("post-in"); g_inPostCollP1 = true; }
+        PlayerObject::postCollision(dt, betweenSteps);
+        if (isP1) { g_inPostCollP1 = false; stickLine("post-out"); }
     }
 
     // Name the spider's teleport target ON THE SPOT (cfg `standtrace=1`).
@@ -563,6 +610,15 @@ class $modify(PlayerObject) {
                              && g_tick >= g_cfg.hbFrom
                              && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
         CCRect prePr = hbWatch ? this->getObjectRect() : CCRect();
+        // cfg `sticktrace`: a dt = 0 collision inside P1's postCollision is the stick
+        // re-land (see g_stickT0).
+        if (g_inPostCollP1 && dt == 0.f && obj && g_tick >= g_stickT0 && g_tick <= g_stickT1) {
+            char sb[160];
+            snprintf(sb, sizeof(sb), "stick: t=%lld dt=%lld at=reland uid=%d y=%.4f vy=%.4f",
+                     (long long)g_tick, (long long)g_tick + 1, obj->m_uniqueID,
+                     this->getPositionY(), (double)this->m_yVelocity);
+            writeResult(sb);
+        }
         bool r = PlayerObject::collidedWithObject(dt, obj, rect, skip);
         // Hitbox observation (cfg `hitboxtrace=1`). Emits the partner rect exactly as GD
         // passed it, plus the player rect of the same tick and the test result (without
@@ -792,7 +848,9 @@ class $modify(PlayerObject) {
     bool pushButton(PlayerButton button) {
         auto* l = GJBaseGameLayer::get();
         if (l && this == l->m_player1) ev("PO_pushButton", (int)button);
-        return PlayerObject::pushButton(button);
+        const bool r = PlayerObject::pushButton(button);
+        if (l && this == l->m_player1) pressLine("pushButton-out");
+        return r;
     }
 
     bool releaseButton(PlayerButton button) {

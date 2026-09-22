@@ -31,6 +31,14 @@ def main(argv=None) -> int:
     ap.add_argument("--plan", default="")
     ap.add_argument("--worker-id", type=int, default=91)
     ap.add_argument("--slowmo", type=int, default=1)
+    ap.add_argument("--pause-at-x", type=float, default=0.0,
+                    help="freeze the picture at this x instead of deriving one "
+                         "from the plan's .dump. For watching one spot (a coin "
+                         "the game refused, a death) rather than the plan's end")
+    ap.add_argument("--cfg", nargs="*", default=[],
+                    help="extra autorun.cfg lines, k=v. `coins=1 coinmode=1` "
+                         "makes the coin lines print; leave coinroute OFF for a "
+                         "watch, it ends the attempt at a coin the plan missed")
     ap.add_argument("--pause-before", type=float, default=40.0,
                     help="how many px before the plan runs out to freeze the "
                          "picture. 0 = do not freeze; without it GD's own retry "
@@ -55,9 +63,9 @@ def main(argv=None) -> int:
     inputs = plan.read_input_lines(plan_path)
 
     # Where to stop the picture: just short of how far this plan actually gets in GD
-    pause_at = 0.0
+    pause_at = a.pause_at_x
     dump = Path(str(plan_path) + ".dump")
-    if a.pause_before > 0 and dump.exists():
+    if pause_at <= 0 and a.pause_before > 0 and dump.exists():
         tail = dump.read_text(encoding="utf-8-sig", errors="replace").splitlines()
         if tail:
             last_x = float(tail[-1].split(",")[3])
@@ -90,7 +98,7 @@ def main(argv=None) -> int:
         "deathfx=0",        # see the note at the top
         "notrace=1", "cbs=0", "cos=1",
         f"pauseatx={pause_at}", f"slowmo={a.slowmo}",
-    ] + (["itermap=1"] if a.itermap else []) + inputs
+    ] + (["itermap=1"] if a.itermap else []) + list(a.cfg) + inputs
 
     note = f"  (pauses at x={int(pause_at)})" if pause_at > 0 else ""
     print(f"lv{a.level}: {len(inputs)} inputs from {plan_path.name}{note}"

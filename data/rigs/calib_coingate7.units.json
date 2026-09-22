@@ -1,0 +1,33 @@
+[
+ {
+  "touch_key": 11,
+  "stations": "A=flat B=stacked C=off_forever"
+ },
+ {
+  "x0": 900.0,
+  "x1": 1500.0,
+  "coin_x": 1200.0,
+  "id": 1329,
+  "kind": "touchflag_on_the_line",
+  "variant": 7,
+  "player_y_assumed": 105.0
+ },
+ {
+  "x0": 1500.0,
+  "x1": 2100.0,
+  "coin_x": 1800.0,
+  "id": 1329,
+  "kind": "touchflag_stacked",
+  "variant": 7,
+  "player_y_assumed": 105.0
+ },
+ {
+  "x0": 2100.0,
+  "x1": 2700.0,
+  "coin_x": 2400.0,
+  "id": 1329,
+  "kind": "off_and_never_on",
+  "variant": 7,
+  "player_y_assumed": 105.0
+ }
+]

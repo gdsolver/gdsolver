@@ -156,31 +156,76 @@ inline bool g_touchCensus = false;
 // g_tcBranchP1 is p1's value, saved by stepBoth before p2's stepOne overwrites it.
 inline thread_local int g_tcBranch = 0;
 inline thread_local int g_tcBranchP1 = 0;
-// --touchprey=parent|button: the y markTouched's preY test reads. parent (the
-// default) is the parent state's y, as before; button is p1's y before this
+// --touchprey=button: the y markTouched's preY test reads is p1's y before this
 // tick's button effects, carried out of stepOne -- the spider tap warp's
-// pre-warp y -- or this tick's own y when no button effect moved it.
-// g_preBtnSet/g_preBtnY are written by the warp branch under the flag only.
-inline bool g_touchPreyButton = false;
+// pre-warp y -- or this tick's own y when no button effect moved it
+// (g_preBtnSet/g_preBtnY, written by the warp branch). The old reading, the
+// parent state's y (--touchprey=parent), is a tick too early: the cross of
+// "this tick's x" with "last tick's y" fired lv20's uid5625 on a position the
+// player never occupied, moving a saw 113.7 px onto a lane GD leaves open.
+// On since 2026-09-21 (audit AUD-20260921-12); always on since the flag
+// clean-up, which removed --touchprey.
+// --rotpretap: the same tick order for a 2900. GD fires a rotation
+// in the collision pass, BEFORE the tick's button, so the trigger's
+// perpendicular-window test (applyRotation, step.hpp) sees the spider where it
+// stood before its tap warp. The model ran the tap first and tested the warped
+// position. Measured on lv22 (2026-09-21), a plan both sides replay alike up to
+// t=1,816: GD fires uid1215 (2143.5,225) with the player at (2143.5, 224.3) and
+// then warps it in frame 0 to y=316.5; the model had already warped it in frame
+// 1 to world x=2,926.5, read |dv| = 783 > kRotPerpWin, dropped the rotation and
+// planned on in a frame GD had left. applyRotation already restores the pre-tap
+// y once a rotation has fired (its re-tap); this makes the DECISION use it too.
+// ON by default since 2026-09-21 (audit AUD-20260921-20), as ONE unit with
+// --spiderstrip: this alone still left a wrong landing, the pair made the
+// target plan match the game for 400 ticks. Both always on since the flag
+// clean-up.
+// --spiderstrip: the spider's teleport search in frame 0 uses
+// GD's own rects instead of a window centred on the player. Read off
+// spiderTestJumpInternal's two queries (cfg hitboxtrace=1, `srect:`/`drect:`)
+// on lv22, both frame-0 taps of one replay (t=1,816 on the rotation tick and
+// t=1,854), with x the player's position on the tap's tick:
+//   srect o.x = x        s.x = 14.5   -> solids  [x, x + 14.5]
+//   drect o.x = x - 4    s.x = 8.0    -> hazards [x - 4, x + 4]
+// The centred window was |x - cx| <= hw + 14.5 for solids (lv21's seven
+// injections pin 29.5 -- on the LEADING side, where the two agree) and
+// hw + 13.5 for hazards. Behind the player it reached 14.5 px too far: at
+// t=1,816 it took uid1212 (x 2,100..2,130, the player at 2,143.5) and landed
+// the spider at 226.5 where GD, which never looks behind, lands at 316.5.
+// Forward travel at normal size only: reverse travel and the mini are not
+// measured, and keep the old window.
+// ON by default since 2026-09-21 (audit AUD-20260921-20), paired with
+// --rotpretap (see there).
 // --ceilpush (default off): seat a body that overlaps a ceiling ramp's rect at
 // GD's ceiling seat even where the ramp window has dropped the ramp. See the
 // branch beside the push-out gate in step.hpp.
 inline bool g_ceilPush = false;
 // slope law: the acquisition GD actually performs, in place of --ceilpush's
 // one-sided push-out. See step.hpp's site for what is measured and what is not.
-// On by default since v0.1.4; --no-slopelaw turns it off (--slopelaw is accepted
-// and does nothing).
-inline bool g_slopeLaw = true;
+// On since v0.1.4; always on since the flag clean-up.
 // ship slope kill: the ship's spiked/plain ramp kill on the measured outline
 // (perpendicular d = playerHalf, flat side +kCubeInner) instead of the interval
-// overlap. See the note at the ramp kill in step.hpp. On by default since v0.1.4;
-// --no-shipslopekill turns it off.
-inline bool g_shipSlopeKill = true;
+// overlap. See the note at the ramp kill in step.hpp. On since v0.1.4; always on
+// since the flag clean-up.
+// --killslopeside: the slope KILL test decides which half of the
+// box is solid with GD's own set, {1,3,5,6} (slopeIsCeiling, read off
+// collidedWithObjectInternal at 0x3921B5), for every mode -- not just the ship.
+// The kill test is the last place in the tree still on the {1,3} subset: the
+// ride path dropped the mode whitelist in r63 (step.hpp, 2026-08-21) on the
+// grounds that "the reason was the same every time and has nothing to do with
+// the player's mode", and step.hpp's ceiling-ramp branch reads ceilRampSide.
+// 447 of the corpus's 3,091 type-25 slopes sit in the difference set {5,6}, so
+// this is NOT a one-object change and it moves kills in BOTH directions -- a
+// slope GD calls ceiling is currently judged as floor, which empties one
+// interval and fills the other.
+// ON by default since 2026-09-21 (audit AUD-20260921-12). The enumeration came
+// back with one row changed -- lv21's t=14,999 over-kill, the same rule and the
+// same direction as lv20's -- and nothing moved the other way over 22 whole-run
+// replays. deathref 41/47 -> 42/47 with nothing lost, cold 22/22. Always on
+// since the flag clean-up.
 // flipped wave slope kill: a flipped wave's ceiling-type spiked ramp kill at the
 // measured perpendicular distance kWaveFlipSlopeKillD instead of playerHalf. See
-// the note at the ramp kill in step.hpp. On by default since v0.1.4;
-// --no-waveflipkill turns it off.
-inline bool g_waveFlipKill = true;
+// the note at the ramp kill in step.hpp. On since v0.1.4; always on since the
+// flag clean-up.
 // --latgap: the search does not change the input on a tick no button edge can reach --
 // the tick after a mode portal from a latency-1 mode (cube/ball/wave/...) into a
 // latency-2 one (ship/UFO). The emitter maps such an edge to the press one tick earlier
@@ -189,13 +234,33 @@ inline bool g_waveFlipKill = true;
 // (cube -> ship at 19,637), both SOLVED plans whose own witness lived while --replay of
 // the emitted plan followed GD to its death. Off by default.
 inline bool g_latGap = false;
+// --waveslopeside: the wave's floor-ramp kill with the two things the plain rig
+// measured on 2026-09-17 (calib_slopespike_wave and _wave_mini, bisected to 0.006 px,
+// positions converted to the kill tick): a MINI wave's perpendicular distance is 3.0
+// (its rect's half), not the 2.0 the model used, and on a DESCENDING floor ramp the
+// boundary sits exactly 1.0 px higher than on an ascending one, for both sizes and both
+// slopes (normal 5.000 up / +1.000 down, mini 3.000 up / +1.000 down, on m=1 and m=0.5).
+// lv21 t=14,674 is the cold run's case: a mini wave 3.54 px (perpendicular) above
+// descending plain ramp 1338, killed by GD and not by the model.
+// On since 2026-09-20, always on since the flag clean-up. The high-end cap was
+// re-confirmed on a third object -- id1339 rotated 90, m=2 -- by a coin route on lv21 that GD
+// kills at t=16,725 and the model flew 95 ticks past; with the flag the model kills on the same
+// uid at the same place. Gates: the replay suite moves 38 of 1,116 traces with the reference
+// tracking unchanged, a cold run clears 22/22 for +8 on lv20 and +1 on lv17, deathref keeps
+// 41/47 with no reference lost, and refaudit adds no over-kill (lv19 improves from 153
+// differing rows to 3). Audit AUD-20260920-06.
+constexpr double kWaveSlopeDescendDy = 1.0;
+// ...and past the high end the kill is flat at objMaxY + half - 1.0 (both directions).
+// The downhill +1.0 is the source's tolerance xmm10 = (m_slopeUphill == 0), x4 while
+// m_wasOnSlope, plus a velocity term for a moving ramp (0x38fab3-0x38fb94); only the
+// static, not-sliding case is modelled here.
+constexpr double kWaveSlopeCapInset = 1.0;
 // The overlap of the two flipped-wave brackets (m=0.5: 5.83-5.97, m=1: 5.69-5.86).
 constexpr double kWaveFlipSlopeKillD = 5.845;
-// --nofreeside: drop --slopelaw's one empirical conjunct (see step.hpp).
-inline bool g_noFreeSide = false;
-// --escrotahead (default off): do not escapee-prune a body in a turned frame while
-// a rotation is still ahead on the active queue channel. See the prune in step.hpp.
-inline bool g_escRotAhead = true;
+// (--nofreeside, which dropped --slopelaw's one empirical conjunct, is gone since the flag clean-up.)
+// --escrotahead: do not escapee-prune a body in a turned frame while a rotation
+// is still ahead on the active queue channel. See the prune in step.hpp. Always
+// on; the switch is gone since the flag clean-up.
 inline thread_local bool g_preBtnSet = false;
 inline thread_local double g_preBtnY = 0.0;
 
@@ -324,7 +389,7 @@ inline bool g_p2Touch = false;
 // is boxes whose objects have no recording at all. Those have to come from GD,
 // which knows.
 //
-// NAMED, NOT POSITIONAL. The 26 positional --start fields cannot take another
+// NAMED, NOT POSITIONAL. The positional --start fields (30 today, 26 when this was written) cannot take another
 // one without every reader changing, and appending after an optional field is
 // its own trap. So: `--anchor-state key=value;key=value`.
 //
@@ -363,7 +428,16 @@ inline std::string g_anchorState;
 // for that one value -- a hybrid seed, and the opposite of what the refusal
 // says. Declaring ownership keeps "replaces wholesale" true WITHIN a
 // subsystem and leaves the others honestly alone.
-inline const char* const kAnchorKeys[] = {"owns", "touch", "portal", "portal2"};
+inline const char* const kAnchorKeys[] = {"owns", "touch", "portal", "portal2",
+                                          "hist"};
+// `owns=hist` -> the per-body history values that --start does not carry, as
+// ONE versioned value: `hist=<version>|<count>|name:value,name:value`. The
+// version and the count are checked, and a name this build does not know is
+// refused like an unknown key (AUD-20260919-07: every new history value goes
+// through this one transport, never another positional --start field).
+// Version 1 knows pressSpent and pressSpent2 (GD's +0x986 negated, per body).
+inline bool g_ownsHist = false;
+inline const char* const kHistNames[] = {"pressSpent", "pressSpent2"};
 // Which subsystems this payload claims. The lock and the rotation queue keep
 // their own seeding until someone measures a reason to move them.
 inline bool g_ownsTouch = false;
@@ -614,9 +688,8 @@ inline std::vector<int> g_spentPad;
 // A/B switch (--no-spentpad): ignore the list above, i.e. seed only from the
 // boxes overlapped at t0, which is what every build before 2026-09-06 did.
 inline bool g_spentPadSeed = true;
-// A/B switch that turns off the reverse-run toggle (a 2900 of the same frame)
-// (--norevtoggle).
-inline bool g_revToggle = true;
+// (--norevtoggle, which turned off the reverse-run toggle of a same-frame 2900,
+// is gone since the flag clean-up.)
 
 // ---- CONTROL-DISABLED WINDOWS (--ctrlwin t0:t1,...) -------------------------
 //

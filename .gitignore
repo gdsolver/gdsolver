@@ -21,10 +21,17 @@ data/*
 !data/solution_lv[0-9]_dp.txt
 !data/solution_lv1[0-9]_dp.txt
 !data/solution_lv2[0-2]_dp.txt
+# ...and their all-coins counterparts, each checked by a bare replay to clear
+# with GD's own coin count at 3/3.
+!data/solution_lv[0-9]_coins.txt
+!data/solution_lv1[0-9]_coins.txt
+!data/solution_lv2[0-2]_coins.txt
 # What py/cold_regress.py compares against: the iteration count each level took
 # the last time the suite was green, and the [fp] it ended on. It is the
-# acceptance record, so it belongs with the code it judges.
+# acceptance record, so it belongs with the code it judges. The coin runs have
+# their own (coinroute=1 coins=1), with each level's coin count.
 !data/cold_baseline.json
+!data/cold_baseline_coins.json
 !data/rigs/
 data/rigs/*
 !data/rigs/*.lvl

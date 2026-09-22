@@ -32,44 +32,68 @@ disagrees with it; no external process is involved. Most levels take under a
 minute. The solutions are tracked in [`data/`](data/) as
 `solution_lv<N>_dp.txt`, one `input=<tick>,<0|1>` line per press or release.
 
+**With all three coins, too.** Switch **Coins** on in the panel and the goal
+becomes the end of the level *and* every coin in it. All 22 official levels are
+solved that way as well, cold, and each of those solutions replays to a clear
+with all three coins counted by the game itself; they are tracked beside the
+others as `solution_lv<N>_coins.txt`. Coins picked up while the mod drives are
+never awarded (see [Safety](#safety--community-notes)) — a coin route is a TAS
+result, not progress on a save file.
+
 Those 22 are also the supported set — see [What's next](#whats-next) for where
-custom levels, platformer mode and coins stand.
+custom levels and platformer mode stand.
 
 ## Results
 
-The whole table is one cold regression run (2026-09-20) — `python
-py/cold_regress.py --one-session`, the whole suite inside a single game session,
-no plan and no solution file to start from — and it is run again on every change
-that reaches the loop.
+The whole table is two cold regression runs of the same build (2026-09-22) —
+`python py/cold_regress.py --one-session`, the whole suite inside a single game
+session, no plan and no solution file to start from — one with coins
+(`--cfg coinroute=1 coins=1`) and one for the end of the level alone. The coin
+run ended every level with all three coins, as the game itself counted them.
+Both are run again on every change that reaches the loop.
 
-| # | Level | Repairs (v0.1.5) | Time (v0.1.5) | | # | Level | Repairs (v0.1.5) | Time (v0.1.5) |
+Every cell reads **with all three coins**, then in brackets **the end of the
+level alone**.
+
+| # | Level | Repairs | Time | | # | Level | Repairs | Time |
 |--:|---|--:|--:|---|--:|---|--:|--:|
-| 1 | Stereo Madness | 1 (1) | 19 s (20 s) | | 12 | Theory of Everything | 5 (5) | 20 s (19 s) |
-| 2 | Back On Track | 0 (0) | 11 s (12 s) | | 13 | Electroman Adventures | 0 (0) | 17 s (17 s) |
-| 3 | Polargeist | 1 (1) | 16 s (15 s) | | 14 | Clubstep | 3 (3) | 22 s (22 s) |
-| 4 | Dry Out | 0 (0) | 12 s (12 s) | | 15 | Electrodynamix | 5 (5) | 23 s (24 s) |
-| 5 | Base After Base | 0 (0) | 14 s (14 s) | | 16 | Hexagon Force | 12 (12) | 2 m 34 s (2 m 44 s) |
-| 6 | Can't Let Go | 0 (0) | 13 s (12 s) | | 17 | Blast Processing | 0 (0) | 27 s (28 s) |
-| 7 | Jumper | 1 (1) | 18 s (19 s) | | 18 | Theory of Everything 2 | 12 (12) | 53 s (54 s) |
-| 8 | Time Machine | 0 (0) | 15 s (15 s) | | 19 | Geometrical Dominator | 5 (5) | 59 s (59 s) |
-| 9 | Cycles | 0 (0) | 11 s (11 s) | | 20 | Deadlocked | 21 (21) | 4 m 8 s (4 m 9 s) |
-| 10 | xStep | 1 (1) | 27 s (27 s) | | 21 | Fingerdash | 4 (4) | 1 m 22 s (1 m 21 s) |
-| 11 | Clutterfunk | 4 (4) | 32 s (32 s) | | 22 | Dash | 46 (39) | 5 m 2 s (3 m 43 s) |
+| 1 | Stereo Madness | 0 (1) | 23 s (26 s) | | 12 | Theory of Everything | 5 (5) | 23 s (23 s) |
+| 2 | Back On Track | 0 (0) | 14 s (14 s) | | 13 | Electroman Adventures | 0 (0) | 20 s (20 s) |
+| 3 | Polargeist | 0 (1) | 18 s (19 s) | | 14 | Clubstep | 3 (3) | 26 s (26 s) |
+| 4 | Dry Out | 0 (0) | 15 s (15 s) | | 15 | Electrodynamix | 6 (3) | 25 s (24 s) |
+| 5 | Base After Base | 0 (0) | 19 s (18 s) | | 16 | Hexagon Force | 17 (38) | 2 m 0 s (8 m 39 s) |
+| 6 | Can't Let Go | 0 (0) | 15 s (16 s) | | 17 | Blast Processing | 5 (4) | 59 s (56 s) |
+| 7 | Jumper | 4 (0) | 41 s (21 s) | | 18 | Theory of Everything 2 | 13 (6) | 1 m 18 s (46 s) |
+| 8 | Time Machine | 2 (1) | 20 s (20 s) | | 19 | Geometrical Dominator | 15 (3) | 2 m 12 s (1 m 1 s) |
+| 9 | Cycles | 0 (0) | 11 s (13 s) | | 20 | Deadlocked | 22 (16) | 3 m 57 s (3 m 46 s) |
+| 10 | xStep | 6 (1) | 38 s (33 s) | | 21 | Fingerdash | 5 (8) | 2 m 16 s (3 m 40 s) |
+| 11 | Clutterfunk | 3 (4) | 26 s (38 s) | | 22 | Dash | 56 (26) | 6 m 43 s (4 m 13 s) |
 
-In brackets: the same two numbers as `v0.1.5` published them (2026-09-19), from
-a run of the same kind — one game session for the whole suite. A bracket is there
-to say where the project was standing, not to be subtracted from the figure
-beside it: a repair count is not a score, and a different route through the
-search gives a different count for the same build. This release changes one
-level: Dash's 46 repairs (39) are what it costs to treat every place the game's
-own random numbers can put a block as deadly (see [How it works](#how-it-works)).
-The other 21 made exactly the same decisions as in `v0.1.5`, round for round.
+The two numbers in a cell are two separate searches, not a total and a part:
+with coins the goal is a different one, so the search takes a different route
+from the first round on, and it is not always the longer one (Hexagon Force
+finds a cheaper way through with coins than without).
+
+Against `v0.1.6` (2026-09-20, end of the level only), the counts moved on ten
+levels, the large moves being Hexagon Force 12 → 38, Dash 46 → 26, Theory of
+Everything 2 12 → 6, Deadlocked 21 → 16, Fingerdash 4 → 8 and Blast Processing
+0 → 4.
+A repair count is not a score, and a different route through the search gives a
+different count for the same build. Between the two releases the model has become
+more faithful in many measured places, and a more faithful model takes other
+routes, so some counts fell and some rose. Hexagon Force's 38 is one of the
+latter: every death on its new route is one the model predicted, and the extra
+rounds are the search walking into a dead end and backing out of it. Two repairs
+to the loop itself removed deaths that had been repeating round after round, on
+Fingerdash's rotating bars and on Deadlocked's spikes that follow the player (see
+[How it works](#how-it-works)).
 
 **Repairs** is how many times the loop had to go back: solve, replay, die,
 re-anchor on the game's real state, solve the tail. `0` means the very first
 plan the DP produced cleared the level. The count is deterministic for a given
-build, which is why it is what `py/cold_regress.py` compares against
-`data/cold_baseline.json`.
+build, and `py/cold_regress.py` pins it by comparing the `[fp]` line each round
+prints against `data/cold_baseline.json` (`data/cold_baseline_coins.json` for a
+coin run).
 
 It is not a fidelity score. It counts what the loop had to do, and that depends
 on which corridor the search happens to walk as much as on where the model is
@@ -78,11 +102,12 @@ and the run takes a different route. Making the model *more* correct can raise
 it: closing a route the model only believed in sends the search off to find the
 real one.
 
-**Time** comes from that same run — 8 solver threads on a 16-core desktop — and
+**Time** comes from those same runs — 8 solver threads on a 16-core desktop — and
 it counts everything from the level being built to the solution being written;
-the 22 add up to the 20 minutes the suite took. Read it as a guide and not as a
-contract: the clock is not what the regression compares, the repair count is, and
-only that one is deterministic.
+the 22 add up to the 25 minutes the coin suite took (28 without coins). The
+machine was not otherwise idle during them, so read the clock as a guide and not
+as a contract: it is not what the regression compares, and only the repair count
+is deterministic.
 
 Almost all of it is the search. Broken down on the 2026-08-27 run, the DP calls
 were 86 % of the total and 88–93 % on the four expensive levels; on the ones that
@@ -141,6 +166,26 @@ game check each step; once a plan outlives its step, it plans the rest of the
 level. And a repair does not have to solve everything past the death again: when
 the new search comes back onto the trajectory of the plan that died, it stops
 there and keeps that plan's inputs from that point on.
+
+The moving geometry the model plans against is the game's own recording: every
+replay records it, and past the tick where the last replay died the model falls
+back on a recording of the level played with no input at all. Two things are
+handled at that seam. The input-free run reaches each trigger a little later
+than a real one, so an object still moving at the seam is joined to it at the
+shift where the two recordings agree (Fingerdash's rotating bars used to jump
+eight ticks back there). And the game decides a kill on the tick the replay died,
+while the model decides it on its next row, so that row holds the replay's last
+one (Deadlocked's spikes follow the player; in the input-free recording they are
+somewhere else and switched off).
+
+With coins on, a coin is collected when the player's own box overlaps it, and a
+state that leaves an uncollected coin behind it is dead: nothing steers the search
+towards a coin, the goal simply is not reached without it. Some coins appear only
+once the level has been played a certain way — the third coins of Fingerdash and
+Dash wait for item counters that touch and count triggers advance — so those
+counters are part of the model too. In the game, a replay of a plan that claims
+every coin ends the moment it passes one the game did not credit, and is repaired
+from there like a death.
 
 One kind of geometry is not recorded where it was. An Area Move can give its
 distance, length, offset, angle or x/y moves a variance, and the game picks the
@@ -221,17 +266,12 @@ more than some later ones, because of what they are built from (a dual section,
 say) rather than when. A 2.2 level that happens to be a plain cube level may well
 solve on its first plan, and a 1.6 level with a dual may not.
 
-**Coins.** The objective today is "reach the end alive", so a solution picks up a
-coin only by accident. The level export always records where the coins are, and
-there is a pickup test that does not consult GD's own coin state, so it still
-works while every award is blocked — though that test is off unless asked for
-(`coinMode`), because nothing in the solve needs it yet. What is missing is the
-search: it does not route through them. Making coins an objective means carrying
-"which coins are taken" in the
-search state, and accepting that the cheapest route to the end is usually not a
-route that passes every coin. Coins collected while the mod drives are never
-awarded (see [Safety](#safety--community-notes)) — a coin route is a TAS result,
-not progress on a save file.
+**Coins beyond the official levels.** The coin routing is measured on the 22
+official levels: the pickup box, and the counters and gates their coins wait for.
+A custom level's coins can hang on triggers the official ones never use, and the
+search's coin set holds at most eight coins — a level with more turns the routing
+off and says so rather than guessing. Coins collected while the mod drives are
+never awarded (see [Safety](#safety--community-notes)).
 
 ## Installing
 
@@ -279,7 +319,10 @@ geode build                                    # -> build/gdsolver.solver.geode
 ## Watching a run
 
 A panel appears on the screens a level is started from, offering three modes: **Normal**,
-**Replay** (play a stored solution) and **Solve** (solve the level in-process). A solve runs
+**Replay** (play a stored solution) and **Solve** (solve the level in-process), and a **Coins**
+switch: with it on, Solve routes through every coin and files the result as
+`solution_lv<N>_coins.txt`, and Replay plays that file and reports the coins the game counted.
+A solve runs
 fast, dark and silent until a candidate clears, and then plays that one through at 1x with the
 artwork and the music. While a level is on screen an overlay reports what the loop is doing, and
 F10 draws the iteration map: where the repair rounds went, and where the model — rather than

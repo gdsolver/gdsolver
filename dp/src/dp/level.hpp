@@ -33,6 +33,17 @@ struct Level {
     std::vector<Obj> orbs;        // type 11, sorted by cx
     std::vector<Obj> speeds;      // speed portals (see dxForSpeedId), by cx
     std::vector<Obj> slopes;      // GameObjectType 25, by cx
+    // Coins: type 22 (secret) and 31 (user), by cx. NOT obstacles -- they are
+    // in no other list and touch neither the physics nor a death test; the
+    // search reads them only when --coins asks it to route through them. A
+    // level holds at most three (GD drops the rest at load), so the mask that
+    // tracks them is 3 bits wide in practice.
+    std::vector<Obj> coins;
+    // ...and, per coin, its entry in `dyn` (-1 = it is where the level put it and
+    // stays there). A coin a trigger controls is moved and switched like any
+    // other object; the collect test reads the live row through this index
+    // rather than the load-time one above.
+    std::vector<int> coinDyn;
     Dynamics dyn;                 // objects with a recorded timeline
     // "The highest surface ahead" in this frame (suffix max over 30px buckets).
     // Frame 0 uses g_topAhead as is, so it stays empty there. In a rotated frame

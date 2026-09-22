@@ -1,4 +1,7 @@
 #pragma once
+#include <fstream>
+#include <sstream>
+#include <string>
 #include "dp/speed.hpp"
 
 namespace dp {
@@ -200,8 +203,14 @@ constexpr double kForceUnitUfo = 0.1305;
 // rounding before anyone looked at the call sites. Make the mistake impossible
 // rather than remembering not to make it.
 struct ForceUnit { double v; };
+// --forceunit1x: the unit's gravity is the 1x one whatever the speed. The
+// force's own step is 0.225 x m_force for a cube (the 0.945 note at the force
+// application in step.hpp), and lv22 t=20,958..20,960 (mini cube, speed 1.1,
+// one 4.2 box) reads +0.730 = 0.945 - 0.215 in GD where the speed's g gives
+// 4.2 x 0.2239 = 0.941 and +0.726. Off by default.
+inline bool g_forceUnit1x = false;
 inline ForceUnit forceUnitFor(uint8_t mode, float dxF) {
-    const double g = std::fabs(cubePhysFor(dxF).g);
+    const double g = std::fabs(cubePhysFor(g_forceUnit1x ? 1.29825f : dxF).g);
     switch (mode) {
         case 0: return {g / kForceGDiv};                  // cube
         case 1: return {kForceUnitShip};
@@ -218,15 +227,76 @@ inline ForceUnit forceUnitFor(uint8_t mode, float dxF) {
         default: return {0.0};
     }
 }
-struct ForceBox { double cx, cy, hw, hh; double force; };   // force = m_force
+struct ForceBox {
+    double cx, cy, hw, hh;
+    double force;   // m_force
+    int uid = -1;
+    int fid = 0;    // m_forceID (property 530); 0 = none, set by --forceids
+};
 inline std::vector<ForceBox> g_forceBoxes;
+// --forceids <file>: the forceblocks dump (uid,...,forceid). GD sums the boxes a
+// player overlaps, but a box with m_forceID > 0 counts once per tick per ID:
+// collisionCheckObjects reads obj+0x750 and skips the box if the ID is already
+// in the player's set at +0xb98 (0x215b01-0x215b40), then adds
+// calculateForceToTarget into +0xb8c. lv22 t=20,961: uid17041 and uid17184, two
+// 4.2 boxes stacked at x=21,555 with forceid 1, push a mini cube +0.730/tick in
+// GD where the model, summing both, gave +1.666. The only boxes in lv1-22 with
+// an ID. Not given: every fid is 0 and the sum is as before.
+inline std::string g_forceIdsPath;
 inline double forceBoxSum(double x, double y, double pHalf) {
     double f = 0.0;
+    int seen[8];
+    int ns = 0;
     for (const auto& fb : g_forceBoxes)
         if (std::fabs(x - fb.cx) <= fb.hw + pHalf
-            && std::fabs(y - fb.cy) <= fb.hh + pHalf)
+            && std::fabs(y - fb.cy) <= fb.hh + pHalf) {
+            if (fb.fid > 0) {
+                bool dup = false;
+                for (int k = 0; k < ns; ++k)
+                    if (seen[k] == fb.fid) { dup = true; break; }
+                if (dup) continue;
+                if (ns < 8) seen[ns++] = fb.fid;
+            }
             f += fb.force;
+        }
     return f;
+}
+inline void applyForceIds(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) {
+        std::printf("forceids: cannot read %s\n", path.c_str());
+        return;
+    }
+    std::string line;
+    std::getline(in, line);
+    std::vector<std::string> hdr;
+    {
+        std::stringstream ss(line);
+        std::string c;
+        while (std::getline(ss, c, ',')) hdr.push_back(c);
+    }
+    int iu = -1, ifd = -1;
+    for (int k = 0; k < (int)hdr.size(); ++k) {
+        if (hdr[k] == "uid") iu = k;
+        if (hdr[k] == "forceid") ifd = k;
+    }
+    if (iu < 0 || ifd < 0) {
+        std::printf("forceids: %s has no uid/forceid column\n", path.c_str());
+        return;
+    }
+    int set = 0;
+    while (std::getline(in, line)) {
+        std::vector<std::string> f;
+        std::stringstream ss(line);
+        std::string c;
+        while (std::getline(ss, c, ',')) f.push_back(c);
+        if ((int)f.size() <= std::max(iu, ifd)) continue;
+        const int uid = std::atoi(f[iu].c_str());
+        const int fid = std::atoi(f[ifd].c_str());
+        for (auto& fb : g_forceBoxes)
+            if (fb.uid == uid) { fb.fid = fid; if (fid > 0) ++set; }
+    }
+    std::printf("forceids: %d box(es) carry a force ID\n", set);
 }
 // `unit` is forceUnitFor(mode, dx) -- the push one unit of m_force gives THIS
 // player. Quantised the way GD quantises vy: every number the old uid table
@@ -397,13 +467,65 @@ constexpr double kBandBase = 270.0;
 struct ZoomTrig { double cx, target, durTicks, rate; int ease; };
 inline std::vector<ZoomTrig> g_zoomTrigs;   // sorted by cx at load
 inline double camScaleAt(double x, double dx);     // defined below gdEase
-struct FlipHeadBox { double cx, cy, hw, hh; };
+// One row of a modifier box's recorded motion. Its own type rather than
+// DynSample so that this header keeps depending on nothing: the loader copies
+// the three fields across.
+struct ModRow { int t; float cx, cy; };
+struct FlipHeadBox {
+    double cx, cy, hw, hh;      // LOAD-TIME position
+    int uid = -1;
+    // --fgarmlive: the recording's rows for this uid, ascending in t. Empty
+    // when the box never moves (or when no recording was given), which reads
+    // as "the load-time position is the live one".
+    std::vector<ModRow> live;
+};
 inline std::vector<FlipHeadBox> g_flipHeadBoxes;
-inline bool flipHeadArms(double x, double y, double pHalf) {
-    for (const auto& b : g_flipHeadBoxes)
-        if (std::fabs(x - b.cx) <= b.hw + pHalf
-            && std::fabs(y - b.cy) <= b.hh + pHalf)
+// --fgarmlive: arm from the box's LIVE position and let the arm DECAY, instead
+// of arming once from the parked box and staying armed for the level.
+//
+// GD's side is read from the binary: collisionCheckObjects writes 2 into
+// m_stateFlipGravity (player+0xb80) on contact (0x215ba1, the only setter) and
+// PlayerObject::update decrements it every tick (0x389f40). So the arm lasts
+// the contact tick and the one after -- kArmTicks, the same shape the id-1859
+// ceiling arm already uses.
+//
+// What made this look like a long-lived latch for a year: lv22's only 2866,
+// uid2860, RIDES THE PLAYER. Across 650 ticks of the recording it stays 1.19 px
+// from the player in x -- a 36x36 box around a half-9 cube -- so GD re-arms on
+// every one of them and the counter never gets to expire. The three flips GD
+// makes (t=2,749 / 2,890 / 2,961) are all inside that one contact, which is why
+// "active for at least 254 ticks" looked like a decay constant and was not.
+//
+// The two halves ship together on purpose. With the decay alone the model loses
+// those three flips, because the parked box at (3735,255) is 400+ px behind by
+// then; with the live lookup alone nothing changes, because the latch never
+// clears anyway. They were each other's cover.
+inline bool g_fgArmLive = false;
+// Where the box is at tick t: the last recorded row at or before t, and the
+// load-time position before the first row. A binary search rather than a
+// cursor, because the frame slices each hold their own Level and would
+// otherwise share one mutable position.
+inline void flipHeadAt(const FlipHeadBox& b, int t, double& cx, double& cy) {
+    cx = b.cx;
+    cy = b.cy;
+    if (b.live.empty()) return;
+    size_t lo = 0, hi = b.live.size();
+    while (lo < hi) {
+        const size_t m = lo + (hi - lo) / 2;
+        if (b.live[m].t <= t) lo = m + 1; else hi = m;
+    }
+    if (lo == 0) return;
+    cx = (double)b.live[lo - 1].cx;
+    cy = (double)b.live[lo - 1].cy;
+}
+inline bool flipHeadArms(double x, double y, double pHalf, int t) {
+    for (const auto& b : g_flipHeadBoxes) {
+        double bx = b.cx, by = b.cy;
+        if (g_fgArmLive) flipHeadAt(b, t, bx, by);
+        if (std::fabs(x - bx) <= b.hw + pHalf
+            && std::fabs(y - by) <= b.hh + pHalf)
             return true;
+    }
     return false;
 }
 // CEILING ARM (id 1859, GameObjectType 40). Touching one is what puts the

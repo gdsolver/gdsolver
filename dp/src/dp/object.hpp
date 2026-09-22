@@ -3,6 +3,11 @@
 
 namespace dp {
 
+// The uid of the hazard twin the level loader gives an object whose placement depends on GD's
+// own random numbers (DynSample::env): this plus the object's uid. Far above any real
+// m_uniqueID, and readable in a death report: 100006272 is the box of uid 6272.
+constexpr int kEnvTwinUidBase = 100000000;
+
 struct Obj {
     double cx, cy, hw, hh;
     uint8_t type;  // 0 solid, 2/47 hazard, 4 gravity portal, 5 ship, 6 cube,
@@ -423,7 +428,32 @@ inline bool hazardHit(const Obj* o, double px, double py, double half,
     // that will be reused; the SHAPE it feeds is still provisional.
     //
     // Standard SAT, four axes: the box's two and the player square's two.
-    if (o->obbOk) {
+    //
+    // [2026-09-18] MEASURED ON THE RIG, AND THE BOX GATES THE KILL. data/rigs/
+    // calib_hazrot_wave, one spike per rotation: nine cells where the object's rect
+    // overlaps but this box never does (the rect's y bound still reaches while the
+    // box's normal axis does not, and one row later the player is past the rect's x
+    // bound, so the box has no row left) -- GD survives all nine, at rot 15/30/45/63
+    // and by 0.97 to 3.55 px. Three control cells, where both shapes fire, die on the
+    // predicted row. So `--hazaabb` (the rect alone in stage 1) is not GD's shape: it
+    // kills in a region GD leaves alone. It stays a diagnostic, default off.
+    //
+    // Reading a column sweep as a shape boundary is what made the flag look right:
+    // the player crosses a hazard diagonally (dx +1.298, dy -1.298 per row), so every
+    // cell of a column dies eventually and a sweep with a near stop tick measures
+    // WHICH ROW fires, not where the shape ends.
+    //
+    // One case is still unexplained, and it is the one that named the flag: lv19
+    // t=7,131 (wave, spike uid 4666 id368 rot 8, static -- no group, no rotation
+    // gameplay). GD kills at |ly| = 7.727 against bhh + r = 7.647, i.e. 0.08 px
+    // outside this box (`killer: t=7130 uid=4666 px=9256.606 py=517.874`), and the
+    // cold run spent an iteration on it. The rig at the same rotation does NOT kill
+    // 0.096 px outside -- but that is the largest gap rot 8 affords here, and it is
+    // the size of the shape's own uncertainty (the half is 5.0 +- 0.025), so rot 8
+    // cannot decide it. What is left: the player box's centre may sit off the dumped
+    // (x,y) by an offset that turns with the player (the rig's player is at -1 deg,
+    // lv19's at -13.4), which is unmeasured.
+    if (o->obbOk && !g_hazAabb) {
         const double dx = px - o->cx, dy = py - o->cy;
         const double h = half + margin;
         // the player's square projected onto the box's axes (same width on

@@ -78,6 +78,33 @@ class $modify(PlayLayer) {
         // state whether anything was written into it (see progressDiff).
         g_progressLevel = level;
         g_progressAtStart = sampleProgress(level);
+        // cfg `rngfresh` (see g_rngFresh): the first level keeps the seeds it found and
+        // saves them; every later level of the same game starts from those values again.
+        if (g_rngFresh) {
+            static bool saved = false;
+            static long long seeds[3];
+            static const uintptr_t kSeedRva[3] = {0x6c2e90, 0x6c2ee0, 0x6c2ef8};
+            auto* base = reinterpret_cast<unsigned char*>(geode::base::get());
+            for (int k = 0; k < 3; ++k) {
+                auto* p = reinterpret_cast<long long*>(base + kSeedRva[k]);
+                if (!saved) seeds[k] = *p;
+                else *p = seeds[k];
+            }
+            char b[160];
+            snprintf(b, sizeof(b), "rngfresh: %s e90=%lld ee0=%lld ef8=%lld",
+                     saved ? "restored" : "saved", seeds[0], seeds[1], seeds[2]);
+            writeResult(b);
+            saved = true;
+        }
+        // cfg `rngseed` (see g_rngSeedSet): explicit values for the two unreseeded seeds.
+        if (g_rngSeedSet) {
+            auto* base = reinterpret_cast<unsigned char*>(geode::base::get());
+            *reinterpret_cast<long long*>(base + 0x6c2ee0) = g_rngSeedEE0;
+            *reinterpret_cast<long long*>(base + 0x6c2ef8) = g_rngSeedEF8;
+            char b[128];
+            snprintf(b, sizeof(b), "rngseed: ee0=%lld ef8=%lld", g_rngSeedEE0, g_rngSeedEF8);
+            writeResult(b);
+        }
         return PlayLayer::init(level, useReplay, dontCreateObjects);
     }
 
@@ -184,6 +211,17 @@ class $modify(PlayLayer) {
             anchors::onAttemptStart();   // the re-anchor record is per attempt
             itermap::onAttemptStart();   // ...and so is the seek bar's tick -> x record
             solver::g_coinPickupTick.assign(solver::g_coins.size(), -1);
+            // GD's verdict is per attempt for the same reason ours is. GD's own
+            // "already collected" dictionary is NOT cleared here -- that is its
+            // business, and clearing it would be changing the game -- so on a
+            // second attempt hasUniqueCoin may suppress the call; that shows up
+            // as gd=-1 against ours>=0 and is a real fact about the instrument,
+            // not something to paper over.
+            solver::g_coinGdTick.assign(solver::g_coins.size(), -1);
+            solver::g_coinGdUnmatched = 0;
+            solver::g_coinMissFired = false;   // the miss request is one per attempt
+            solver::g_itemCounts.clear();      // ...and so are GD's item counters
+            solver::g_coinLiveSaid.assign(solver::g_coins.size(), 0);
             g_attemptStart = std::chrono::steady_clock::now();
             // The moving-geometry recording is rewritten every attempt (leaving the previous
             // attempt's rows would put two rects on the same tick)
@@ -304,6 +342,9 @@ class $modify(PlayLayer) {
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         if (this != PlayLayer::get()) { PlayLayer::destroyPlayer(player, object); return; }
+        // cfg killersite=1: built before the original call, written after it (see below).
+        char siteBuf[256];
+        bool siteArmed = false;
         // A death during the section solver is just "a branch died". Running the mod's death
         // bookkeeping (closing the attempt, effects, retry) breaks the search, so only the
         // plain death is let through.
@@ -337,6 +378,65 @@ class $modify(PlayLayer) {
                 object ? object->getPositionX() : 0.f,
                 object ? object->getPositionY() : 0.f);
             writeResult(kb);
+            // cfg killersite=1: WHERE IN GD THE CALL CAME FROM. `killer:` above
+            // names the object, and GD passes null for every rule that is not a
+            // collision -- so an object-free death is reported as "something
+            // killed you" and nothing more. The call site separates them.
+            //
+            // The stack is walked rather than read from _ReturnAddress(): this
+            // body is reached through Geode's detour, so the immediate return
+            // address is inside the generated handler and not in GD at all.
+            // Frames outside the game module are dropped, which leaves the
+            // chain of GD callers in order.
+            //
+            // ONE LINE PER DEATH, NOT PER CALL. The first version wrote here, for
+            // every call, and choked a repair loop on its first minutes: 22,151
+            // lines, five a tick, and not one replay finished. Those calls come
+            // from runs that cannot die (the recorder's no-death pass, the section
+            // solver's no-kill search) sitting in a hazard, and from calls on a
+            // body that is already dead. So the line is only BUILT for a call that
+            // could kill, and only WRITTEN after the original call, when the body
+            // went from alive to dead -- the same transition the gatetrace
+            // `killer:` line below waits for.
+            if (g_cfg.killerSite && !player->m_isDead && !secsolve::g_noKill
+                && !secsolve::g_active && !g_cfg.noDeath) {
+                static uintptr_t base = 0, size = 0;
+                if (!base) {
+                    base = (uintptr_t)GetModuleHandleW(nullptr);
+                    auto* dos = (IMAGE_DOS_HEADER*)base;
+                    auto* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+                    size = nt->OptionalHeader.SizeOfImage;
+                }
+                char* sb = siteBuf;
+                constexpr int kSb = (int)sizeof siteBuf;
+                int o = snprintf(sb, kSb, "killsite: t=%lld obj=%s rva=",
+                                 (long long)g_tick, object ? "yes" : "NULL");
+                int kept = 0;
+                // CaptureStackBackTrace returns only this frame here: Geode's
+                // trampoline has no unwind info, so the walk stops at it --
+                // pfgstk prints the same two `?` addresses for the same reason.
+                // Scan the stack for values lying inside the game module
+                // instead, the way postmortem.hpp does after a stack overflow.
+                // These are CANDIDATES in stack order, not a call chain: a slot
+                // can still hold a return address from an earlier, deeper call.
+                ULONG_PTR sp = (ULONG_PTR)&kept;
+                MEMORY_BASIC_INFORMATION mbi{};
+                if (VirtualQuery((LPCVOID)sp, &mbi, sizeof mbi)) {
+                    ULONG_PTR end = (ULONG_PTR)mbi.BaseAddress + mbi.RegionSize;
+                    if (end > sp + 0x4000) end = sp + 0x4000;
+                    for (ULONG_PTR p = sp;
+                         p + 8 <= end && kept < 6 && o < kSb - 20;
+                         p += 8) {
+                        const ULONG_PTR v = *(ULONG_PTR*)p;
+                        if (v < base || v - base >= size) continue;
+                        o += snprintf(sb + o, kSb - o, "%s%llx",
+                                      kept++ ? "," : "",
+                                      (unsigned long long)(v - base));
+                    }
+                }
+                if (!kept) snprintf(sb + o, kSb - o, "(none in module)");
+                siteArmed = true;
+            }
             // The same verdict, latched for the iteration map (itermap.hpp). GD holds the killer
             // in an argument at this instant and nowhere afterwards, and the recorder's last row
             // is a tick short of the death -- so this is the only place the mark's y and the
@@ -429,6 +529,7 @@ class $modify(PlayLayer) {
         }
         // ...and now the call has said whether it killed anybody.
         if (gateLine && player->m_isDead) writeResult(kb);
+        if (siteArmed && !wasDead && player->m_isDead) writeResult(siteBuf);
         if (!wasDead && player->m_isDead) {
             if (player == m_player1) ++solver::g_deathsP1;
             else if (player == m_player2) ++solver::g_deathsP2;
@@ -529,10 +630,60 @@ class $modify(PlayLayer) {
             size_t got = 0;
             for (auto pu : solver::g_coinPickupTick)
                 if (pu >= 0 && pu <= g_tick) ++got;
+            // COARSE ON PURPOSE, and the line has to say so. This witness tests
+            // |dx| and |dy| against COIN_RADIUS (20) at the coin's LOAD
+            // position, while GD credits the player's per-mode box against the
+            // coin's LIVE one -- 35 for a cube, 33.5 for a spider, and the
+            // moved row for a coin its group carries. So it reports FEWER coins
+            // than GD on the same run, and that is not a disagreement.
+            // Measured 2026-09-20 on lv21: GD credited coin 0 at |dx|=31.8,
+            // which this test cannot reach, and the line read 2/3 against GD's
+            // 3/3 on a clear that was genuinely all three -- read as a conflict
+            // for twenty minutes. The rule belongs in the search (dp cli.hpp)
+            // and not in a second copy here, so the bound is printed instead
+            // and a reader can compare like with like.
             std::string s = "coin: level complete with " + std::to_string(got) + "/"
-                + std::to_string(solver::g_coins.size()) + " coins (pickup ticks:";
+                + std::to_string(solver::g_coins.size())
+                + " coins (COARSE r=" + std::to_string((int)solver::COIN_RADIUS)
+                + " at the load position -- GD's own count is the coingd: line)"
+                + " (pickup ticks:";
             for (auto pu : solver::g_coinPickupTick) s += " " + std::to_string(pu);
             writeResult(s + ")");
+            // ...and GD's own verdict on the same coins, from the pickupItem hook.
+            // Two lines, deliberately not merged into one number: the mod's test is
+            // a claim ABOUT GD, and a claim and its subject have to be readable
+            // apart before they can be compared.
+            size_t gdGot = 0;
+            for (auto pu : solver::g_coinGdTick) if (pu >= 0) ++gdGot;
+            std::string g = "coingd: level complete with " + std::to_string(gdGot) + "/"
+                + std::to_string(solver::g_coins.size()) + " coins (pickup ticks:";
+            for (auto pu : solver::g_coinGdTick) g += " " + std::to_string(pu);
+            writeResult(g + ") unmatched=" + std::to_string(solver::g_coinGdUnmatched));
+            // The comparison itself, so a run cannot look green while the two
+            // witnesses disagree. A disagreement is a difference in the VERDICT
+            // (collected or not); the tick offset between two agreeing witnesses is
+            // reported as a number rather than judged against a tolerance nobody
+            // has measured yet -- our test runs at the end of the tick and GD's
+            // runs inside the collision pass, so some lag is expected and its size
+            // is one of the things this run is here to find out.
+            std::string d;
+            long long maxLag = 0;
+            for (size_t i = 0; i < solver::g_coins.size(); ++i) {
+                const long long ours = i < solver::g_coinPickupTick.size()
+                                           ? solver::g_coinPickupTick[i] : -1;
+                const long long gd = i < solver::g_coinGdTick.size()
+                                         ? solver::g_coinGdTick[i] : -1;
+                if ((ours >= 0) != (gd >= 0)) {
+                    d += " #" + std::to_string(i)
+                       + "(uid" + std::to_string(solver::g_coins[i].uid)
+                       + " ours=" + std::to_string(ours)
+                       + " gd=" + std::to_string(gd) + ")";
+                } else if (ours >= 0) {
+                    maxLag = std::max(maxLag, ours > gd ? ours - gd : gd - ours);
+                }
+            }
+            writeResult("coincmp:" + (d.empty() ? std::string(" agree") : d)
+                        + " maxlag=" + std::to_string(maxLag));
         }
         // A solve session's FIRST clear is the loop's own verification replay reaching the end.
         // It is bookkeeping, not an ending: nobody watched it (the screen was off and the sound
@@ -640,6 +791,24 @@ class $modify(PlayLayer) {
                 dpsolve::onDeath(g_tick, cx);
                 return;
             }
+            // cfg `coinroute`: a clear that left a coin behind is not the answer that was asked
+            // for. An attempt normally ends AT the coin (the miss request in hooks_gamelayer),
+            // so this is the second gate, not the first -- and it is needed because the first
+            // one can be refused: GD ignores a kill aimed at a player in the moving-zombie
+            // state, and a recording pass is deliberately never asked. Refused exactly as a
+            // false clear is, so the loop re-anchors instead of filing it.
+            if (g_cfg.dpSolve && !g_dpShowSolution && g_cfg.coinRoute
+                && !solver::g_coins.empty()) {
+                size_t got = 0;
+                for (auto pu : solver::g_coinGdTick) if (pu >= 0) ++got;
+                if (got < solver::g_coins.size()) {
+                    writeResult("dpsolve: refusing a clear with " + std::to_string(got) + "/"
+                                + std::to_string(solver::g_coins.size())
+                                + " coins - not an all-coins solution");
+                    dpsolve::onDeath(g_tick, cx);
+                    return;
+                }
+            }
             // A checkpoint flight (cfg `dpcheck`) can be what reached the end while a search is
             // still out. That is a real clear of the plan GD just flew, so it is filed like any
             // other below; the search in flight is abandoned (dpsolve::ckClearedDuringJob).
@@ -651,7 +820,9 @@ class $modify(PlayLayer) {
             // Only here: a plan that has not cleared is not a solution, whatever else it is.
             if (g_cfg.dpSolve && !g_dpShowSolution && !g_cfg.inputs.empty()) {
                 char name[128];
-                snprintf(name, sizeof(name), "%s/solution_lv%d_dp.txt",
+                snprintf(name, sizeof(name),
+                         g_cfg.coinFiles ? "%s/solution_lv%d_coins.txt"
+                                         : "%s/solution_lv%d_dp.txt",
                          DATA_DIR, g_cfg.levelId);
                 if (writeInputsFile(name, g_cfg.inputs)) {
                     writeResult(std::string("dpsolve: solution saved -> ") + name);

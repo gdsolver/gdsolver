@@ -1,0 +1,29 @@
+[
+ {
+  "x0": 300.0,
+  "x1": 900.0,
+  "coin_x": 600.0,
+  "id": 1329,
+  "kind": "group30_before_trigger",
+  "variant": 5,
+  "player_y_assumed": 105.0
+ },
+ {
+  "x0": 900.0,
+  "x1": 1500.0,
+  "coin_x": 1200.0,
+  "id": 1329,
+  "kind": "group30_after_trigger",
+  "variant": 5,
+  "player_y_assumed": 105.0
+ },
+ {
+  "x0": 1500.0,
+  "x1": 2100.0,
+  "coin_x": 1800.0,
+  "id": 1329,
+  "kind": "plain",
+  "variant": 5,
+  "player_y_assumed": 105.0
+ }
+]

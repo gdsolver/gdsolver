@@ -97,11 +97,88 @@ CFG = ["enabled=1", "attempts=1000000", "quitwhendone=1", "blockinput=1",
 STALL_S = 2400.0
 
 
-def load_baseline() -> dict:
+# The coin-on runs have a baseline of their own. They take different routes and
+# different iteration counts, so comparing one against cold_baseline.json says
+# nothing (an lv22 coin run printed "baseline 46, +10" against the coin-off
+# number). It carries each level's final coin count as well, and a `_meta` entry
+# naming what it was blessed from; a run whose coin keys do not match it is
+# refused rather than compared with the coin-off file.
+BASELINE_COINS = DATA / "cold_baseline_coins.json"
+COIN_KEYS = ("coinroute=1", "coins=1")
+
+
+def coin_cfg(cfg: list[str]) -> bool | None:
+    """True for a coin-on run, False for coin off, None when only one of the two
+    keys is given (a run that is neither, so there is nothing to compare it to)."""
+    have = [k in cfg for k in COIN_KEYS]
+    if all(have):
+        return True
+    return None if any(have) else False
+
+
+def load_baseline(coins: bool = False) -> dict:
     try:
-        return json.loads(BASELINE.read_text(encoding="utf-8"))
+        return json.loads((BASELINE_COINS if coins else BASELINE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+
+
+def _all_coins(c: str) -> bool:
+    """'3/3' yes, '2/3' or '' no."""
+    m = re.fullmatch(r"(\d+)/(\d+)", c or "")
+    return bool(m) and m.group(1) == m.group(2) and int(m.group(2)) > 0
+
+
+def _meta(a, coins: bool, resolution: int | None) -> dict:
+    """What a baseline was blessed from, so a later run can tell whether it is
+    comparable: the commit, the package that ran, the profile's resolution (GD's
+    saw radius follows it), and for a coin baseline the coin keys."""
+    run = getattr(a, "run_meta", None) or _run_meta(a)
+    m = {"head": run["head"],
+         "mod_sha256": run["mod_sha256"],
+         "resolution": resolution,
+         "levels": list(a.levels), "arrangement": "one-session",
+         "record": "none on every level"}
+    if coins:
+        m["cfg"] = " ".join(COIN_KEYS)
+    return m
+
+
+def _run_meta(a) -> dict:
+    """What produced a run: the commit, the package and its sha256, the cfg, the
+    levels and the resolution. Written beside a one-session run's log so the
+    baseline can be adopted from that run later (--adopt) without running it
+    again -- the two-stage bless of AUD-20260922-28."""
+    import hashlib
+    import subprocess
+    head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                          cwd=Path(__file__).resolve().parent).stdout.strip()
+    return {"head": head, "mod": str(a.mod),
+            "mod_sha256": hashlib.sha256(Path(a.mod).read_bytes()).hexdigest(),
+            "cfg": list(a.cfg), "levels": list(a.levels),
+            "resolution": getattr(a, "resolution", None), "arrangement": "one-session"}
+
+
+def run_resolution(workers: list[int]) -> tuple[int | None, str]:
+    """The resolution index the run's workers will play at, and a refusal if
+    they disagree. A disposable (minimal) profile without the key gets 25 at
+    launch (worker.py), so that is what it will run at."""
+    from gdtas import gdsave
+    seen = {}
+    for w in workers:
+        r = gdsave.resolution_index(w)
+        if r is None:
+            try:
+                small = gdsave.save_paths(w)[0].stat().st_size <= 1000
+            except OSError:
+                small = True
+            r = 25 if small else None
+        seen[w] = r
+    vals = set(seen.values())
+    if len(vals) > 1:
+        return None, ("the workers play at different resolutions ("
+                      + ", ".join(f"{w}: {r}" for w, r in seen.items()) + ")")
+    return vals.pop(), ""
 
 
 def iter_cap(lv: int, base: dict) -> int:
@@ -330,6 +407,10 @@ def read_result(txt: str, timed_out: bool = False) -> dict:
     deaths = [(int(a), float(b)) for a, b in
               re.findall(r"^death: attempt=\d+ tick=(\d+) x=([\d.]+)", txt, re.M)]
     fps = re.findall(r"^dpsolve:   \[fp\] (.*)$", txt, re.M)
+    # The coins the game counted when the level was finished. The LAST line: an
+    # earlier one can be the bootstrap recording's pass reaching the end without
+    # trying for coins (0/3 on lv19-21), which is not the solve.
+    coins = re.findall(r"^coingd: level complete with (\d+/\d+) coins", txt, re.M)
     saved = bool(re.search(r"^dpsolve: solution saved", txt, re.M))
     why = "CLEARED" if saved else "stuck"
     if not saved:
@@ -354,7 +435,23 @@ def read_result(txt: str, timed_out: bool = False) -> dict:
         record = "MISSING (session ended without the audit line)"
     else:
         record = "no-audit (killed before session end)"
+    # The Area Move envelope's own check (src/solver/areaenv.hpp), on levels that have one. Any
+    # count below other than zero means the box was not verified against the game, and a level
+    # solved against an unverified box is not seed-independent. `solver_box_kills` is not a
+    # fault: the box is conservative by design, and a non-zero count says the search was pruned
+    # by uncertainty and not only by the level (audit AUD-20260920-01).
+    areaenv = ""
+    ae = re.search(r"^areaenv: (.*)$", txt, re.M)
+    if ae:
+        f = dict(re.findall(r"(\w+)=(\d+)", ae.group(1)))
+        dirty = [k for k in ("miss", "outside_box", "value_miss", "offset_miss", "rect_miss",
+                             "compound", "unenveloped") if int(f.get(k, 0))]
+        kills = int(f.get("solver_box_kills", 0))
+        areaenv = ("NOT CLEAN: " + ", ".join(f"{k}={f[k]}" for k in dirty)) if dirty else \
+            ("clean" + (f", {kills} solver kills by the box (pruned by uncertainty)"
+                        if kills else ", no solver kills by the box"))
     return {"cleared": saved, "why": why, "iters": len(iters),
+            "areaenv": areaenv,
             # A level stopped by the clock is not the same finding as one the
             # search gave up on: the first says "too slow to be worth waiting
             # for today", the second says "the model cannot get through". They
@@ -368,6 +465,7 @@ def read_result(txt: str, timed_out: bool = False) -> dict:
             "deepest_x": max((d[1] for d in deaths), default=-1.0),
             "fx": len(re.findall(r"\[fixup\] t=\d+ x=", txt)),
             "record": record,
+            "coins": coins[-1] if coins else "",
             # The last [fp] is the state the run ended in -- the cheapest single
             # value to diff two runs by (see logFingerprint in repair.hpp).
             "fp": fps[-1] if fps else ""}
@@ -376,8 +474,11 @@ def read_result(txt: str, timed_out: bool = False) -> dict:
 def report(results: list[dict], base: dict, a) -> int:
     """The verdict, shared by both arrangements so they are judged identically."""
     results.sort(key=lambda r: r["lv"])
-    print("\n=== cold regression ===")
+    coins = bool(coin_cfg(list(a.cfg)))
+    print("\n=== cold regression ===" + (f" (coins, against {BASELINE_COINS.name})"
+                                          if coins else ""))
     bad: list[str] = []
+    over_cap: list[str] = []
     timeouts: list[int] = []
     for r in results:
         b = base.get(str(r["lv"]), {})
@@ -394,13 +495,26 @@ def report(results: list[dict], base: dict, a) -> int:
             d = r["iters"] - b["iters"]
             if d:
                 mark = f"  (baseline {b['iters']}, {d:+d})"
+            # Over the cap is a thing to look at, not a failure: iterations are
+            # not a verdict (REGRESSION_OPERATING_DESIGN 3.6, AUD-20260922-28).
+            # The wall and stall clocks are what protect the machine.
             if r["iters"] > iter_cap(r["lv"], base):
-                bad.append(f"lv{r['lv']}: {r['iters']} iterations against a cap of "
-                           f"{iter_cap(r['lv'], base)}")
+                over_cap.append(f"lv{r['lv']}: {r['iters']} iterations against a cap of "
+                                f"{iter_cap(r['lv'], base)}")
+        # A coin run is judged on its coins too: the baseline holds each level's
+        # final count, and fewer is a failure whatever the iterations say.
+        if coins and r["cleared"] and b.get("coins") and r.get("coins") != b["coins"]:
+            bad.append(f"lv{r['lv']}: coins {r.get('coins') or 'none'} against the "
+                       f"baseline's {b['coins']}")
         kind = "CLEARED" if r["cleared"] else \
             ("TIMEOUT" if r.get("timeout") else r["why"])
         print(f"lv{r['lv']:<3} {kind:<40}iters={r['iters']:<4}"
-              f"{r.get('wall', 0.0):>6.0f}s{mark}")
+              f"{r.get('wall', 0.0):>6.0f}s{mark}"
+              + (f"  coins {r.get('coins') or 'none'}" if coins else ""))
+        if r.get("areaenv"):
+            print(f"    areaenv: {r['areaenv']}")
+            if r["areaenv"].startswith("NOT CLEAN"):
+                bad.append(f"lv{r['lv']}: the Area Move box was not verified ({r['areaenv']})")
         if r.get("timeout"):
             # A level over its clock is a signal, not a mystery, and everything
             # the morning needs is already on disk. Print where, and the three
@@ -472,19 +586,42 @@ def report(results: list[dict], base: dict, a) -> int:
         # Only bless a complete, clean run. A baseline built out of a run that
         # failed somewhere records the failure as the expectation, and the next
         # run then compares itself against it and passes.
-        if bad:
-            print("\nNOT BLESSED: this run is not clean (see FAIL below)")
+        # A coin baseline also needs every level to have ended with all its
+        # coins: blessing a 2/3 would make the miss the expectation.
+        short = [f"lv{r['lv']} {r.get('coins') or 'none'}" for r in results
+                 if coins and r["cleared"] and not _all_coins(r.get("coins", ""))]
+        # A baseline has to say where it was measured (AUD-20260922-28).
+        if getattr(a, "resolution", None) is None:
+            bad.append("the profile's resolution is unknown, so a baseline from this "
+                       "run could not say where it was measured")
+        if bad or short:
+            print("\nNOT BLESSED: this run is not clean (see FAIL below)"
+                  + (f"; not every level ended with all its coins: {', '.join(short)}"
+                     if short else ""))
         else:
             out = {str(r["lv"]): {"iters": r["iters"], "fp": r["fp"]}
                    for r in results if r["cleared"]}
-            BASELINE.write_text(json.dumps(out, indent=1, sort_keys=True),
-                                encoding="utf-8")
-            print(f"blessed {len(out)} levels -> {BASELINE}")
+            path = BASELINE
+            if coins:
+                for r in results:
+                    if r["cleared"]:
+                        out[str(r["lv"])]["coins"] = r["coins"]
+                path = BASELINE_COINS
+            out["_meta"] = _meta(a, coins, getattr(a, "resolution", None))
+            path.write_text(json.dumps(out, indent=1, sort_keys=True),
+                            encoding="utf-8")
+            print(f"blessed {len([k for k in out if k != '_meta'])} levels -> {path}")
 
     if timeouts:
         print(f"\nover the per-level cap: {len(timeouts)} "
               f"({', '.join('lv' + str(l) for l in timeouts)}) -- each one's "
               f"working files are named above")
+    if over_cap:
+        # Printed, never counted as a failure: a level far over its baseline is
+        # worth a look (and an iteration count that grows on every run is the
+        # signal), but whether a change was good is not decided by it.
+        print("\nover the iteration cap (not a failure -- worth a look): "
+              + "; ".join(over_cap))
     if bad:
         print("\nFAIL:")
         for b in bad:
@@ -492,6 +629,42 @@ def report(results: list[dict], base: dict, a) -> int:
         return 1
     print(f"\nPASS ({len(results)}/{len(results)} cleared cold)")
     return 0
+
+
+def adopt(a) -> int:
+    """Bless from a saved --one-session run (the folder --adopt names), judged by
+    the same report() a live run is: complete, cleared, record none, all coins on
+    a coin run, a known resolution. The run's own commit, package and resolution
+    go into the baseline's _meta, not today's."""
+    import hashlib
+    d = Path(a.adopt)
+    log, meta_p = d / "coldlog_suite.txt", d / "coldlog_suite.meta.json"
+    if not log.exists() or not meta_p.exists():
+        print(f"refused: {d} needs coldlog_suite.txt and coldlog_suite.meta.json "
+              f"(both written to data/ by a --one-session run)")
+        return 2
+    run = json.loads(meta_p.read_text(encoding="utf-8"))
+    mod = Path(run["mod"])
+    if mod.exists() and hashlib.sha256(mod.read_bytes()).hexdigest() != run["mod_sha256"]:
+        print(f"refused: {mod} is no longer the package that run measured")
+        return 2
+    a.cfg, a.levels, a.mod = list(run["cfg"]), list(run["levels"]), mod
+    a.resolution, a.run_meta, a.bless = run.get("resolution"), run, True
+    coins = coin_cfg(a.cfg)
+    if coins is None:
+        print("refused: the run's cfg names only one of the coin keys")
+        return 2
+    if a.resolution is None:
+        print("refused: the run does not say which resolution it was measured at")
+        return 2
+    print(f"adopting from {d}: run of {run['head'][:7]}, {mod.name} "
+          f"{run['mod_sha256'][:8]}, resolution {a.resolution}, cfg {' '.join(a.cfg) or '-'}")
+    results = []
+    for lv, sec in split_suite(log.read_text(encoding="utf-8", errors="replace")):
+        r = read_result(sec)
+        r["lv"], r["wall"] = lv, 0.0
+        results.append(r)
+    return report(results, load_baseline(coins), a)
 
 
 def main(argv=None) -> int:
@@ -532,14 +705,59 @@ def main(argv=None) -> int:
     # desk -- different configuration, so not obviously the same arithmetic.
     ap.add_argument("--mod", type=Path, default=BUILD_MOD,
                     help="the .geode to run (default: the local build)")
+    # The second stage of a bless (AUD-20260922-28): a --one-session run leaves
+    # coldlog_suite.txt and coldlog_suite.meta.json in data/; copied to a folder
+    # and reviewed, the baseline is adopted from them here, without running GD.
+    ap.add_argument("--adopt", type=Path, default=None,
+                    help="adopt the baseline from a saved --one-session run "
+                         "(a folder holding coldlog_suite.txt and coldlog_suite.meta.json)")
     a = ap.parse_args(argv)
+    if a.adopt:
+        return adopt(a)
     if not a.mod.exists():
         print(f"no such package: {a.mod}")
         return 1
     if a.mod != BUILD_MOD:
         print(f"measuring {a.mod}\n  (not the local build at {BUILD_MOD})")
 
-    base = load_baseline()
+    coins = coin_cfg(list(a.cfg))
+    if coins is None:
+        print(f"refused: --cfg names only one of {' / '.join(COIN_KEYS)}; a coin run "
+              f"needs both, a coin-off run neither")
+        return 2
+    base = load_baseline(coins)
+    if coins:
+        if not base:
+            print(f"no coin baseline yet ({BASELINE_COINS}): nothing is compared -- "
+                  f"the coin-off baseline is not a stand-in for it")
+        elif base.get("_meta", {}).get("cfg") != " ".join(COIN_KEYS):
+            print(f"refused: {BASELINE_COINS.name} was blessed with cfg "
+                  f"{base.get('_meta', {}).get('cfg')!r}, this run has "
+                  f"{' '.join(COIN_KEYS)!r}")
+            return 2
+
+    # The profile's resolution is part of what a run measures (GD's saw radius
+    # follows it; see gdsave.resolution_index), so it is printed, written into a
+    # blessed baseline, and a baseline measured at another one is not compared.
+    used = [a.pool[0]] if (a.one_session or a.bless) else list(a.pool)
+    a.resolution, why = run_resolution(used)
+    if why:
+        print(f"refused: {why}")
+        return 2
+    if a.resolution is None:
+        # Fail closed: a run that cannot say where it was measured is neither
+        # compared nor blessed (AUD-20260922-28).
+        print(f"refused: worker {','.join(str(w) for w in used)} has a hand-configured "
+              f"profile without a resolution key, so this run could not say what it measured")
+        return 2
+    print(f"  resolution index {a.resolution} (worker {','.join(str(w) for w in used)})")
+    bres = base.get("_meta", {}).get("resolution")
+    if base and bres is None:
+        print("  the baseline does not record the resolution it was measured at")
+    elif base and bres != a.resolution:
+        print(f"refused: the baseline was measured at resolution {bres}, these "
+              f"workers play at {a.resolution}")
+        return 2
 
     # The baseline is only worth what the arrangement that produced it can
     # disprove, so blessing runs the levels in one game. Nothing stops a plain
@@ -559,6 +777,11 @@ def main(argv=None) -> int:
         print(f"  worker {wid}: {','.join(str(l) for l in a.levels)} "
               f"in ONE game (cap {budget / 3600:.1f} h)")
         results = one_session(a.levels, wid, budget, list(a.cfg), DATA, a.mod)
+        # ...and what produced it, beside the log, so the run can be reviewed and
+        # its baseline adopted later with --adopt instead of being run again.
+        a.run_meta = _run_meta(a)
+        (DATA / "coldlog_suite.meta.json").write_text(
+            json.dumps(a.run_meta, indent=1, sort_keys=True), encoding="utf-8")
         for r in results:
             r["cap"] = iter_cap(r["lv"], base)
             print(f"lv{r['lv']:<3} {r['why']:<40} iters={r['iters']:<4}"

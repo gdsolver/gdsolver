@@ -415,7 +415,10 @@ inline void endPath() {
 
 inline std::string pathFor(int levelId) {
     char name[64];
-    snprintf(name, sizeof(name), "/itermap_lv%d.txt", levelId);
+    // A coin session's map goes beside its coin solution (Config::coinFiles), so replaying the
+    // plain solution never draws the coin run's rounds, or the other way round.
+    snprintf(name, sizeof(name),
+             g_cfg.coinFiles ? "/itermap_lv%d_coins.txt" : "/itermap_lv%d.txt", levelId);
     return std::string(DATA_DIR) + name;
 }
 

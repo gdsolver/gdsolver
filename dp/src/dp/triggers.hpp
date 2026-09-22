@@ -39,6 +39,9 @@ namespace dp {
 //
 // Only 3 of lv19's 313 targeted triggers have touch=1 and lv1-18 have none, so
 // this is inert everywhere it is not needed.
+// (kTouchBits, TouchMask and touchBit are in prelude.hpp -- the root of the
+// include chain, because State, the recording's masks and the run's outcome
+// all hold this mask and see each other only through that file.)
 struct TouchTrig {
     double cx, cy, hw, hh;          // the box the player has to enter
     std::vector<TrigCtl> ctl;
@@ -55,7 +58,70 @@ struct TouchTrig {
     // off a group holding rotation-queue objects.
     int id = 0;
     int togOn = -1;
+    // ---- a COUNT trigger rather than a box (1611 / 1811) ------------------
+    // Same chain, same bit, same fire tick -- only the firing CONDITION
+    // differs: not "the player entered this rect" but "the item counter has
+    // reached this value". lv21's third coin is behind one (item 1 == 10 opens
+    // group 222, which holds the Move that brings the coin into reach) and
+    // lv22's first behind another (item 2 == 5). `count` < 0 means this entry
+    // is an ordinary touch box; markTouched skips the ones where it is not.
+    int item = 0;
+    int count = -1;
+    // 0 = equals, 1 = larger, 2 = smaller (a Count's own order); 3 = at least,
+    // which only an Item Compare root carries (itemCompareGate).
+    int cmode = 0;
+    // ---- a TAP trigger (1595) rather than a box ---------------------------
+    // GD's "Touch trigger", which is NOT the same thing as a trigger marked
+    // touch-triggered: this one fires on the PLAYER'S TAP. Measured on the rig
+    // calib_coingate5 (2026-09-20), with a coin whose group the trigger
+    // switches on: a tap 185 px BEFORE the trigger does nothing, a tap 6 px
+    // before it does nothing, and a tap 146 px past it fires. So it arms when
+    // the player's x crosses it and any press after that sets it off.
+    bool tap = false;
+    // ...and a Tap that feeds a counter fires on EVERY press, not once: lv22's
+    // third coin needs six (x=15,525 on, confirmed in the game). Each press
+    // spawns the chain again, and a Pickup in it adds to the item. The window
+    // shuts where an x-crossing Stop halts the group holding that Pickup
+    // (lv22: uid17961 at x=15,765). 1e18 = no such Stop, the window never
+    // shuts. Read by the tap counter in cli.hpp (State::taps).
+    double tapCloseX = 1e18;
+    // ...and where each end is IN GD'S TERMS. On a level with rotated gameplay
+    // an x-crossing trigger is not fired by x: it sits in its CHANNEL's queue
+    // (the dump's `chan`) and fires when that channel is active and the player
+    // passes it in the channel's direction (step.hpp's queue walk). lv22's tap
+    // is on channel 9 (x-) and its Stop on channel 10 (x+), so the window is
+    // open on the maze's second pass, not the first -- the game counted a press
+    // at t=14,223, x~15,73x and none on the first pass through the same x.
+    int tapChan = 0, tapCloseChan = 0;
+    double tapCloseY = 0.0;
+    // The chain reaches a coin (set at load for Count, Tap and Item Compare
+    // roots; the window's feeder test needs it after the walk).
+    bool reachesCoin = false;
+    // --movetarget only: the Move triggers a Stop in this box's chain halts
+    // (the trigger members of the Stop's target group), and the chain's spawn
+    // delay to that Stop in ticks.
+    std::vector<int> stops;
+    double stopDelay = 0.0;
 };
+// The uids of this level's coins, filled by the CLI before the touch window is
+// built (level_loader.hpp's coinUids). Empty = not known, and then the filter
+// that uses it does nothing: a build that forgets to fill it keeps the old
+// behaviour instead of silently dropping every counter.
+inline std::unordered_set<int> g_coinUids;
+// uid -> the item it gives, for EVERY row of items.txt and not only the ones
+// the player can touch (g_collect keeps those). lv22's first coin is fed by
+// Pickup triggers that a touch box spawns -- nothing touches them -- and the
+// window has to know that those boxes are the ones it must not drop.
+inline std::unordered_map<int, int> g_itemGiver;
+// The collectibles a Count trigger is waiting for (items.txt, pickup=1). Their
+// geometry is read the same way a coin's is -- the player's own box against the
+// object -- and the set a lineage has taken lives in State::items.
+struct Collectible {
+    double cx, cy, hw, hh;
+    int item = 0;
+    int uid = -1;
+};
+inline std::vector<Collectible> g_collect;
 // Bit b of State::trig is g_touch[b]. Global because the step function, the
 // layer loop and the witness resim all need the same numbering, and there is
 // exactly one level in flight.
@@ -91,6 +157,8 @@ inline unsigned long long g_fireBNoTick = 0, g_fireBNoBit = 0, g_fireBTooEarly =
 // wrong answer, a longer one is only cost.
 inline void buildTouchMoveTicks() {
     g_touchMoveTicks.assign(g_touch.size(), 0);
+    g_touchStops.assign(g_touch.size(), {});   // --movetarget (see the field)
+    for (size_t b = 0; b < g_touch.size(); ++b) g_touchStops[b] = g_touch[b].stops;
     for (size_t b = 0; b < g_touch.size(); ++b) {
         double d = 0.0;
         for (const TrigCtl& c : g_touch[b].ctl)
@@ -132,7 +200,7 @@ inline const std::vector<TouchTrig>& touchFor(int f) {
     return v;
 }
 // which bits have already been announced (diagnostic only)
-inline uint32_t g_trigReported = 0;
+inline TouchMask g_trigReported = 0;
 // --bands <file>: per-layer frontier width, for the driver's segment cuts.
 // One row per layer. `capdrop` / `merged` and the per-class breakdown were
 // added for the lv16 diagnosis (2026-08-04): "which lane/speed lineage died,
@@ -157,7 +225,7 @@ inline std::vector<BandRow> g_bands;
 // and the ordinary search can use it (see applyTriggers).
 // This is exploration, not a seed: the box comes out of the level's own trigger
 // map, no prior solution is involved (CLAUDE.md's cold rule).
-inline uint32_t g_needTrig = 0;
+inline TouchMask g_needTrig = 0;
 // --needtrig-unseen: require every box whose effect is still UNKNOWN, i.e. whose
 // objects have not moved in any recording. That is the standing form of the rule
 // above and the one the driver uses: "if you have never seen what this box does,
@@ -173,12 +241,11 @@ inline bool g_needUnseen = false;
 // property of the level: the driver goes back once and skips the box afterwards
 // if the trip bought nothing. The `needtrig:` line below reports every box so
 // the driver can see which one is blocking.
-inline uint32_t g_needSkip = 0;
-// Use the turned box instead of the bound (see Obj::oriented). ON by default
-// since the rotation sign was fixed: lv18 goes from STUCK at x=27,713 (five
-// sessions) to CLEARED cold in 9 iterations. `--no-oriented` restores the bound
-// for A/B.
-inline bool g_oriented = true;
+inline TouchMask g_needSkip = 0;
+// The turned box is used instead of the bound (see Obj::oriented), since the
+// rotation sign was fixed: lv18 goes from STUCK at x=27,713 (five sessions) to
+// CLEARED cold in 9 iterations. Always on (--no-oriented is gone since the flag
+// clean-up).
 // --obb-all: apply the **2nd stage (oriented box vs oriented box)** of GD's
 // hazard test to the modes other than wave as well. What the disassembly shows
 // is "GJBaseGameLayer::checkCollisions's hazard loop has two tests:
@@ -197,8 +264,18 @@ inline bool g_oriented = true;
 // The flag itself stays. The "two-stage hazard test" the disassembly shows is
 // not a per-mode matter, so the current form that applies it to the wave alone
 // will be fixed eventually. But it is a change in the **under-killing
-// direction**, so it is kept default OFF in a form that can be A/B'd.
-inline bool g_obbAll = false;
+// direction**, so it was kept default OFF in a form that can be A/B'd.
+//
+// [2026-09-21] **ON by default** (audit AUD-20260921-12). The rejection above
+// was not "the rule is false" -- it was "hitbox_sweep advances only 1 tick and
+// cannot see the next tick's death". That failure mode does not reach the new
+// witness: lv20 t=15,125, where the model kills on the AABB of a spike turned
+// -312 degrees while GD's own reference carries both bodies 8,547 ticks past it
+// to the end of the level. Over 22 whole-run replays this flag changes exactly
+// one reading and only with --touchprey=button, which is what lets lv20 reach
+// that spike at all -- it has no independent witness in the corpus, and that is
+// recorded rather than glossed. `--no-obb-all` is the off arm.
+inline bool g_obbAll = true;
 
 // One row of the MOD's triggers.txt, shared by both loaders below.
 // The trailing ease/erate/lock columns were added 2026-08-09; a dump written
@@ -230,11 +307,29 @@ struct TrigRow {
     // Read only by --rotqtoggle: a group switched off makes GD's rotation queue
     // consume its 2900s without firing them (checkSpawnObjects 0x21aad8).
     int togon = -1;
+    // The item columns (37th on), for the counter gates. `count` < 0 means the
+    // dump predates them or the row is not a Count trigger at all.
+    int item = 0, item2 = 0, count = -1, actgrp = -1, cmode = -1;
+    // An ITEM COMPARE's (3620) own columns, the 46th on (i1mode .. res3):
+    // ItemTriggerGameObject's m_item1Mode / m_item2Mode / m_targetItemMode /
+    // m_mod1 / m_mod2 / m_resultType1..3. `cmpCols` is false on dumps that
+    // predate them. Only the one shape measured in the game is read as a gate
+    // (itemCompareGate below); the others are parsed so a new level can say
+    // which shape it has.
+    bool cmpCols = false;
+    int i1mode = 0, i2mode = 0, res1 = 0, res2 = 0, res3 = -1;
+    double mod1 = 0.0, mod2 = 0.0;
     // A Spawn's (1268) group remap, the 36th column: (named group -> group it
     // acts on) for the triggers it spawns. Empty on other ids and on dumps that
     // predate the column. Applied only under --spawnremap (see g_spawnRemap).
     std::vector<std::pair<int, int>> remap;
+    // A Move's target mode, the 28th-30th columns (0 on dumps that predate them).
+    // mvtgt=1: the group goes to the position of the object in group `center`,
+    // measured from the object in group `tmodctr` (which moves with it); mvaxis
+    // 1 = x only, 2 = y only, 0 = both. Read only by --movetarget.
+    int mvtgt = 0, mvaxis = 0, tmodctr = 0;
 };
+
 
 // --spawnremap: follow a Spawn's group remap (property 442) in the chain walks.
 // A spawned trigger acts on the REMAPPED group. lv22's touch box uid17771
@@ -307,6 +402,22 @@ inline bool loadTrigRows(const std::string& path,
                 ++commas;
             }
             if (commas == 34 && p < line.size()) r.togon = std::atoi(line.c_str() + p);
+            // mvtgt / mvaxis / tmodctr, the 28th-30th columns, by position the
+            // same way (a dump that predates them has 13-26 columns).
+            {
+                auto field = [&](int k) -> int {
+                    size_t q = 0;
+                    for (int c = 0; c < k; ++c) {
+                        q = line.find(',', q);
+                        if (q == std::string::npos) return 0;
+                        ++q;
+                    }
+                    return std::atoi(line.c_str() + q);
+                };
+                r.mvtgt = field(27);
+                r.mvaxis = field(28);
+                r.tmodctr = field(29);
+            }
             // remap, the 36th column: "a:b:c:d;..." or "-". The source is the
             // first field and the target the third (checked against lv22's
             // level string, uid17771 = "100:100:508:0").
@@ -321,8 +432,79 @@ inline bool loadTrigRows(const std::string& path,
                 }
             }
         }
+        {   // The item columns, the 37th on (item,item2,count,subcount,actgrp,
+            // thold,ttog,tdual,cmode). Counted from the start rather than
+            // continued from the remap parse above, which has moved its cursor;
+            // the remap field holds ':' and ';' but never a comma, so the count
+            // is exact. A dump without them leaves count = -1 = "not a counter".
+            size_t q = 0;
+            int cm = 0;
+            while (cm < 36 && (q = line.find(',', q)) != std::string::npos) {
+                ++q;
+                ++cm;
+            }
+            if (cm == 36 && q < line.size()) {
+                int it = 0, it2 = 0, cnt = -1, sub = 0, act = -1,
+                    th = 0, tt = 0, td = 0, cmd = -1;
+                int m1 = 0, m2 = 0, tm = 0, r1 = 0, r2 = 0, r3 = -1;
+                double md1 = 0.0, md2 = 0.0;
+                const int got = std::sscanf(
+                    line.c_str() + q,
+                    "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lf,%lf,%d,%d,%d",
+                    &it, &it2, &cnt, &sub, &act, &th, &tt, &td, &cmd,
+                    &m1, &m2, &tm, &md1, &md2, &r1, &r2, &r3);
+                if (got >= 5) {
+                    r.item = it;
+                    r.item2 = it2;
+                    r.count = cnt;
+                    r.actgrp = act;
+                    r.cmode = cmd;
+                }
+                if (got >= 17) {
+                    r.cmpCols = true;
+                    r.i1mode = m1;
+                    r.i2mode = m2;
+                    r.mod1 = md1;
+                    r.mod2 = md2;
+                    r.res1 = r1;
+                    r.res2 = r2;
+                    r.res3 = r3;
+                }
+            }
+        }
         trig[r.uid] = r;
     }
+    return true;
+}
+
+// The collectibles (items.txt). Only the ones GD calls a PICKUP item: a
+// collectible that is not one cannot move a counter, and the counter is the
+// whole reason this file is read.
+inline bool loadCollectibles(const std::string& path) {
+    g_collect.clear();
+    std::ifstream in(path);
+    if (!in) return false;
+    std::string line;
+    std::getline(in, line);   // header
+    while (std::getline(in, line)) {
+        int uid = 0, id = 0, item = 0, points = 0, pickup = 0, toggle = 0, sub = 0;
+        double cx = 0, cy = 0, w = 0, h = 0;
+        if (std::sscanf(line.c_str(), "%d,%d,%lf,%lf,%lf,%lf,%d,%d,%d,%d,%d",
+                        &uid, &id, &cx, &cy, &w, &h, &item, &points, &pickup,
+                        &toggle, &sub) < 9)
+            continue;
+        // EVERY row that names an item goes in the giver map, touchable or
+        // not: lv22's first coin is fed by Pickup triggers a touch box spawns,
+        // and those have pickup=0 because nothing touches them. g_collect is
+        // still only what the player can walk into.
+        if (item != 0) g_itemGiver[uid] = item;
+        if (!pickup || item == 0) continue;
+        g_collect.push_back({cx, cy, w * 0.5, h * 0.5, item, uid});
+    }
+    std::sort(g_collect.begin(), g_collect.end(),
+              [](const Collectible& a, const Collectible& b) {
+                  return a.cx < b.cx || (a.cx == b.cx && a.cy < b.cy);
+              });
     return true;
 }
 
@@ -332,6 +514,89 @@ inline bool loadTrigRows(const std::string& path,
 // --touch-from-anchor: keep the 32 touch triggers AHEAD of the anchor instead
 // of the first 32 in the level. Off by default -- see the note at the cap.
 inline bool g_touchFromAnchor = false;
+// --trigdump: print one line per touch box BEFORE the 32-cap (see the print
+// site). Diagnostic only -- nothing reads it and no run that omits the flag
+// changes by a byte.
+inline bool g_trigDump = false;
+// --trigeffect: one line per touch box saying what its chain does AFTER the
+// per-(box, uid) fold in level_loader, next to the raw counts the selection
+// reads. Print-only; see the note at the print itself.
+inline bool g_trigEffect = false;
+// --stopdump: what a Stop (id 1616) would freeze, and how it is fired. Print
+// only. See the block at the end of loadAutoTriggers for what it is for; the
+// short version is that the model does not decode 1616, and this counts what
+// that costs before anything is written that acts on it.
+inline bool g_stopDump = false;
+// --trigrelevant: choose the 32 by RELEVANCE rather than by x alone. A box is
+// kept when its chain moves something, or reaches an object the player can
+// collide with, or switches a group on/off (the Toggle's own effect is not a
+// motion, and --rotqtoggle reads it through TouchTrig::togOn).
+//
+// The cap is not the defect the counting found. On the one level where it
+// bites, of the 32 boxes it currently keeps only 8 pass this test and of the
+// 120 it drops 52 do -- so 24 bits go to boxes that cannot touch the player
+// while 52 that can are thrown away. Narrowing the population first is worth
+// more than widening the mask: with the population at 60 instead of 152, the
+// same 32 bits all go to boxes that matter.
+//
+// Needs the type map. Without one the test cannot be made and is skipped
+// rather than guessed at.
+//
+// ON BY DEFAULT since 2026-09-20 (user ruling). Measured at width 32: the two
+// levels under the cap keep every box, the one over it goes from 152 to 61, and
+// the cold run clears 22/22 with that level twelve iterations cheaper and every
+// other level's fingerprints bit-identical -- which is the positive control,
+// since the filter provably drops nothing on any of them. Always on since the
+// flag clean-up.
+// --csvtypes: an in-process call reads the object types for the
+// selection above from the level table (g_levelCsv) instead of argv[1], which is
+// a placeholder there -- so the loop's selection sees the collidable reach the
+// CLI's does. Off keeps the loop's historical selection (movers and toggles
+// only), which every blessed number was measured with; on changes WHICH boxes
+// lv22 keeps (relevant 45 -> 61).
+// ON since 2026-09-21 (audit AUD-20260921-20): reading the types from a
+// placeholder was a known inconsistency, and --no-csvtypes, which reproduced
+// it, is gone since the flag clean-up.
+// --trigwinsel (default off): the auto-window gate probes the population it
+// will actually load, instead of the unselected one. See the gate in cli.hpp.
+// It exists because the selection went on by default (934c21e) and that gate
+// was not updated with it; the two populations have disagreed since.
+inline bool g_trigWinSel = false;
+// World-x window: an anchor in a ROTATED frame asks the window gate
+// with its WORLD x, and keeps the kTouchBits boxes nearest that x. The gate
+// compared the touch boxes' world cx with x0 after --start had mapped x0 into the
+// frame's travel coordinate (world Y in frame 3), so in a rotated section it never
+// opened: lv22's eight frame-3 anchors of a whole cold run (x0 ~ 16,000) each kept
+// the first 32 relevant boxes, all at x <= 3,675, and dropped the 29 ahead. And
+// "ahead" is not a world-x direction there -- frame 2 travels -X, and lv22's maze
+// goes back and forth over world x 15,400..16,200 with its touch boxes at
+// 15,075..16,425 -- so the window is the nearest boxes, not the ones past x0.
+// ON by default since 2026-09-22: the eight anchors window with nothing dropped
+// ahead, and lv22's route is the same to the plan hash. Always on since the 0.2.0
+// flag clean-up (it was --trigwinworld).
+// Set by cli.hpp for one loadTouchTriggers call from a rotated-frame anchor: keep
+// the kTouchBits boxes nearest this world x instead of the ones from fromX on.
+inline double g_trigWinNear = -1e18;
+// WHAT THE CAP ACTUALLY COVERED, published rather than only printed. The
+// consumers of a whole-run comparison need it: a first-divergence past
+// `maxKeptX` was measured in a world missing `droppedRelevant` boxes, and
+// reporting it as a pass or an improvement is reporting a different level
+// (audit AUD-20260920-09). Filled by loadTouchTriggers; zero before it runs.
+//   total            boxes the chain walk produced
+//   relevant         ...that survive the selection (== total when it is off)
+//   kept             ...that fit in kTouchBits
+//   droppedRelevant  relevant - kept. NON-ZERO IS THE UNCOVERED CASE.
+//   maxKeptX         the cx of the last box kept; past it nothing is modelled
+inline size_t g_trigTotal = 0, g_trigRelevantN = 0, g_trigKept = 0,
+              g_trigDroppedRelevant = 0;
+// ...and WHICH SIDE they fell off, which the sum above cannot say and the
+// window code has always known (it prints "dropped N behind, M ahead").
+// Collapsing them made the UNCOVERED label wrong for a windowed anchor: the
+// boxes behind it are dropped ON PURPOSE -- the world they already moved is in
+// the recording -- while only the ones ahead are a world this call cannot see
+// (audit AUD-20260921-15). 0 / 0 when no window was cut.
+inline size_t g_trigDroppedBehind = 0, g_trigDroppedAhead = 0;
+inline double g_trigMaxKeptX = 0.0;
 
 // `fromX` = where this solve starts (the --start anchor, or the level's head).
 // The mask in State::trig has 32 bits, so a level with more touch triggers than
@@ -344,10 +609,125 @@ inline bool g_touchFromAnchor = false;
 // instead makes the window follow the ladder. Triggers behind the anchor are
 // not lost information: whatever they already moved is in the grouptrace
 // recording the driver passes as --groups.
+// uid -> GD object type, read from the objrects dump by NAME rather than by
+// position (the columns move with the mod's dump schedule, and a position
+// guessed in advance is the one failure this parser family already records).
+// Only the two columns are taken, so this costs one pass over the file and no
+// allocation per object beyond the map.
+//
+// It exists because the touch-box selection needs to know whether a chain
+// reaches anything the player can collide with, and loadTouchTriggers runs
+// BEFORE loadLevel -- there is no Level to ask yet. Empty map = "unknown",
+// which every caller must read as "do not drop anything on this basis".
+inline std::unordered_map<int, int> loadObjTypesFrom(std::istream& in);
+inline std::unordered_map<int, int> loadObjTypes(const std::string& objPath) {
+    std::ifstream in(objPath);
+    if (!in) return {};
+    return loadObjTypesFrom(in);
+}
+// The same table from a stream. An IN-PROCESS call's argv[1] is the placeholder
+// "(in-process level)" (dp_bridge.cpp) and the level lives in g_levelCsv, so the
+// path form above returns an empty map there: every box then reads as reaching
+// nothing collidable and --trigrelevant keeps the movers only. That is lv22's
+// "mod relevant 45 vs CLI 61" (open since 2026-09-21 morning). The caller picks
+// the source; see the --csvtypes note above.
+inline std::unordered_map<int, int> loadObjTypesFrom(std::istream& in) {
+    std::unordered_map<int, int> out;
+    std::string line;
+    if (!std::getline(in, line)) return out;
+    int iu = -1, it = -1, n = 0;
+    {
+        std::stringstream hs(line);
+        std::string c;
+        while (std::getline(hs, c, ',')) {
+            if (c == "uid") iu = n;
+            else if (c == "type") it = n;
+            ++n;
+        }
+    }
+    if (iu < 0 || it < 0) return out;
+    while (std::getline(in, line)) {
+        std::stringstream ss(line);
+        std::string c;
+        int i = 0, uid = -1, ty = -1;
+        while (std::getline(ss, c, ',')) {
+            if (i == iu) uid = std::atoi(c.c_str());
+            else if (i == it) ty = std::atoi(c.c_str());
+            ++i;
+        }
+        if (uid >= 0 && ty >= 0) out[uid] = ty;
+    }
+    return out;
+}
+// uid -> (cx, cy) from the same table, for --movetarget: a target-mode Move goes
+// to where the object in its `center` group is, measured from the object in its
+// `tmodctr` group. Read by header like loadObjTypes, from a stream so the caller
+// can hand it g_levelCsv in-process (argv[1] is a placeholder there -- the first
+// cold with --movetarget read an empty map and the flag did nothing).
+inline std::unordered_map<int, std::pair<double, double>> loadObjPos(std::istream& in) {
+    std::unordered_map<int, std::pair<double, double>> out;
+    std::string line;
+    if (!std::getline(in, line)) return out;
+    int iu = -1, ix = -1, iy = -1, n = 0;
+    {
+        std::stringstream hs(line);
+        std::string c;
+        while (std::getline(hs, c, ',')) {
+            if (c == "uid") iu = n;
+            else if (c == "cx") ix = n;
+            else if (c == "cy") iy = n;
+            ++n;
+        }
+    }
+    if (iu < 0 || ix < 0 || iy < 0) return out;
+    while (std::getline(in, line)) {
+        std::stringstream ss(line);
+        std::string c;
+        int i = 0, uid = -1;
+        double x = 0.0, y = 0.0;
+        while (std::getline(ss, c, ',')) {
+            if (i == iu) uid = std::atoi(c.c_str());
+            else if (i == ix) x = std::atof(c.c_str());
+            else if (i == iy) y = std::atof(c.c_str());
+            ++i;
+        }
+        if (uid >= 0) out[uid] = {x, y};
+    }
+    return out;
+}
+// The GD object types the player can be stopped or killed by. A chain that
+// reaches none of these cannot change the collision geometry, whatever kind of
+// trigger sits at its root -- which is what makes the test independent of the
+// trigger ids, most of which are not decoded anywhere in this tree.
+inline bool collidableType(int t) {
+    return t == 0 || t == 2 || t == 21 || t == 47;
+}
+// An ITEM COMPARE (3620) that reads "item A at least C", as a gate: returns C,
+// or 0 for every other shape. Only this one is measured:
+//   - the operator: resultType3 = 2 is "at least" (rig calib_coingate6, constant
+//     3: N = 0 and 2 stay shut, 3 and 4 open);
+//   - the constant: m_mod2 with item2Mode 0 (the level string's 483, checked
+//     against lv22's uid17962, which is 6 -- and six taps is what opens that
+//     coin in the game);
+//   - the left side: item1Mode 1 (an item counter) times m_mod1 = 1. The
+//     operator between them (resultType1) is not measured, so any m_mod1 other
+//     than 1 is refused rather than guessed at.
+inline int itemCompareGate(const TrigRow& T) {
+    if (T.id != 3620 || !T.cmpCols) return 0;
+    if (T.i1mode != 1 || T.i2mode > 0 || T.res3 != 2 || T.mod1 != 1.0) return 0;
+    if (T.item <= 0 || T.mod2 < 1.0 || T.mod2 != std::floor(T.mod2)) return 0;
+    return (int)T.mod2;
+}
 inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                                                 const std::string& grpPath,
-                                                double fromX = -1e18) {
+                                                double fromX = -1e18,
+                                                const std::unordered_map<int, int>*
+                                                    objTypes = nullptr,
+                                                const std::unordered_map<int,
+                                                    std::pair<double, double>>*
+                                                    objPos = nullptr) {
     std::vector<TouchTrig> out;
+    size_t nIrrelevant = 0;                             // --trigrelevant
     std::unordered_map<int, TrigRow> trig;              // uid -> row
     std::unordered_map<int, std::vector<int>> byGroup;  // group id -> uids
     if (!loadTrigRows(trigPath, trig)) {
@@ -374,16 +754,45 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
     }
     for (const auto& kv : trig) {
         const TrigRow& T = kv.second;
-        if (!T.touch || T.target == 0) continue;
+        // A COUNT trigger (1611 instant / 1811) is a root here as well: its
+        // chain is walked exactly like a box's, and it takes a bit in the same
+        // mask. What differs is only who sets that bit (the step child's item
+        // test rather than markTouched).
+        const bool isCount = (T.id == 1611 || T.id == 1811) && T.count >= 0
+                             && g_coinRoute;
+        // ...and a TAP trigger (1595), armed by crossing and fired by a press.
+        const bool isTap = (T.id == 1595) && g_coinRoute;
+        // ...and an ITEM COMPARE (3620) in the one shape itemCompareGate reads.
+        // Its chain is the TRUE branch (its target), and it fires the way a
+        // Count does, from the counter; the chains that spawn it stop at it
+        // (the walk below), so a tap alone no longer reaches what it guards.
+        const int cmpNeed = g_coinRoute ? itemCompareGate(T) : 0;
+        const bool isCmp = cmpNeed > 0;
+        if ((!T.touch && !isCount && !isTap && !isCmp) || T.target == 0) continue;
         TouchTrig tt{T.cx, T.cy, T.w * 0.5, T.h * 0.5, {}};
         tt.uid = T.uid;   // so an outside payload can name the box (see the field)
         tt.id = T.id;
         tt.togOn = (T.id == 1049) ? T.togon : -1;   // --rotqtoggle (see the field)
+        if (isCount) {
+            tt.item = T.item;
+            tt.count = T.count;
+            tt.cmode = T.cmode > 0 ? T.cmode : 0;
+        }
+        if (isCmp) {
+            tt.item = T.item;
+            tt.count = cmpNeed;
+            tt.cmode = 3;
+        }
+        tt.tap = isTap;
         struct Item {
             int group; float dx, dy; double dur; int ease; double erate;
             double lock, lockY;
             // the remap the triggers in `group` act under (--spawnremap)
             std::vector<std::pair<int, int>> remap;
+            // --movetarget only (see TrigCtl::mover / tmode / tdx / tdy)
+            int mover = 0;
+            uint8_t tmode = 0;
+            float tdx = 0.f, tdy = 0.f;
         };
         // Seed with the BOX'S OWN move. A touch row is often a bare Spawn whose
         // effect is nested (all 3 of lv19's are), and starting the walk at zero
@@ -404,6 +813,20 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
         // the key at all while its geometry is still turning.
         const bool rootTurns = (T.deg != 0.0 || T.t360 != 0);
         const bool rootMoves = (T.ox != 0.0 || T.oy != 0.0 || rootTurns);
+        // --trigdump only: how much of this chain ACTS. `ctl` is filled from the
+        // else-branch below, which pushes every plain object the walk reaches
+        // whether or not anything moved it -- deliberately, because GD's
+        // "move to target" carries no offset. The consequence is that
+        // `!tt.ctl.empty()` keeps a box whose chain only tints its group, and on
+        // lv22 that is most of them: 155 touch rows, 152 boxes, and the two
+        // largest id families (66 + 52 of 155) carry no ox/oy/deg of their own.
+        // These counters exist to put a number on that before any rule is
+        // written. They are read nowhere else.
+        // Counted at the ctl push below rather than at each hop, because that is
+        // where a selection rule would have to decide: the entry it pushes
+        // carries everything the walk accumulated (offset, duration, lock).
+        size_t nInert = 0;
+        double maxDur = 0.0, maxLock = 0.0, maxOff = 0.0;
         std::vector<Item> stack{{T.target, (float)T.ox, (float)T.oy,
                                  rootMoves ? T.dur * 240.0 : 0.0,
                                  rootMoves ? T.ease : 0,
@@ -412,6 +835,7 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                                  T.locky ? T.dur * 240.0 : 0.0,
                                  g_spawnRemap ? T.remap
                                               : std::vector<std::pair<int, int>>{}}};
+        stack[0].mover = rootMoves ? T.uid : 0;
         // A group can contain the trigger that targets it, so the walk needs a
         // hard bound rather than a visited set (the same group legitimately
         // appears twice under different offsets).
@@ -451,6 +875,66 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                     // it raises the group 36 and then drops it 75, which the
                     // recording shows to the decimal (174.5 -> 210.5 -> 135.5).
                     if (!t2->second.spawn) continue;
+                    // An Item Compare this build reads is a root of its own
+                    // (see isCmp): what it spawns happens only when the counter
+                    // says so. Walking through it credited lv22's tap box with
+                    // switching the third coin on at the first press, where the
+                    // game needs six.
+                    if (g_coinRoute && itemCompareGate(t2->second) > 0) continue;
+                    // --movetarget: a STOP halts the Moves in its target group.
+                    // Those are ordinary triggers (touch or x-crossing), which
+                    // the walk skips, so without this the Stop reached nothing
+                    // at all. Recorded on the box, and the group is not walked
+                    // (it holds triggers, not geometry). Spawn delays are not
+                    // accumulated: lv22's trap chain (the one case measured)
+                    // has sdelay 0 at every hop.
+                    if (t2->second.id == 1616) {
+                        const int sg = remapGroup(it.remap, t2->second.target);
+                        const auto sgi = byGroup.find(sg);
+                        if (sgi != byGroup.end())
+                            for (const int su : sgi->second)
+                                if (trig.count(su)) tt.stops.push_back(su);
+                        continue;
+                    }
+                    // --movetarget: a TARGET-MODE Move. Its ox/oy are 0 by
+                    // construction; where it takes the group is "the object in
+                    // group `center`" measured from "the object in group
+                    // `tmodctr`", which rides with the moved group -- so the
+                    // destination is a fixed offset from the group's placement
+                    // and the distance still to go is decided when it fires.
+                    if (objPos && t2->second.id == 901
+                        && t2->second.mvtgt == 1) {
+                        auto posOfGroup = [&](int grp, double& x, double& y) {
+                            const auto gi = byGroup.find(grp);
+                            if (gi == byGroup.end()) return false;
+                            for (const int ou : gi->second) {
+                                const auto pi = objPos->find(ou);
+                                if (pi != objPos->end()) {
+                                    x = pi->second.first; y = pi->second.second;
+                                    return true;
+                                }
+                            }
+                            return false;
+                        };
+                        double tx = 0, ty = 0, rx = 0, ry = 0;
+                        if (posOfGroup(remapGroup(it.remap, t2->second.center), tx, ty)
+                            && posOfGroup(remapGroup(it.remap, t2->second.tmodctr),
+                                          rx, ry)) {
+                            Item nx{remapGroup(it.remap, t2->second.target),
+                                    it.dx, it.dy, t2->second.dur * 240.0,
+                                    t2->second.ease, t2->second.erate,
+                                    it.lock, it.lockY, it.remap};
+                            nx.mover = t2->second.uid;
+                            // 1 = both axes, 2 = x only, 3 = y only (mvaxis + 1):
+                            // a zero destination on an axis is not the same as
+                            // not moving on it.
+                            nx.tmode = (uint8_t)(1 + std::clamp(t2->second.mvaxis, 0, 2));
+                            nx.tdx = (float)(tx - rx);
+                            nx.tdy = (float)(ty - ry);
+                            stack.push_back(std::move(nx));
+                            continue;
+                        }
+                    }
                     // Duration belongs to the hop that actually MOVES something.
                     // The spawn trigger in front of lv19's door carries 0.5 s of
                     // its own, and adding that would stretch the "still opening"
@@ -489,6 +973,12 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                                      g_spawnRemap
                                          ? composeRemap(t2->second.remap, it.remap)
                                          : std::vector<std::pair<int, int>>{}});
+                    // --movetarget: the Move that set this hop's motion, and a
+                    // target mode inherited from an earlier hop.
+                    stack.back().mover = moves ? t2->second.uid : it.mover;
+                    stack.back().tmode = it.tmode;
+                    stack.back().tdx = it.tdx;
+                    stack.back().tdy = it.tdy;
                 } else {
                     // Recorded WITH a zero offset too. m_moveOffset is empty for
                     // GD's "move to target" mode, and lv19's third touch trigger
@@ -501,13 +991,142 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
                     // The offset is only a fallback for the first iteration
                     // anyway; once a plan touches the box, the replay's
                     // grouptrace carries the real trajectory (see applyTriggers).
+                    // --trigdump only: is this entry one the player can feel?
+                    const double off = std::max(std::fabs((double)it.dx),
+                                                std::fabs((double)it.dy));
+                    if (off == 0.0 && it.dur == 0.0 && it.lock == 0.0
+                        && it.lockY == 0.0)
+                        ++nInert;
+                    maxOff = std::max(maxOff, off);
+                    maxDur = std::max(maxDur, it.dur);
+                    maxLock = std::max(maxLock, std::max(it.lock, it.lockY));
                     tt.ctl.push_back({uid, it.dx, it.dy, it.dur, it.ease,
                                       it.erate, it.lock, it.lockY});
+                    tt.ctl.back().mover = it.mover;
+                    tt.ctl.back().tmode = it.tmode;
+                    tt.ctl.back().tdx = it.tdx;
+                    tt.ctl.back().tdy = it.tdy;
                 }
+            }
+        }
+        // A COUNT OR TAP ROOT EARNS ITS BIT ONLY IF ITS CHAIN REACHES A COIN.
+        //
+        // These two are roots only because coin routing is on, and a root MOVES
+        // WHAT ITS CHAIN NAMES. lv21 has ten Counts: one reads item 0 and moves
+        // 1,395 objects, and six are the level's own "n of 10" readout moving 59
+        // each -- and at a counter of zero every `<= k` of them fires at once.
+        // So --coins alone moved some 350 objects the model otherwise never
+        // touches, and the SAME plan that GD flies to x=21,840 died at x=14,245
+        // -- with the flag on and only with it.
+        //
+        // CORRECTED 2026-09-20, having first written it up as the window
+        // evicting ordinary boxes (the window keeps 32 and never drops a
+        // Count). That is a real hazard but it is NOT what happened here:
+        // **lv21 has no touch boxes at all** -- 0 rows with touch=1 and a
+        // target -- so out.size() never passed 32 and nothing was trimmed. The
+        // eviction story fitted the symptom and was never checked against the
+        // level; counting the rows takes one grep and would have refused it.
+        // A trigger that is also a touch box (T.touch) keeps its bit either
+        // way: it is in this list for a reason that has nothing to do with
+        // coins, and dropping it would change a run that never asked for them.
+        if ((isCount || isTap || isCmp) && !T.touch && !g_coinUids.empty()) {
+            for (const TrigCtl& c : tt.ctl)
+                if (g_coinUids.count(c.uid)) { tt.reachesCoin = true; break; }
+            // A TAP IS KEPT ON A SECOND GROUND: its chain feeds an item (a
+            // Pickup in it), and a coin's gate may read that item. lv22's tap
+            // box reaches the third coin only through the Item Compare, which
+            // the walk now stops at. Whether the item is one a coin reads is
+            // known only once every root is walked, so the window block below
+            // drops the taps that turn out not to be.
+            bool feedsItem = false;
+            if (isTap && !tt.reachesCoin)
+                for (const TrigCtl& c : tt.ctl)
+                    if (g_itemGiver.count(c.uid)) { feedsItem = true; break; }
+            if (!tt.reachesCoin && !feedsItem) continue;
+            // ...and where its window shuts: the nearest x-crossing Stop past
+            // it whose target group holds the tap itself or a Pickup it spawns.
+            if (feedsItem)
+                for (const auto& sv : trig) {
+                    const TrigRow& S = sv.second;
+                    if (S.id != 1616 || S.spawn || S.touch || S.cx <= T.cx) continue;
+                    const auto sg = byGroup.find(S.target);
+                    if (sg == byGroup.end()) continue;
+                    bool halts = false;
+                    for (const int u : sg->second) {
+                        if (u == T.uid) { halts = true; break; }
+                        for (const TrigCtl& c : tt.ctl)
+                            if (c.uid == u && g_itemGiver.count(u)) { halts = true; break; }
+                        if (halts) break;
+                    }
+                    if (halts && S.cx < tt.tapCloseX) {
+                        tt.tapCloseX = S.cx;
+                        tt.tapCloseY = S.cy;
+                        tt.tapCloseChan = S.chan;
+                    }
+                }
+            if (isTap) tt.tapChan = T.chan;
+        }
+        // --trigdump: one line per box BEFORE the 32-cap, so the population the
+        // cap chooses from can be counted. `inert` is the number of ctl entries
+        // the walk reached without any offset, duration or lock -- objects the
+        // box is credited with but never seen to act on. Printed with the uids
+        // so the types can be joined against objrects offline; this header does
+        // not read the level.
+        // How many of the objects this chain reaches are ones the player
+        // collides with. -1 when no type map was given, so "no types" never
+        // reads as "no collidables" -- a distinction that matters: the probe
+        // call at cli.hpp builds the same boxes without a map, and counting
+        // its -1 as zero drops two real boxes on lv20.
+        int hard = objTypes ? 0 : -1;
+        if (objTypes)
+            for (const TrigCtl& c : tt.ctl) {
+                const auto t3 = objTypes->find(c.uid);
+                if (t3 != objTypes->end() && collidableType(t3->second))
+                    ++hard;
+            }
+        if (g_trigDump && !tt.ctl.empty()) {
+            std::printf("trigdump: uid=%d id=%d cx=%.0f cy=%.0f ctl=%zu "
+                        "inert=%zu hard=%d maxoff=%.2f maxdur=%.1f "
+                        "maxlock=%.1f uids=",
+                        tt.uid, tt.id, tt.cx, tt.cy, tt.ctl.size(), nInert,
+                        hard, maxOff, maxDur, maxLock);
+            for (size_t i = 0; i < tt.ctl.size(); ++i)
+                std::printf("%s%d", i ? "," : "", tt.ctl[i].uid);
+            std::printf("\n");
+        }
+        // --trigrelevant: drop the boxes that cannot reach the player at all,
+        // BEFORE the cap picks 32. Without a type map the test is not
+        // available and every box is kept, which is the old behaviour.
+        // ...and only over the boxes that would have existed anyway. A chain
+        // that reached no object at all is dropped by the test below whether or
+        // not this flag is on, so counting it here would make `total` mean a
+        // different population than the same word on the line without the flag.
+        // ...but never a coin root (Count, Tap, Item Compare -- all of them
+        // passed the coin test above). What those act on is a counter or a
+        // coin, neither of which is collidable, so the test read lv22's tap
+        // box and its Item Compare as moving nothing and dropped both: the
+        // third coin had no gate at all in any call that loaded types.
+        if (objTypes && !tt.ctl.empty() && !isCount && !isTap && !isCmp) {
+            const bool moves = nInert < tt.ctl.size();
+            if (!moves && hard <= 0 && tt.togOn < 0) {
+                ++nIrrelevant;
+                continue;
             }
         }
         if (!tt.ctl.empty()) out.push_back(std::move(tt));
     }
+    if (objTypes)
+        std::printf("triggers: --trigrelevant dropped %zu box(es) that move "
+                    "nothing, reach nothing collidable and toggle nothing; "
+                    "%zu left to choose from\n", nIrrelevant, out.size());
+    g_trigTotal = out.size() + nIrrelevant;
+    g_trigRelevantN = out.size();
+    // ...and clear the two sides HERE, not in the cap block: a call that keeps
+    // everything never enters that block, and would otherwise publish the
+    // previous call's split. That is the defect this file already carries a
+    // fix for once (the five coverage numbers), in the same shape.
+    g_trigDroppedBehind = 0;
+    g_trigDroppedAhead = 0;
     std::sort(out.begin(), out.end(),
               [](const TouchTrig& a, const TouchTrig& b) { return a.cx < b.cx; });
     // one bit per trigger in the state's mask
@@ -520,34 +1139,142 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
     // world, so a state that has NOT touched may be reading a base position
     // that never existed. Left in as a switch so the next session can pick it
     // up with a measurement instead of re-deriving the 32-cap.
-    if (out.size() > 32) {
+    // A COUNT trigger is never dropped by the window below. There are at most a
+    // handful in a level (lv21 has 10, lv22 two), they have no x at which the
+    // player is "near" them -- the counter is what fires them, from anywhere --
+    // and dropping the one that opens a coin's group would make the coin
+    // unreachable without saying so. Pulled out, trimmed, put back.
+    // ...AND SO IS A BOX THAT FEEDS A COIN'S COUNTER. lv22 keeps 32 of its 152
+    // and drops 122 ahead, so the window spans x=511..2,277 -- while the seven
+    // boxes that raise the first coin sit at x=3,263..3,690. They were not in
+    // the model at all, item 2 could never move, and the coin could never come
+    // up to 303: the search had no representable way to take it. Measured
+    // 2026-09-20 off the window's own line.
+    //
+    // Which boxes those are is derived, not listed: a coin-gating Count names
+    // the item it reads, and a box is a feeder when its chain reaches an object
+    // that items.txt says gives that item. Both ends come out of the dump.
+    std::vector<int> wantedItems;
+    for (const TouchTrig& t : out)
+        if (t.count >= 0 && t.item != 0) {
+            bool reachesCoin = false;
+            for (const TrigCtl& c : t.ctl)
+                if (g_coinUids.count(c.uid)) { reachesCoin = true; break; }
+            if (reachesCoin) wantedItems.push_back(t.item);
+        }
+    auto feedsACoin = [&](const TouchTrig& t) {
+        if (wantedItems.empty() || g_itemGiver.empty()) return false;
+        for (const TrigCtl& c : t.ctl) {
+            auto it = g_itemGiver.find(c.uid);
+            if (it == g_itemGiver.end()) continue;
+            for (int w : wantedItems) if (w == it->second) return true;
+        }
+        return false;
+    };
+    // The taps kept above only for feeding SOME item, and whose item no coin's
+    // gate reads after all.
+    out.erase(std::remove_if(out.begin(), out.end(),
+                             [&](const TouchTrig& t) {
+                                 return t.tap && !t.reachesCoin && !feedsACoin(t);
+                             }),
+              out.end());
+    std::vector<TouchTrig> counts;
+    if ((int)out.size() > kTouchBits) {
+        std::vector<TouchTrig> boxes;
+        for (TouchTrig& t : out) {
+            // ...and a TAP trigger with it, for the same reason: the tap that
+            // fires it can come from anywhere past its x.
+            if (t.count >= 0 || t.tap || feedsACoin(t))
+                counts.push_back(std::move(t));
+            else boxes.push_back(std::move(t));
+        }
+        out.swap(boxes);
+    }
+    if ((int)(out.size() + counts.size()) > kTouchBits) {
+        const size_t keep = (size_t)kTouchBits
+                          - std::min<size_t>(counts.size(), (size_t)kTouchBits - 1);
         size_t first = 0;
-        if (fromX > -1e17) {
+        if (g_trigWinNear > -1e17) {
+            // World-x window: the nearest kTouchBits boxes to a point on a line are
+            // a contiguous run of the cx-sorted list -- the run whose farther end
+            // is closest to the point.
+            double best = 1e300;
+            for (size_t f = 0; f + (size_t)kTouchBits <= out.size(); ++f) {
+                const double reach = std::max(
+                    std::fabs(out[f].cx - g_trigWinNear),
+                    std::fabs(out[f + (size_t)kTouchBits - 1].cx - g_trigWinNear));
+                if (reach < best) { best = reach; first = f; }
+            }
+            std::printf("triggers: the rotated-frame window keeps the %d boxes nearest world "
+                        "x=%.0f (within %.0f px)\n", kTouchBits, g_trigWinNear, best);
+        } else if (fromX > -1e17) {
             // 200 px of slack behind the anchor: a box the player is standing
             // in when the tail is anchored still has to be enterable.
             const double lo = fromX - 200.0;
             while (first < out.size() && out[first].cx < lo) ++first;
-            // Never leave fewer than 32 in hand (an anchor near the end of the
-            // level would otherwise keep only a handful).
-            if (out.size() - first < 32) first = out.size() - 32;
+            // Never leave fewer than the window in hand (an anchor near the end
+            // of the level would otherwise keep only a handful).
+            if (out.size() - first < keep) first = out.size() - keep;
         }
         const size_t total = out.size();
         out = std::vector<TouchTrig>(out.begin() + (long long)first,
-                                     out.begin() + (long long)first + 32);
-        std::printf("triggers: %zu touch triggers, keeping 32 from x=%.0f "
+                                     out.begin() + (long long)(first + keep));
+        // The two sides, published and not only printed -- see the globals.
+        g_trigDroppedBehind = first;
+        g_trigDroppedAhead = total - first - keep;
+        std::printf("triggers: %zu touch triggers, keeping %zu from x=%.0f "
                     "(dropped %zu behind, %zu ahead)\n",
-                    total, out.front().cx, first, total - first - 32);
+                    total, keep, out.front().cx,
+                    g_trigDroppedBehind, g_trigDroppedAhead);
     }
+    // ...and back in, at the end, so the boxes keep the numbering they had.
+    for (TouchTrig& t : counts) out.push_back(std::move(t));
+    // COVERAGE, on one machine-readable line, always -- including the happy
+    // case. A consumer that only hears about trouble cannot tell "covered" from
+    // "this build does not report it", which is how 120 dropped boxes went
+    // unnoticed for as long as they did.
+    g_trigKept = out.size();
+    g_trigDroppedRelevant = g_trigRelevantN - g_trigKept;
+    g_trigMaxKeptX = out.empty() ? 0.0 : out.back().cx;
+    // UNCOVERED is AHEAD only. A windowed anchor drops the boxes behind it on
+    // purpose -- their world is already in the recording -- so labelling those
+    // "uncovered" would wave a flag at the normal case and blunt the flag that
+    // matters (audit AUD-20260921-15). Behind-drops are still reported, under
+    // their own name, because "reported" and "a warning" are different things.
+    std::printf("triggers: coverage total=%zu relevant=%zu kept=%zu "
+                "droppedRelevant=%zu droppedBehind=%zu droppedAhead=%zu "
+                "maxKeptX=%.0f%s\n",
+                g_trigTotal, g_trigRelevantN, g_trigKept,
+                g_trigDroppedRelevant, g_trigDroppedBehind, g_trigDroppedAhead,
+                g_trigMaxKeptX,
+                g_trigDroppedAhead ? "  UNCOVERED"
+                                   : (g_trigDroppedBehind ? "  behind-only" : ""));
     // The uid travels with the box because bit numbering is a property of THIS
     // window (see the anchor payload): without it there is no way to say which
     // object a State::trig bit stands for, and the payload's uid->bit mapping
     // cannot be checked against what GD reports activating.
-    for (size_t b = 0; b < out.size(); ++b)
-        std::printf("triggers: box %zu uid %d (%.0f,%.0f) %.0fx%.0f moves %zu objects\n",
-                    b, out[b].uid, out[b].cx, out[b].cy, out[b].hw * 2,
-                    out[b].hh * 2, out[b].ctl.size());
+    for (size_t b = 0; b < out.size(); ++b) {
+        if (out[b].count >= 0 && out[b].cmode == 3)
+            std::printf("triggers: bit %zu uid %d ITEM COMPARE item %d at least %d,"
+                        " moves %zu objects\n",
+                        b, out[b].uid, out[b].item, out[b].count, out[b].ctl.size());
+        else if (out[b].count >= 0)
+            std::printf("triggers: bit %zu uid %d COUNT item %d %s %d, moves %zu objects\n",
+                        b, out[b].uid, out[b].item,
+                        out[b].cmode == 1 ? ">=" : out[b].cmode == 2 ? "<=" : "==",
+                        out[b].count, out[b].ctl.size());
+        else if (out[b].tap && out[b].tapCloseX < 1e17)
+            std::printf("triggers: box %zu uid %d TAP at x=%.0f chan %d, counts presses"
+                        " until the Stop at x=%.0f chan %d, moves %zu objects\n",
+                        b, out[b].uid, out[b].cx, out[b].tapChan, out[b].tapCloseX,
+                        out[b].tapCloseChan, out[b].ctl.size());
+        else
+            std::printf("triggers: box %zu uid %d (%.0f,%.0f) %.0fx%.0f moves %zu objects\n",
+                        b, out[b].uid, out[b].cx, out[b].cy, out[b].hw * 2,
+                        out[b].hh * 2, out[b].ctl.size());
+    }
     // the ownTouch proximity gate's table (see g_touchBoxU)
-    for (size_t b = 0; b < 32 && b < out.size(); ++b)
+    for (size_t b = 0; b < (size_t)kTouchBits && b < out.size(); ++b)
         g_touchBoxU[b] = (float)out[b].cx;
     return out;
 }
@@ -799,6 +1526,46 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
         std::printf("rotspec: %zu of %zu turned uids have a computable orbit "
                     "(centre + whole angle)\n", g_rotSpec.size(),
                     g_rotated.size());
+    // --stopdump: WHAT A Stop (id 1616) WOULD FREEZE, and when. Print only --
+    // nothing here changes a position, exactly as --trigdump changed nothing
+    // before the touch-box selection was written on top of what it counted.
+    //
+    // The model does not decode 1616 at all, so a group GD has parked keeps
+    // running in the search (the replay is safe: it follows the recording).
+    // Measured on lv22 before any of this was written: uid18096 stops two Moves
+    // on group 265 whose commands are -360 and -480, and GD's own recording of
+    // those 35 collidables ends after -122.4 -- cut short, not completed.
+    //
+    // Two shapes, and only the first can be a root here: a Stop with
+    // touch=0 spawn=0 fires on an x crossing like any autonomous trigger, while
+    // spawn=1 is fired by a Spawn chain this function never walks. The line
+    // says which, rather than printing the first and staying quiet about the
+    // second -- the witness above is a spawn=1 one.
+    if (g_stopDump) {
+        size_t n = 0;
+        for (const auto& kv : trig) {
+            const TrigRow& T = kv.second;
+            if (T.id != 1616 || T.target == 0) continue;
+            ++n;
+            const char* how = T.touch ? "touch" : (T.spawn ? "SPAWN (not a root here)"
+                                                           : "x-crossing");
+            std::printf("stopdump: uid=%d at x=%.0f target=%d fired-by=%s\n",
+                        T.uid, T.cx, T.target, how);
+            const auto g = byGroup.find(T.target);
+            if (g == byGroup.end()) { std::printf("stopdump:   (empty group)\n"); continue; }
+            for (const int uid : g->second) {
+                const auto t2 = trig.find(uid);
+                if (t2 == trig.end()) continue;
+                const TrigRow& S = t2->second;
+                std::printf("stopdump:   stops uid=%d id=%d -> group %d "
+                            "dur=%.3f ox=%.1f oy=%.1f fired-by=%s\n",
+                            S.uid, S.id, S.target, S.dur, S.ox, S.oy,
+                            S.touch ? "touch" : (S.spawn ? "spawn"
+                                                         : "x-crossing"));
+            }
+        }
+        std::printf("stopdump: %zu stop triggers in this level\n", n);
+    }
     return out;
 }
 

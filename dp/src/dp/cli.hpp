@@ -177,6 +177,147 @@ inline int cliMain(int argc, char** argv) {
         std::printf("usage: leveldp <objrects.csv> [--out plan.txt]\n");
         return 2;
     }
+    // SWITCHES REMOVED IN A RELEASE CLEAN-UP. Each chose between a behaviour that
+    // had been on by default and the one it replaced (the --no- form is the off
+    // arm, the plain name the on spelling that had become a no-op). Columns: the
+    // spelling, the commit that removed it, and the earlier commit that folded its
+    // branch into the default. A caller that still passes one is refused by name
+    // rather than ignored. A spelling ending in '=' takes its value in the same
+    // token and is matched as a prefix.
+    {
+        static const char* const kRemoved[][3] = {
+        {"--no-miniwave", "dbd106d", "5c44e5d"},
+        {"--no-ringmode", "dbd106d", "5c44e5d"},
+        {"--no-pressspent", "dbd106d", "5c44e5d"},
+        {"--no-portalseat", "dbd106d", "5c44e5d"},
+        {"--no-forceorder", "dbd106d", "5c44e5d"},
+        {"--no-rot2900halve", "dbd106d", "5c44e5d"},
+        {"--no-slopeland5", "dbd106d", "5c44e5d"},
+        {"--no-portallatch", "dbd106d", "5c44e5d"},
+        {"--no-r52gravhold", "dbd106d", "5c44e5d"},
+        {"--no-ceilseat", "dbd106d", "5c44e5d"},
+        {"--no-slopeveto", "dbd106d", "b43e150"},
+        {"--no-slopefreshrect", "dbd106d", "5c44e5d"},
+        {"--no-slopenudge", "dbd106d", "5c44e5d"},
+        {"--no-mpushreach", "dbd106d", "5c44e5d"},
+        {"--no-boostlatch", "dbd106d", "b43e150"},
+        {"--no-ringfirsttouch", "dbd106d", "5c44e5d"},
+        {"--no-padobb", "dbd106d", "5c44e5d"},
+        {"--no-padspinpre", "dbd106d", "5c44e5d"},
+        {"--no-dualflip", "dbd106d", "b43e150"},
+        {"--nofreeside", "dbd106d", "5c44e5d"},
+        {"--no-ufolandtol", "dbd106d", "5c44e5d"},
+        {"--no-uforampflap", "dbd106d", "5c44e5d"},
+        {"--no-ridelandlaunch", "dbd106d", "5c44e5d"},
+        {"--no-ballcorng", "dbd106d", "5c44e5d"},
+        {"--no-rampfirst", "dbd106d", "5c44e5d"},
+        {"--nohangladder", "dbd106d", "5c44e5d"},
+        {"--nocrush", "dbd106d", "5c44e5d"},
+        {"--noformula", "dbd106d", "b43e150"},
+        {"--ballceilpos", "4c5b7c7", "56a7a83"},
+        {"--no-ballceilpos", "4c5b7c7", "56a7a83"},
+        {"--ceilcont", "4c5b7c7", "56a7a83"},
+        {"--no-ceilcont", "4c5b7c7", "56a7a83"},
+        {"--ceillimrelease", "4c5b7c7", "56a7a83"},
+        {"--no-ceillimrelease", "4c5b7c7", "56a7a83"},
+        {"--ceilpinmin", "4c5b7c7", "56a7a83"},
+        {"--no-ceilpinmin", "4c5b7c7", "56a7a83"},
+        {"--ceilreleasemode", "4c5b7c7", "56a7a83"},
+        {"--no-ceilreleasemode", "4c5b7c7", "56a7a83"},
+        {"--ceilveto", "4c5b7c7", "56a7a83"},
+        {"--no-ceilveto", "4c5b7c7", "56a7a83"},
+        {"--csvtypes", "4c5b7c7", "ac5506d"},
+        {"--no-csvtypes", "4c5b7c7", "ac5506d"},
+        {"--cubeceilgrace", "4c5b7c7", "56a7a83"},
+        {"--no-cubeceilgrace", "4c5b7c7", "56a7a83"},
+        {"--dropnocollide", "4c5b7c7", "bf6e11d"},
+        {"--dualcouple", "4c5b7c7", "bf6e11d"},
+        {"--no-dualcouple", "4c5b7c7", "bf6e11d"},
+        {"--no-dyninterp", "4c5b7c7", "bf6e11d"},
+        {"--escrotahead", "4c5b7c7", "56a7a83"},
+        {"--hangland", "4c5b7c7", "56a7a83"},
+        {"--no-hangland", "4c5b7c7", "56a7a83"},
+        {"--hazaftersolid", "4c5b7c7", "56a7a83"},
+        {"--no-hazaftersolid", "4c5b7c7", "56a7a83"},
+        {"--killslopeside", "4c5b7c7", "56a7a83"},
+        {"--no-killslopeside", "4c5b7c7", "56a7a83"},
+        {"--lockanchor", "4c5b7c7", "ac5506d"},
+        {"--no-lockanchor", "4c5b7c7", "ac5506d"},
+        {"--movetarget", "4c5b7c7", "ac5506d"},
+        {"--no-movetarget", "4c5b7c7", "ac5506d"},
+        {"--mpushlaunch", "4c5b7c7", "56a7a83"},
+        {"--no-mpushlaunch", "4c5b7c7", "56a7a83"},
+        {"--mpushsign", "4c5b7c7", "56a7a83"},
+        {"--no-mpushsign", "4c5b7c7", "56a7a83"},
+        {"--oriringnow", "4c5b7c7", "56a7a83"},
+        {"--no-oriringnow", "4c5b7c7", "56a7a83"},
+        {"--oriented", "4c5b7c7", "bf6e11d"},
+        {"--no-oriented", "4c5b7c7", "bf6e11d"},
+        {"--recinterp", "4c5b7c7", "bf6e11d"},
+        {"--no-recinterp", "4c5b7c7", "bf6e11d"},
+        {"--releaseceilpress", "4c5b7c7", "56a7a83"},
+        {"--no-releaseceilpress", "4c5b7c7", "56a7a83"},
+        {"--norevtoggle", "4c5b7c7", "56a7a83"},
+        {"--rotpretap", "4c5b7c7", "56a7a83"},
+        {"--no-rotpretap", "4c5b7c7", "56a7a83"},
+        {"--shipheldflap", "4c5b7c7", "56a7a83"},
+        {"--no-shipheldflap", "4c5b7c7", "56a7a83"},
+        {"--shipslopekill", "4c5b7c7", "56a7a83"},
+        {"--no-shipslopekill", "4c5b7c7", "56a7a83"},
+        {"--slopelaw", "4c5b7c7", "56a7a83"},
+        {"--no-slopelaw", "4c5b7c7", "56a7a83"},
+        {"--spiderstrip", "4c5b7c7", "56a7a83"},
+        {"--no-spiderstrip", "4c5b7c7", "56a7a83"},
+        {"--stickground", "4c5b7c7", "56a7a83"},
+        {"--no-stickground", "4c5b7c7", "56a7a83"},
+        {"--stickrelease", "4c5b7c7", "56a7a83"},
+        {"--no-stickrelease", "4c5b7c7", "56a7a83"},
+        {"--stickseam", "4c5b7c7", "56a7a83"},
+        {"--no-stickseam", "4c5b7c7", "56a7a83"},
+        {"--touchprey=", "4c5b7c7", "bf6e11d"},
+        {"--touchretime", "4c5b7c7", "bf6e11d"},
+        {"--no-touchretime", "4c5b7c7", "bf6e11d"},
+        {"--touchretimelag", "4c5b7c7", "bf6e11d"},
+        {"--no-touchretimelag", "4c5b7c7", "bf6e11d"},
+        {"--tpbandskip", "4c5b7c7", "56a7a83"},
+        {"--no-tpbandskip", "4c5b7c7", "56a7a83"},
+        {"--tpgroundvy", "4c5b7c7", "56a7a83"},
+        {"--no-tpgroundvy", "4c5b7c7", "56a7a83"},
+        {"--trigclosed", "4c5b7c7", "ac5506d"},
+        {"--no-trigclosed", "4c5b7c7", "ac5506d"},
+        {"--trigrelevant", "4c5b7c7", "ac5506d"},
+        {"--no-trigrelevant", "4c5b7c7", "ac5506d"},
+        {"--upceilv3", "4c5b7c7", "56a7a83"},
+        {"--no-upceilv3", "4c5b7c7", "56a7a83"},
+        {"--waveflipkill", "4c5b7c7", "56a7a83"},
+        {"--no-waveflipkill", "4c5b7c7", "56a7a83"},
+        {"--waveslopeside", "4c5b7c7", "56a7a83"},
+        {"--no-waveslopeside", "4c5b7c7", "56a7a83"},
+        {"--wavespentgate", "4c5b7c7", "56a7a83"},
+        {"--no-wavespentgate", "4c5b7c7", "56a7a83"},
+        {"--witnessframe", "4c5b7c7", "ac5506d"},
+        // the 0.2.0 clean-up
+        {"--automixlag", "a234c00", "edc8b6b"},
+        {"--no-automixlag", "a234c00", "edc8b6b"},
+        {"--trigwinworld", "a234c00", "edc8b6b"},
+        {"--no-trigwinworld", "a234c00", "edc8b6b"},
+        {"--bootretime", "a234c00", "edc8b6b"},
+        {"--no-bootretime", "a234c00", "edc8b6b"},
+        };
+        for (int i = 1; i < argc; ++i)
+            for (const auto& r : kRemoved) {
+                const size_t n = std::strlen(r[0]);
+                const bool hit = r[0][n - 1] == '='
+                    ? !std::strncmp(argv[i], r[0], n) : !std::strcmp(argv[i], r[0]);
+                if (hit) {
+                    std::printf("leveldp: %s was removed in %s; the behaviour is fixed "
+                                "(since %s)\n", argv[i], r[1], r[2]);
+                    std::fprintf(stderr, "leveldp: %s was removed in %s; the behaviour is "
+                                 "fixed (since %s)\n", argv[i], r[1], r[2]);
+                    return 2;
+                }
+            }
+    }
     std::string outPath = "leveldp_plan.txt";
     // --replay <plan.txt>: DIAGNOSTIC ONLY. Re-simulate a fixed input plan
     // (the driver's own "input=tick,level" format) against the model and
@@ -200,10 +341,13 @@ inline int cliMain(int argc, char** argv) {
     double startSnapDist = 0.0;
     int startFrame = 0;   // --start's 21st field (gframe); gates the pad seeding
     double x0 = -kDx;  // so that x(1) = 0
+    // --start's world x, kept before a rotated frame maps x0 into its travel
+    // coordinate (see g_trigWinNear).
+    double x0World = -1e18;
     int dbgLayers = 0;
     std::string snapLogPath;
     std::vector<std::string> groupsPaths;
-    std::string trigPath, grpPath, obbPath, setPath, rotQPath;
+    std::string trigPath, grpPath, obbPath, setPath, rotQPath, itemPath;
     // y, vy, mode, held, grounded, flip (everything after that is zeroed)
     State init{(float)kFloorY, 0.f, 0, 0, 1, 0};
     // value-less flags get their own loop: the one below stops at argc-1 (every
@@ -213,22 +357,33 @@ inline int cliMain(int argc, char** argv) {
         // On by default since v0.1.4: the plain names still parse (and change
         // nothing), the --no- forms are the off arm.
         if (!std::strcmp(argv[i], "--spawnremap")) g_spawnRemap = true;
-        if (!std::strcmp(argv[i], "--touchretime")) g_touchRetime = true;
-        if (!std::strcmp(argv[i], "--shipslopekill")) g_shipSlopeKill = true;
-        if (!std::strcmp(argv[i], "--waveflipkill")) g_waveFlipKill = true;
         if (!std::strcmp(argv[i], "--no-spawnremap")) g_spawnRemap = false;
-        if (!std::strcmp(argv[i], "--no-touchretime")) g_touchRetime = false;
-        if (!std::strcmp(argv[i], "--no-shipslopekill")) g_shipSlopeKill = false;
-        if (!std::strcmp(argv[i], "--no-waveflipkill")) g_waveFlipKill = false;
+        if (!std::strcmp(argv[i], "--flyhazaftersolid")) g_flyHazAfterSolid = true;
+        if (!std::strcmp(argv[i], "--pinminnoswing")) g_pinMinNoSwing = true;
         if (!std::strcmp(argv[i], "--latgap")) g_latGap = true;
+        if (!std::strcmp(argv[i], "--hazaabb")) g_hazAabb = true;
+        // --ceilrideslope: no flight ceiling ride while a ceiling ramp presses.
+        if (!std::strcmp(argv[i], "--ceilrideslope")) g_ceilRideSlope = true;
+        if (!std::strcmp(argv[i], "--fgarmlive")) g_fgArmLive = true;
+        if (!std::strcmp(argv[i], "--trigdump")) g_trigDump = true;
+        if (!std::strcmp(argv[i], "--stopdump")) g_stopDump = true;   // print only
+        if (!std::strcmp(argv[i], "--trigeffect")) g_trigEffect = true;  // print only
+        if (!std::strcmp(argv[i], "--forceunit1x")) g_forceUnit1x = true;
+        // --lawseatonslope: a ride's slopeT starts from the slopelaw seat.
+        if (!std::strcmp(argv[i], "--lawseatonslope")) g_lawSeatOnSlope = true;
+        // ...and here as well, because the loop that used to own it stops at argc-1:
+        // passed LAST on the command line it was read by nobody, which is how the
+        // turned-hazard fixture came out "still dies" for the arm that re-applies the
+        // box (py/test_haz_turned_stage.py). Parsing it twice is harmless -- it only
+        // ever sets the flag true.
+        if (!std::strcmp(argv[i], "--obb-all")) g_obbAll = true;
+        if (!std::strcmp(argv[i], "--no-obb-all")) g_obbAll = false;   // the off arm since 2026-09-21
         if (!std::strcmp(argv[i], "--memstat")) g_memStat = true;
         // --phaseprof: wall time per phase of the layer loop, printed once at the end. Print only.
         if (!std::strcmp(argv[i], "--phaseprof")) g_phaseProf = true;
         // --firebcheck: count violations of fireB's invariant (a set bit with no
         // tick, or a tick with no bit) and print the totals at the end.
         if (!std::strcmp(argv[i], "--firebcheck")) g_fireBCheck = true;
-        // --noformula: keep formula-driven objects on the recording path.
-        if (!std::strcmp(argv[i], "--noformula")) g_noFormula = true;
         // --rotqueue: consume rotations from the queue (frames.hpp) instead of
         // the pre-queue selection. Opt-in until the anchor can seed the state.
         if (!std::strcmp(argv[i], "--rotqueue")) g_rotQueue = true;
@@ -262,6 +417,28 @@ inline int cliMain(int argc, char** argv) {
         // --anchor-state / --seed-partial-ok: the anchor payload (frames.hpp).
         if (!std::strcmp(argv[i], "--anchor-state")) g_anchorState = argv[i + 1];
         if (!std::strcmp(argv[i], "--touchseed") && i + 1 < argc) g_touchSeedArg = argv[i + 1];
+        // --touchentered uid[:tick],uid[:tick],... ("-" = none): see
+        // g_touchEnteredGiven and g_touchEnteredT.
+        if (!std::strcmp(argv[i], "--touchentered") && i + 1 < argc) {
+            g_touchEnteredGiven = true;
+            g_touchEntered.clear();
+            g_touchEnteredT.clear();
+            const std::string v = argv[i + 1];
+            size_t p = 0;
+            while (p < v.size()) {
+                size_t q = v.find(',', p);
+                if (q == std::string::npos) q = v.size();
+                const std::string tok = v.substr(p, q - p);
+                const int u = std::atoi(tok.c_str());
+                if (u > 0) {
+                    g_touchEntered.insert(u);
+                    const size_t c = tok.find(':');
+                    if (c != std::string::npos)
+                        g_touchEnteredT[u] = std::atoi(tok.c_str() + c + 1);
+                }
+                p = q + 1;
+            }
+        }
         if (!std::strcmp(argv[i], "--seed-partial-ok")) g_seedPartialOk = true;
         // --shiftstat: one line per moving object saying which recorded row the
         // model reads for it (dynamics.hpp). Single-threaded paths only -- the
@@ -294,68 +471,14 @@ inline int cliMain(int argc, char** argv) {
             g_rjAfter = std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--refeps") && i + 1 < argc)
             g_refEps = std::atof(argv[i + 1]);
-        if (!std::strcmp(argv[i], "--no-miniwave")) g_noMiniWave = true;
-        // --no-ringmode: the pre-2026-09-04 ring gate (held fires in every
-        // mode). A/B switch, see g_noRingMode.
-        if (!std::strcmp(argv[i], "--no-ringmode")) g_noRingMode = true;
-        // --no-pressspent: the pre-2026-09-05 ring gate (only a RING spends the
-        // hold). A/B switch, see g_noPressSpent.
-        if (!std::strcmp(argv[i], "--no-pressspent")) g_noPressSpent = true;
-        // --no-portalseat: no same-tick seating after a mode change. See
-        // g_noPortalSeat.
-        if (!std::strcmp(argv[i], "--no-portalseat")) g_noPortalSeat = true;
-        // --no-forceorder: force inside the terminal clamp. See g_noForceOrder.
-        if (!std::strcmp(argv[i], "--no-forceorder")) g_noForceOrder = true;
-        // --no-rot2900halve: no halving on a same-frame 2900 polarity change.
-        if (!std::strcmp(argv[i], "--no-rot2900halve")) g_noRot2900Halve = true;
-        // --no-slopeland5: ramp contact always lands. See g_noSlopeLand5.
-        if (!std::strcmp(argv[i], "--no-slopeland5")) g_noSlopeLand5 = true;
-        // --no-portallatch: a gravity portal fires on every pass.
-        if (!std::strcmp(argv[i], "--no-portallatch")) g_noPortalLatch = true;
-        // --no-r52gravhold: drop r52. See g_noR52GravHold.
-        if (!std::strcmp(argv[i], "--no-r52gravhold")) g_noR52GravHold = true;
-        // --no-ceilseat: no acquisition from under a ceiling ramp.
-        if (!std::strcmp(argv[i], "--no-ceilseat")) g_noCeilSeat = true;
-        // --no-dualflip: a dual's flip does not reach the partner.
-        if (!std::strcmp(argv[i], "--no-slopeveto")) g_noSlopeVeto = true;
-        // --no-slopefreshrect: a fresh ramp contact skips GD's inset rect test.
-        if (!std::strcmp(argv[i], "--no-slopefreshrect"))
-            g_noSlopeFreshRect = true;
-        // --no-slopenudge: the ramp contact keeps the pre-2026-09-06 velocity
-        // rules (the gradient-signed +-2.0 writes) instead of GD's V3/V4/V5.
-        if (!std::strcmp(argv[i], "--no-slopenudge"))
-            g_noSlopeNudge = true;
-        // --no-mpushreach: the flight mover-catch seats at any penetration
-        // (the pre-2026-09-06 behaviour) instead of GD's speed-widened reach.
-        if (!std::strcmp(argv[i], "--no-mpushreach"))
-            g_noMpushReach = true;
-        // --no-boostlatch: only the swing carries GD's velocity-limit
-        // exemption (the pre-2026-09-06 scope), so a ship or UFO clamps on the
-        // tick after any boost and its acceleration never takes the latched
-        // rung.
-        if (!std::strcmp(argv[i], "--no-boostlatch"))
-            g_noBoostLatch = true;
-        // --no-ringfirsttouch: several rings touching at once are resolved by
-        // lowest uid alone (the pre-2026-09-06 behaviour), without preferring
-        // the one that was already in contact on the previous tick.
-        if (!std::strcmp(argv[i], "--no-ringfirsttouch"))
-            g_noRingFirstTouch = true;
-        // --no-padobb: a rotated pad's contact is tested against the raw player
-        // rotation, with no override (the pre-2026-09-06 behaviour).
-        if (!std::strcmp(argv[i], "--no-padobb")) g_noPadObb = true;
         // --no-padplayerrot: a rotated pad's contact is tested with the player
         // square forced AXIS-ALIGNED (the a874728 behaviour) rather than turned
-        // by the player's own rotation. Wins over --no-padobb.
+        // by the player's own rotation.
         if (!std::strcmp(argv[i], "--no-padplayerrot")) g_noPadPlayerRot = true;
-        // --no-padspinpre: a pad's same-tick rotation step turns toward the
-        // END-of-tick gravity (the pre-2026-09-06 behaviour) instead of the
-        // gravity at the moment of the call. See g_noPadSpinPre.
-        if (!std::strcmp(argv[i], "--no-padspinpre")) g_noPadSpinPre = true;
         // --no-satrotraw: the four oriented-contact sites advance s.rot by one
         // spin step before the SAT (the pre-2026-09-06 behaviour) instead of
         // passing it as it stands. See g_noSatRotRaw.
         if (!std::strcmp(argv[i], "--no-satrotraw")) g_noSatRotRaw = true;
-        if (!std::strcmp(argv[i], "--no-dualflip")) g_noDualFlip = true;
         if (!std::strcmp(argv[i], "--old-latency")) g_oldLatency = true;
         if (!std::strcmp(argv[i], "--old-slope")) g_oldSlope = true;
         if (!std::strcmp(argv[i], "--rotport")) g_rotPort = true;
@@ -364,23 +487,25 @@ inline int cliMain(int argc, char** argv) {
         // argc-1 loop would drop it silently whenever it is passed last.
         if (!std::strcmp(argv[i], "--rotqtoggle")) g_rotQToggle = true;
         if (!std::strcmp(argv[i], "--touchcensus")) g_touchCensus = true;   // value-less, same reason
-        // --touchprey=parent|button: the value rides in the same token, so it
-        // lives in this loop too. See g_touchPreyButton.
-        if (!std::strncmp(argv[i], "--touchprey=", 12)) {
-            const char* v = argv[i] + 12;
-            if (!std::strcmp(v, "button")) g_touchPreyButton = true;
-            else if (!std::strcmp(v, "parent")) g_touchPreyButton = false;
-            else std::fprintf(stderr, "leveldp: --touchprey=%s is not parent|button; using parent\n", v);
-        }
+        if (!std::strcmp(argv[i], "--swingpushtol")) g_swingPushTol = true;   // value-less
+        if (!std::strcmp(argv[i], "--lagfit")) g_lagFitDbg = true;   // print only
+        // --keycensus: count, per touch box, how often it divided the dedupe
+        // key. Print-only; the tally goes out at the end of the run.
+        if (!std::strcmp(argv[i], "--keycensus")) g_keyCensus = true;
+        if (!std::strcmp(argv[i], "--ceilpin")) g_ceilPin = true;
+        // --trigraw: autonomous triggers behind the anchor trust the
+        // recording's tick (history at g_trigRaw's declaration). These three sat
+        // in the argc-1 loop and were never read when passed last
+        // (py/test_valueless_flags.py).
+        if (!std::strcmp(argv[i], "--trigraw")) g_trigRaw = true;
+        if (!std::strcmp(argv[i], "--trigwinsel")) g_trigWinSel = true;   // value-less, same reason
+        // --groupholddeath: the last --groups file ended on a death; hold its
+        // last row one tick (groups.hpp). The mod appends it after the live
+        // recording, i.e. last. Value-less, so it lives in this loop.
+        if (!std::strcmp(argv[i], "--groupholddeath")) g_groupHoldDeath = true;
         if (!std::strcmp(argv[i], "--ceilpush")) g_ceilPush = true;   // value-less, same reason
-        if (!std::strcmp(argv[i], "--slopelaw")) g_slopeLaw = true;   // value-less, same reason
-        if (!std::strcmp(argv[i], "--no-slopelaw")) g_slopeLaw = false;   // the off arm since v0.1.4
-        if (!std::strcmp(argv[i], "--nofreeside")) g_noFreeSide = true;   // value-less, same reason
-        if (!std::strcmp(argv[i], "--escrotahead")) g_escRotAhead = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--bonkarm")) g_bonkArm = true;   // value-less, same reason
-        if (!std::strcmp(argv[i], "--witnessframe")) g_witnessFrame = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--vetophys")) g_vetoPhys = true;   // value-less, same reason
-        if (!std::strcmp(argv[i], "--dropnocollide")) g_dropNoCollide = true;   // value-less, same reason
         if (!std::strcmp(argv[i], "--verdictinfo")) g_verdictInfo = true;   // value-less, same reason
         // Value-less too, and the mod's addWorldArgs can emit it LAST (nothing
         // after it when no boxes are dropped, obb.txt is missing and dpArgs is
@@ -413,24 +538,6 @@ inline int cliMain(int argc, char** argv) {
         // instead of GD's extrapolated `line -/+ h/(2 cos t)` with the bounds on
         // the target y. See slopeSeatTarget in slopes.hpp.
         if (!std::strcmp(argv[i], "--no-slopeseat")) g_noSlopeSeat = true;
-        // --no-ufolandtol: the UFO keeps the unmeasured 6.0 floor allowance
-        // instead of GD's own 1 fresh / 2 continuing.
-        if (!std::strcmp(argv[i], "--no-ufolandtol")) g_noUfoLandTol = true;
-        // --no-uforampflap: a normal UFO flapping off a floor ramp keeps its
-        // plain 6.871 instead of the rig's measured 8.000.
-        if (!std::strcmp(argv[i], "--no-uforampflap")) g_noUfoRampFlap = true;
-        // --no-ridelandlaunch: the slope-exit launch fires off any contact, not
-        // only off a ride that became a landing.
-        if (!std::strcmp(argv[i], "--no-ridelandlaunch"))
-            g_noRideLandLaunch = true;
-        // --no-ballcorng: the ball's hang window keeps the constant 1.5 grace
-        // on its exit end instead of one tick's movement |useDx|.
-        if (!std::strcmp(argv[i], "--no-ballcorng")) g_noBallCornG = true;
-        // --no-rampfirst: the model's own order (solids first, the ramp seat
-        // last and never revisited) instead of GD's ramp-then-solid. With
-        // --no-slopeseat as well the build reproduces the pre-2026-09-06
-        // behaviour byte for byte.
-        if (!std::strcmp(argv[i], "--no-rampfirst")) g_noRampFirst = true;
         // --spddbg: one line per speed-portal candidate per tick, plus the
         // window size, plus which of the three gates rejected it.
         if (!std::strcmp(argv[i], "--spddbg")) g_spdDbg = true;
@@ -444,6 +551,11 @@ inline int cliMain(int argc, char** argv) {
         // --no-rotsplit: keep the recording for turned objects instead of the
         // computed orbit (stage 1' A/B).
         if (!std::strcmp(argv[i], "--no-rotsplit")) g_rotSplit = false;
+        // --coins: collect every coin in the level as well as reaching the end.
+        // Value-less, so it belongs HERE -- put in the loop below it was read
+        // only when something else followed it on the command line, and the
+        // first run passed it last and silently solved the level as usual.
+        if (!std::strcmp(argv[i], "--coins")) g_coinRoute = true;
     }
     for (int i = 2; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--threads")) g_threads = std::atoi(argv[i + 1]);
@@ -457,6 +569,13 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--out")) outPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--dbg")) dbgLayers = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--cap")) g_aliveCap = (size_t)std::atoll(argv[i + 1]);
+        // --coinmask <bits>: with --coins, the coins already collected at the
+        // --start anchor (bit i = L.coins[i], x order). See the seed below.
+        if (!std::strcmp(argv[i], "--coinmask")) g_coinMaskSeed = std::atoi(argv[i + 1]);
+        // --coinskip <bits>: coins to leave out of the goal (same bit order).
+        // Kept apart from --coinmask because the loop passes that one itself,
+        // at every anchor, and the last occurrence would win.
+        if (!std::strcmp(argv[i], "--coinskip")) g_coinSkip = std::atoi(argv[i + 1]);
         // --hazdbg <uid>: see g_hazDbgUid. Takes a value, so it is parsed with
         // the same argv[i+1] form as --cap and not with the valueless shape at
         // the top of this file, which is silently off when it is given one.
@@ -465,34 +584,38 @@ inline int cliMain(int argc, char** argv) {
         // group applied. Reads --hazdbg for WHICH object to locate, so the two
         // flags are given together.
         if (!std::strcmp(argv[i], "--trigdbg")) g_trigDbgT = std::atoll(argv[i + 1]);
+        // Where the model put each coin at that tick, against the mod's own
+        // `coinlive:` line for the same tick (see the declaration).
+        if (!std::strcmp(argv[i], "--coindbg")) g_coinDbgT = std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--gcnodes")) g_gcNodes = (size_t)std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--memlimit")) g_memLimitMiB = (size_t)std::atoll(argv[i + 1]);
         if (!std::strcmp(argv[i], "--shipyq")) g_shipYq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--shipvq")) g_shipVq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--snaplog")) snapLogPath = argv[i + 1];
-        if (!std::strcmp(argv[i], "--shipceil")) {
-            g_shipCeil = std::atof(argv[i + 1]);
-            g_shipCeilSet = true;
-        }
-        if (!std::strcmp(argv[i], "--flyfloor")) g_flyFloor = std::atof(argv[i + 1]);
-        if (!std::strcmp(argv[i], "--ufoceil")) g_ufoCeil = std::atof(argv[i + 1]);
-        // --ceil <y>            everywhere (lv9)
-        // --ceil <y>@<x0>:<x1>  only inside that x window (lv14), repeatable
-        if (!std::strcmp(argv[i], "--ceil")) {
-            CeilBand b{0.0, -1e18, 1e18};
-            const char* a = argv[i + 1];
-            const char* at = std::strchr(a, '@');
-            b.y = std::atof(a);
-            if (at) std::sscanf(at + 1, "%lf:%lf", &b.x0, &b.x1);
-            if (b.y > 0.0) g_playerCeils.push_back(b);
-        }
+        // [2026-08-31] --shipceil / --ceil / --flyfloor / --ufoceil ARE GONE.
+        // Not the machinery -- g_shipCeil, g_playerCeils / playerCeilAt,
+        // g_flyFloor and g_ufoCeil are all still read where they always were --
+        // only the way to SET them from the command line. An audit found that
+        // nothing passes any of the four: not addWorldArgs (the full list the
+        // in-game loop hands the solver is level dumps plus what the run itself
+        // produced), not cold_regress.py (one identical cfg for all 22 levels),
+        // not fidelity_diff, not the lab. They are per-LEVEL knobs in a solver
+        // whose whole claim is that every level gets the same one, and leaving a
+        // way to set them meant the claim held only because nobody happened to.
+        // Their comments still describe values "measured per level" (lv9 = 330,
+        // lv14 = 420@13100:13600) as though they were in force; they are not,
+        // and both levels solve without them. See the notes at the globals.
+        // Dropping the flags makes that structural instead of accidental, and
+        // leaves the readers as plain dead code for whoever deletes them.
         // --groups <file>: the MOD's grouptrace dump. Without it every level
         // from lv19 on is planned against geometry that is in the wrong place.
         if (!std::strcmp(argv[i], "--groups")) groupsPaths.push_back(argv[i + 1]);
+        // --groupholdend <n>: the bootstrap fills in only n ticks after a live
+        // recording ends (see g_groupHoldEnd in groups.hpp). Default 0.
+        if (!std::strcmp(argv[i], "--groupholdend")) g_groupHoldEnd = std::atoi(argv[i + 1]);
         // --triggers / --objgroups: the MOD's trigger -> group -> uid map. Both
         // or neither; without them a door that only opens on contact reads as a
         // solid wall (see TouchTrig).
-        if (!std::strcmp(argv[i], "--norevtoggle")) g_revToggle = false;
         // --supporttol X: gap tolerance for staying supported (default 0.01,
         // and the surface's own |dcy| is added on top -- see kSupportTol's
         // note)
@@ -514,13 +637,6 @@ inline int cliMain(int argc, char** argv) {
         // 3.15, see kStepDepth's note)
         if (!std::strcmp(argv[i], "--stepdepth"))
             kStepDepth = std::atof(argv[i + 1]);
-        // --nohangladder: turn off the hanging ride's ship ladder (r88)
-        // (diagnostic A/B)
-        if (!std::strcmp(argv[i], "--nohangladder")) g_noHangLadder = true;
-        if (!std::strcmp(argv[i], "--nocrush")) g_noCrush = true;
-        // --no-dyninterp: turn off interpolation between recording rows (the
-        // r104 A/B)
-        if (!std::strcmp(argv[i], "--no-dyninterp")) g_dynInterp = false;
         // --ctrlwin t0:t1,t0:t1,...: controls-disabled windows (both ends
         // inclusive). The caller builds them from the ctrlOff column of GD's
         // dump (history at g_ctrlWin's declaration).
@@ -535,11 +651,6 @@ inline int cliMain(int argc, char** argv) {
                 p = c + 1;
             }
         }
-        if (!std::strcmp(argv[i], "--ceilpin")) g_ceilPin = true;
-        // --trigraw: autonomous triggers behind the anchor trust the
-        // recording's tick (history at g_trigRaw's declaration). The argument
-        // loop runs to i+1<argc, so PASSED LAST IT IS NEVER READ.
-        if (!std::strcmp(argv[i], "--trigraw")) g_trigRaw = true;
         // --spentrot uid,uid,...: 2900s already fired before the anchor
         // (history at g_spentRot's declaration). Applied after loadLevel (once
         // g_rotTrig has been filled).
@@ -565,6 +676,25 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--dyndbg")) g_dynDbg = std::atoi(argv[i + 1]);
         if (!std::strcmp(argv[i], "--triggers")) trigPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--objgroups")) grpPath = argv[i + 1];
+        // --items <path>: the MOD's items.txt, the pickups a Count trigger
+        // counts. Read only under --coins (nothing else looks at a counter).
+        if (!std::strcmp(argv[i], "--items")) itemPath = argv[i + 1];
+        // --itembase "<item>:<n>,...": the counters GD already holds at the
+        // anchor (see g_itemBase).
+        // --coinmargin <px>: how far inside a coin the plan has to be (see
+        // kCoinMargin). 0 restores "the boundary counts", which is GD's own
+        // rule and the fragile one to plan against.
+        if (!std::strcmp(argv[i], "--coinmargin")) kCoinMargin = std::atof(argv[i + 1]);
+        if (!std::strcmp(argv[i], "--itembase")) {
+            g_itemBase.clear();
+            std::stringstream ss(argv[i + 1]);
+            std::string ent;
+            while (std::getline(ss, ent, ',')) {
+                int it = 0, n = 0;
+                if (std::sscanf(ent.c_str(), "%d:%d", &it, &n) == 2 && it != 0)
+                    g_itemBase.push_back({it, n});
+            }
+        }
         // --rotgameplay <path>: the MOD's dump of the 2899/2900 queue (channel,
         // ord, the switch fields). Absent on 21 of 22 levels, which have no
         // such object at all.
@@ -580,6 +710,8 @@ inline int cliMain(int argc, char** argv) {
         // Optional -- without it a turned hazard keeps the bound it has always
         // had, so a level with no obb dump cannot move.
         if (!std::strcmp(argv[i], "--obb")) obbPath = argv[i + 1];
+        // --forceids <file>: force block IDs (see g_forceIdsPath)
+        if (!std::strcmp(argv[i], "--forceids")) g_forceIdsPath = argv[i + 1];
         // --bandtrack <file>: the recorded band (history at g_bandTrack's
         // declaration)
         if (!std::strcmp(argv[i], "--bandtrack")) {
@@ -679,16 +811,13 @@ inline int cliMain(int argc, char** argv) {
         }
         // --needtrig <n>: repeatable. See g_needTrig.
         if (!std::strcmp(argv[i], "--needtrig"))
-            g_needTrig |= (uint32_t)1 << std::atoi(argv[i + 1]);
+            g_needTrig |= touchBit(std::atoi(argv[i + 1]));
         if (!std::strcmp(argv[i], "--needtrig-unseen")) g_needUnseen = true;
         // --needtrig-skip <n>: repeatable. See g_needSkip.
         if (!std::strcmp(argv[i], "--needtrig-skip"))
-            g_needSkip |= (uint32_t)1 << std::atoi(argv[i + 1]);
-        if (!std::strcmp(argv[i], "--oriented")) g_oriented = true;
-        if (!std::strcmp(argv[i], "--no-oriented")) g_oriented = false;
+            g_needSkip |= touchBit(std::atoi(argv[i + 1]));
         if (!std::strcmp(argv[i], "--obb-all")) g_obbAll = true;
-        if (!std::strcmp(argv[i], "--trigclosed")) g_trigClosed = true;
-        if (!std::strcmp(argv[i], "--no-trigclosed")) g_trigClosed = false;
+        if (!std::strcmp(argv[i], "--no-obb-all")) g_obbAll = false;   // the off arm since 2026-09-21
         if (!std::strcmp(argv[i], "--bands")) g_bandPath = argv[i + 1];
         if (!std::strcmp(argv[i], "--replay")) replayPath = argv[i + 1];
         // --fixups <file>: divergence-driven local overrides recorded by the
@@ -808,10 +937,14 @@ inline int cliMain(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--cubeyq")) g_cubeYq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--cubevq")) g_cubeVq = std::atof(argv[i + 1]);
         if (!std::strcmp(argv[i], "--start")) {
-            // 29 fields (21st=frame, 22nd=rev, 23rd/24th=sprite rotation,
+            // 30 fields (21st=frame, 22nd=rev, 23rd/24th=sprite rotation,
             // 25th=boost, 26th/27th=the second body's mode and size,
             // 28th=ticks since the last gravity flip, 29th=ticks since the
-            // last id-1859 ceiling arm).
+            // last id-1859 ceiling arm, 30th=rotStep). The mod's producer
+            // (repair.hpp startArg) writes the first 27 only, so 28-30 reach
+            // this parser from the offline instruments and one-off scripts
+            // alone. New per-body history does not get a field here: it goes
+            // through --anchor-state owns=hist (frames.hpp, kHistNames).
             // FORGET TO GROW THE SIZE AND
             // sscanf WRITES PAST THE ARRAY: when rev was added it was left at
             // 21, and it showed up as rev=0/1 not changing the result by a
@@ -954,6 +1087,7 @@ inline int cliMain(int argc, char** argv) {
             g_startSpeedMul = a[14];
             t0 = (long long)a[0];
             x0 = a[1];
+            x0World = a[1];
             init = State{(float)a[2], (float)a[3], (uint8_t)a[4], (uint8_t)a[6],
                          (uint8_t)a[5], (uint8_t)a[7]};
             init.mini = (uint8_t)a[8];
@@ -1147,7 +1281,8 @@ inline int cliMain(int argc, char** argv) {
     for (size_t gi = 0; gi < groupsPaths.size(); ++gi) {
         GroupTimeline one = loadGroupTimeline(groupsPaths[gi]);
         if (gi == 0) gt = std::move(one);
-        else overlayGroupTimeline(gt, one);
+        else overlayGroupTimeline(gt, one,
+                                  g_groupHoldDeath && gi + 1 == groupsPaths.size());
     }
     if (!trigPath.empty() && !grpPath.empty()) {
         // The window (--touch-from-anchor) stays opt-in in general -- the note at
@@ -1162,19 +1297,117 @@ inline int cliMain(int argc, char** argv) {
         // Auto-window exactly then: the levels below 33 triggers never trip this,
         // and early anchors keep the measured-safe plain list.
         g_touchRetimeFrom = t0;   // --touchretime re-times only boxes entered from here on
+        // THE COIN SIDE FIRST, because the probe below decides the gate from a
+        // list loadTouchTriggers builds, and both of these change that list: a
+        // Count or Tap trigger is a root only when its chain reaches a coin
+        // (g_coinUids), and a box is kept as a feeder only when its chain
+        // reaches something items.txt says gives the item a coin's counter
+        // reads (g_itemGiver, filled by loadCollectibles). Loaded after the
+        // probe, the probe would be deciding on a population the run does not
+        // use -- which is the fault --trigwinsel exists to name.
+        if (g_coinRoute) {
+            g_coinUids = coinUids(argv[1]);
+            std::printf("coins: %zu coin uids for the trigger window\n",
+                        g_coinUids.size());
+        }
+        if (g_coinRoute && !itemPath.empty()) {
+            loadCollectibles(itemPath);
+            if (!g_collect.empty())
+                std::printf("items: %zu pickups\n", g_collect.size());
+        }
+        // The types the chains reach (the relevance filter reads them, --trigdump
+        // prints them). Read here because loadLevel has not run yet and this is
+        // the only place that knows the dump's path.
+        // MOVED ABOVE THE GATE (2026-09-21) so the probe below can use it: see
+        // g_trigWinSel.
+        // In-process, argv[1] is a placeholder and the level is g_levelCsv (see
+        // loadObjTypesFrom). --csvtypes reads it from there.
+        std::unordered_map<int, int> objTypes;
+        if (!g_levelCsv.empty()) {
+            std::istringstream cs(g_levelCsv);
+            objTypes = loadObjTypesFrom(cs);
+        } else {
+            objTypes = loadObjTypes(argv[1]);
+        }
         bool winTouch = g_touchFromAnchor;
-        if (!winTouch && x0 > -1e17) {
+        // A rotated-frame anchor is placed by its WORLD x (the boxes' cx are
+        // world), and windows around it (triggers.hpp, g_trigWinNear).
+        const bool rotWin = startFrame != 0 && x0World > -1e17;
+        const double xGate = rotWin ? x0World : x0;
+        if (!winTouch && xGate > -1e17) {
+            // --trigwinsel: probe the population this call will ACTUALLY load.
+            // Without it the probe runs with the selection off while g_touch
+            // below runs with it on (it has been on by default since 934c21e),
+            // so the gate is decided on a list the run never uses: on lv22 the
+            // probe's last box is at cx 2,283 and the loaded set reaches 3,675,
+            // and the gate fires ~1,400 px of anchor too early. Early windowing
+            // is the direction the note at the cap records a measured failure
+            // for, so this is not a safe inconsistency -- but it does change
+            // which anchors window, so it is off until measured.
             const std::vector<TouchTrig> plain =
-                loadTouchTriggers(trigPath, grpPath, -1e18);
-            if (plain.size() >= 32 && !plain.empty()
-                && plain.back().cx < x0 - 200.0) {
+                loadTouchTriggers(trigPath, grpPath, -1e18,
+                                  g_trigWinSel ? &objTypes : nullptr);
+            // THE LAST BOX, NOT THE LAST ENTRY. With --coins the list ends with
+            // the roots held outside the cap (Counts, Taps, Item Compares --
+            // triggers.hpp), which have no x the player passes, and lv22's tap
+            // at x=15,525 sat last in every probe: no anchor ever windowed, and
+            // every coin run carried the boxes of x=511..3,674 all the way to
+            // the end (the loop's own `[trigwin] win=0 maxKeptX=3674`). Without
+            // coins nothing is held and the max is the last entry, as before.
+            double lastBox = -1e18;
+            for (const TouchTrig& e : plain)
+                if (e.count < 0 && !e.tap) lastBox = std::max(lastBox, e.cx);
+            if ((int)plain.size() >= kTouchBits && !plain.empty()
+                && lastBox < xGate - 200.0) {
                 winTouch = true;
-                std::printf("triggers: the plain 32 all lie behind the anchor "
+                // ...and say how many, rather than "32": the cap is kTouchBits
+                // and the probe's own count is what the test just used.
+                std::printf("triggers: the plain %d all lie behind the anchor "
                             "(last %.0f < %.0f) - windowing from the anchor\n",
-                            plain.back().cx, x0);
+                            (int)plain.size(), lastBox, xGate);
             }
         }
-        g_touch = loadTouchTriggers(trigPath, grpPath, winTouch ? x0 : -1e18);
+        // --movetarget: object positions, for a target-mode Move's destination.
+        // In-process the level is g_levelCsv, not argv[1] (a placeholder there).
+        std::unordered_map<int, std::pair<double, double>> objPos;
+        if (!g_levelCsv.empty()) {
+            std::istringstream cs(g_levelCsv);
+            objPos = loadObjPos(cs);
+        } else {
+            std::ifstream fs(argv[1]);
+            if (fs) objPos = loadObjPos(fs);
+        }
+        std::printf("movetarget: %zu object positions from %s\n", objPos.size(),
+                    g_levelCsv.empty() ? "the dump" : "the in-process level table");
+        if (rotWin && winTouch) g_trigWinNear = x0World;
+        g_touch = loadTouchTriggers(trigPath, grpPath, winTouch ? x0 : -1e18,
+                                    &objTypes,
+                                    &objPos);
+        g_trigWinNear = -1e18;
+        // ...and publish what that decided, because nothing else can see it:
+        // the numbers are printed and the mod has no pipe. See SolveOutcome.
+        g_outcome.trigWinTouch = g_touch.empty() ? -1 : (winTouch ? 1 : 0);
+        g_outcome.trigTotal = (long long)g_trigTotal;
+        g_outcome.trigRelevantN = (long long)g_trigRelevantN;
+        g_outcome.trigKept = (long long)g_trigKept;
+        g_outcome.trigDroppedRelevant = (long long)g_trigDroppedRelevant;
+        g_outcome.trigDroppedBehind = (long long)g_trigDroppedBehind;
+        g_outcome.trigDroppedAhead = (long long)g_trigDroppedAhead;
+        g_outcome.trigMaxKeptX = g_trigMaxKeptX;
+        // FNV-1a over the uids in BIT ORDER. Order is the point -- the same
+        // set of boxes in a different order is a different bit->uid map and
+        // must hash differently, which a set hash would hide.
+        {
+            unsigned long long h = 1469598103934665603ull;
+            for (const TouchTrig& t : g_touch) {
+                unsigned long long u = (unsigned long long)(unsigned)t.uid;
+                for (int k = 0; k < 8; ++k) {
+                    h ^= (u >> (k * 8)) & 0xffull;
+                    h *= 1099511628211ull;
+                }
+            }
+            g_outcome.trigMapSig = g_touch.empty() ? 0ull : h;
+        }
         buildTouchMoveTicks();   // the dedupe key's "is this box still moving"
         g_autoTrig = loadAutoTriggers(trigPath, grpPath);
     }
@@ -1189,6 +1422,10 @@ inline int cliMain(int argc, char** argv) {
                         g_touch.empty() ? nullptr : &g_touch,
                         g_autoTrig.empty() ? nullptr : &g_autoTrig);
     g_baseLv = &L;   // see levelOfFrame / applyRotation's re-tap
+    // Beside the dump when nobody said, the way levelsettings and rotgameplay are
+    // (forceIdsPathBeside; it returns empty unless the file is really there).
+    if (g_forceIdsPath.empty()) g_forceIdsPath = forceIdsPathBeside(argv[1]);
+    if (!g_forceIdsPath.empty()) applyForceIds(g_forceIdsPath);
     // ...and build every frame the level can turn into, NOW. frameLevel() is a
     // lazy cache, and applyRotation's re-tap needs the NEW frame's geometry on
     // the tick it turns -- which for the first rotation is before anything else
@@ -1252,7 +1489,7 @@ inline int cliMain(int argc, char** argv) {
             // rotated board -- see the padobb / padplayerrot note at the loop's
             // site in step.hpp. A type-8 pad's activation is judged with the
             // player's square TURNED BY ITS OWN ROTATION, so the anchor asks the
-            // same question here, under the same three arms. (No one-step
+            // same question here, under the same two arms. (No one-step
             // advance of the angle. That used to be a DIFFERENCE from the loop,
             // justified by `init.rot` being a whole seeded state rather than the
             // mid-tick value the loop reconstructed from `s.rot`; since the
@@ -1261,7 +1498,6 @@ inline int cliMain(int argc, char** argv) {
             double sRotPad = (double)init.rot;
             if (o.type == 8) {
                 if (g_noPadPlayerRot) sRotPad = 0.0;
-                else if (g_noPadObb) { /* raw, ungated */ }
                 else if (!padPlayerRotMode(init.mode)) sRotPad = 0.0;
             }
             if (o.oriented
@@ -1350,6 +1586,7 @@ inline int cliMain(int argc, char** argv) {
     // payload written against a wider window than this one's 32.
     std::vector<std::pair<int, int>> payloadTouch;
     std::vector<int> payloadPortal, payloadPortal2;
+    std::vector<std::pair<std::string, int>> payloadHist;
     bool havePayload = false;
     if (!g_anchorState.empty()) {
         std::vector<std::pair<std::string, std::string>> kv;
@@ -1363,12 +1600,56 @@ inline int cliMain(int argc, char** argv) {
             return 2;
         }
         bool sawTouchKey = false, sawPortalKey = false, sawPortal2Key = false;
+        bool sawHistKey = false;
         for (const auto& p : kv) {
             if (p.first == "owns") {
                 if (p.second.find("touch") != std::string::npos)
                     g_ownsTouch = true;
                 if (p.second.find("portal") != std::string::npos)
                     g_ownsPortal = true;
+                if (p.second.find("hist") != std::string::npos)
+                    g_ownsHist = true;
+            } else if (p.first == "hist") {
+                // version|count|name:value,... -- see kHistNames.
+                const std::string& v = p.second;
+                const size_t b1 = v.find('|');
+                const size_t b2 = (b1 == std::string::npos) ? b1
+                                                            : v.find('|', b1 + 1);
+                if (b2 == std::string::npos || v.substr(0, b1) != "1") {
+                    std::printf("seed payload rejected: hist '%s' is not version "
+                                "1 (version|count|name:value,...)\n", v.c_str());
+                    return 2;
+                }
+                const int want = std::atoi(v.substr(b1 + 1, b2 - b1 - 1).c_str());
+                int got = 0;
+                size_t i = b2 + 1;
+                while (i < v.size()) {
+                    size_t c = v.find(',', i);
+                    if (c == std::string::npos) c = v.size();
+                    const std::string nv = v.substr(i, c - i);
+                    i = c + 1;
+                    if (nv.empty()) continue;
+                    const size_t colon = nv.find(':');
+                    const std::string name = nv.substr(0, colon);
+                    bool known = false;
+                    for (const char* hn : kHistNames) if (name == hn) known = true;
+                    if (colon == std::string::npos || !known) {
+                        std::printf("seed payload rejected: hist name '%s' is "
+                                    "not one this exe knows:", name.c_str());
+                        for (const char* hn : kHistNames) std::printf(" %s", hn);
+                        std::printf("\n");
+                        return 2;
+                    }
+                    payloadHist.emplace_back(name,
+                                             std::atoi(nv.substr(colon + 1).c_str()));
+                    ++got;
+                }
+                if (got != want) {
+                    std::printf("seed payload rejected: hist says %d values and "
+                                "carries %d\n", want, got);
+                    return 2;
+                }
+                sawHistKey = true;
             } else if (p.first == "touch") {
                 payloadTouch = parseTouchPayload(p.second);
                 sawTouchKey = true;
@@ -1400,6 +1681,18 @@ inline int cliMain(int argc, char** argv) {
             missing += (missing.empty() ? "" : " ") + std::string("portal");
         if (g_ownsPortal && !sawPortal2Key)
             missing += (missing.empty() ? "" : " ") + std::string("portal2");
+        // ...and a claimed hist must name every value version 1 knows: an
+        // omitted one would be left at its default by nobody's decision.
+        if (g_ownsHist) {
+            if (!sawHistKey)
+                missing += (missing.empty() ? "" : " ") + std::string("hist");
+            for (const char* hn : kHistNames) {
+                bool have = false;
+                for (const auto& h : payloadHist) if (h.first == hn) have = true;
+                if (sawHistKey && !have)
+                    missing += (missing.empty() ? "" : " ") + std::string(hn);
+            }
+        }
         if (!missing.empty()) {
             if (!g_seedPartialOk) {
                 // Say WHY this is fatal rather than a warning: the payload
@@ -1429,10 +1722,10 @@ inline int cliMain(int argc, char** argv) {
         int set = 0, unmapped = 0;
         for (const auto& ut : payloadTouch) {
             int bit = -1;
-            for (size_t b = 0; b < g_touch.size() && b < 32; ++b)
+            for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b)
                 if (g_touch[b].uid == ut.first) { bit = (int)b; break; }
             if (bit < 0) { ++unmapped; continue; }
-            init.trig |= (uint32_t)1 << bit;
+            init.trig |= touchBit(bit);
             init.fireB[bit] = (uint16_t)std::max(0, ut.second);
             ++set;
         }
@@ -1460,10 +1753,10 @@ inline int cliMain(int argc, char** argv) {
         int set = 0, unmapped = 0;
         for (const auto& ut : parseTouchPayload(g_touchSeedArg)) {
             int bit = -1;
-            for (size_t b = 0; b < g_touch.size() && b < 32; ++b)
+            for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b)
                 if (g_touch[b].uid == ut.first) { bit = (int)b; break; }
             if (bit < 0) { ++unmapped; continue; }
-            init.trig |= (uint32_t)1 << bit;
+            init.trig |= touchBit(bit);
             init.fireB[bit] = (uint16_t)std::max(0, ut.second);
             ++set;
         }
@@ -1486,7 +1779,7 @@ inline int cliMain(int argc, char** argv) {
                 for (const Obj& p : L.portals)
                     if (p.uid == uid && p.gpBit >= 0) { bit = p.gpBit; break; }
                 if (bit < 0) { ++unmapped; continue; }
-                mask |= (uint32_t)1 << bit;
+                mask |= touchBit(bit);
                 ++set;
             }
         }
@@ -1494,6 +1787,16 @@ inline int cliMain(int argc, char** argv) {
                     "named but not a gravity portal in this level\n",
                     set, init.portalLatch, init.portalLatch2, unmapped);
         std::printf("seed: portal=payload\n");
+    }
+    // owns=hist: the per-body history values --start does not carry.
+    if (t0 > 0 && g_ownsHist) {
+        for (const auto& h : payloadHist) {
+            if (h.first == "pressSpent") init.pressSpent = (uint8_t)(h.second != 0);
+            else if (h.first == "pressSpent2")
+                init.pressSpent2 = (uint8_t)(h.second != 0);
+        }
+        std::printf("seed: hist=payload pressSpent=%d pressSpent2=%d\n",
+                    (int)init.pressSpent, (int)init.pressSpent2);
     }
     // The recording-derived seeding still runs even when a payload owns
     // `touch`, because it also seeds the LOCK -- a subsystem no payload claims
@@ -1506,8 +1809,20 @@ inline int cliMain(int argc, char** argv) {
         // Counted, because "nothing happened" is the failure mode this block has
         // (an anchor that silently keeps every door shut looks exactly like a
         // physics wall, and did for a whole session on lv22).
-        int nCtl = 0, nNoRec = 0, nNoOff = 0;
+        int nCtl = 0, nNoRec = 0, nNoOff = 0, nNotEntered = 0, nEnteredRedated = 0;
         for (size_t b = 0; b < g_touch.size(); ++b) {
+            // --touchentered: the boxes the attempt's own recorded positions
+            // overlapped by t0 (the mod's touchEnteredArg). Given, a box
+            // missing from it gets no bit from the recording below: an object
+            // moving before t0 says SOMETHING moved it, and when its group is
+            // also driven by an autonomous Move that something is not this box.
+            // lv22's ceiling (group 265) is moved by the autonomous Move 18311
+            // and by seven boxes' chains, so an anchor at x=2,954 used to open
+            // all seven, the nearest 240 px ahead of anything the player had
+            // reached. Not given, every box may open as before.
+            const bool mayOpen = !g_touchEnteredGiven
+                                 || g_touchEntered.count(g_touch[b].uid) != 0;
+            if (!mayOpen) ++nNotEntered;
             // HOW MANY BOXES CAN THIS SCAN NEVER SEED. Both branches below are
             // gated on `full > 0.5`, and `full` is the TRIGGER TABLE's offset,
             // so a box whose controllers all carry a zero offset -- move to
@@ -1665,8 +1980,9 @@ inline int cliMain(int argc, char** argv) {
                 // A payload that owns `touch` has already set these; the rest
                 // of this block still runs for the lock.
                 if (havePayload) continue;
+                if (!mayOpen) continue;
                 if (full > 0.5 && moved > full * 0.5) {
-                    init.trig |= (uint32_t)1 << b;
+                    init.trig |= touchBit(b);
                     // far enough back that the move counts as finished
                     init.trigT = (int32_t)(t0 - (long long)std::llround(c.durTicks));
                     // ...and this box's own tick, or the anchored state would
@@ -1683,8 +1999,8 @@ inline int cliMain(int argc, char** argv) {
                 // Neither "open" nor "shut" is true, so say open and let the
                 // recording carry the phase (see g_recPhase).
                 if (full > 0.5 && moved > 0.5) {
-                    init.trig |= (uint32_t)1 << b;
-                    g_recPhase |= (uint32_t)1 << b;
+                    init.trig |= touchBit(b);
+                    g_recPhase |= touchBit(b);
                     // The anchor landed INSIDE the slide, so this box is still
                     // moving and the key has to keep it. How far in is what the
                     // recording already says: `moved` of `full` is the fraction
@@ -1747,7 +2063,7 @@ inline int cliMain(int argc, char** argv) {
                 // the worst of the three -- the anchor then plans against a
                 // door the run had already opened.
                 if (full <= 0.5 && recFire >= 0 && recFire <= t0) {
-                    init.trig |= (uint32_t)1 << b;
+                    init.trig |= touchBit(b);
                     // fireB from the recording's own first motion, taken on
                     // EITHER axis because a rotation has no offset axis to
                     // prefer -- and nothing fast can contaminate it here: the
@@ -1760,16 +2076,37 @@ inline int cliMain(int argc, char** argv) {
                     break;
                 }
             }
+            // --touchentered uid:tick: a box the scan opened is dated by the
+            // attempt's own entry into it (the first recorded row that overlaps
+            // it, markTouched's test), not by the first motion of an object it
+            // moves -- which the branches above take, and which for an object an
+            // autonomous Move also drives is that Move's (g_touchEnteredT).
+            if (!havePayload && (init.trig & touchBit(b))) {
+                const auto et = g_touchEnteredT.find(g_touch[b].uid);
+                if (et != g_touchEnteredT.end() && et->second > 0
+                    && (long long)et->second <= t0) {
+                    if (init.fireB[b] != (uint16_t)et->second) ++nEnteredRedated;
+                    init.fireB[b] = (uint16_t)et->second;
+                }
+            }
         }
         std::printf("triggers: anchor scan t0=%lld: %d controlled objects, "
                     "%d with no recording, %d with no offset\n",
                     t0, nCtl, nNoRec, nNoOff);
+        if (g_touchEnteredGiven)
+            std::printf("triggers: --touchentered names %zu boxes (%zu with an entry "
+                        "tick, %d opened boxes re-dated by it); %d of %zu boxes "
+                        "may not open from the recording\n",
+                        g_touchEntered.size(), g_touchEnteredT.size(), nEnteredRedated,
+                        nNotEntered, g_touch.size());
         if (init.trig)
-            std::printf("triggers: anchor starts with mask 0x%x (already open in "
-                        "the recording)\n", init.trig);
+            std::printf("triggers: anchor starts with mask 0x%llx (already open "
+                        "in the recording)\n",
+                        (unsigned long long)init.trig);
         if (g_recPhase)
-            std::printf("triggers: mask 0x%x was still MOVING at the anchor -- "
-                        "replayed from the recording's own phase\n", g_recPhase);
+            std::printf("triggers: mask 0x%llx was still MOVING at the anchor -- "
+                        "replayed from the recording's own phase\n",
+                        (unsigned long long)g_recPhase);
     }
     // Autonomous triggers behind the anchor fired before the sim begins; their
     // first-motion tick is already in the recording (recFire of the objects
@@ -1797,7 +2134,7 @@ inline int cliMain(int argc, char** argv) {
             for (size_t i = 0; i < L.dyn.objs.size(); ++i) {
                 if (L.dyn.autoAnchor[i] != (int)b || L.dyn.trigRecFire[i] < 0)
                     continue;
-                const int tr = L.dyn.trigRecFire[i] - L.dyn.recLag[i];
+                const int tr = L.dyn.trigRecFire[i] - L.dyn.autoLag[i];
                 if (rf < 0 || tr < rf) rf = tr;
             }
             // [2026-08-22 r99] UNDER --trigraw, TRIGGERS AHEAD OF THE ANCHOR
@@ -1872,6 +2209,32 @@ inline int cliMain(int argc, char** argv) {
             // is the trigger's own cx to within one tick of travel (the
             // crossing is the FIRST x at or past cx).
             A.fireX = A.lockLastX = A.cx;
+            // --lockanchor [2026-09-19]: ...but for a lockToPlayerX trigger that
+            // is not enough. lockLastX only moves while the replay is inside the
+            // lock window, so an anchor past the window leaves fireX == lockLastX
+            // and the object sits at its base: lv19 uid15908/15910 (trigger
+            // uid15896, locked t=22,509..22,597) anchored at 22,600 came out at
+            // cx 31,455 where GD holds 31,570.596, and the robot standing on them
+            // fell. For an object moved in x by nothing but the lock, the
+            // recording (this plan's own replays) holds the displacement
+            // outright -- the same source the touch lock reads its lockOff from.
+            for (size_t i = 0; i < L.dyn.objs.size(); ++i) {
+                if (L.dyn.autoLockTrig[i] != (int)b
+                    || L.dyn.samples[i].size() < 2)
+                    continue;
+                bool xFree = true;
+                for (const auto& p : L.dyn.autoParts[i])
+                    xFree = xFree && std::fabs(p.dx) <= 0.001f;
+                if (!xFree) continue;
+                const auto& sm = L.dyn.samples[i];
+                const DynSample* at = &sm.front();
+                for (const DynSample& s : sm)
+                    if ((long long)s.t <= t0) at = &s;
+                const double D = (double)at->cx - (double)sm.front().cx;
+                A.fireX = x0 - D;
+                A.lockLastX = x0;
+                break;
+            }
             if (g_dynDbg >= 0)
                 std::printf("anchortrig uid=%d cx=%.1f rf=%d estT=%d -> fireT=%d "
                             "(x0=%.2f dxA=%.5f t0=%lld)\n",
@@ -1897,13 +2260,15 @@ inline int cliMain(int argc, char** argv) {
             if (!sm.empty())
                 std::printf("  first(t=%d cy=%.3f)  last(t=%d cy=%.3f)",
                             sm.front().t, sm.front().cy, sm.back().t, sm.back().cy);
-            std::printf("\n  closed=%d  trigMask=0x%x recFire=%d (lag %d -> "
-                        "true %d)  autoAnchor=%d autoD=(%.1f,%.1f) autoDur=%.2f "
-                        "ease=%d/%.2f\n",
+            std::printf("\n  closed=%d  trigMask=0x%llx recFire=%d (lag %d -> "
+                        "true %d; autoLag %d)  autoAnchor=%d autoD=(%.1f,%.1f) "
+                        "autoDur=%.2f ease=%d/%.2f\n",
                         (int)L.dyn.autoClosed[i],
-                        L.dyn.trigMask[i], L.dyn.trigRecFire[i], L.dyn.recLag[i],
+                        (unsigned long long)L.dyn.trigMask[i],
+                        L.dyn.trigRecFire[i], L.dyn.recLag[i],
                         L.dyn.trigRecFire[i] >= 0
                             ? L.dyn.trigRecFire[i] - L.dyn.recLag[i] : -1,
+                        L.dyn.autoLag[i],
                         L.dyn.autoAnchor[i], L.dyn.autoDx[i], L.dyn.autoDy[i],
                         L.dyn.autoDur[i], L.dyn.autoEase[i], L.dyn.autoErate[i]);
             const int aA = L.dyn.autoAnchor[i];
@@ -1923,24 +2288,24 @@ inline int cliMain(int argc, char** argv) {
         for (size_t b = 0; b < g_touch.size(); ++b) {
             bool seenIt = false;
             for (size_t i = 0; i < L.dyn.objs.size() && !seenIt; ++i)
-                if ((L.dyn.trigMask[i] & ((uint32_t)1 << b)) && L.dyn.trigRecFire[i] >= 0)
+                if ((L.dyn.trigMask[i] & touchBit(b)) && L.dyn.trigRecFire[i] >= 0)
                     seenIt = true;
             // ...and one the anchor already entered is settled, not unknown.
-            if (!seenIt && !(init.trig & ((uint32_t)1 << b))) {
+            if (!seenIt && !(init.trig & touchBit(b))) {
                 // Unreachable from this anchor: the tail starts past the box.
                 // Reported either way so the driver can tell a blocked anchor
                 // from a physics wall; only --needtrig-skip drops it.
                 const bool passed = g_touch[b].cx + g_touch[b].hw + 40.0 < x0;
-                const bool skip = (g_needSkip & ((uint32_t)1 << b)) != 0;
+                const bool skip = (g_needSkip & touchBit(b)) != 0;
                 std::printf("needtrig: box=%zu cx=%.0f cy=%.0f hw=%.0f "
                             "passed=%d skipped=%d\n",
                             b, g_touch[b].cx, g_touch[b].cy, g_touch[b].hw,
                             passed ? 1 : 0, skip ? 1 : 0);
                 if (skip) continue;
-                g_needTrig |= (uint32_t)1 << b;
+                g_needTrig |= touchBit(b);
                 // Same facts, for a caller with no stdout to read (dp/progress.hpp)
-                g_outcome.needTrigMask |= (unsigned)1 << b;
-                if (passed) g_outcome.needTrigPassed |= (unsigned)1 << b;
+                g_outcome.needTrigMask |= touchBit(b);
+                if (passed) g_outcome.needTrigPassed |= touchBit(b);
             }
         }
     }
@@ -1996,10 +2361,10 @@ inline int cliMain(int argc, char** argv) {
     if (g_rotQToggle) {
         auto maskFor = [](int uid, int want) {
             uint32_t m = 0;
-            for (size_t b = 0; b < g_touch.size() && b < 32; ++b) {
+            for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b) {
                 if (g_touch[b].togOn != want) continue;
                 for (const TrigCtl& ct : g_touch[b].ctl)
-                    if (ct.uid == uid) { m |= (uint32_t)1 << b; break; }
+                    if (ct.uid == uid) { m |= touchBit(b); break; }
             }
             return m;
         };
@@ -2135,7 +2500,7 @@ inline int cliMain(int argc, char** argv) {
                     "(%zu of them checked against a recording, %zu follow the "
                     "player)%s\n",
                     closedN, autoN, closedRec, lockN,
-                    g_trigClosed ? ", --trigclosed ON" : "");
+                    ", --trigclosed ON");
     }
     // A re-anchor taken while the player was RIDING A RAMP used to restart with
     // onSlope = 0. The ride is sticky (see stickToSlope), so without it the
@@ -2223,6 +2588,456 @@ inline int cliMain(int argc, char** argv) {
     if (init.onSlope) init.rideLanded = 1;
     if (init.dual && init.onSlope2) init.rideLanded2 = 1;
     const double goalX = L.maxX + 60.0;
+    // ---- --coins: route through the level's coins as well as to its end -----
+    //
+    // Two things and no more. A coin is COLLECTED when the player's own rect
+    // overlaps it (hazardHalfFor, which is GD's getObjectRect half and the one
+    // the coincal rig measured: 15/9 for most modes, 13.5/8.1 spider, 5/3 wave),
+    // and a state that leaves an uncollected coin BEHIND IT is dead. The second
+    // half is what keeps this cheap: without it the frontier fills with lineages
+    // that can no longer finish, and the collected set would have to stay in the
+    // key for the whole level instead of just inside a coin's window.
+    //
+    // Nothing here is a heuristic about where to go. The search is not steered
+    // towards a coin; the goal simply is not reached without it.
+    const uint32_t coinAll = g_coinRoute && !L.coins.empty()
+        ? (uint32_t)((1u << L.coins.size()) - 1u) : 0u;
+    if (g_coinRoute) {
+        if (L.coins.size() > 8) {
+            std::printf("coins: %zu is more than the 8 the mask holds -- "
+                        "routing disabled\n", L.coins.size());
+        } else if (L.coins.empty()) {
+            std::printf("coins: none in this level\n");
+        } else {
+            std::printf("coins: %zu to collect, mask 0x%x\n",
+                        L.coins.size(), coinAll);
+            for (size_t i = 0; i < L.coins.size(); ++i)
+                std::printf("  coin %zu: (%.0f,%.0f) box %.1fx%.1f\n", i,
+                            L.coins[i].cx, L.coins[i].cy,
+                            L.coins[i].hw * 2, L.coins[i].hh * 2);
+        }
+    }
+    const bool coinOn = coinAll != 0 && L.coins.size() <= 8;
+    // ---- WHAT A COIN NEEDS COUNTED BEFORE IT CAN BE HAD --------------------
+    // Four of the corpus' coins sit behind a counter, and the search had no
+    // reason to feed one: the only signal was the miss prune, which fires at
+    // the coin. lv21's ten pickups end at x=21,455 and the coin is at 21,813,
+    // so a branch that skipped the FIRST pickup (x=19,079) still flew 2,759 px
+    // -- filling the frontier under a cap of 2,000 with branches that were
+    // already doomed -- before anything said so.
+    //
+    // Only ONE shape gives a sound prune, and it is the shape the corpus has.
+    // A counter never decreases, so "can this branch still reach N" is exactly
+    // `have + still ahead >= N`. That is a proof, not a heuristic. The other
+    // two comparisons (n == C, n > C) cannot be made unreachable by running out
+    // of feeders, so they get no prune here and are left to the miss test.
+    //
+    // WHICH WAY the trigger decides is read off the offset its chain gives the
+    // coin, not assumed: if firing moves the coin further than the collect
+    // bound, firing is what loses it, and the requirement is the negation of
+    // the trigger's own test. lv21: uid 21783 is `item 1 < 10` and its chain
+    // drops the coin 120 px against a bound of 25, so the coin needs ten.
+    struct CoinCountReq {
+        int item;      // which counter
+        int need;      // ...has to reach this
+        int coinIdx;   // the coin it decides (skip once that one is collected)
+    };
+    std::vector<CoinCountReq> coinReq;
+    if (coinOn) {
+        for (const TouchTrig& T : g_touch) {
+            if (T.count < 0 || T.cmode != 2) continue;   // only `n < C` bites
+            for (const TrigCtl& c : T.ctl) {
+                int ci = -1;
+                for (size_t i = 0; i < L.coins.size(); ++i)
+                    if (L.coins[i].uid == c.uid) { ci = (int)i; break; }
+                if (ci < 0) continue;
+                const double reach = L.coins[(size_t)ci].hh + 15.0;
+                if (std::fabs((double)c.dy) <= reach) continue;   // not decisive
+                coinReq.push_back({T.item, T.count, ci});
+                std::printf("coins: coin %d needs item %d to reach %d before it"
+                            " (uid %d moves it %.0f px, reach %.0f)\n",
+                            ci, T.item, T.count, c.uid, (double)c.dy, reach);
+            }
+        }
+    }
+    // ---- ...AND THE COIN ITS GROUP CAN BE SWITCHED OFF ---------------------
+    // lv20's first coin is the other shape, and it has no counter at all --
+    // the level holds no pickups. A Toggle at x=6,465 switches its group off on
+    // the crossing, and a TOUCH-TRIGGERED one at (7,003, 405.5) switches it
+    // back on; the coin is at x=15,631. So the only thing that could have saved
+    // the branch is 8,628 px behind by the time the miss test speaks.
+    //
+    // Sound for the same reason as the counter, and gated on the same fact: x
+    // only grows in frame 0, so once every switch-on box is behind the player
+    // and none of them has fired, that coin can never come back. The test also
+    // asks whether the coin is off RIGHT NOW (it is absent from the live rows
+    // when its group is) -- without that, a coin that is on by default and
+    // merely has an enabling Toggle somewhere would be pruned for never having
+    // needed it.
+    //
+    // Only a Toggle that is the ROOT of its chain is seen here (togOn is read
+    // off the root row). A switch-on nested inside a spawn chain would not be,
+    // and the branch would keep the old behaviour -- late, not wrong.
+    // ---- WHAT A FIRED CHAIN ADDS TO AN ITEM COUNTER ------------------------
+    // The counter used to be "collectibles the player has physically touched"
+    // (g_collect, which loadCollectibles fills from the rows with pickup=1).
+    // On lv22's first coin that counter can never move: the gate is
+    // `item 2 == 5`, and all three rows that give item 2 have pickup=0 --
+    // they are Pickup triggers (1817) and a collectible (1816) that a TOUCH BOX
+    // spawns, so nothing is ever touched. The gate could not fire, the coin was
+    // never raised, and the model was not choosing the low lane over the high
+    // one: IT HAD NO HIGH LANE. Closing the low band with --deadband made it go
+    // lower still (under the coin, between the two spikes) rather than up.
+    //
+    // So count what the FIRED CHAINS give as well. The per-bit table is static:
+    // g_itemGiver holds every row that names an item, touchable or not, and a
+    // box's ctl list is what its chain reaches. No new state -- s.trig already
+    // says which boxes have fired.
+    //
+    // MULTIPLICITY IS TAKEN FROM THE CTL LIST, and the game agrees on both
+    // boxes it was asked about. A uid reached by two paths appears twice there,
+    // and whether GD's counter moves once or twice for that is the game's
+    // answer to give (cfg coins=1 prints `itemcnt:`). Dropped onto each box in
+    // turn, lv22 says:
+    //
+    //   box uid 18090   weight 1   itemcnt v=1, still 1 fourteen ticks later
+    //   box uid 2195    weight 2   itemcnt v=1 at the touch, v=2 at +25 ticks
+    //
+    // THE SECOND INCREMENT IS LATE, which a first reading missed: that box was
+    // measured on a run that died nine ticks in and reported 1, and a walk of
+    // the same chains written independently said 3 for the first box. Both were
+    // wrong and the ctl list was right -- so the weights are measured, and the
+    // number to distrust is a counter read from a run that ended too early.
+    //
+    // The line below prints what the model derives, so any level can be put
+    // beside its `itemcnt:` the same way. On lv22 nine boxes feed item 2, 13 in
+    // total, against a gate of 5.
+    std::unordered_map<int, TouchMask> itemBits;   // item -> bits that give it
+    std::vector<std::vector<std::pair<int, int>>> bitItemGive(g_touch.size());
+    // ---- A TAP THAT COUNTS PRESSES -----------------------------------------
+    // A fired box gives its items once, and s.trig says so. A counting TAP
+    // (TouchTrig::tapCloseX) gives them on every press, which a bit cannot
+    // hold: lv22's third coin opens at item 1 >= 6, six presses of the box at
+    // x=15,525 before the Stop at x=15,765 (six confirmed in the game). So its
+    // gift is taken out of the per-bit table and counted in State::taps
+    // instead. One such tap per call -- State::taps is a single number; a
+    // second one keeps the fire-once reading and says so.
+    struct TapGive {
+        TouchMask bit = 0;
+        int item = 0, per = 0;
+        double armX = 0.0, closeX = 1e18;
+        // GD's terms for the two ends (TouchTrig::tapChan): the channel each
+        // sits on and its world point.
+        int armChan = 0, closeChan = 0;
+        double armY = 0.0, closeY = 0.0;
+    };
+    TapGive tapGive;   // bit 0 = none
+    if (coinOn && !g_itemGiver.empty()) {
+        for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b) {
+            std::vector<std::pair<int, int>>& v = bitItemGive[b];
+            for (const TrigCtl& c : g_touch[b].ctl) {
+                const auto gi = g_itemGiver.find(c.uid);
+                if (gi == g_itemGiver.end()) continue;
+                // ...but NOT the ones the player has to run into. Those are in
+                // g_collect and are counted from s.items, so counting them here
+                // as well would credit a branch for a collectible it never
+                // touched -- and credit it twice if it did. No corpus level
+                // does this today (lv20 has no items at all and no chain on
+                // lv21 reaches one of its eleven pickups, so this loop is empty
+                // there), which is exactly why it would have gone unnoticed.
+                bool isPickup = false;
+                for (const auto& col : g_collect)
+                    if (col.uid == c.uid) { isPickup = true; break; }
+                if (isPickup) continue;
+                bool seen = false;
+                for (auto& p : v)
+                    if (p.first == gi->second) { ++p.second; seen = true; break; }
+                if (!seen) v.push_back({gi->second, 1});
+            }
+            if (g_touch[b].tap && g_touch[b].tapCloseX < 1e17 && v.size() == 1) {
+                if (!tapGive.bit) {
+                    tapGive.bit = touchBit((int)b);
+                    tapGive.item = v[0].first;
+                    tapGive.per = v[0].second;
+                    tapGive.armX = g_touch[b].cx;
+                    tapGive.armY = g_touch[b].cy;
+                    tapGive.armChan = g_touch[b].tapChan;
+                    tapGive.closeX = g_touch[b].tapCloseX;
+                    tapGive.closeY = g_touch[b].tapCloseY;
+                    tapGive.closeChan = g_touch[b].tapCloseChan;
+                    std::printf("items: tap %zu uid %d gives item %d x%d PER PRESS,"
+                                " open from (%.0f,%.0f) on channel %d to the Stop at"
+                                " (%.0f,%.0f) on channel %d\n", b, g_touch[b].uid,
+                                tapGive.item, tapGive.per, tapGive.armX, tapGive.armY,
+                                tapGive.armChan, tapGive.closeX, tapGive.closeY,
+                                tapGive.closeChan);
+                    v.clear();
+                    continue;
+                }
+                std::printf("items: tap %zu uid %d also counts presses -- only one"
+                            " is held per call, so it gives once\n", b,
+                            g_touch[b].uid);
+            }
+            for (const auto& p : v) itemBits[p.first] |= touchBit((int)b);
+            if (!v.empty()) {
+                std::printf("items: box %zu uid %d (x=%.0f) gives", b,
+                            g_touch[b].uid, g_touch[b].cx);
+                for (const auto& p : v)
+                    std::printf(" item %d x%d", p.first, p.second);
+                std::printf("\n");
+            }
+        }
+    }
+    // s.trig -> how much this state has fed `item`. The mask makes the common
+    // case (no box for this item has fired) a single test.
+    auto chainItems = [&itemBits, &bitItemGive](TouchMask trig, int item) -> int {
+        const auto mi = itemBits.find(item);
+        if (mi == itemBits.end() || !(trig & mi->second)) return 0;
+        int add = 0;
+        for (size_t b = 0; b < bitItemGive.size(); ++b) {
+            if (!(trig & touchBit((int)b))) continue;
+            for (const auto& p : bitItemGive[b])
+                if (p.first == item) add += p.second;
+        }
+        return add;
+    };
+    // The Item Compare gates (cmode 3) that read the counting tap's item --
+    // once one has fired, further presses change nothing -- and the coins each
+    // gate switches on. A gated coin is live only in a state whose gate has
+    // fired (coinLive below): the recording's own on/off belongs to the run
+    // that recorded it, and lv22's recordings are of runs that never pressed
+    // six times, so they hold the third coin off for every state. The chain
+    // is read as switching the coin ON; lv22's reaches it through Toggle
+    // uid17968 (activate 1), and no corpus gate reaches a coin any other way.
+    TouchMask tapGateBits = 0;
+    std::vector<TouchMask> coinEnable(L.coins.size(), 0);
+    if (coinOn)
+        for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b) {
+            const TouchTrig& T = g_touch[b];
+            if (T.count < 0 || T.cmode != 3) continue;
+            if (tapGive.bit && T.item == tapGive.item) tapGateBits |= touchBit((int)b);
+            for (const TrigCtl& c : T.ctl)
+                for (size_t ci = 0; ci < L.coins.size(); ++ci)
+                    if (L.coins[ci].uid == c.uid && !(coinEnable[ci] & touchBit((int)b))) {
+                        coinEnable[ci] |= touchBit((int)b);
+                        std::printf("coins: coin %zu is switched on by Item Compare uid %d"
+                                    " (item %d at least %d)\n",
+                                    ci, T.uid, T.item, T.count);
+                    }
+        }
+    // ...and which of those coins can be collected in a TURNED frame too. The
+    // collect test runs in frame 0 because a moving coin's position there is
+    // read off the dyn rows; a coin nothing moves has one world position, and
+    // toFrame turns it into any frame exactly as it turns the geometry.
+    // lv22's third coin needs this: GD's own runs pass it at y=506 in frame 0,
+    // 175 px under it, and come back up through x=16,090..16,131 in frame 3.
+    // "Nothing moves it" = no touch chain gives it an offset, a duration, a
+    // lock or a target-mode move; its group (537) is otherwise only toggled.
+    std::vector<uint8_t> coinAnyFrame(L.coins.size(), 0);
+    for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+        if (!coinEnable[ci]) continue;
+        bool moved = false;
+        for (size_t b = 0; b < g_touch.size() && !moved; ++b)
+            for (const TrigCtl& c : g_touch[b].ctl)
+                if (c.uid == L.coins[ci].uid
+                    && (c.dx != 0.f || c.dy != 0.f || c.durTicks != 0.0
+                        || c.lockTicks != 0.0 || c.lockYTicks != 0.0 || c.tmode != 0)) {
+                    moved = true;
+                    break;
+                }
+        if (moved) continue;
+        coinAnyFrame[ci] = 1;
+        std::printf("coins: coin %zu never moves, so it is collected in any frame\n", ci);
+    }
+    // Whether the counting tap is the only thing that feeds its item. Then a
+    // window that shut with the gate unfired is final (the prune in the step).
+    bool haveCmpGate = false;
+    for (const TouchTrig& T : g_touch)
+        if (T.count >= 0 && T.cmode == 3) haveCmpGate = true;
+    bool tapSole = tapGive.bit != 0 && !itemBits.count(tapGive.item);
+    for (const auto& col : g_collect)
+        if (col.item == tapGive.item) tapSole = false;
+    // ---- WHEN THE COUNTING TAP'S WINDOW IS OPEN, IN GD'S TERMS -------------
+    // A channel's direction is the one the queue print above names
+    // (rotQDirection of the 2900 that switches TO it: 1 y+, 2 y-, 3 x-, else
+    // x+), and a point is PASSED once the player's WORLD coordinate on that
+    // axis has reached it in that direction -- the comparison step.hpp's queue
+    // walk makes for the 2900s themselves. Passed now (the channel is active and
+    // the player is there) or earlier, which the queue's own record keeps: an
+    // entry of that channel lying at or beyond the point has been consumed.
+    // That second reading is what lets an anchored call inside the window know
+    // it is open without having seen it open.
+    int chanDir[16];
+    for (int ch = 0; ch < 16; ++ch) {
+        chanDir[ch] = 4;
+        for (const RotQEntry& e : g_rotQ)
+            if (e.swarm && e.swch == ch && e.rotIdx >= 0) {
+                chanDir[ch] = rotQDirection(g_rotTrig[(size_t)e.rotIdx].rawRot,
+                                            g_rotTrig[(size_t)e.rotIdx].flipX != 0);
+                break;
+            }
+    }
+    const bool tapQueue = g_rotQueue && !g_rotQ.empty();
+    auto reachedOn = [&chanDir](int ch, double wx, double wy, double px, double py) {
+        switch (chanDir[ch & 15]) {
+            case 1: return wy >= py;
+            case 2: return wy <= py;
+            case 3: return wx <= px;
+            default: return wx >= px;
+        }
+    };
+    // ...and WHERE SUCH A COIN IS PASSED FOR GOOD. The ordinary miss test is
+    // withheld on a level that turns (coinPruneOk), and on lv22 rightly so for
+    // the third coin in general: the maze brings the player back past it. But
+    // the coin can only be had after its window, and past the shut point the
+    // way on is the shut channel's run -- lv22's channel 10, x+, on which the
+    // ship glides under the coin at y=615 and on (GD's own rows, t=14,250..
+    // 14,580). So a coin lying AHEAD of the shut point in that channel's
+    // direction is missed once the player is past its far edge on that same
+    // channel. `gatedMask` is those coins; `tapMissX/Y` the far-edge point.
+    uint8_t gatedMask = 0;
+    std::vector<double> tapMissX(L.coins.size(), 0.0), tapMissY(L.coins.size(), 0.0);
+    if (tapGive.bit)
+        for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+            if (!(coinEnable[ci] & tapGateBits) || ((g_coinSkip >> ci) & 1)) continue;
+            const Obj& c = L.coins[ci];
+            const int d = chanDir[tapGive.closeChan & 15];
+            // the coin has to be ahead of the shut point on that run
+            if (!reachedOn(tapGive.closeChan, c.cx, c.cy, tapGive.closeX, tapGive.closeY))
+                continue;
+            gatedMask |= (uint8_t)(1u << ci);
+            const double m = 15.0;   // the largest half any mode has, as the mod's miss
+            tapMissX[ci] = d == 3 ? c.cx - c.hw - m : (d == 1 || d == 2) ? c.cx : c.cx + c.hw + m;
+            tapMissY[ci] = d == 1 ? c.cy + c.hh + m : d == 2 ? c.cy - c.hh - m : c.cy;
+        }
+    // ...and hand both points to the mod (Outcome::coinGates), so a flown
+    // attempt that passes either -- the shut point with the count short, or the
+    // coin's far edge without it -- ends there the way one that passes a missed
+    // coin does. Only for a coin this run still wants.
+    if (tapGive.bit && tapSole)
+        for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+            const TouchMask gates = coinEnable[ci] & tapGateBits;
+            if (!gates || ((g_coinSkip >> ci) & 1)) continue;
+            int need = 1 << 30;
+            for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b)
+                if (gates & touchBit((int)b)) need = std::min(need, g_touch[b].count);
+            const bool miss = ((gatedMask >> ci) & 1) != 0;
+            char e[224];
+            std::snprintf(e, sizeof e, "%s%d,%d,%.3f,%.3f,%d,%d,%d,%d,%.3f,%.3f",
+                          g_outcome.coinGates.empty() ? "" : ";", L.coins[ci].uid,
+                          tapGive.closeChan, tapGive.closeX, tapGive.closeY,
+                          chanDir[tapGive.closeChan & 15], tapGive.item, need,
+                          miss ? 1 : 0, tapMissX[ci], tapMissY[ci]);
+            g_outcome.coinGates += e;
+        }
+    auto passedOn = [&](const State& st, int frame, int ch, double wx, double wy,
+                        double px, double py) {
+        // No queue in this call: only channel 0 exists, and it is the plain
+        // frame-0 crossing the fire-once tap already uses.
+        if (!tapQueue) return ch == 0 && frame == 0 && wx > px;
+        if ((st.rotChan & 15) == (ch & 15) && reachedOn(ch, wx, wy, px, py)) return true;
+        const int beg = g_rotQBeg[(size_t)(ch & 15)], end = g_rotQEnd[(size_t)(ch & 15)];
+        for (int k = beg; k < end && k < 32; ++k)
+            if (((st.rotSpent >> k) & 1u)
+                && reachedOn(ch, g_rotQ[(size_t)k].px, g_rotQ[(size_t)k].py, px, py))
+                return true;
+        return false;
+    };
+    // ---- CAN "THE PLAYER IS PAST IT" BE FINAL FOR THIS COIN? ---------------
+    // Both prunes below -- the switch-on gate and the miss test -- say "behind
+    // the player, so gone". That rests on the player never coming back, which
+    // used to be asked of the LEVEL: no gameplay rotation anywhere, or neither
+    // prune runs. lv22 turns the frame, so on the one level whose coins are
+    // still missing, nothing pruned and a branch that skipped a coin flew to the
+    // end for free. The level's own log says what that costs: fourteen runs
+    // completed it with 0/3.
+    //
+    // It is a per-COIN question, and a static one. Collecting needs frame 0 (the
+    // live coin rows are built only there -- in a turned frame xAbs is a
+    // different axis), and inside frame 0 x only grows. So a coin is out of
+    // reach for good once every LATER return to frame 0 happens further along
+    // than the coin. The returns are known before the search starts: a 2900
+    // carries the frame it SETS and its world position, and it is one-shot, so
+    // the chain is a fixed sequence. Take the ones at or after the point the
+    // coin is passed and ask for the smallest.
+    //
+    // The index is taken crudely -- the first rotation in chain order sitting
+    // past the coin -- which can only pull in rotations that fire EARLIER than
+    // the coin is passed. That makes the minimum smaller and the verdict more
+    // conservative, never less.
+    //
+    // On lv22 this separates the three coins, and its "no" is independently
+    // right: a recorded run comes back past c3 for 2,840 ticks and never returns
+    // past c1 or c2, which is exactly what the rule says.
+    //
+    //   c1 (3,919)   smallest later return 6,875    prunable
+    //   c2 (10,513)  smallest later return 15,015   prunable
+    //   c3 (16,097)  smallest later return 15,015   NOT prunable
+    std::vector<uint8_t> coinPruneOk(L.coins.size(), 0);
+    if (coinOn) {
+        for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+            const double past = L.coins[ci].cx + L.coins[ci].hw + 40.0;
+            if (g_rotTrig.empty()) { coinPruneOk[ci] = 1; continue; }
+            size_t idx = g_rotTrig.size();
+            for (size_t j = 0; j < g_rotTrig.size(); ++j)
+                if (g_rotTrig[j].cx > L.coins[ci].cx) { idx = j; break; }
+            double minRe = 1e18;
+            for (size_t j = idx; j < g_rotTrig.size(); ++j)
+                if (g_rotTrig[j].frame == 0)
+                    minRe = std::min(minRe, g_rotTrig[j].cx);
+            coinPruneOk[ci] = (minRe > past) ? (uint8_t)1 : (uint8_t)0;
+            if (!g_rotTrig.empty())
+                std::printf("coins: coin %zu at x=%.0f -- the frame returns to 0"
+                            " next at x=%.0f, %s\n", ci, L.coins[ci].cx,
+                            minRe > 1e17 ? -1.0 : minRe,
+                            coinPruneOk[ci] ? "so passing it is final"
+                                            : "which is BEHIND it, so passing it "
+                                              "says nothing (no miss prune)");
+        }
+    }
+    struct CoinOnGate {
+        int coinIdx;
+        // THE MASK'S OWN TYPE. This was uint32_t while s.trig, which it is
+        // tested against, is a TouchMask: at a width of 64 the `1u << b` that
+        // filled it is undefined for b >= 32 (and wraps mod 32 on x86), the
+        // store truncates, and the test can only ever match the low half. The
+        // gate sets dead = true, so a wrong bit KILLS BRANCHES -- it is the
+        // expensive direction of that mistake, not the harmless one.
+        std::vector<std::pair<TouchMask, double>> ons;  // bit, x past which it is gone
+    };
+    std::vector<CoinOnGate> coinGate;
+    // Same gate as the miss test below, and for the same reason -- both rest on
+    // x growing for ever, now asked per coin.
+    if (coinOn) {
+        for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+            if (!coinPruneOk[ci]) continue;
+            CoinOnGate g{(int)ci, {}};
+            for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b) {
+                if (g_touch[b].togOn != 1) continue;
+                bool hits = false;
+                for (const TrigCtl& c : g_touch[b].ctl)
+                    if (c.uid == L.coins[ci].uid) { hits = true; break; }
+                if (!hits) continue;
+                g.ons.push_back({touchBit((int)b),
+                                 g_touch[b].cx + g_touch[b].hw + 15.0});
+            }
+            if (g.ons.empty()) continue;
+            coinGate.push_back(std::move(g));
+            std::printf("coins: coin %zu is switched on by %zu box(es), the last"
+                        " at x=%.0f\n", ci, coinGate.back().ons.size(),
+                        coinGate.back().ons.back().second);
+        }
+    }
+    // ...and whether a coin the player has passed can be called missed. The
+    // answer is coinPruneOk above, per coin. Say so once, with the count, so a
+    // level where nothing prunes reads differently from one where the flag is
+    // off: "0 of 3" is a verdict, a missing line is not.
+    if (coinOn && !g_rotTrig.empty()) {
+        size_t n = 0;
+        for (uint8_t ok : coinPruneOk) n += ok ? 1 : 0;
+        std::printf("coins: the level turns the frame -- %zu of %zu coins can "
+                    "still be called missed once passed\n", n, coinPruneOk.size());
+    }
     // 120 px = 4 blocks of slack above the highest surface, so a legitimate
     // arc over the top of the level is still allowed
     g_yBound = std::max(700.0, L.maxY + 120.0);
@@ -2935,17 +3750,18 @@ inline int cliMain(int argc, char** argv) {
             }
             std::vector<const Obj*> rn, rp, rd, ro, rs;
             Lf->dyn.seek((int)t);
+            seekOtherFrames(Lf, (int)t);   // --rotpretap only
             // + this tick's advance (xPrevR is tick t-1's x): see the group
             // call's note on why a lock needs the CURRENT tick.
             Lf->dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB,
                                   s.lockOff + (float)(x - xPrevR), (int)t, x);
-            std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
+            std::vector<std::pair<const TouchTrig*, TouchMask>> rt;
             const std::vector<TouchTrig>& tfr = touchFor((int)s.frame);
             for (size_t b = 0; b < tfr.size(); ++b) {
-                if (s.trig & ((uint32_t)1 << b)) continue;
+                if (s.trig & touchBit(b)) continue;
                 const TouchTrig& T = tfr[b];
                 if (T.cx + T.hw < x - 40 || T.cx - T.hw > x + 40) continue;
-                rt.push_back({&T, (uint32_t)1 << b});
+                rt.push_back({&T, touchBit(b)});
             }
             if (g_slopeDbg && s.frame != 0) {
                 std::printf("trigcand t=%lld frame=%d x=%.3f y=%.3f "
@@ -2980,8 +3796,23 @@ inline int cliMain(int argc, char** argv) {
             g_dashVySet = 0;
             g_clampWhy = "";
             g_clampUid = -1;
+            // ...and the COORDINATES beside them, which this block cleared the
+            // "why" and the uid of but not the numbers. seqcall found it: two
+            // identical whole-run replays in one process differ in clampcx /
+            // clampcy on 539 of lv20's rows and 448 of lv21's, starting at
+            // t=1 with the LAST clamp of the previous call. Nothing else
+            // differs, so the trajectory was never at risk -- but the comment
+            // at CLAMP0O says these exist to catch stale geometry, and they
+            // were themselves stale across calls.
+            g_clampCx = g_clampCy = 0.f;
             g_deadWhy = "";
             g_deadObj = nullptr;
+            // g_deadCx/Cy are NOT diagnostics: the resim block publishes them
+            // as g_resimObjX / g_resimObjY. An object-free death (deadband,
+            // maxplayy, offboard -- and the two-tick latch GD kills with) sets
+            // g_deadObj to null and leaves the coordinates alone, so the
+            // outcome carried the PREVIOUS killer's position with uid = -1.
+            g_deadCx = g_deadCy = 0.f;
             const bool sPrevGrounded = (s.grounded != 0);   // applyRotation's re-tap
             const double sPrevY = (double)s.y;              // ...and its pre-tap y
             State c = stepBoth(s, (uint8_t)curIn, K, rdead);
@@ -3006,17 +3837,21 @@ inline int cliMain(int argc, char** argv) {
                 // of this file names. The bias is one-sided and small -- a state
                 // anchored mid-hold can fire one ring GD would have refused --
                 // and it needs the button held ACROSS the anchor tick to bite.
-                std::printf("seed: t=%lld sizeof=%zu trig=0x%x trigT=%d "
+                // groundUid (--stickseam) is the same kind of hole: printed, not
+                // seeded; an anchor mid-ride re-ties to the lowest-uid support.
+                std::printf("seed: t=%lld sizeof=%zu trig=0x%llx trigT=%d "
                             "lockOff=%.4f rotSpent=0x%x rotChan=%d "
                             "rotRev=0x%x rotStep=%.6f rotNeg=%d "
                             "ringHold=%d pressSpent=%d portalLatch=0x%x/0x%x "
-                            "fireB=",
-                            t, sizeof(State), s.trig, (int)s.trigT,
+                            "groundUid=%d taps=%d fireB=",
+                            t, sizeof(State), (unsigned long long)s.trig,
+                            (int)s.trigT,
                             (double)s.lockOff, s.rotSpent, (int)s.rotChan,
                             (unsigned)s.rotRev, (double)s.rotStep,
                             (int)s.rotNeg, (int)s.ringHold,
-                            (int)s.pressSpent, s.portalLatch, s.portalLatch2);
-                for (int b = 0; b < 32; ++b)
+                            (int)s.pressSpent, s.portalLatch, s.portalLatch2,
+                            (int)s.groundUid, (int)s.taps);
+                for (int b = 0; b < kTouchBits; ++b)
                     if (s.fireB[b]) std::printf("%d:%u,", b, s.fireB[b]);
                 std::printf("\n");
                 // ...and the same state as a READY-MADE --startrotq argument.
@@ -3240,6 +4075,24 @@ inline int cliMain(int argc, char** argv) {
         g_snapOut = nullptr;
         return 0;
     }
+    // --coinmask: the coins GD had already credited at the anchor (the repair
+    // loop's re-anchor, repair.hpp). An anchored tail otherwise starts with an
+    // empty set, so every coin behind x0 reads as missed and the miss prune kills
+    // the seed on its first step. Bits for coins the level does not have drop.
+    if (coinOn) {
+        init.coins = (uint8_t)((uint32_t)g_coinMaskSeed & coinAll);
+        if (init.coins)
+            std::printf("coins: starting with 0x%x already collected\n",
+                        (unsigned)init.coins);
+        // --coinskip: every coin test skips a collected coin, so seeding the
+        // bit takes that coin out of the goal and out of both miss prunes.
+        const uint8_t skip = (uint8_t)((uint32_t)g_coinSkip & coinAll);
+        if (skip) {
+            init.coins |= skip;
+            std::printf("coins: 0x%x not a goal this run (--coinskip)\n",
+                        (unsigned)skip);
+        }
+    }
     cur.push_back(init);   // root state, AFTER every init amendment (see above)
     // Announce the search to anything watching from another thread (dp/progress.hpp). The end
     // is announced from the guard below, so that every way out of the loop clears it.
@@ -3370,7 +4223,10 @@ inline int cliMain(int argc, char** argv) {
         // parent k times for k identical children. It goes in keyOf instead,
         // where the separation is exactly as absolute and costs one xor.
         struct GKey {
-            float dx; uint32_t trig; uint8_t frame; uint8_t rev;
+            // TouchMask, not uint32_t: this key GROUPS states, so a narrower
+            // field would merge two states whose only difference is a box above
+            // bit 31 -- silently, and only once kTouchBits passes 32.
+            float dx; TouchMask trig; uint8_t frame; uint8_t rev;
             bool operator==(const GKey& o) const {
                 return dx == o.dx && trig == o.trig && frame == o.frame
                        && rev == o.rev;
@@ -3402,7 +4258,13 @@ inline int cliMain(int argc, char** argv) {
                 // Keep the roomiest instead of the first; with the score off
                 // they all read 0 and the incumbent always wins, which is the
                 // old latch exactly.
+                // --coins: the end of the level is not the goal on its own.
+                // A lineage that reached it without the full set is not a
+                // solution, and saying so HERE rather than filtering afterwards
+                // is what makes the search look for the other one instead of
+                // reporting the first thing that got to the end.
                 if (s.frame == 0 && (double)s.xAbs >= goalX
+                    && (!coinOn || s.coins == (uint8_t)coinAll)
                     && (!solved || roomierRoute(s.tight, goalState.tight))) {
                     solved = true;
                     goalState = s;
@@ -3464,7 +4326,7 @@ inline int cliMain(int argc, char** argv) {
         const bool qfHere = (g_qfoldLo >= 0 && t >= g_qfoldLo && t <= g_qfoldHi);
         for (const auto& gkey : groupDx) {
         const float gdx = gkey.dx;
-        const uint32_t gtrig = gkey.trig;
+        const TouchMask gtrig = gkey.trig;
         const int gframe = (int)gkey.frame;
         const int grev = (int)gkey.rev;
         // this group's own x span, and the windows that cover it for the whole
@@ -3476,7 +4338,7 @@ inline int cliMain(int argc, char** argv) {
         // holds `trig`, so every member has entered the SAME set of boxes --
         // what differs is when, and this keeps the latest for each one
         // separately instead of collapsing them onto a single scalar.
-        uint16_t gFireB[32] = {};
+        uint16_t gFireB[kTouchBits] = {};
         // ...and how far the least-advanced member has carried a locked
         // platform. Same conservative direction as `gFire`, which takes the
         // LATEST firing tick so the group is shown a door that is still
@@ -3489,7 +4351,8 @@ inline int cliMain(int argc, char** argv) {
             gHi = std::max(gHi, (double)s.xAbs);
             gFire = std::max(gFire, (int)s.trigT);
             gFireMin = std::min(gFireMin, (int)s.trigT);
-            for (int b = 0; b < 32; ++b)
+            // gFireB is uint16_t[kTouchBits] -- fold all of it, not the first 32.
+            for (int b = 0; b < kTouchBits; ++b)
                 if (s.fireB[b] > gFireB[b]) gFireB[b] = s.fireB[b];
             if (s.lockOff < gLockOff) gLockOff = s.lockOff;
         }
@@ -3512,7 +4375,7 @@ inline int cliMain(int argc, char** argv) {
         if (g_needTrig) {
             bool missed = false;
             for (size_t b = 0; b < g_touch.size() && !missed; ++b)
-                if ((g_needTrig & ~gtrig) & ((uint32_t)1 << b))
+                if ((g_needTrig & ~gtrig) & touchBit(b))
                     missed = gLo > g_touch[b].cx + g_touch[b].hw + 40.0;
             if (missed) continue;
         }
@@ -3545,6 +4408,7 @@ inline int cliMain(int argc, char** argv) {
         FrameSlices& FS = slicesFor(gframe, wLo);
         Level& LG = *FS.lv;
         LG.dyn.seek((int)t);
+        seekOtherFrames(&LG, (int)t);   // --rotpretap only; serial here, before the workers
         // ...and then the doors this group has (or has not) opened. Must come
         // after seek and before any window is built. `gFire` is the LATEST
         // firing tick in the group, so a state that touched the box early is
@@ -3559,6 +4423,7 @@ inline int cliMain(int argc, char** argv) {
         LG.dyn.applyTriggers(gtrig, gFire, gFireB,
                              gLockOff + (float)sdx, (int)t, x);
         std::vector<const Obj*> near;
+        std::vector<CoinLive> coinLive;   // --coins, filled below the windows
         FS.near->forRange(wLo - 40, wHi + 40, [&](const Obj& o) { near.push_back(&o); });
         LG.dyn.collect(Dynamics::NEAR, wLo - 40, wHi + 40, near);
         // --trigdbg <tick>: the mask this GROUP applied, and where it left the
@@ -3598,21 +4463,102 @@ inline int cliMain(int argc, char** argv) {
         FS.speed->forRange(wLo - 80, wHi + 80, [&](const Obj& o) { spds.push_back(&o); });
         LG.dyn.collect(Dynamics::SPEED, wLo - 80, wHi + 80, spds);
         // touch-trigger boxes this group could reach this tick, with their bits
-        std::vector<std::pair<const TouchTrig*, uint32_t>> trigs;
+        std::vector<std::pair<const TouchTrig*, TouchMask>> trigs;
         // ...in THIS group's frame (see touchFor): a world-coordinate box is
         // unreachable once the frame turns, which silently shut every door in
         // lv22's rotated sections.
         const std::vector<TouchTrig>& tfg = touchFor(gframe);
         for (size_t b = 0; b < tfg.size(); ++b) {
             const TouchTrig& T = tfg[b];
-            if (gtrig & ((uint32_t)1 << b)) continue;   // already fired
-            if (T.cx + T.hw < wLo - 40 || T.cx - T.hw > wHi + 40) continue;
-            trigs.push_back({&T, (uint32_t)1 << b});
+            if (gtrig & touchBit(b)) continue;   // already fired
+            // A STANDING COUNT DOES NOT STOP LISTENING WHEN IT SCROLLS OFF.
+            // Count (1611) is the standing form -- the file already says so at
+            // the test that makes 1811 ask once -- but the window dropped it
+            // the moment the player was 40 px past, so it was only ever asked
+            // while it was nearby. On lv22's first coin that is fatal to the
+            // whole mechanism: the gate `item 2 == 5` sits at x=2,835 and every
+            // box that feeds item 2 is at 3,195..3,674, so the player crosses
+            // the gate with a count of 0, and by the time the count rises the
+            // gate is no longer in this list. The coin could never be raised,
+            // which is why every plan collects it at its load position.
+            //
+            // Only the BEHIND half of the window goes. A gate the player has
+            // not reached yet is still skipped, so this only ever adds
+            // occasions to ask a question whose answer was already false.
+            // An Item Compare root (3620) is asked from anywhere for the same
+            // reason: what fires it is a press, not the player's x.
+            const bool standing =
+                (T.id == 1611 || T.id == 3620) && T.count >= 0 && !T.tap;
+            // ...and an Item Compare is not ahead either: nothing about it is a
+            // place, and in a turned frame its x is not even on this axis.
+            const bool anywhere = T.id == 3620 && T.count >= 0;
+            if (!anywhere && !standing && T.cx + T.hw < wLo - 40) continue;
+            if (!anywhere && T.cx - T.hw > wHi + 40) continue;
+            trigs.push_back({&T, touchBit(b)});
         }
         seen.ensure(cur.size() * 2 + 64);
         seen.clear();   // per GROUP, not per layer (see the note above)
         (void)x; (void)xPrev;
-        const StepCtx K{x, xPrev, dxUsed, t, &near, &ports, &pads, &orbs, &slps, &spds, &SP, &SPmini, &UP, &UPmini, &trigs};
+        // --coins: this group's coins where THEY are now. A controlled coin is
+        // read out of the dyn rows the applyTriggers above has just placed (and
+        // is absent while its group is switched off, which is what GD does with
+        // it); an uncontrolled one is its load-time row. Frame 0 only, like the
+        // collect in the step: in a turned frame xAbs is a different axis.
+        // ...and in a TURNED frame, only the coins that never move
+        // (coinAnyFrame), turned into this frame the way the geometry is.
+        if (coinOn && gframe != 0)
+            for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+                if (!coinAnyFrame[ci] || !(gtrig & coinEnable[ci])) continue;
+                const Obj& c = L.coins[ci];
+                double u = 0.0, v = 0.0;
+                toFrame(gframe, c.cx, c.cy, u, v);
+                const bool odd = (gframe & 1) != 0;
+                coinLive.push_back({u, v, odd ? c.hh : c.hw, odd ? c.hw : c.hh, (int)ci});
+            }
+        if (coinOn && gframe == 0) {
+            for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+                const int di = ci < L.coinDyn.size() ? L.coinDyn[ci] : -1;
+                // A coin an Item Compare switches on is live exactly when this
+                // group's gate has fired (see coinEnable), wherever it sits.
+                if (coinEnable[ci]) {
+                    if (gtrig & coinEnable[ci]) {
+                        const Obj& c = di < 0 ? L.coins[ci] : LG.dyn.objs[(size_t)di];
+                        coinLive.push_back({c.cx, c.cy, c.hw, c.hh, (int)ci});
+                    }
+                    continue;
+                }
+                if (di < 0) {
+                    const Obj& c = L.coins[ci];
+                    coinLive.push_back({c.cx, c.cy, c.hw, c.hh, (int)ci});
+                } else if (LG.dyn.on[(size_t)di]) {
+                    const Obj& c = LG.dyn.objs[(size_t)di];
+                    coinLive.push_back({c.cx, c.cy, c.hw, c.hh, (int)ci});
+                }
+            }
+            // --coindbg <tick>: where THIS group put each coin, and which ones
+            // its mask left switched off. The mod prints the same thing from
+            // GD (`coinlive:`), so the two can be put side by side -- which is
+            // the only way to say "at this tick the model and GD disagree about
+            // where the coin is" rather than "they could".
+            if (g_coinDbgT >= 0 && (long long)t == g_coinDbgT) {
+                for (const CoinLive& C : coinLive)
+                    std::printf("coindbg: t=%lld gtrig=0x%08x coin=%d live=(%.3f,%.3f)"
+                                " box %.1fx%.1f load=(%.3f,%.3f)\n",
+                                (long long)t, gtrig, C.bit, C.cx, C.cy,
+                                C.hw * 2, C.hh * 2,
+                                L.coins[(size_t)C.bit].cx, L.coins[(size_t)C.bit].cy);
+                for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+                    bool live = false;
+                    for (const CoinLive& C : coinLive)
+                        if ((size_t)C.bit == ci) live = true;
+                    if (!live)
+                        std::printf("coindbg: t=%lld gtrig=0x%08x coin=%zu OFF"
+                                    " (its group is switched off)\n",
+                                    (long long)t, gtrig, ci);
+                }
+            }
+        }
+        const StepCtx K{x, xPrev, dxUsed, t, &near, &ports, &pads, &orbs, &slps, &spds, &SP, &SPmini, &UP, &UPmini, &trigs, &coinLive};
         ppMark(0);
         // ---- phase 1: STEP every state of this group (parallel) -------------
         // Stepping is pure -- it reads the shared windows and writes only its
@@ -3685,6 +4631,387 @@ inline int cliMain(int argc, char** argv) {
                 const auto lat2 = [](uint8_t m) { return m == 1 || m == 3; };
                 kid.s.latLock = (lat2(kid.s.mode) && !lat2(s.mode) && !kid.s.dual) ? 1 : 0;
             }
+            // ---- --coins: collect, then kill whoever left one behind --------
+            // After the step and after any rotation, so the position tested is
+            // the one the tick ended at, in the frame the coin's world
+            // coordinates mean something. In the frame coinLive was built in
+            // (the group's): frame 0 for every coin, a turned frame only for
+            // the coins that never move (coinAnyFrame), whose rows are turned
+            // into it. A tick that turns the player skips the test, as before.
+            if (coinOn && !dead && kid.s.frame == gframe) {
+                const double ph =
+                    hazardHalfFor(kid.s.mode, kid.s.mini != 0);
+                const double px = (double)kid.s.xAbs, py = (double)kid.s.y;
+                // COLLECTING reads the live rows (coinLive): a coin its group
+                // has moved is tested where it is now, and one the group has
+                // switched off is not in the list at all -- GD credits neither
+                // a moved coin at its old place nor a disabled one.
+                for (const CoinLive& C : coinLive) {
+                    const uint8_t bit = (uint8_t)(1u << C.bit);
+                    if (kid.s.coins & bit) continue;
+                    // --coindbg: how close anything got. Recorded BEFORE the
+                    // collect test and only inside the x bound, so a coin that
+                    // is never collected still says which of the three reasons
+                    // it was (see g_coinNearDy).
+                    // (frame 0 only: the probe's x is a world x)
+                    if (g_coinDbgT >= 0 && gframe == 0 && px > g_coinProbeMaxX)
+                        g_coinProbeMaxX = px;
+                    if (g_coinDbgT >= 0 && gframe == 0
+                        && std::fabs(px - C.cx) <= C.hw + ph) {
+                        ++g_coinSeen[C.bit];
+                        const double dy = std::fabs(py - C.cy);
+                        double& best = g_coinNearDy[C.bit];
+                        if (best < 0.0 || dy < best) {
+                            best = dy;
+                            g_coinNearX[C.bit] = px;
+                            g_coinNearY[C.bit] = py;
+                            g_coinNearT[C.bit] = (long long)t;
+                        }
+                    }
+                    // Touching counts (measured: exactly on the boundary is
+                    // credited), hence <= and not <.
+                    // The margin is an allowance for THIS model's own error, so
+                    // it must never eat the window it is protecting: a wave's
+                    // coin bound is 25 px against a cube's 35, and the learnt 8
+                    // takes a third of it -- measured on lv21, where the search
+                    // then had no route left it could call a collection. A
+                    // quarter of the bound is the cap.
+                    const double mx = std::min(kCoinMargin, (C.hw + ph) * 0.25);
+                    const double my = std::min(kCoinMargin, (C.hh + ph) * 0.25);
+                    if (std::fabs(px - C.cx) <= C.hw + ph - mx
+                        && std::fabs(py - C.cy) <= C.hh + ph - my) {
+                        // --coindbg: WHERE the model decided it had one, once
+                        // per coin. "The game refused a coin the plan claimed"
+                        // names the coin and nothing else, so without this the
+                        // claim's own position is only inferable -- and the two
+                        // sides were compared at different ticks twice before.
+                        if (g_coinDbgT >= 0 && !g_coinSaid[C.bit]) {
+                            g_coinSaid[C.bit] = 1;
+                            // ...with vy and the mode, because the next question
+                            // this line gets asked is always "does the game
+                            // survive from there", and that is an injection
+                            // which needs the whole state. Without vy the
+                            // probe has to guess it, and a cube dropped at
+                            // this coin with vy=0 is inside the spikes three
+                            // ticks later -- which says nothing about the plan.
+                            std::printf("coincollect: t=%lld coin=%d player=(%.3f,%.3f)"
+                                        " vy=%.4f mode=%d mini=%d frame=%d"
+                                        " live=(%.3f,%.3f) |dx|=%.3f |dy|=%.3f"
+                                        " bound=(%.3f,%.3f)\n",
+                                        (long long)t, C.bit, px, py,
+                                        (double)kid.s.vy, (int)kid.s.mode,
+                                        (int)kid.s.mini, gframe, C.cx, C.cy,
+                                        std::fabs(px - C.cx), std::fabs(py - C.cy),
+                                        C.hw + ph - mx, C.hh + ph - my);
+                        }
+                        kid.s.coins |= bit;
+                    }
+                }
+                // MISSING is judged on the load-time x instead, for the two
+                // reasons the live row cannot serve: a switched-off coin has no
+                // live row at all (and must still be counted as passed), and
+                // the bound has to be the same one the game side uses to end an
+                // attempt (hooks_gamelayer.cpp). Every coin this corpus moves is
+                // moved in y only, so the two agree; a coin carried in x would
+                // need its own bound and does not exist here.
+                //
+                // ...AND ONLY WHERE THE PLAYER CANNOT COME BACK. The whole
+                // verdict rests on x growing for ever, which a level with
+                // rotated gameplay breaks outright: lv22 travels -x through its
+                // maze and its third coin sits at x=16,097, inside it. There the
+                // prune would kill a lineage that has merely not turned round
+                // yet. Without it the search only loses the early exit -- the
+                // goal still is not reached without every coin.
+                // `dead` and no early return: the bookkeeping below (flags,
+                // key, the dbg reason) is the same for this death as for a
+                // physical one, and duplicating it is how the two drift.
+                // ---- the PICKUP ITEMS, and the Count triggers they fire -----
+                // Same test as a coin's (the player's own box against the
+                // object), and state for the same reason: lv21's third coin
+                // only comes into reach once ten of item 1 have been taken.
+                // The trigger they fire takes a bit in the SAME mask a touch
+                // box does, so the chain, the fire tick and the dedupe key are
+                // machinery that already exists.
+                //
+                // AND THE COUNT LOOP BELOW LIVES INSIDE THIS BLOCK, which was
+                // opened only when there are pickups. It was written for lv21,
+                // whose gate is fed by collectibles; on a level whose counter is
+                // fed by CHAINS instead there are no pickups at all, the block
+                // is skipped, and no Count trigger is ever asked anything. That
+                // is lv22's first coin exactly: its three item-2 rows all have
+                // pickup=0, g_collect is empty, and `item 2 == 5` never fired
+                // even with every feeder forced -- a --coindbg print inside the
+                // loop produced zero lines for any Count on that level. Opened
+                // for either source now; the pickup loop just below is a no-op
+                // when g_collect is empty, so a level with neither is unchanged
+                // and a level with pickups takes the same path as before.
+                // Frame 0 only, as everything in this block was before the coin
+                // collect above learnt the turned frames: the pickups are world
+                // rows, and the counters are asked where they always were.
+                // The exception is an Item Compare gate (cmode 3): it reads a
+                // count and nothing else, and lv22's third coin is collected in
+                // frame 3, where an anchored call has to open it from GD's own
+                // counter (--itembase) or never see the coin at all.
+                if ((gframe == 0
+                     && (!g_collect.empty() || !itemBits.empty() || tapGive.bit))
+                    || (gframe != 0 && haveCmpGate)) {
+                    for (size_t ii = 0; gframe == 0 && ii < g_collect.size() && ii < 16;
+                         ++ii) {
+                        const uint16_t ibit = (uint16_t)(1u << ii);
+                        if (kid.s.items & ibit) continue;
+                        const Collectible& C = g_collect[ii];
+                        if (std::fabs(px - C.cx) <= C.hw + ph - kCoinMargin
+                            && std::fabs(py - C.cy) <= C.hh + ph - kCoinMargin) {
+                            // --coindbg: and the same line for the pickups. GD
+                            // prints `itemcnt:` per increment, so a replay of
+                            // one plan through both sides says whether the two
+                            // take the SAME ones -- which is what an --itembase
+                            // of 1 against a model that needs ten turns on.
+                            if (g_coinDbgT >= 0 && !g_itemSaid[ii]) {
+                                g_itemSaid[ii] = 1;
+                                std::printf("itemcollect: t=%lld item=%d uid=%d"
+                                            " player=(%.3f,%.3f) obj=(%.3f,%.3f)"
+                                            " |dx|=%.3f |dy|=%.3f bound=(%.3f,%.3f)"
+                                            " mode=%d mini=%d\n",
+                                            (long long)t, C.item, C.uid, px, py,
+                                            C.cx, C.cy, std::fabs(px - C.cx),
+                                            std::fabs(py - C.cy),
+                                            C.hw + ph - kCoinMargin,
+                                            C.hh + ph - kCoinMargin,
+                                            (int)kid.s.mode, (int)kid.s.mini);
+                            }
+                            kid.s.items |= ibit;
+                        }
+                    }
+                    if (K.trigs)
+                        for (const auto& tb : *K.trigs) {
+                            const TouchTrig* T = tb.first;
+                            if (T->count < 0 || (kid.s.trig & tb.second)) continue;
+                            if (T->tap) continue;   // fired below, by the press
+                            if (gframe != 0 && T->cmode != 3) continue;
+                            int n = 0;
+                            for (const auto& ib : g_itemBase)
+                                if (ib.first == T->item) n += ib.second;
+                            const int nBase = n;   // before anything this run gave
+                            for (size_t ii = 0; ii < g_collect.size() && ii < 16; ++ii)
+                                if ((kid.s.items & (uint16_t)(1u << ii))
+                                    && g_collect[ii].item == T->item)
+                                    ++n;
+                            // ...and what the boxes this state has already
+                            // fired gave. Without this lv22's `item 2 == 5` is
+                            // unreachable: none of its givers is a pickup.
+                            n += chainItems(kid.s.trig, T->item);
+                            // ...and the counting tap's presses (tapGive).
+                            if (tapGive.bit && T->item == tapGive.item)
+                                n += (int)(kid.s.taps & 0x3f) * tapGive.per;
+                            // GD's own order: 0 equals, 1 larger, 2 smaller.
+                            // Measured on lv21, where the third coin's gate is
+                            // a pair -- uid21783 "item 1 SMALLER than 10" drops
+                            // the coin out of reach, uid21781 "EQUALS 10" keeps
+                            // it -- which is what "collect ten and it appears"
+                            // is made of.
+                            // EQUALS IS "THE COUNTER PASSED THROUGH C", not "it
+                            // is C on this tick". Every increment the model
+                            // counts is a single +1 in the game -- a pickup, or
+                            // one Pickup trigger firing -- so the game's counter
+                            // visits every integer on the way up, and an equals
+                            // gate fires on the visit. The model sums a box's
+                            // whole weight on the tick the box fires, so it
+                            // skips: lv22's four yellow blocks weigh 2 each, and
+                            // the count goes 2,4,6,8,9 where the game's goes
+                            // 1,2,3,4,5 -- measured, the second increment of a
+                            // box arriving 25 ticks after the first. With the
+                            // old `n == C` the gate `item 2 == 5` could never
+                            // fire even with every feeder forced: at the collect
+                            // tick the count was 9 and the gate's bit was clear
+                            // in every group.
+                            //
+                            // So with unit steps from nBase, `n == C` happens at
+                            // some tick iff nBase <= C <= n. Where increments
+                            // really do land one per tick (lv21's eleven pickups,
+                            // collected one at a time) this fires on the same
+                            // tick as before; it only differs where the old test
+                            // stepped over C.
+                            // cmode 3 is an Item Compare's "at least", asked
+                            // on every press, so it simply reads the count.
+                            const bool hit = T->cmode == 3 ? (n >= T->count)
+                                           : T->cmode == 1 ? (n > T->count)
+                                           : T->cmode == 2 ? (n < T->count)
+                                           : (nBase <= T->count && T->count <= n);
+                            // --coindbg: the gate itself, once per distinct n,
+                            // so "the coin never moved" can be split into
+                            // "the gate was never asked" and "it was asked and
+                            // said no". Without this the only witness is the
+                            // coin's live row, which cannot tell the two apart.
+                            if (g_coinDbgT >= 0 && T->count >= 0 && !T->tap) {
+                                const int bi = touchBitIndex(tb.second);
+                                const int key = std::min(n, 60) + 1;
+                                if (bi >= 0 && bi < kTouchBits
+                                    && g_countSaid[bi].load() < key) {
+                                    g_countSaid[bi].store(key);
+                                    std::printf("countgate: t=%lld bit=%d uid=%d id=%d "
+                                                "item=%d cmode=%d need=%d n=%d base=%d "
+                                                "px=%.1f hit=%d\n",
+                                                (long long)t, bi, T->uid, T->id,
+                                                T->item, T->cmode, T->count, n, nBase,
+                                                px, hit ? 1 : 0);
+                                }
+                            }
+                            if (!hit) continue;
+                            // An INSTANT Count (1811) asks the question once, as
+                            // the player crosses it; a Count (1611) is a standing
+                            // listener. Without the crossing test the smaller-than
+                            // ones fire at t=0 for every state (0 < 10 is true
+                            // from the start) and lv21's coin drops before the
+                            // level has begun.
+                            if (T->id == 1811 && px < T->cx) continue;
+                            kid.s.trig |= tb.second;
+                            kid.s.trigT = (int32_t)t;
+                            const int b = touchBitIndex(tb.second);
+                            if (g_touchFireT[b] < 0) g_touchFireT[b] = (int)t;
+                            kid.s.fireB[b] = (uint16_t)t;
+                        }
+                }
+                // ---- the TAP triggers (1595) --------------------------------
+                // Armed by crossing, fired by a press -- measured on the rig
+                // calib_coingate5: a tap before the trigger's x does nothing, a
+                // tap past it switches its target group. The press EDGE is what
+                // GD sees, so a state already holding the button does not fire
+                // one by continuing to hold.
+                if (K.trigs && input && !s.action && gframe == 0)
+                    for (const auto& tb : *K.trigs) {
+                        const TouchTrig* T = tb.first;
+                        if (!T->tap || (kid.s.trig & tb.second)) continue;
+                        if (px <= T->cx) continue;
+                        kid.s.trig |= tb.second;
+                        kid.s.trigT = (int32_t)t;
+                        const int b = touchBitIndex(tb.second);
+                        if (g_touchFireT[b] < 0) g_touchFireT[b] = (int)t;
+                        kid.s.fireB[b] = (uint16_t)t;
+                    }
+                // ...and the COUNTING tap (tapGive): every press edge while its
+                // window is open adds one. State::taps holds the count in its low
+                // six bits, 0x80 once the window has opened and 0x40 once it has
+                // shut (see passedOn for both ends). Read from tapGive rather
+                // than K.trigs, which drops a box 40 px behind the player. The
+                // count is dropped once it cannot matter (window shut, or a gate
+                // on its item already fired), so it splits the key only inside
+                // the window. Any frame: lv22's window opens travelling -x.
+                if (tapGive.bit) {
+                    if (kid.s.trig & tapGateBits) {
+                        kid.s.taps = 0;
+                    } else {
+                        double wx = 0.0, wy = 0.0;
+                        fromFrame(gframe, (double)kid.s.xAbs, (double)kid.s.y, wx, wy);
+                        uint8_t tp = kid.s.taps;
+                        const bool armed =
+                            (tp & 0x80) != 0
+                            || passedOn(kid.s, gframe, tapGive.armChan, wx, wy,
+                                        tapGive.armX, tapGive.armY);
+                        const bool shut =
+                            (tp & 0x40) != 0
+                            || (armed && passedOn(kid.s, gframe, tapGive.closeChan, wx, wy,
+                                                  tapGive.closeX, tapGive.closeY));
+                        if (shut) {
+                            tp = 0x40;
+                        } else if (armed) {
+                            tp |= 0x80;
+                            if (input && !s.action && (tp & 0x3f) < 0x3f) ++tp;
+                        }
+                        kid.s.taps = tp;
+                    }
+                }
+                // ...and a gated coin passed for good (gatedMask, tapMissX/Y):
+                // once its window has resolved, past the coin's far edge on the
+                // shut channel without it. Same reading of "passed" as the
+                // window's own ends.
+                if (!dead && gatedMask
+                    && ((kid.s.trig & tapGateBits) || (kid.s.taps & 0x40))) {
+                    double wx = 0.0, wy = 0.0;
+                    fromFrame(gframe, (double)kid.s.xAbs, (double)kid.s.y, wx, wy);
+                    for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+                        if (!((gatedMask >> ci) & 1) || (kid.s.coins & (uint8_t)(1u << ci)))
+                            continue;
+                        if (passedOn(kid.s, gframe, tapGive.closeChan, wx, wy,
+                                     tapMissX[ci], tapMissY[ci])) {
+                            dead = true;
+                            break;
+                        }
+                    }
+                }
+                // ...a coin whose group is OFF and whose every switch-on box is
+                // behind the player (coinGate, built at load). "Off right now"
+                // is read from the live rows: a switched-off coin is not in
+                // them. Nothing to learn from flying the rest of the level.
+                // Frame 0 only, and for the same reason as the miss test: `px`
+                // is a world Y in a turned frame, and coinLive is empty there,
+                // so every coin would read as "off, and the switch-ons are all
+                // behind" and be killed on a comparison between two axes.
+                for (size_t gi = 0; gframe == 0 && gi < coinGate.size(); ++gi) {
+                    const CoinOnGate& G = coinGate[gi];
+                    if (kid.s.coins & (uint8_t)(1u << G.coinIdx)) continue;
+                    bool liveNow = false;
+                    for (const CoinLive& C : coinLive)
+                        if (C.bit == G.coinIdx) { liveNow = true; break; }
+                    if (liveNow) continue;
+                    bool canStill = false;
+                    for (const auto& on : G.ons)
+                        if ((kid.s.trig & on.first) || px <= on.second) {
+                            canStill = true;
+                            break;
+                        }
+                    if (!canStill) { dead = true; break; }
+                }
+                // ...and a coin that only an Item Compare on the counting tap's
+                // item switches on, once that tap's window has shut with the
+                // gate unfired: the Stop at its end halts the tap itself (lv22's
+                // uid17958 sits in the Stop's group 535), nothing else feeds the
+                // item (tapSole), and the gate reads only the count -- so the
+                // coin stays off for good. Without this the branches that
+                // pressed too few times fly on to the coin and only the goal
+                // test tells them apart, a whole frontier later.
+                if (!dead && tapSole && (kid.s.taps & 0x40)
+                    && !(kid.s.trig & tapGateBits))
+                    for (size_t ci = 0; ci < L.coins.size(); ++ci) {
+                        if (!coinEnable[ci] || (coinEnable[ci] & ~tapGateBits)) continue;
+                        if (kid.s.coins & (uint8_t)(1u << ci)) continue;
+                        dead = true;
+                        break;
+                    }
+                // ...and the COUNTER a coin needs (coinReq, built at load).
+                // A counter never decreases, so once `have + ahead < need` the
+                // coin can never come into reach again and the branch is done.
+                // This is the prune the miss test could not be: it fires at the
+                // last feeder the branch could still have taken, not at the
+                // coin, which on lv21 is 2,759 px and a whole cap's worth of
+                // frontier earlier.
+                for (size_t ri = 0; gframe == 0 && ri < coinReq.size(); ++ri) {
+                    const CoinCountReq& R = coinReq[ri];
+                    if (kid.s.coins & (uint8_t)(1u << R.coinIdx)) continue;
+                    int have = 0, ahead = 0;
+                    for (const auto& ib : g_itemBase)
+                        if (ib.first == R.item) have += ib.second;
+                    for (size_t ii = 0; ii < g_collect.size() && ii < 16; ++ii) {
+                        if (g_collect[ii].item != R.item) continue;
+                        if (kid.s.items & (uint16_t)(1u << ii)) ++have;
+                        else if (g_collect[ii].cx > px) ++ahead;
+                    }
+                    if (have + ahead < R.need) { dead = true; break; }
+                }
+                // ONLY IN FRAME 0, and that is not a detail: px is the frame's
+                // travel coordinate, so in a turned frame it is a world Y and
+                // comparing it with the coin's world x kills branches for a
+                // reason that does not exist. The old form could skip the guard
+                // because it only ran on levels that never turn.
+                for (size_t ci = 0; !dead && gframe == 0 && ci < L.coins.size(); ++ci) {
+                    if (!coinPruneOk[ci]) continue;
+                    if (kid.s.coins & (uint8_t)(1u << ci)) continue;
+                    const Obj& C = L.coins[ci];
+                    // x only ever grows in frame 0, and coinPruneOk says every
+                    // later return to frame 0 is past this coin, so it is final.
+                    if (px > C.cx + C.hw + ph) { dead = true; break; }
+                }
+            }
             // Route tightness rides along with the child (State c = s copies it
             // already, so this only adds this tick's own contribution). Read by
             // the goal pick below; nothing else looks at it.
@@ -3706,7 +5033,7 @@ inline int cliMain(int argc, char** argv) {
             // no tick, is an implementation defect and nothing else would
             // catch it.
             if (!dead && g_fireBCheck) {
-                for (int b = 0; b < 32; ++b) {
+                for (int b = 0; b < kTouchBits; ++b) {
                     const bool bit = ((kid.s.trig >> b) & 1u) != 0;
                     const bool has = kid.s.fireB[b] != 0;
                     if (bit && !has) ++g_fireBNoTick;
@@ -4067,7 +5394,7 @@ inline int cliMain(int argc, char** argv) {
             for (const State& s : nxt) m |= s.trig;
             if (m & ~g_trigReported) {
                 for (size_t b = 0; b < g_touch.size(); ++b)
-                    if ((m & ~g_trigReported) & ((uint32_t)1 << b))
+                    if ((m & ~g_trigReported) & touchBit(b))
                         std::printf("triggers: box (%.0f,%.0f) entered at "
                                     "t=%lld\n", g_touch[b].cx, g_touch[b].cy, t);
                 g_trigReported |= m;
@@ -4214,9 +5541,48 @@ inline int cliMain(int argc, char** argv) {
             capDropped += (long long)(nxt.size() - g_aliveCap);
             if (!g_bandPath.empty() && !g_bands.empty() && g_bands.back().t == t)
                 g_bands.back().capdrop = (int)(nxt.size() - g_aliveCap);
-            auto classOf = [](const State& s) {
+            // --coins only. Measured 2026-08-31: with the band class on for
+            // every run, 20 of the 21 levels the cold suite reached kept their
+            // baseline iteration count exactly -- and lv20 went 37 -> 50. That
+            // is the level where the band really does branch, and +13 cold
+            // iterations is not a price the PLAIN solver has any reason to pay:
+            // it needs the deepest route, which is the majority the water-fill
+            // already keeps. Preserving a minority branch is a coin-routing
+            // problem, so the class is a coin-routing class.
+            const bool bandClass = coinOn;
+            auto classOf = [bandClass](const State& s) {
                 return ((uint64_t)s.mode << 32) ^ ((uint64_t)s.mini << 24)
                        ^ ((uint64_t)s.flip << 16) ^ ((uint64_t)s.dual << 8)
+                       // --coins: the collected set is a class of its own, so
+                       // the water-fill below -- which serves the SMALLEST
+                       // class first -- protects the few lineages that took a
+                       // coin instead of thinning them at the same stride as
+                       // the many that are merely inside its window. 0 without
+                       // the flag, so every existing partition is unchanged.
+                       ^ ((uint64_t)s.coins << 40)
+                       // ...and the FLIGHT BAND. Every ship state is otherwise
+                       // one class, so the water-fill samples the whole layer at
+                       // one stride -- and a route that has to thread many
+                       // saturated layers as a minority survives that with
+                       // probability (kept/born)^n. lv1's coin corridor is
+                       // exactly such a route, and it is what this is for: at
+                       // cap 16,000 the frontier at t=19,000 is y=[113,367]
+                       // while the reference route is at 457, so the search
+                       // reports the coin unreachable even though the model
+                       // replays the human's own route through it to 0.00 px.
+                       // At cap 200,000 the frontier is y=[435,495] and it
+                       // solves -- so it was never physics, only thinning.
+                       // The band is the right axis rather than a y grid (tried
+                       // first, floor(y/60)): it is what a BRANCH actually is
+                       // here. lv1's corridor is entered through a portal at
+                       // cy=405 that a low route never touches, and firing it is
+                       // what rewrites bandCeil; keyOf already treats two bands
+                       // as two worlds. The y grid recovered lv1 too but cost
+                       // capHits on levels that have no branch at all (lv19
+                       // +30%, lv14 +13%, lv18 +10%), while the band left
+                       // lv14/17/18/19 identical to the digit.
+                       ^ (bandClass ? ((uint64_t)(uint32_t)(int32_t)
+                              std::lround((double)s.bandCeil) << 48) : 0)
                        ^ (uint64_t)(uint32_t)std::lround(s.dx * 1000.0);
             };
             std::vector<uint64_t> cls;
@@ -4294,7 +5660,25 @@ inline int cliMain(int argc, char** argv) {
             // ...and only onto an old plan that goes on: a trace that ends a tick past the join
             // (the old plan was a PARTIAL that died there) would turn a dead end into a SOLVED.
             const bool rjGoesOn = !g_rjRows.empty() && g_rjRows.rbegin()->first - tt >= kRjMinTail;
-            if (g_rjUse && ji >= 0 && !solved && rjGoesOn) {
+            // ...and, with --coins, not from INSIDE an open counting-tap window
+            // whose gate has not fired. The old plan's tail is flown as it is,
+            // and a join is a SOLVED: joined there, the presses still owed are
+            // never planned. Anywhere else a join stays what it was -- a tail
+            // that then passes the window short is ended by the mod at the shut
+            // point (Outcome::coinGates), and the loop plans the window again
+            // from an anchor inside it. (Refusing every join short of all coins
+            // was tried first: 0 joins against 34, and the run stalled at
+            // x=3.6-4.9k, 1,000 px before any coin.)
+            // ...nor after the gate has fired while a coin it opens is still to
+            // be taken: the old tail was flown with the coin off, and on lv22 it
+            // glides under it.
+            const State* rjS = ji >= 0 ? &nxt[(size_t)ji] : nullptr;
+            const bool rjWindow = rjS && (rjS->taps & 0x80) && !(rjS->taps & 0x40)
+                                  && !(rjS->trig & tapGateBits);
+            const bool rjOwed = rjS && gatedMask && (rjS->trig & tapGateBits)
+                                && (rjS->coins & gatedMask) != gatedMask;
+            const bool rjCoins = !coinOn || !tapGive.bit || !(rjWindow || rjOwed);
+            if (g_rjUse && ji >= 0 && !solved && rjGoesOn && rjCoins) {
                 solved = true;
                 goalState = nxt[(size_t)ji];
                 planCut = 0;
@@ -4587,6 +5971,47 @@ inline int cliMain(int argc, char** argv) {
                     " (both must be 0)\n", g_fireBNoTick, g_fireBNoBit, g_fireBTooEarly);
     std::printf("capstat: maxAlive=%zu capHits=%lld dropped=%lld cap=%zu\n",
                 maxAlive, capHits, capDropped, g_aliveCap);
+    // --keycensus: the per-box tally, with the uid so it can be joined against
+    // objrects. Boxes that never divided the key are printed as 0 rather than
+    // omitted -- "absent" and "zero" are the distinction this project keeps
+    // getting wrong, and a box that cost nothing is the interesting case here.
+    // --coindbg: the closest approach per coin, whether or not it was taken.
+    if (g_coinDbgT >= 0 && coinOn)
+        for (size_t i = 0; i < L.coins.size() && i < 8; ++i) {
+            // The denominator is on the line, always: "never entered" reads the
+            // same whether no state entered the bound or the search never got
+            // that far, and this project has mis-read that 0 six times in one
+            // night. `seen` is how many states were examined inside the bound,
+            // `reachedX` is the deepest x the coin test itself ever saw.
+            if (g_coinNearDy[i] < 0.0) {
+                std::printf("coinnear: coin=%zu at (%.0f,%.0f) NEVER ENTERED "
+                            "(seen=%lld, the coin test reached x=%.0f, this "
+                            "coin's x bound starts at %.0f)%s\n",
+                            i, L.coins[i].cx, L.coins[i].cy, g_coinSeen[i],
+                            g_coinProbeMaxX, L.coins[i].cx - L.coins[i].hw - 15.0,
+                            (g_coinProbeMaxX < L.coins[i].cx - L.coins[i].hw - 15.0)
+                                ? "  <-- NOT YET: the search never got this far"
+                                : "  <-- a real zero: the search passed it and no "
+                                  "state was inside the x bound");
+                continue;
+            }
+            std::printf("coinnear: coin=%zu at (%.0f,%.0f) closest |dy|=%.3f at "
+                        "t=%lld player=(%.3f,%.3f)  yBound=%.1f  seen=%lld%s\n",
+                        i, L.coins[i].cx, L.coins[i].cy, g_coinNearDy[i],
+                        g_coinNearT[i], g_coinNearX[i], g_coinNearY[i],
+                        L.coins[i].hh + 15.0, g_coinSeen[i],
+                        (g_coinNearDy[i] <= L.coins[i].hh + 5.0) ? "  <-- inside" : "");
+        }
+    if (g_keyCensus) {
+        long long tot = 0;
+        for (int b = 0; b < kTouchBits; ++b) tot += g_keyCount[b].load();
+        std::printf("keycensus: total=%lld over %zu boxes\n", tot, g_touch.size());
+        for (size_t b = 0; b < g_touch.size() && b < (size_t)kTouchBits; ++b)
+            std::printf("keycensus: box=%zu uid=%d cx=%.0f moveTicks=%lld splits=%lld\n",
+                        b, g_touch[b].uid, g_touch[b].cx,
+                        b < g_touchMoveTicks.size() ? g_touchMoveTicks[b] : -1,
+                        g_keyCount[b].load());
+    }
     clearReport();
     g_outcome.capHits = capHits;
     if (!g_fixups.empty()) {
@@ -4795,7 +6220,7 @@ inline int cliMain(int argc, char** argv) {
         // through uid 5845 at t=6162 where --replay lands, missed the turn at
         // 6299 and reported escapee-prune at 6505. The walk also fills modeAt,
         // which sets the emitted edges' latency, so this is not print-only.
-        Level* rLf = g_witnessFrame ? &frameLevel(L, (int)init.frame) : &L;
+        Level* rLf = &frameLevel(L, (int)init.frame);
         std::unique_ptr<XSlice> sl, pl, dl, ol, sls, vl;
         auto rrebind = [&](Level& lv) {
             sl = std::make_unique<XSlice>(lv.objs);
@@ -4847,6 +6272,7 @@ inline int cliMain(int argc, char** argv) {
             // ...and the witness resim has to see the SAME moving geometry the
             // search planned against, or its trace disagrees with its own plan
             rLf->dyn.seek((int)t);
+            seekOtherFrames(rLf, (int)t);   // --rotpretap only
             // ...including the doors IT opened. The witness carries its own mask
             // (stepBoth sets it below), so this is the same call the search made
             // for the group this lineage belonged to.
@@ -4855,18 +6281,18 @@ inline int cliMain(int argc, char** argv) {
             rLf->dyn.applyTriggers(s.trig, (int)s.trigT, s.fireB,
                                    s.lockOff + (float)(x - (double)s.xAbs),
                                    (int)t, x);
-            std::vector<std::pair<const TouchTrig*, uint32_t>> rt;
+            std::vector<std::pair<const TouchTrig*, TouchMask>> rt;
             // --witnessframe: the boxes in THIS frame's coordinates, as --replay
             // (touchFor above) and the search do. g_touch is frame 0's, so a walk
             // that turns part-way could never touch a box inside the turned
             // section: lv22 box 30 drops the spike row at 213.25 at t=1,758 in
             // frame 1, and a witness that missed it teleported onto the spikes.
-            const std::vector<TouchTrig>& tw = g_witnessFrame ? touchFor((int)s.frame) : g_touch;
+            const std::vector<TouchTrig>& tw = touchFor((int)s.frame);
             for (size_t b = 0; b < tw.size(); ++b) {
-                if (s.trig & ((uint32_t)1 << b)) continue;
+                if (s.trig & touchBit(b)) continue;
                 const TouchTrig& T = tw[b];
                 if (T.cx + T.hw < x - 40 || T.cx - T.hw > x + 40) continue;
-                rt.push_back({&T, (uint32_t)1 << b});
+                rt.push_back({&T, touchBit(b)});
             }
             sl->forRange(x - 40, x + 40, [&](const Obj& o) { rn.push_back(&o); });
             rLf->dyn.collect(Dynamics::NEAR, x - 40, x + 40, rn);
@@ -5090,12 +6516,11 @@ inline int cliMain(int argc, char** argv) {
     // loop means by PARTIAL (checkPhantom: "a PARTIAL tail is the model agreeing
     // that the route dies, which is not a phantom"). So publish it as the PARTIAL
     // at that death, and let the loop's own PARTIAL gate decide whether to play
-    // it. Only when the witness is bound to the right geometry (frame 0, or
-    // --witnessframe), and only for physical causes -- a search prune
+    // it. The witness is bound to its own frame's geometry (--witnessframe,
+    // always on since the flag clean-up), and only physical causes count -- a search prune
     // (escapee-prune, deadband, maxplayy, out-of-play) is not the model's
     // physics. The emitted tail is not cut, as for any PARTIAL.
-    if (g_vetoPhys && rDead > 0 && g_outcome.verdict == VerdictSolved && rWhy
-        && ((int)init.frame == 0 || g_witnessFrame)) {
+    if (g_vetoPhys && rDead > 0 && g_outcome.verdict == VerdictSolved && rWhy) {
         static const char* const kPhys[] = {"cube/hazard", "wave/hazard", "fly/hazard",
                                             "spider/tp-hazard", "cube/solid-side",
                                             "fly/solid-side", "crush"};

@@ -111,25 +111,21 @@ struct Config {
     int dpStepHorizon = 3000;
     // cfg `dpfastveto`: a round that flew EXACTLY the plan the round before flew, and died on the
     // same tick, drops the veto box at once instead of waiting for the fourth hit -- the search is
-    // deterministic, so the repeat is not new evidence.
-    bool dpFastVeto = true;
+    // deterministic, so the repeat is not new evidence. Always on since the flag clean-up.
     // cfg `dpfastvetoall` (off, measured inert under the adaptive length): the same, against every
     // plan this level has flown rather than only the last round's.
     bool dpFastVetoAll = false;
     // cfg `dprejoinwatch`: hand dp the model's trace of the plan that last died (--rejoinwatch).
-    // On its own it only prints how soon the next search comes back onto that plan.
-    bool dpRejoinWatch = true;
+    // On its own it only prints how soon the next search comes back onto that plan. Always on since the flag clean-up.
     // cfg `dprejoinuse` (needs dprejoinwatch): stop the search where a state that did not go
     // through the old death comes back onto the old plan's trajectory, and keep the old plan's
     // inputs from there on (dp's --rejoinuse). The layers past the join were 31-45% of the search
     // on lv16/20/22; lv16 258 -> 163 s, lv22 385 -> 222 s. Its one measured loss is lv20
     // (212 -> 247 s): the old plan's continuation past the join died 44 ticks on, in ground the
-    // game had never flown.
-    bool dpRejoinUse = true;
+    // game had never flown. Always on since the flag clean-up.
     // cfg `dprejoinchain`: also join a plan that was itself a join. Off was measured and is worse:
     // it did not repair lv20, and on lv22 the changed route fell into the off-board hole
-    // dpoffboardkill describes.
-    bool dpRejoinChain = true;
+    // dpoffboardkill describes. Always on since the flag clean-up.
     // cfg `dprejoinfull` (off, measured worse): an exact rejoin also needs the search's dedupe key
     // to match. It removed most of lv22's joins -- equal on y/vy/mode but not on the key, and still
     // good in the game -- and lv22 went 222 -> 507 s.
@@ -139,8 +135,7 @@ struct Config {
     bool dpOffBoardKill = false;
     // cfg `dpadaptivehorizon` (needs dpstephorizon): choose the next plan length from where the
     // game ended the last one. Killed within the step of its anchor = the model is wrong here, plan
-    // the step; alive past it = the model is right here, plan the level.
-    bool dpAdaptiveHorizon = true;
+    // the step; alive past it = the model is right here, plan the level. Always on since the flag clean-up.
     // How many repair iterations the loop may spend before it reports the wall (Stage C).
     // A report, not a failure: "stopped at iteration N, deepest t=..." is the diagnostic the
     // level is asking for. 40 undercounted a level the loop can actually clear: with the phantom
@@ -195,9 +190,8 @@ struct Config {
     // lv20 pays 6 iterations and 7% for what lv16 gains 40 and 38% on; across the three dual
     // levels -- the only ones this can reach -- it is 2,205 s -> 1,975 s. lv20's heavy solves
     // (>= 10 s) move 806 -> 817 s, i.e. the extra iterations there are the cheap kind.
-    // Turn it OFF to A/B the records back out; GDSOLVER_LAB/oneoff/py/p2_gap_list.py reads the
-    // remaining gaps out of a run's log.
-    bool dpFixP2 = true;
+    // GDSOLVER_LAB/oneoff/py/p2_gap_list.py reads the remaining gaps out of a run's log.
+    // Always on since the flag clean-up. (the off arm, which A/B-ed the records back out, is gone.)
     // cfg `dpbandtrack`: hand the search the CAMERA's recorded flight band
     // (--bandtrack). On since 81f2a09; off is how that commit's remaining half is
     // A/B'd, since lv22's second cold regression bisects to it.
@@ -212,16 +206,23 @@ struct Config {
     // Known gap, not closed here: a press held into the window and released on
     // its last tick makes GD jump as the controls come back. The replay path
     // (the fixup resim) reproduces that; the search does not, so it cannot plan
-    // that one-tick-earlier jump and presses a tick later instead.
-    bool dpCtrlWin = true;
+    // that one-tick-earlier jump and presses a tick later instead. Always on since the flag clean-up.
     // cfg `dprotseed`: seed the 2.2 rotation queue at each re-anchor from GD's own
     // recording, and hand the queue (--rotqueue --startrotq) ONLY to the calls whose
     // seed that recording fixes exactly; every other call gets no queue at all, so an
-    // empty seed can never reach a running queue. 0 = off (the default: nothing is
-    // passed and the argv is unchanged), 1/2/3 = A/E/F -- how much counts as having
-    // seen a queue entry, strictest first (rotSeedFor in repair.hpp). Refused, and
-    // named, when a cfg `dparg=--rotqueue` already turns the queue on for every call.
-    int dpRotSeed = 0;
+    // empty seed can never reach a running queue. 0 = off (nothing is passed and the
+    // argv is as before), 1/2/3 = A/E/F -- how much counts as having seen a queue
+    // entry, strictest first (rotSeedFor in repair.hpp) -- and 4 = S, the game's own
+    // consumption loop replayed over the recording (rotseed::seedSim). Refused, and named, when a
+    // cfg `dparg=--rotqueue` already turns the queue on for every call.
+    // On since AUD-20260921-21 (at A), paired with dpRotQToggle below: the queue
+    // without the toggle rule fires rotations the game only consumes (lv22 uid5809),
+    // so the two go on and off together. S since AUD-20260921-22, with dpTouchSeedNow:
+    // on lv22 every anchored call's seed is derivable (122 of 122 against 46 of 157 at
+    // A) -- derivable from S's rule, not independently checked in the game.
+    // `dprotseed=A dptouchseednow=0` is the previous default, `dprotseed=0
+    // dprotqtoggle=0` the one before it.
+    int dpRotSeed = 4;
     // cfg `dprotseedanchor`: whether an exact seed also hands the queue to the ANCHORED
     // SEARCH (site=anchor), or only to the fixup resim. 1 = both (dprotseed's own
     // behaviour); 0 = resim only -- the anchored call still logs its class on the
@@ -229,17 +230,14 @@ struct Config {
     // whether the queue in the search is what an lv22 run piles up on.
     bool dpRotSeedAnchor = true;
     // cfg `dpswingpending`: an anchor taken on the tick a SWING's press takes effect carries
-    // the pending flip in --start's 16th field (see swingPendingAt in repair.hpp). On by
-    // default since v0.1.4; `dpswingpending=0` turns it off.
-    bool dpSwingPending = true;
+    // the pending flip in --start's 16th field (see swingPendingAt in repair.hpp). On since
+    // v0.1.4; always on since the flag clean-up.
     // cfg `dphoverstrict`: an anchored robot whose vy is not flat into t0 gets no hover budget
-    // unless the hover starts on t0 itself (see robotHoverLeft in repair.hpp). On by default
-    // since v0.1.4; `dphoverstrict=0` turns it off.
-    bool dpHoverStrict = true;
+    // unless the hover starts on t0 itself (see robotHoverLeft in repair.hpp). On since
+    // v0.1.4; always on since the flag clean-up.
     // cfg `dpbandend`: pass --bandtrackend with the last tick the recording behind
     // dp_band.txt reached, so a portal past it sets the band instead of the held last row
-    // (dp/src/dp/bands.hpp g_bandTrackEnd). On by default since v0.1.4; `dpbandend=0` turns it off.
-    bool dpBandEnd = true;
+    // (dp/src/dp/bands.hpp g_bandTrackEnd). On since v0.1.4; always on since the flag clean-up.
     // cfg `dpsnapshot`: keep a copy of the file inputs every solver call read (the moving-
     // geometry groups, the camera band, the fixups, the replayed plan) and of every anchored
     // search's emitted plan, each named by its own size/fnv so it matches the call's
@@ -263,8 +261,27 @@ struct Config {
     // cfg `dprotqtoggle=1`: pass --rotqtoggle to the anchored solves and the fixup resims,
     // with --touchseed naming the touch Toggles the attempt had already entered by t0 (a
     // geometric test on its own recorded positions -- GD's touch recorder never sees a
-    // touch Toggle). Off by default.
-    bool dpRotQToggle = false;
+    // touch Toggle). On by default with dpRotSeed (AUD-20260921-21); `dprotqtoggle=0`
+    // turns it off.
+    bool dpRotQToggle = true;
+    // cfg `dptouchseednow`: --touchseed tests the recorded row's own y only, which is
+    // dp's markTouched under the default --touchprey=button. Off (`dptouchseednow=0`), it
+    // also accepts the previous row's y, the older --touchprey=parent reading
+    // (touchSeedArg in repair.hpp). On since AUD-20260921-22, with dpRotSeed = S.
+    bool dpTouchSeedNow = true;
+    // Always on since the 0.2.0 flag clean-up, and no longer cfg keys:
+    //   * anchored calls pass --touchentered, the touch boxes the attempt's recorded positions
+    //     overlapped by t0 (touchEnteredArg in repair.hpp), each as `uid:tick` with the first
+    //     recorded row that overlapped it; dp's anchor scan opens only those, dated from that
+    //     tick (it was `dptouchentered` / `dptouchenteredtick`). One unit with dp's autonomous
+    //     lag: alone it broke lv22, because the old opening's wrong ceiling height was what let
+    //     GD's recorded deaths through the fixup gate; and lv22's trap 18092, entered at 2,614,
+    //     had been dated 2,255 from the ceiling's autonomous descent.
+    //   * after the live recording (dp_groups.txt, written only once a replay has died) the
+    //     calls pass --groupholddeath, so dp holds its last row one tick before the bootstrap
+    //     takes over (it was `dpgroupholddeath`; see g_groupHoldDeath in groups.hpp). The kill
+    //     on that recording's last tick is decided on dp's next row, where lv20's spike
+    //     uid13068 was 3,000 px away and switched off in the bootstrap.
     // cfg `dpfingerprint`: one `[fp]` line per iteration pinning the loop's whole state
     // (see logFingerprint). This is the acceptance instrument for a change to the loop,
     // so it is ON by default -- a run that cannot be compared to a previous one cannot be
@@ -326,10 +343,21 @@ struct Config {
     // there is a cold run to judge it rather than on the strength of the
     // argument.
     bool portalPayload = false;
+    // Seed an anchored solve's history values that --start does not carry
+    // (dp's --anchor-state owns=hist; version 1 = the press latch ->
+    // State::pressSpent). On by default since 2026-09-19, together with the two
+    // rules that read the latch (--shipheldflap / --wavespentgate): with the
+    // payload off they would read the latch's default after an anchor. A cold
+    // run carried it on every call that has --start (421 of 421). Always on since the flag clean-up.
     // Observe the stair snap (checkSnapJumpToObject). For measuring the phenomenon where x
     // advances extra on the landing tick
     bool snapTrace = false;
     bool hitboxTrace = false;   // record the hitboxes GD actually uses (cfg hitboxtrace=1)
+    // cfg killersite=1: with every `killer:` line, where in GD the call came
+    // from. `killer:` names the OBJECT, and an object-free death names nothing
+    // at all -- which is most of what the lv22 c1 corridor produces. The call
+    // site is the only thing that separates one object-free rule from another.
+    bool killerSite = false;
     // Print the raw fields that decide collidedWithObjectInternal's return value, at the call
     // itself (cfg `fieldprobe=1`, `fprobe:` lines). Reading them off the object/player by literal
     // offset is deliberate: the bindings carry no offset annotations here, and inferring a
@@ -436,8 +464,22 @@ struct Config {
     // them all landed 1 to 17 ticks late, on grid values.
     double vyTest = 0.0;
     bool vyTestOn = false;
+    // A panel session started with Coins on (g_uiCoins): its solution and iteration map are the
+    // COIN files (solution_lv<N>_coins.txt, itermap_lv<N>_coins.txt), so a coin solve does not
+    // replace the plain solution Replay plays, and a coin replay finds the coin one. Set by the
+    // panel only; a cfg-driven run keeps its file names whatever it routes for.
+    bool coinFiles = false;
     bool coinMode = false;   // enable our own coin-pickup detection (for coin verification
                              // during replay)
+    // cfg `coinroute=1`: the repair loop solves for every coin as well as the end. The search
+    // gets --coins (and --coinmask at an anchor), and an attempt that passes a coin GD has not
+    // credited is ended there (hooks_gamelayer.cpp), the same verdict the search's miss prune
+    // gives. Implies coinMode: GD's own pickup (the pickupItem hook) is what it reads.
+    bool coinRoute = false;
+    // cfg `coinwatch=1`: repeat the `coinlive:` line every 1,200 ticks. For the
+    // question "when does this coin's collision rect move", which the once-per
+    // -coin default cannot answer.
+    bool coinWatch = false;
     // cfg `areaenv=0` turns off the recording of where GD's own random numbers can put an Area
     // Move's objects (solver/areaenv.hpp); the recording then holds this game's rects, as before.
     // A diagnostic switch: without it the plan depends on the seeds of the game that recorded it.
@@ -758,6 +800,51 @@ constexpr double ENDZONE_KILL_AFTER_SEC = 10.0;
 inline bool g_syncProbe = false;
 // Record switch (touch trigger) contacts (cfg `trigtrace=1`)
 inline bool g_trigTrace = false;
+// autorun.cfg keys removed in a release clean-up that this session's file still names
+// (session.hpp kRemovedCfg). dpsolve::start refuses to solve with any of them.
+inline std::vector<std::string> g_cfgRemoved;
+// The press latch around a tick window (cfg `presstrace=t0,t1`, `press:` lines; off when
+// t1 < t0). +0x985 is "the button is down", +0x986 "a press not yet consumed" -- pushButton
+// sets both at once (0x397fbc) and each consumer clears only 0x986. Printed before and after
+// PlayerObject::update and after pushButton, so a consumer's tick shows as 1 -> 0 inside one
+// update. Added for a UFO press on lv14 that fires two ticks late in the game.
+inline long long g_pressT0 = 0, g_pressT1 = -1;
+// The stick re-land of PlayerObject::postCollision around a tick window (cfg
+// `sticktrace=t0,t1`, `stick:` lines; off when t1 < t0). postCollision re-lands a player
+// whose ground object moved away by at most 5*dt (0x38e76f-0x38ea48) through
+// collidedWithObject with dt = 0, and when the ground object's stretched rect misses the
+// player it falls back to the object checkCollisions pre-registered at +0x600. Printed on
+// entry and exit of postCollision (P1 only) with the ground object +0x608, the fallback
+// +0x600 and the stick flag +0x658, plus one line per dt = 0 collision inside it. Added to
+// test which object a rider on a sinking floor is tied to when it crosses a seam between
+// two blocks in a rotated frame (lv22 t=6,122).
+inline long long g_stickT0 = 0, g_stickT1 = -1;
+inline bool g_inPostCollP1 = false;
+// The positions of listed objects at the end-of-tick record point (cfg
+// `areatrace=t0,t1,uid[,uid...]`, `area:` lines; off when t1 < t0). Added to find what a
+// level solved after another one in the same game carries over: on lv22 the solids an
+// Area Move (3006) pushes sit up to 2 px elsewhere at t=14,275-14,370 when lv21 ran first,
+// while everything the dump shows is identical.
+// cfg `rngfresh=1`: every level of a session starts GD's own fast_rand seeds where the
+// first level found them (the values a fresh process has). 2.2081 keeps three process-wide
+// LCG seeds (x*0x343fd + 0x269ec3): 0x6c2e90 for triggers (PlayLayer::resetLevel reseeds it
+// each attempt), 0x6c2ee0 drawn by every object's GameObject::resetObject on every attempt,
+// and 0x6c2ef8 in teleportPlayer. The last two are never reseeded, so a level solved after
+// another one in the same game starts from wherever that one left them: on lv22 the solids an
+// Area Move pushes at t=14,275-14,370 then sit up to 2 px elsewhere than in a fresh game.
+inline bool g_rngFresh = false;
+// cfg `rngseed=<ee0>,<ef8>`: set the two never-reseeded seeds (see g_rngFresh) to these
+// values on every level load. For measuring which objects depend on them: the same plan
+// replayed under several seeds shows every position the seeds can move.
+inline bool g_rngSeedSet = false;
+inline long long g_rngSeedEE0 = 0, g_rngSeedEF8 = 0;
+inline long long g_areaT0 = 0, g_areaT1 = -1;
+inline std::vector<int> g_areaUids;
+inline std::vector<GameObject*> g_areaObjs;
+inline cocos2d::CCArray* g_areaArr = nullptr;
+// The slope-ride bytes at the end-of-tick record point (cfg `slopetrace=t0,t1`,
+// `slprec:` lines; off when t1 < t0). See anchors::slopeTrace in repair.hpp.
+inline long long g_slopeT0 = 0, g_slopeT1 = -1;
 // Simulated frame drop (cfg `lagms=<milliseconds>`). Sleep this long at the head of each frame
 // (`fps=` has no effect on visitDraws, so it cannot substitute)
 inline int g_lagMs = 0;

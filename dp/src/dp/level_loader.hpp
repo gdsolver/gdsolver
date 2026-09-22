@@ -177,7 +177,14 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     // like. (No level has a real conflict here -- lv20's stacks are all one
     // move deep -- but the rule has to be written down somewhere.)
     struct TrigOf {
-        uint32_t mask = 0; float dx = 0, dy = 0; double dur = 0;
+        // THE MASK'S OWN WIDTH. These are touch BOX INDICES, so the type has to
+        // follow kTouchBits: at a width of 64 `(uint32_t)1 << b` is undefined
+        // for b >= 32, and on x86 the shift count wraps mod 32, so boxes 32..63
+        // silently answered for boxes 0..31. The consumer (dynamics.hpp's
+        // dyn.trigMask) has always been TouchMask -- only the producer here
+        // truncated, which is the shape that hides: widening a short value into
+        // a wide vector compiles and says nothing.
+        TouchMask mask = 0; float dx = 0, dy = 0; double dur = 0;
         int ease = 0; double erate = 2.0;
         int aAnchor = -1; float adx = 0, ady = 0; double adur = 0;
         int aease = 0; double aerate = 2.0;
@@ -210,13 +217,27 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // that moves nothing at all -- lag 0.
         float andx = 0, andy = 0; double andur = 0;
         int anease = 0; double anerate = 2.0;
+        // --touchretimelag: the same threshold lag for a TOUCH-only object,
+        // from the single controller (one TrigCtl, not the per-box sum, which
+        // cancels a +9/-9 pair to nothing) whose move clears 0.05 px soonest.
+        int tlag = -1;
+        float tldx = 0, tldy = 0; double tldur = 0;
+        int tlease = 0; double tlerate = 2.0;
         std::vector<Dynamics::AutoPart> parts;   // one per moving controller
         std::vector<Dynamics::AutoPart> tparts;  // touch, one per BOX (trig=bit)
     };
     std::unordered_map<int, TrigOf> trigOf;
+    // --trigeffect: how much of a box's chain survives the fold below. The
+    // selection test and buildTouchMoveTicks() read the individual TrigCtl
+    // entries ("does any one of them move, and for how long"), while
+    // applyTriggers reads the per-(box, uid) SUM built here -- so a chain that
+    // adds +12 and -12 down two paths keeps its mask bit and its move window
+    // while moving nothing. These counts put both sides on one line.
+    std::vector<long long> effReach(tt ? tt->size() : 0, 0);
     if (tt) {
         for (size_t b = 0; b < tt->size(); ++b)
             for (const TrigCtl& c : (*tt)[b].ctl) {
+                ++effReach[b];
                 TrigOf& e = trigOf[c.uid];
                 // The lock the walk carried down this chain. Same shape as the
                 // autonomous block below, and the reason it has to exist here
@@ -226,7 +247,17 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                     ++e.tlockN;
                     if (e.tlockBox < 0) { e.tlockBox = (int)b; e.tlock = c.lockTicks; }
                 }
-                e.mask |= (uint32_t)1 << b;
+                e.mask |= touchBit((int)b);
+                if (std::hypot((double)c.dx, (double)c.dy) > 0.5
+                    && c.durTicks > 0.0) {
+                    const int lg = recordLag(c.dx, c.dy, c.durTicks, c.ease,
+                                             c.erate);
+                    if (e.tlag < 0 || lg < e.tlag) {
+                        e.tlag = lg;
+                        e.tldx = c.dx; e.tldy = c.dy; e.tldur = c.durTicks;
+                        e.tlease = c.ease; e.tlerate = c.erate;
+                    }
+                }
                 e.dx += c.dx;
                 e.dy += c.dy;
                 if (c.durTicks >= e.dur) { e.ease = c.ease; e.erate = c.erate; }
@@ -234,10 +265,27 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                 // ...and the same effect kept per box. One box can reach the
                 // uid down several chain paths; those are one controller, so
                 // they merge into one part per (box, uid).
-                if (std::fabs(c.dx) > 0.001f || std::fabs(c.dy) > 0.001f) {
+                // --movetarget: a target-mode entry is its own part (its offset
+                // is decided when it fires, so it cannot be folded into a sum),
+                // and it is kept although its ox/oy are zero.
+                if (c.tmode) {
+                    Dynamics::AutoPart tp{(int)b, 0.f, 0.f, c.durTicks, c.ease,
+                                          c.erate};
+                    tp.mover = c.mover;
+                    tp.tmode = c.tmode;
+                    tp.tdx = c.tdx;
+                    tp.tdy = c.tdy;
+                    e.tparts.push_back(tp);
+                } else if (std::fabs(c.dx) > 0.001f || std::fabs(c.dy) > 0.001f) {
                     Dynamics::AutoPart* found = nullptr;
+                    // --movetarget: parts from different Moves stay apart, so a
+                    // Stop can freeze one without the other. Off, the fold is
+                    // per box as before.
                     for (auto& p : e.tparts)
-                        if (p.trig == (int)b) { found = &p; break; }
+                        if (p.trig == (int)b && !p.tmode
+                            && p.mover == c.mover) {
+                            found = &p; break;
+                        }
                     if (found) {
                         found->dx += c.dx;
                         found->dy += c.dy;
@@ -248,9 +296,89 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                     } else {
                         e.tparts.push_back({(int)b, c.dx, c.dy, c.durTicks,
                                             c.ease, c.erate});
+                        e.tparts.back().mover = c.mover;
                     }
                 }
             }
+    }
+    // ...and report it, per box, once the fold is complete. `moved` counts the
+    // uids whose SUMMED offset is non-zero -- what applyTriggers will actually
+    // displace. A box with reaches > 0, uids > 0 and moved == 0 costs a dedupe
+    // bit and a move window and moves nothing; lv22's ball section is fourteen
+    // of them. Printing raw and folded side by side is the whole point: either
+    // number alone reads as "this box does something".
+    //
+    // MOVE-NOOP is only that: nothing reached through this box is DISPLACED.
+    // It is not "the box has no effect", and the rest of the line says what
+    // else a box can do that the motion columns cannot see:
+    //   tmodeUids  target-mode Moves (--movetarget) -- no offset to sum, the
+    //              destination is decided when they fire, so they count as
+    //              motion without appearing in movedUids
+    //   lockUids   lockToPlayer windows carried down this box's chain; a Move
+    //              with offset (0,0) that only locks is still a consumer
+    //              (touchLock / g_lockBox)
+    //   togOn      the box is a Toggle (0 off / 1 on / -1 not one), which the
+    //              rotation queue reads under --rotqtoggle
+    //   stops      Moves a Stop in this chain halts (--movetarget)
+    //   recGate    uids this box's bit keeps `controlled` -- the same predicate
+    //              as emit() below -- AND whose recording moves or switches
+    //              them (more than one row), so the recording waits on the box
+    //              even when the summed offset is zero. Controlled alone would
+    //              count every uid the box reaches; one that the recording
+    //              never changes has nothing for the gate to hold back
+    // live = any of them. Selection must go by `live`, never by MOVE-NOOP.
+    if (g_trigEffect && tt) {
+        long long nBoxes = 0, nMoveNoop = 0, nNoopLive = 0;
+        for (size_t b = 0; b < tt->size(); ++b) {
+            long long uids = 0, moved = 0, tmodeUids = 0, recGate = 0;
+            double maxNet = 0.0, maxDur = 0.0;
+            for (const auto& kv : trigOf) {
+                const TrigOf& e = kv.second;
+                if (!(e.mask & touchBit((int)b))) continue;
+                ++uids;
+                bool tm = false;
+                for (const auto& p : e.tparts) {
+                    if (p.trig != (int)b) continue;
+                    if (p.tmode) tm = true;
+                    const double n = std::max(std::fabs((double)p.dx),
+                                              std::fabs((double)p.dy));
+                    if (n > 0.001) { ++moved; maxNet = std::max(maxNet, n); }
+                    maxDur = std::max(maxDur, (double)p.dur);
+                }
+                if (tm) ++tmodeUids;
+                const bool autoMoves = e.adx != 0.f || e.ady != 0.f;
+                const bool noopTouch = e.dx == 0.f && e.dy == 0.f && e.dur == 0.0
+                                       && e.aAnchor >= 0 && autoMoves;
+                const auto rit = gt ? gt->find(kv.first) : GroupTimeline::const_iterator();
+                const bool recChanges = gt && rit != gt->end() && rit->second.size() > 1;
+                if (!noopTouch && recChanges) ++recGate;
+            }
+            std::unordered_set<int> lockSet;
+            double maxLock = 0.0;
+            for (const TrigCtl& c : (*tt)[b].ctl)
+                if (c.lockTicks > 0.0) {
+                    lockSet.insert(c.uid);
+                    maxLock = std::max(maxLock, c.lockTicks);
+                }
+            const long long lockUids = (long long)lockSet.size();
+            const int togOn = (*tt)[b].togOn;
+            const size_t stops = (*tt)[b].stops.size();
+            const bool moveNoop = uids && !moved && !tmodeUids;
+            const bool live = moved || tmodeUids || lockUids || togOn >= 0
+                              || stops || recGate;
+            ++nBoxes;
+            if (moveNoop) { ++nMoveNoop; if (live) ++nNoopLive; }
+            std::printf("trigeffect: box %zu uid %d reaches=%lld uids=%lld "
+                        "movedUids=%lld maxNet=%.3f maxDur=%.1f tmodeUids=%lld "
+                        "lockUids=%lld maxLock=%.1f togOn=%d stops=%zu "
+                        "recGate=%lld live=%d%s\n",
+                        b, (*tt)[b].uid, effReach[b], uids, moved, maxNet,
+                        maxDur, tmodeUids, lockUids, maxLock, togOn, stops,
+                        recGate, live ? 1 : 0, moveNoop ? "  MOVE-NOOP" : "");
+        }
+        std::printf("trigeffect: %lld boxes, MOVE-NOOP %lld, of which live %lld\n",
+                    nBoxes, nMoveNoop, nNoopLive);
+        std::fflush(stdout);
     }
     if (at) {
         for (size_t b = 0; b < at->size(); ++b)
@@ -372,10 +500,11 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // passed --triggers, and went unseen because quick_regress sends each
         // section's stdout to DEVNULL.
         if (g_dynDbg >= 0 && tit != trigOf.end())
-            std::printf("ctl: uid=%d mask=%u dx=%.2f dy=%.2f dur=%.3f "
+            std::printf("ctl: uid=%d mask=0x%llx dx=%.2f dy=%.2f dur=%.3f "
                         "aAnchor=%d adx=%.2f ady=%.2f adur=%.3f "
                         "autoMoves=%d noopTouch=%d controlled=%d autoCtl=%d\n",
-                        o.uid, tit->second.mask, tit->second.dx, tit->second.dy,
+                        o.uid, (unsigned long long)tit->second.mask,
+                        tit->second.dx, tit->second.dy,
                         tit->second.dur, tit->second.aAnchor, tit->second.adx,
                         tit->second.ady, tit->second.adur, autoMoves ? 1 : 0,
                         noopTouch ? 1 : 0, controlled ? 1 : 0, autoCtl ? 1 : 0);
@@ -407,6 +536,10 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                 case Dynamics::PAD:   L.pads.push_back(o); break;
                 case Dynamics::ORB:   L.orbs.push_back(o); break;
                 case Dynamics::SPEED: L.speeds.push_back(o); break;
+                // A coin nothing controls is already in L.coins (the row loop
+                // puts every coin there for the mask's numbering), so this is
+                // where an UNCONTROLLED coin stops -- it needs no dyn entry.
+                case Dynamics::COIN:  break;
                 default:              L.slopes.push_back(o); break;
             }
             return;
@@ -468,7 +601,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         L.dyn.baseSy1.push_back((float)o.sy1);
         L.dyn.on.push_back(1);
         L.dyn.prevCy.push_back((float)o.cy);
-        L.dyn.trigMask.push_back(controlled ? tit->second.mask : 0u);
+        L.dyn.trigMask.push_back(controlled ? tit->second.mask : (TouchMask)0);
         L.dyn.trigDx.push_back(controlled ? tit->second.dx : 0.f);
         L.dyn.trigDy.push_back(controlled ? tit->second.dy : 0.f);
         L.dyn.trigDur.push_back(controlled ? tit->second.dur : 0.0);
@@ -558,23 +691,21 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // box, one direction -- keeps the mask-gated path (lv19/20 unchanged).
         {
             uint8_t ra = 0;
-            if (controlled && !g_touchRetime) {
-                bool up = false, down = false;
-                for (const auto& p : tit->second.tparts) {
-                    if (p.dy > 0.01f) up = true;
-                    if (p.dy < -0.01f) down = true;
-                }
-                ra = (up && down) ? 1 : 0;
-            } else if (controlled) {
-                // --touchretime: ACROSS boxes, as the note above says. The test
-                // above pools every part, so one box whose own chain goes down
+            if (controlled) {
+                // --touchretime: ACROSS boxes, as the note above says. The pooled
+                // test (the --no-touchretime arm, gone since the flag clean-up)
+                // folded every part together, so one box whose own chain goes down
                 // and back up -- lv22's uid17771 spawns a -12 and a +12 Move on
                 // the block row it sinks -- was classed as a worldline fact,
                 // forced fired, and had its +12 counted as a punch delay.
-                uint32_t upB = 0, downB = 0;
+                // Same width rule as TrigOf::mask above: p.trig is a touch BIT
+                // INDEX, so `& 31` folded boxes 32..63 onto 0..31 and let two
+                // different boxes answer for each other in this test.
+                TouchMask upB = 0, downB = 0;
                 for (const auto& p : tit->second.tparts) {
-                    if (p.dy > 0.01f) upB |= (uint32_t)1 << (p.trig & 31);
-                    if (p.dy < -0.01f) downB |= (uint32_t)1 << (p.trig & 31);
+                    const int tb = p.trig & (kTouchBits - 1);
+                    if (p.dy > 0.01f) upB |= touchBit(tb);
+                    if (p.dy < -0.01f) downB |= touchBit(tb);
                 }
                 ra = ((upB & ~downB) && (downB & ~upB)) ? 1 : 0;
             }
@@ -583,10 +714,18 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // ...and how late that first ROW is against the true start. The 0.05
         // above is not a choice made here: it is grouptrace's own threshold
         // (grouptrace.hpp kEps), so the lag is computable from the curve.
+        // --touchretimelag: a touch-only object's first row is late by the
+        // same threshold, and --touchretime compares the box entry + latency
+        // (the MOTION's start) against that ROW. lv22 uid2748 (+9 px over 48
+        // ticks, ease 1): GD moves it from t=2,749 (k^2/128 px), the recording's
+        // first row is 2,751 at 0.070 px, and the model played the recording
+        // two ticks early.
+        const bool touchLag = controlled && !autoCtl
+            && tit != trigOf.end() && tit->second.tlag > 0;
         int lag = autoCtl
             ? recordLag(tit->second.andx, tit->second.andy, tit->second.andur,
                         tit->second.anease, tit->second.anerate)
-            : 0;
+            : (touchLag ? tit->second.tlag : 0);
         // ...but that formula only knows about the TRANSLATION, while the
         // recorder writes a row when ANY channel moves -- cx, cy, w, h (a turned
         // or scaled object) or the toggle. An object that is being rotated trips
@@ -602,11 +741,15 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // displacement after `n` ticks. Invert it. Only ever SHRINKS the lag
         // (the row cannot be later than the translation predicts), so an object
         // whose bound is not being touched keeps the old value exactly.
-        if (autoCtl && lag > 1 && recFire >= 0) {
+        if ((autoCtl || touchLag) && lag > 1 && recFire >= 0) {
             const auto& sm = L.dyn.samples.back();
-            const double full = std::hypot((double)tit->second.andx,
-                                           (double)tit->second.andy);
-            const double dur = tit->second.andur;
+            const double full = autoCtl
+                ? std::hypot((double)tit->second.andx, (double)tit->second.andy)
+                : std::hypot((double)tit->second.tldx, (double)tit->second.tldy);
+            const double dur = autoCtl ? tit->second.andur : tit->second.tldur;
+            const int easeL = autoCtl ? tit->second.anease : tit->second.tlease;
+            const double erateL =
+                autoCtl ? tit->second.anerate : tit->second.tlerate;
             if (full > 0.5 && dur > 0.0) {
                 double moved = 0.0;
                 for (const DynSample& q : sm)
@@ -638,8 +781,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                 int bestN = lag;
                 double bestErr = 1e18;
                 for (int n = 1; n <= lag; ++n) {
-                    const double e = gdEase(tit->second.anease,
-                                            tit->second.anerate, (double)n / dur);
+                    const double e = gdEase(easeL, erateL, (double)n / dur);
                     const double err = std::fabs(full * e - moved);
                     if (err < bestErr) { bestErr = err; bestN = n; }
                 }
@@ -647,6 +789,71 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             }
         }
         L.dyn.recLag.push_back(lag);
+        // Autonomous lag: a formula-driven object's recLag is its TOUCH move's (the
+        // branch above), but its autonomous trigger is dated from the same first
+        // row (cli.hpp, the behind-the-anchor loop). When that row is the
+        // autonomous move's, the lag has to come from the autonomous curve -- the
+        // anchor controller's own move (andx..anerate), inverted against the
+        // row's recorded displacement exactly as above, so it only ever shrinks
+        // from the threshold count.
+        int aLag = lag;
+        if (formulaDriven && recFire >= 0) {
+            const TrigOf& e = tit->second;
+            aLag = recordLag(e.andx, e.andy, e.andur, e.anease, e.anerate);
+            const double full = std::hypot((double)e.andx, (double)e.andy);
+            if (aLag > 1 && full > 0.5 && e.andur > 0.0) {
+                const auto& sm = L.dyn.samples.back();
+                double moved = 0.0;
+                for (const DynSample& q : sm)
+                    if (q.t == recFire) {
+                        moved = std::hypot((double)q.cx - (double)sm[0].cx,
+                                           (double)q.cy - (double)sm[0].cy);
+                        break;
+                    }
+                int bestN = aLag;
+                double bestErr = 1e18;
+                for (int n = 1; n <= aLag; ++n) {
+                    const double ev = gdEase(e.anease, e.anerate, (double)n / e.andur);
+                    const double err = std::fabs(full * ev - moved);
+                    if (err < bestErr) { bestErr = err; bestN = n; }
+                }
+                aLag = bestN;
+            }
+            // --lagfit (print only, AUD-20260922-24): does the first motion belong to
+            // the autonomous curve at all? The first row of a two-controller object is
+            // whichever fired first; the lag above is only right if that is the
+            // autonomous one. Residual of the first three moving rows against each
+            // curve, started where its own lag puts it.
+            if (g_lagFitDbg && aLag != lag) {
+                const auto& sm = L.dyn.samples.back();
+                auto resid = [&](float fx, float fy, double dur, int ease, double rate,
+                                 int start) {
+                    double worst = 0.0;
+                    int seen = 0;
+                    for (size_t k = 1; k < sm.size() && seen < 3; ++k) {
+                        if (sm[k].t < recFire) continue;
+                        const double u = dur > 0.0
+                            ? std::min(1.0, std::max(0.0, (double)(sm[k].t - start) / dur))
+                            : 1.0;
+                        const double ev = gdEase(ease, rate, u);
+                        const double ex = (double)sm[k].cx - (double)sm[0].cx - fx * ev;
+                        const double ey = (double)sm[k].cy - (double)sm[0].cy - fy * ev;
+                        worst = std::max(worst, std::hypot(ex, ey));
+                        ++seen;
+                    }
+                    return worst;
+                };
+                const double ra = resid(e.andx, e.andy, e.andur, e.anease, e.anerate,
+                                        recFire - aLag);
+                const double rt = resid(e.tldx, e.tldy, e.tldur, e.tlease, e.tlerate,
+                                        recFire - lag);
+                std::printf("lagfit: uid=%d autoAnchor=%d recFire=%d recLag=%d autoLag=%d "
+                            "resid auto=%.4f touch=%.4f -> %s\n",
+                            o.uid, e.aAnchor, recFire, lag, aLag, ra, rt,
+                            ra < rt ? "auto" : "touch");
+            }
+        }
+        L.dyn.autoLag.push_back(aLag);
         // Can the formula stand in for this object's recording? Replay it over
         // every recorded sample and see. An object that is really moved by
         // something else -- a rotation about a centre group, a lockToPlayer
@@ -828,8 +1035,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // something other than a multiple of 90 (see Obj::oriented). Multiples
         // of 90 are left alone: there the bound IS the shape, so nothing that
         // already works can move.
-        // ON BY DEFAULT -- `g_oriented = true` at triggers.hpp:175, and
-        // `--no-oriented` is what turns it off.
+        // ALWAYS ON -- the `--no-oriented` arm is gone since the flag clean-up.
         // [2026-09-06] This comment said "OFF BY DEFAULT (--oriented turns it
         // on)" long after the default had been flipped, and on 2026-09-06 it
         // was read as current and became the premise of a brief: the model was
@@ -895,7 +1101,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
                 std::printf("teleport: uid %d at (%.0f,%.0f) sets gravity mode %d\n",
                             o.uid, o.cx, o.cy, (int)o.tpGrav);
         }
-        if (g_oriented && o.radius == 0.0 && !o.slope && w0 > 1.0 && h0 > 1.0) {
+        if (o.radius == 0.0 && !o.slope && w0 > 1.0 && h0 > 1.0) {
             const double m = std::fabs(std::fmod(o.rot, 90.0));
             if (m > 0.5 && m < 89.5) {
                 const double th = o.rot * 3.14159265358979 / 180.0;
@@ -976,6 +1182,35 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
         // on contact instead of holding the player up. Only lv13 (32) and lv18
         // (8) have any, both id 143, so lv1-12 cannot be affected by this.
         if (type == 21) { o.type = 0; o.oneway = 1; }
+        // COINS (22 = secret, 31 = user). They fall through every branch below
+        // -- neither type has ever had one -- so collecting them here is purely
+        // additive: nothing else in the level changes, and a run without
+        // --coins never looks at the list.
+        //
+        // The box is the object's own, taken as dumped. That is right for every
+        // official coin (64 of the 66 are a plain 40x40 at rot 0 and the other
+        // two are scaled with rot 0), and WRONG FOR A TURNED ONE, where w,h is
+        // the bounding box and GD tests the oriented shape -- measured on the
+        // coincal rig at rot=45, where the bounding box is out by 28 px at the
+        // far station. No official level has one; a custom level can, and the
+        // fix is the obb path the turned hazards already use.
+        // `continue`, not `return`: this is the row loop, not emit()'s lambda.
+        //
+        // Every coin goes in L.coins -- that list is the mask's numbering -- and
+        // is ALSO offered to emit(), which keeps it if a trigger controls it
+        // (lv20's first coin is toggled in and out with the platform under it;
+        // lv21's third and lv22's third are moved into reach). emit's COIN case
+        // drops an uncontrolled one, so a level whose coins nothing touches ends
+        // up exactly as it was before this.
+        // ...and loadCoinUids below reads the SAME two columns off the SAME
+        // file, because the touch window is built before this loop runs. If the
+        // test here ever changes, change it there too -- they are neighbours so
+        // that a drift is visible rather than silent.
+        if (type == 22 || type == 31) {
+            L.coins.push_back(o);
+            if (g_coinRoute) emit(Dynamics::COIN, o);
+            continue;
+        }
         // HAZARDS ONLY, for now. A turned SOLID has the same bound problem, but
         // the solid branches also LAND on and ride their objects, and a landing
         // resolved against a slanted face is a different piece of work; the
@@ -1008,11 +1243,11 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             // `continue`, NOT `return`: this branch is inside the row loop that
             // starts at the `while (std::getline(in, line))` above, so a return here
             // would abandon every remaining object in the level after the first
-            // id-1910 row. Both compile. The wrong one is invisible to the regression
-            // suite -- that runs with the flag OFF, where this line is never reached --
+            // id-1910 row. Both compile. The wrong one was invisible to the regression
+            // suite while this was a flag that ran OFF there, the line never reached --
             // and would surface only as "the 4,889 death is gone", which is exactly
             // what a truncated level looks like too.
-            if (g_dropNoCollide && o.id == kNoCollideId) continue;
+            if (o.id == kNoCollideId) continue;
             const auto tw = envTwin.empty() ? envTwin.end() : envTwin.find(o.uid);
             if (tw == envTwin.end()) {
                 emit(Dynamics::NEAR, o);
@@ -1320,9 +1555,23 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             }
         }
         else if (o.id == 2866) {
-            g_flipHeadBoxes.push_back({o.cx, o.cy, o.hw, o.hh});
-            std::printf("fliphead: uid %d at (%.0f,%.0f) %.1fx%.1f\n",
-                        o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0);
+            // ...and the box's own motion, for --fgarmlive. Taken here because
+            // this is where the timeline is in scope; the flag decides at run
+            // time whether the arm reads it or the parked position above.
+            FlipHeadBox fh{o.cx, o.cy, o.hw, o.hh, o.uid, {}};
+            if (gt && o.uid >= 0) {
+                const auto fit = gt->find(o.uid);
+                if (fit != gt->end()) {
+                    fh.live.reserve(fit->second.size());
+                    for (const auto& r : fit->second)
+                        fh.live.push_back({r.t, r.cx, r.cy});
+                }
+            }
+            const size_t nrows = fh.live.size();
+            g_flipHeadBoxes.push_back(std::move(fh));
+            std::printf("fliphead: uid %d at (%.0f,%.0f) %.1fx%.1f "
+                        "(%zu recorded rows)\n",
+                        o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0, nrows);
         }
         else if (o.id == 1829) {
             g_dashStopBoxes.push_back({o.cx, o.cy, o.hw, o.hh});
@@ -1413,7 +1662,7 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
             } else {
                 force = std::atof(f[41].c_str());
             }
-            g_forceBoxes.push_back({o.cx, o.cy, o.hw, o.hh, force});
+            g_forceBoxes.push_back({o.cx, o.cy, o.hw, o.hh, force, o.uid, 0});
             // The push this box gives a full-size cube / robot / swing at 1x.
             // THROUGH forceUnitFor, not through a second copy of the arithmetic:
             // the first cut of this line used the quantised gravities (0.194 for
@@ -1494,6 +1743,21 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     std::sort(L.orbs.begin(), L.orbs.end(), byX);
     std::sort(L.speeds.begin(), L.speeds.end(), byX);
     std::sort(L.slopes.begin(), L.slopes.end(), byX);
+    // x, then y: --coinmask is indexed by this order and the mod builds its mask
+    // from its own coin list sorted the same way (solver.hpp buildPois).
+    std::sort(L.coins.begin(), L.coins.end(), [](const Obj& a, const Obj& b) {
+        return a.cx < b.cx || (a.cx == b.cx && a.cy < b.cy);
+    });
+    // ...and, now that the numbering is fixed, which dyn row each coin is (by
+    // uid -- dyn is never sorted, so the index stays valid, and the rotated
+    // frames' copies are built from this one position for position).
+    L.coinDyn.assign(L.coins.size(), -1);
+    for (size_t ci = 0; ci < L.coins.size(); ++ci)
+        for (size_t di = 0; di < L.dyn.objs.size(); ++di)
+            if (L.dyn.objs[di].uid == L.coins[ci].uid && L.coins[ci].uid >= 0) {
+                L.coinDyn[ci] = (int)di;
+                break;
+            }
     std::sort(g_timeWarps.begin(), g_timeWarps.end(),
               [](const TimeWarp& a, const TimeWarp& b) { return a.cx < b.cx; });
     std::sort(g_staticCams.begin(), g_staticCams.end(),
@@ -1730,10 +1994,24 @@ inline Level loadLevelFrom(std::istream& in, const GroupTimeline* gt = nullptr,
     }
     // Say which objects came off the recording. Silent when there are none, so
     // the 21 levels this does not touch print exactly what they printed before.
-    if (g_formulaDriven)
+    if (g_formulaDriven) {
+        // ...and how many of them the autonomous lag re-dates (dynamics.hpp): the
+        // recorded ones whose autonomous curve takes longer, or shorter, to clear
+        // the recorder's 0.05 px than their touch move does.
+        int nLagDiff = 0, lagLo = 0, lagHi = 0;
+        for (size_t i = 0; i < L.dyn.formula.size(); ++i) {
+            if (!L.dyn.formula[i] || L.dyn.trigRecFire[i] < 0) continue;
+            const int d = L.dyn.autoLag[i] - L.dyn.recLag[i];
+            if (d == 0) continue;
+            if (nLagDiff == 0 || d < lagLo) lagLo = d;
+            if (nLagDiff == 0 || d > lagHi) lagHi = d;
+            ++nLagDiff;
+        }
         std::printf("dynamics: %d formula-driven (a touch AND an autonomous "
-                    "controller both reach them and both move)\n",
-                    g_formulaDriven);
+                    "controller both reach them and both move); %d recorded "
+                    "with an autonomous lag other than the touch lag (%+d..%+d)\n",
+                    g_formulaDriven, nLagDiff, lagLo, lagHi);
+    }
     return L;
 }
 
@@ -1789,6 +2067,23 @@ inline std::string rotQPathBeside(const std::string& objrectsPath) {
     return objrectsPath.substr(0, at) + "rotgameplay"
            + objrectsPath.substr(at + 8);
 }
+// ...and the same for the force blocks' IDs, for a reason the other two did not
+// have to state. The mod hands the loop --forceids; until this existed the CLI
+// did not take it unless told, so quick_regress, fixcensus, refaudit and
+// deathref were all measuring a level the loop no longer played -- lv22's
+// t=20,961 family sat in the census as a model defect when the loop had already
+// lost it. An input one side passes and the other does not is an input the
+// instruments stop measuring. Returns empty when the file is not there, so a
+// level without one behaves exactly as before rather than logging a failure:
+// 21 of the 22 official files are a bare header.
+inline std::string forceIdsPathBeside(const std::string& objrectsPath) {
+    const size_t at = objrectsPath.rfind("objrects");
+    if (at == std::string::npos) return std::string();
+    const std::string p = objrectsPath.substr(0, at) + "forceblocks"
+                          + objrectsPath.substr(at + 8);
+    std::ifstream probe(p);
+    return probe ? p : std::string();
+}
 
 // The CLI's way in: the same parse, reading the dump the mod wrote to disk.
 inline Level loadLevel(const std::string& path, const GroupTimeline* gt = nullptr,
@@ -1800,6 +2095,47 @@ inline Level loadLevel(const std::string& path, const GroupTimeline* gt = nullpt
     }
     std::ifstream in(path);
     return loadLevelFrom(in, gt, tt, at);
+}
+
+// The coin uids alone, for the ONE caller that needs them before the level is
+// parsed: the touch window is built first (cli.hpp), and it has to know which
+// Count triggers reach a coin before it decides what to drop. Same two columns
+// and the same test as the row loop above -- see the note beside it.
+//
+// Why it matters that this is cheap rather than a second loadLevel: a Count
+// root moves what its chain names, and on lv21 the ten Counts the level uses
+// for its 'n of 10' readout moved some 350 objects the model otherwise never
+// touches. The same plan that GD flies to x=21,840 died at x=14,245 -- with
+// --coins on, and only with it. A flag for bookkeeping must not move the level.
+inline std::unordered_set<int> coinUidsFrom(std::istream& in) {
+    std::unordered_set<int> out;
+    std::string line;
+    if (!std::getline(in, line)) return out;   // header
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        // COLUMN 7 IS THE UID, column 0 is the object ID -- the header reads
+        // `id,type,cx,cy,w,h,groups,uid,...`. Read as f[0] this returned the
+        // IDs, and since all 66 official coins share id 142 the set collapsed
+        // to one element: "coins: 1 coin uids" on a level with three. The count
+        // is printed for exactly that reason -- it is the cheap check that the
+        // column is the one the header names.
+        std::string f[8];
+        for (int i = 0; i < 8 && std::getline(ss, f[i], ','); ++i) {}
+        if (f[1].empty() || f[7].empty()) continue;
+        const int type = std::atoi(f[1].c_str());
+        if (type == 22 || type == 31) out.insert(std::atoi(f[7].c_str()));
+    }
+    return out;
+}
+
+inline std::unordered_set<int> coinUids(const std::string& path) {
+    if (!g_levelCsv.empty()) {
+        std::istringstream in(g_levelCsv);
+        return coinUidsFrom(in);
+    }
+    std::ifstream in(path);
+    return coinUidsFrom(in);
 }
 
 }  // namespace dp

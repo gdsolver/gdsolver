@@ -96,6 +96,19 @@ def set_resolution_index(worker_id: int | str, index: int) -> None:
     write_xml(worker_id, _set_int_key(read_xml(worker_id), "resolution", index))
 
 
+def resolution_index(worker_id: int | str) -> int | None:
+    """The profile's `resolution` key, or None when it has none.
+
+    It is part of what a run measured, not only of how the window looks: GD's
+    saw radius follows it (lv20's id 187 dumps 21.87 at index 25 and 21.96 at
+    index 8), and that alone changes the first plan of a cold."""
+    try:
+        m = re.search(r"<k>resolution</k><i>(-?\d+)</i>", read_xml(worker_id))
+    except (OSError, ValueError):
+        return None
+    return int(m.group(1)) if m else None
+
+
 def has_resolution(worker_id: int | str) -> bool:
     """Whether the resolution key exists. Without it GD comes up at 4:3 (MINIMAL_SAVE_XML)."""
     try:

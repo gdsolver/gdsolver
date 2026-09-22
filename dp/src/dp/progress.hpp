@@ -201,7 +201,7 @@ struct SearchOutcome {
     // to an object at all.
     int resimUid = -1;               // the LEVEL's uid, not this build's ordinal
     float resimObjX = 0.f, resimObjY = 0.f;
-    unsigned resimTrig = 0;          // the walk's trigger mask at that tick
+    TouchMask resimTrig = 0;         // the walk's trigger mask at that tick
     int resimFrame = -1;             // the frame resimObjX/Y are expressed in
     // --replay only: the tick the model died on, or -1 if it survived the plan. The fixup
     // recorder needs it for the case where the two agree all the way and only the MODEL kills:
@@ -218,8 +218,8 @@ struct SearchOutcome {
     // already past. A requirement the anchor cannot possibly satisfy empties the frontier
     // before a single tick runs, and from outside that is indistinguishable from a physics
     // wall -- so the caller needs to be able to tell the two apart and drop the box.
-    unsigned needTrigMask = 0;    // bit b = box b was required
-    unsigned needTrigPassed = 0;  // bit b = the anchor starts past box b
+    TouchMask needTrigMask = 0;    // bit b = box b was required
+    TouchMask needTrigPassed = 0;  // bit b = the anchor starts past box b
     // --seeddump only: the ready-made `--startrotq` argument for the dumped
     // tick, exactly as stdout carries it on the `seedrotq:` line. The mod has
     // no pipe (dp_bridge.hpp:57), so a caller in-process cannot read that line;
@@ -235,11 +235,42 @@ struct SearchOutcome {
     // `ch,uid,px,py,swarm,swch,chanOnly,gnddir,id`; empty when no queue was
     // loaded. Printed nowhere, so no existing output changes.
     std::string rotQOrder;
+    // --coins: where a coin that only a counting tap's gate switches on is lost
+    // for good -- the Stop that shuts the tap's window, in GD's own terms -- so
+    // the mod can end an attempt there the way it ends one at a missed coin.
+    // One `;`-separated entry per such coin:
+    // `coinUid,chan,x,y,dir,item,need` (dir as the queue print: 1 y+, 2 y-,
+    // 3 x-, else x+). Empty when there is none or the coin is --coinskip'd.
+    std::string coinGates;
     // --startrotq's own read-back, for the same caller: how many of the seed's
     // uids bound to a queue slot, out of how many were given, and the ones that
     // did not. -1/-1 = this call carried no --startrotq.
     int startRotHit = -1, startRotGiven = -1;
     std::string startRotMiss;
+    // WHAT THE TOUCH WINDOW DID ON THIS CALL. The five coverage numbers exist
+    // (triggers.hpp) but are only PRINTED, and dp's stdout does not reach the
+    // mod (dp_bridge.hpp:57). That is not a theoretical gap: grepping the
+    // loop's result.txt for the gate's own printf returned 0 for a line that
+    // fires on every load, and the 0 was nearly read as "the gate never
+    // fired" (audit AUD-20260920-11, -12).
+    //   trigWinTouch  1 = the auto-window fired and the box set is windowed
+    //                 from the anchor instead of the level's head. -1 = this
+    //                 call had no touch boxes at all, which is not the same
+    //                 as 0 and must not be printed as one
+    //   trigTotal..MaxKeptX  the coverage line's five numbers
+    //   trigMapSig    a hash over the KEPT boxes' uids IN BIT ORDER. A bit
+    //                 index is a property of this window, so two calls that
+    //                 disagree here planned against different bit->uid maps.
+    //                 One number instead of sixty pairs, which is what "the
+    //                 first call where the mapping diverges" actually needs.
+    int trigWinTouch = -1;
+    long long trigTotal = 0, trigRelevantN = 0, trigKept = 0,
+              trigDroppedRelevant = 0;
+    // ...split by side. Only `Ahead` is a world this call cannot see; `Behind`
+    // is the window doing its job (audit AUD-20260921-15).
+    long long trigDroppedBehind = 0, trigDroppedAhead = 0;
+    double trigMaxKeptX = 0.0;
+    unsigned long long trigMapSig = 0;
 
     void reset() {
         verdict = VerdictFailed;
@@ -251,8 +282,14 @@ struct SearchOutcome {
         needTrigMask = 0; needTrigPassed = 0;
         seedRotQ.clear();
         rotQOrder.clear();
+        coinGates.clear();
         startRotHit = -1; startRotGiven = -1;
         startRotMiss.clear();
+        trigWinTouch = -1;
+        trigTotal = trigRelevantN = trigKept = trigDroppedRelevant = 0;
+        trigDroppedBehind = trigDroppedAhead = 0;
+        trigMaxKeptX = 0.0;
+        trigMapSig = 0;
     }
 };
 

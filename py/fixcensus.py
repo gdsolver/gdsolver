@@ -106,7 +106,7 @@ from gdtas import inputguard                      # noqa: E402  contamination re
 from gdtas import runtmp                          # noqa: E402  ...and of the traces
 from gdtas.solveutil import (GD_GROUND_CORROBORATED, GD_GROUND_RAW, MODE_ID,
                              cause_of)            # noqa: E402  recorder's classification
-from gdtas.paths import LEVELDP_EXE               # noqa: E402
+from gdtas.paths import LEVELDP_EXE, WORKERS_ROOT  # noqa: E402
 import quick_regress as qr  # noqa: E402  rot_anchor_args (one-shot history of 2900)
 from quick_regress import (DATA, LEVEL_DATA, REF, ctrlwin_args, groups_args,
                            has_grouped_colliders, plan_of, read_ref,
@@ -196,11 +196,74 @@ def eval_trace(lv: int, t0: int, span: int, trace: Path,
     return out
 
 
+def _level_string(lv: int) -> str | None:
+    """GD's own level data for official level `lv`, from any worker install."""
+    import base64
+    import gzip
+    import zlib
+    for w in sorted(WORKERS_ROOT.glob("worker-*")):
+        p = w / "Resources" / "levels" / f"{lv}.txt"
+        if p.exists():
+            s = p.read_bytes().strip()
+            raw = base64.urlsafe_b64decode(s + b"=" * (-len(s) % 4))
+            try:
+                return gzip.decompress(raw).decode("utf-8", "replace")
+            except OSError:
+                return zlib.decompress(raw[10:], -15).decode("utf-8", "replace")
+    return None
+
+
+_schema_checked: dict[int, str | None] = {}
+
+
+def trigger_schema_problem(lv: int, extra: tuple[str, ...] = ()) -> str | None:
+    """Why this level's trigger dump cannot stand for the deployed model, or None.
+
+    The parser treats a missing column as "not set", so a dump written before a
+    column existed silently turns off the feature that reads it. That happened
+    to the spawn remap: --spawnremap has been on by default since v0.1.4, the
+    lab's lv22 dump had no `remap` column, and every census and seg_look
+    replayed lv22 without the 45 remapped spawns the loop itself applies. The
+    test is on the consumer's condition -- the feature is on AND the level
+    really has a spawn trigger carrying a remap (key 442 in GD's level data)
+    AND the dump has no column for it -- so a level without remaps may keep an
+    old dump. None also when the level data cannot be read (said once).
+    """
+    if lv in _schema_checked:
+        return _schema_checked[lv]
+    why = None
+    trig = LEVEL_DATA / f"triggers_lv{lv}.txt"
+    if trig.exists() and "--no-spawnremap" not in extra:
+        header = trig.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
+        if "remap" not in header.strip().split(","):
+            text = _level_string(lv)
+            if text is None:
+                print(f"fixcensus: lv{lv}: cannot read GD's level data to check the "
+                      f"trigger dump's remap column -- not checked")
+            else:
+                n = 0
+                for o in text.split(";")[1:]:
+                    f = o.split(",")
+                    kv = dict(zip(f[0::2], f[1::2]))
+                    if kv.get("1") == "1268" and kv.get("442"):
+                        n += 1
+                if n:
+                    why = (f"{trig} has no `remap` column, but lv{lv} has {n} spawn "
+                           f"trigger(s) with a remap and --spawnremap is on: the "
+                           f"replay would silently run without them. Re-dump the "
+                           f"level's triggers (or pass --extra-flag=--no-spawnremap).")
+    _schema_checked[lv] = why
+    return why
+
+
 def seg_diverge(lv: int, t0: int, span: int, exe: Path, tmp: runtmp.RunTmp,
                 eps: float, gd_ground: str = GD_GROUND_RAW,
                 all_hits: bool = False,
                 extra: tuple[str, ...] = ()) -> list[dict]:
     """Anchor one section from the real GD state, replay it, hand it to eval_trace."""
+    why = trigger_schema_problem(lv, tuple(extra))
+    if why:
+        raise SystemExit(f"fixcensus: {why}")
     plan = plan_of(lv, str(DATA / "solution_lv{}_dp.txt"))
     gd = read_ref(lv)
     objrects = LEVEL_DATA / f"objrects_lv{lv}.txt"
@@ -306,12 +369,27 @@ def main(argv=None) -> int:
                     help="the A/B arm: still name the pads the run had fired "
                          "before each anchor, but tell the solver to ignore "
                          "them (pre-2026-09-06 seeding)")
+    ap.add_argument("--rotseed", action="store_true",
+                    help="give sections on a 2900 level the rotation queue the "
+                         "loop gives an exactly seeded call "
+                         "(quick_regress.rot_seed_args)")
+    ap.add_argument("--rotseed-level", choices=["A", "E", "S"], default="A",
+                    help="which witnesses count for --rotseed, as cfg dprotseed "
+                         "(A is the loop's default); S replays the game's own "
+                         "consumption loop over the recording (rotseed.seed_sim)")
     ap.add_argument("--json", default="", dest="json_out",
                     help="write the divergences themselves (with their ticks) "
                          "to this file -- brief-017's section list needs WHERE "
                          "they are, which the family baseline does not carry")
     a = ap.parse_args(argv)
     qr.NO_SPENTPAD = bool(a.no_spentpad)
+    qr.ROT_SEED = bool(a.rotseed)
+    qr.ROT_SEED_LEVEL = {"A": 1, "E": 2, "S": 4}[a.rotseed_level]
+    qr.ROT_SEED_EXE = Path(a.leveldp)
+    if a.bless and a.rotseed:
+        print("--bless is refused with --rotseed (the baseline is measured "
+              "without the rotation queue)")
+        return 2
     # reject --bless on a restricted run at the door (same reasoning as
     # quick_regress: the baseline file replaces the census of every level
     # wholesale, so a bless with --levels narrowed erases the families of the
@@ -373,6 +451,15 @@ def census(a, tmp: runtmp.RunTmp) -> int:
     guard.watch_many([REF / "cut.json", REF / "fixcensus.json"])
     cuts = json.loads((REF / "cut.json").read_text()) \
         if (REF / "cut.json").exists() else {}
+
+    # A trigger dump that cannot carry a default-on feature is refused up front,
+    # not measured (see trigger_schema_problem).
+    bad = [w for w in (trigger_schema_problem(lv, tuple(a.extra_flag))
+                       for lv in a.levels) if w]
+    if bad:
+        for w in bad:
+            print(f"fixcensus: REFUSED: {w}")
+        return 2
 
     jobs = []
     for lv in a.levels:
@@ -480,7 +567,7 @@ def census(a, tmp: runtmp.RunTmp) -> int:
     return census_report(found, len(jobs), elapsed,
                          top=a.top, bless=a.bless, levels=a.levels,
                          waivers=not a.no_waivers, json_out=a.json_out,
-                         all_hits=a.all_hits)
+                         all_hits=a.all_hits, extra_flag=a.extra_flag)
 
 
 def _base_count(v, levels: set[int]) -> int:
@@ -495,7 +582,8 @@ def _base_count(v, levels: set[int]) -> int:
 def census_report(found: list[dict], n_segs: int, elapsed: float, *,
                   top: int, bless: bool, levels: list[int],
                   waivers: bool = True, json_out: str = "",
-                  all_hits: bool = False) -> int:
+                  all_hits: bool = False,
+                  extra_flag: list[str] | None = None) -> int:
     """Aggregate, print, compare against the baseline, and bless the families.
     found is the accumulation of eval_trace's return values.
 
@@ -539,7 +627,7 @@ def census_report(found: list[dict], n_segs: int, elapsed: float, *,
         per_lv[d["lv"]] = per_lv.get(d["lv"], 0) + 1
 
     wtag = f" / {len(waived)} waived" if waived else ""
-    arm = f", {' '.join(a.extra_flag)}" if a.extra_flag else ""
+    arm = f", {' '.join(extra_flag)}" if extra_flag else ""
     print(f"{n_segs} sections / {len(found)} divergences / "
           f"{len(fams)} families{wtag} ({round(elapsed, 1)}s{arm})")
     print(f"  by size: A(<=0.3)={buck['A']}  B(0.3..2)={buck['B']}  "

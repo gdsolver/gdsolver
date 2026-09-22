@@ -99,10 +99,9 @@ inline void resetInvocationState() {
     g_goalDiv = GoalDiversity{};
 
     // constants.hpp -- the measured values, which --flags override per call
-    g_noMiniWave = false;
-    g_noRingMode = false;
-    g_noPressSpent = false;
+    g_swingPushTol = false;
     g_hazDbgUid = -1;
+    g_hazAabb = false;
     g_inRecon = false;
     g_dieRecon = 0;
     g_dieReconWhy.clear();
@@ -121,56 +120,48 @@ inline void resetInvocationState() {
     g_resimObjY = 0.f;
     g_resimTrig = 0;
     g_resimFrame = -1;
-    g_noPortalSeat = false;
-    g_noForceOrder = false;
-    g_noRot2900Halve = false;
-    g_noSlopeLand5 = false;
-    g_noPortalLatch = false;
     g_halfNow = 0;
-    g_noCeilSeat = false;
-    g_noSlopeVeto = false;
-    g_noSlopeFreshRect = false;
     g_noSlopeSeat = false;
-    g_noUfoLandTol = false;
-    g_noPadSpinPre = false;
-    g_noUfoRampFlap = false;
-    g_noRideLandLaunch = false;
-    g_noRampFirst = false;
-    g_noBallCornG = false;
-    g_noSlopeNudge = false;
-    g_noMpushReach = false;
-    g_noBoostLatch = false;
-    g_noRingFirstTouch = false;
-    g_noPadObb = false;
+    g_ceilRideSlope = false;
+    g_lawSeatOnSlope = false;
+    g_pinMinNoSwing = false;
+    g_groupHoldEnd = 0;
+    g_groupHoldDeath = false;
     g_noPadPlayerRot = false;
     g_noSatRotRaw = false;
-    g_noDualFlip = false;
-    g_noR52GravHold = false;
     g_oldLatency = false;
     g_oldSlope = false;
     kLandTol = 10.0;
     kStickGap = 4.034;
     kRotPerpWin = 150.0;
-    g_noHangLadder = false;
-    g_noCrush = false;
     kCrushHalf = 4.5;
     kStepDepth = 3.15;
     g_ceilPin = false;
+    // The mod calls the solver more than once per process, so a flag left set by
+    // the previous level would silently put coin routing on for the next one
+    // (the in-process caller's globals are this file's whole subject).
+    g_coinRoute = false;
+    g_coinMaskSeed = 0;
+    g_coinSkip = 0;
+    g_itemBase.clear();
+    g_collect.clear();
+    kCoinMargin = 0.0;
     g_shipCeil = 375.0;
     g_flyFloor = 0.0;
     g_ufoCeil = 0.0;
 
     // dynamics.hpp
-    g_dynInterp = true;
     g_recPhase = 0;
     g_autoTrig.clear();
     g_rotated.clear();
     g_rotSpec.clear();
-    g_trigClosed = true;
     g_trigRaw = false;
+    g_lagFitDbg = false;
+    g_touchEnteredGiven = false;
+    g_touchEntered.clear();
+    g_touchEnteredT.clear();
     g_dynDbg = -1;
     g_formulaDriven = 0;
-    g_noFormula = false;
     // ...and three flags the audit had been carrying as known defects. Two are
     // diagnostics, but g_rotSplit is not: it is declared TRUE and --no-rotsplit
     // (cli.hpp:152) turns it off with nothing to turn it back on, so ONE call
@@ -224,18 +215,11 @@ inline void resetInvocationState() {
     g_touchCensus = false;
     g_tcBranch = 0;
     g_tcBranchP1 = 0;
-    g_touchPreyButton = false;
+    g_touchStops.clear();
     g_ceilPush = false;
-    g_slopeLaw = true;
-    g_shipSlopeKill = true;
-    g_waveFlipKill = true;
     g_latGap = false;
-    g_noFreeSide = false;
-    g_escRotAhead = true;
     g_bonkArm = false;
-    g_witnessFrame = true;
     g_vetoPhys = false;
-    g_dropNoCollide = true;
     g_verdictInfo = false;
     g_resimPX = 0.f;
     g_preBtnSet = false;
@@ -264,12 +248,12 @@ inline void resetInvocationState() {
     // makes this reachable rather than merely latent.
     g_ownsTouch = false;
     g_ownsPortal = false;
+    g_ownsHist = false;
     g_seedPartialOk = false;
     g_seedPartial.clear();
     g_spentRot.clear();
     g_spentPad.clear();
     g_spentPadSeed = true;
-    g_revToggle = true;
     g_ctrlWin.clear();
     g_winRePushJump.clear();
 
@@ -284,6 +268,8 @@ inline void resetInvocationState() {
     // modifiers.hpp
     g_deadBands.clear();
     g_forceBoxes.clear();
+    g_forceIdsPath.clear();
+    g_forceUnit1x = false;
     g_forceFields.clear();
     g_timeWarps.clear();
     g_zoomTrigs.clear();
@@ -354,7 +340,10 @@ inline void resetInvocationState() {
     // 22/22 for months.
     g_touchMoveTicks.clear();
     for (auto& f : g_touchFrame) f.clear();
-    for (int b = 0; b < 32; ++b) g_touchFireT[b] = -1;
+    // kTouchBits, not 32: the array is std::array<int, kTouchBits>, so a cap of
+    // 32 left slots 32.. holding the previous level's fire ticks in a
+    // one-session run -- the leak this block exists to close.
+    for (int b = 0; b < kTouchBits; ++b) g_touchFireT[b] = -1;
     // ...and the boxes' travel coordinates, the last of the touch family that
     // was not here. A level with 32 boxes followed by one with 5 leaves the
     // previous level's coordinates in slots 5..31, where the 400 px proximity
@@ -363,19 +352,50 @@ inline void resetInvocationState() {
     // the anchor path re-windows that set (triggers.hpp:437-448) and this
     // session is changing how anchored bits are made, so the tail stops being
     // unreachable by construction.
-    for (int b = 0; b < 32; ++b) g_touchBoxU[b] = 0.f;
+    for (int b = 0; b < kTouchBits; ++b) g_touchBoxU[b] = 0.f;
+    // ...and the key census tally, for the same reason as everything else here:
+    // the mod calls cliMain many times per level, and a per-solve count that
+    // carried would be a sum over calls wearing one call's name.
+    g_keyCensus = false;
+    for (int b = 0; b < kTouchBits; ++b) g_keyCount[b].store(0);
+    // ...and the per-coin closest approach, for the same reason: a second solve
+    // in one process would otherwise report the first one's nearest miss.
+    for (int i = 0; i < 8; ++i) {
+        g_coinNearDy[i] = -1.0;
+        g_coinNearX[i] = g_coinNearY[i] = 0.0;
+        g_coinNearT[i] = 0;
+        g_coinSaid[i] = 0;
+        g_coinSeen[i] = 0;
+    }
+    g_coinProbeMaxX = -1e18;
+    for (int b = 0; b < kTouchBits; ++b) g_countSaid[b].store(0);
+    for (int i = 0; i < 16; ++i) g_itemSaid[i] = 0;
+    // ...and what the cap covered. loadTouchTriggers fills all five, but a
+    // level with no triggers file never calls it, so without this the second
+    // solve in a process publishes the FIRST level's coverage -- and the
+    // UNCOVERED label would name boxes belonging to another level. The
+    // declaration says "zero before it runs"; this is what makes that true on
+    // the second call (audit AUD-20260920-11).
+    g_trigTotal = g_trigRelevantN = g_trigKept = g_trigDroppedRelevant = 0;
+    g_trigDroppedBehind = g_trigDroppedAhead = 0;
+    g_trigMaxKeptX = 0.0;
     g_trigReported = 0;
     g_bandPath.clear();
     g_bands.clear();
     g_needTrig = 0;
     g_needUnseen = false;
     g_needSkip = 0;
-    g_oriented = true;
-    g_obbAll = false;
+    g_obbAll = true;
     g_touchFromAnchor = false;
+    g_trigDump = false;
+    g_trigEffect = false;
+    g_stopDump = false;
+    g_trigWinSel = false;
+    g_trigWinNear = -1e18;
     g_spawnRemap = true;
-    g_touchRetime = true;
     g_touchRetimeFrom = 0;
+    g_flyHazAfterSolid = false;
+    g_fgArmLive = false;
     // ...and the fireB tally. The three counters only ever `++` (cli.hpp:2748,
     // 2749, 2760) and nothing zeroes them, so the line printed at cli.hpp:3504
     // is the PROCESS's running total presented as this solve's -- a number that
@@ -416,3 +436,4 @@ inline void resetInvocationState() {
 }
 
 }  // namespace dp
+

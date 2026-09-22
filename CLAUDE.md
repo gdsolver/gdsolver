@@ -47,8 +47,11 @@ python py/dev.py                                   # build, deploy, launch GD
 3. **Behaviour-preserving changes must be proven, not asserted.** The acceptance
    criteria: byte-identical solver output on the replay/cold suite (`python
    py/quick_regress.py`, a couple of minutes, no worker), and for a change that
-   reaches the loop, `python py/cold_regress.py` — same iteration count per level as
-   `data/cold_baseline.json`, and the `[fp]` lines the loop prints. **Check
+   reaches the loop, `python py/cold_regress.py` — the same `[fp]` lines per level
+   as the baseline (`data/cold_baseline.json`, or `data/cold_baseline_coins.json`
+   for a coin run), which fixes the iteration count too. A change meant to alter
+   behaviour is not judged by iteration counts: they are reported, and the
+   baseline is re-blessed from a reviewed one-session run (`--adopt`). **Check
    which binary you are measuring**: `quick_regress` drives
    `build/dp/RelWithDebInfo/leveldp.exe`, which only `geode build` refreshes,
    so a change compiled into `build-dp` alone is measured against a stale exe

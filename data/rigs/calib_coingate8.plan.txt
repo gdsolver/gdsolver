@@ -1,0 +1,4 @@
+input=600,1
+input=604,0
+input=660,1
+input=664,0

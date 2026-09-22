@@ -83,7 +83,12 @@ struct SolveOutcome {
     // LEVEL's, not this build's ordinal. -1 = the walk found no death.
     int resimUid = -1;
     float resimObjX = 0.f, resimObjY = 0.f;
-    unsigned resimTrig = 0;
+    // WIDE ON PURPOSE. This mirrors dp's touch mask, whose width is a single
+    // constant over there (kTouchBits). This header deliberately includes no
+    // dp/ header, so it cannot name that type -- and a 32-bit field here would
+    // truncate the moment the constant moves, on the far side of a boundary
+    // where nothing would say so.
+    unsigned long long resimTrig = 0;
     int resimFrame = -1;              // the frame resimObjX/Y are read in
     long long replayDiedT = -1;   // --replay only: where the model died, -1 = it survived
     long long rejoinT = -1;       // --rejoinuse: where the search joined, -1 = no
@@ -92,7 +97,7 @@ struct SolveOutcome {
     // Touch boxes the call required, and those the anchor already sits past. A required box
     // behind the anchor can never be entered, so the frontier is empty before the first tick --
     // which looks exactly like an impassable level unless you can see this.
-    unsigned needTrigMask = 0, needTrigPassed = 0;
+    unsigned long long needTrigMask = 0, needTrigPassed = 0;   // wide: see resimTrig
     // --seeddump only: the ready-made `--startrotq` argument for the dumped
     // tick. Empty unless the call asked for a dump and the level has a queue.
     // It crosses here rather than being re-derived on this side because the
@@ -103,8 +108,23 @@ struct SolveOutcome {
     // has what each field means). Same reason as seedRotQ: the ordering lives in
     // dp, and the mod has no pipe to read dp's `startrotq:` line.
     std::string rotQOrder;
+    // Where a tap-gated coin is lost for good (dp progress.hpp, coinGates).
+    std::string coinGates;
     int startRotHit = -1, startRotGiven = -1;
     std::string startRotMiss;
+    // What the touch window did on this call (dp progress.hpp has what each
+    // field means). Here because dp's stdout does not reach this side: the
+    // coverage line and the auto-window's own printf are invisible in-process,
+    // and a grep of result.txt for either returns 0 whether it fired or not.
+    // trigWinTouch is -1 when the call had no touch boxes -- not 0.
+    int trigWinTouch = -1;
+    long long trigTotal = 0, trigRelevantN = 0, trigKept = 0,
+              trigDroppedRelevant = 0;
+    // ...and which side of the window they fell off. Only Ahead is a world the
+    // call cannot see; Behind is the anchor window working as designed.
+    long long trigDroppedBehind = 0, trigDroppedAhead = 0;
+    double trigMaxKeptX = 0.0;
+    unsigned long long trigMapSig = 0;   // over the kept uids IN BIT ORDER
 };
 SolveOutcome outcome();
 
@@ -141,4 +161,7 @@ bool passCheckpoint(unsigned long long call, std::size_t index);
 // judgements), publishes OutcomeCancelled, writes no plan and returns a distinct rc. Cleared by
 // the caller before the next search call.
 void cancelSearch(bool on);
+// Kills by the Area Move boxes (hazard twins) over the life of the process (dp::g_envKills);
+// take the difference across the span to be counted.
+long long envKillsTotal();
 }  // namespace dpbridge

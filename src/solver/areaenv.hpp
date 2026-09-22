@@ -179,8 +179,14 @@ inline long long g_unenveloped = 0; // Area Rotate / Scale actions with a varian
 inline long long g_rows = 0;        // env rows grouptrace wrote
 inline double g_maxErr = 0.0;
 inline std::string g_firstMiss;
+// The solver's kills by these boxes (dp's hazard twins), counted from the level's entry. The box
+// is conservative -- it also closes routes one game's seeds would leave open -- so non-zero means
+// the search was pruned by uncertainty, not only by the level (audit AUD-20260920-01).
+inline long long g_killsBase = 0;
+inline long long solverKills() { return ::dpbridge::envKillsTotal() - g_killsBase; }
 
 inline void resetTallies() {
+    g_killsBase = ::dpbridge::envKillsTotal();
     g_objects = g_varying = g_calls = g_match = g_miss = g_outside = g_valueMiss = 0;
     g_offMiss = g_compound = g_sampled = g_degenerate = g_unenveloped = g_rows = 0;
     g_rectMiss = 0;
@@ -570,12 +576,14 @@ inline bool envelope(GameObject* o, float& cx, float& cy, float& w, float& h) {
 }
 
 inline std::string summary() {
-    char b[400];
+    char b[440];
     snprintf(b, sizeof(b),
-             "areaenv: objects=%lld varying=%lld env_rows=%lld | checked calls=%lld match=%lld "
+             "areaenv: objects=%lld varying=%lld env_rows=%lld solver_box_kills=%lld | "
+             "checked calls=%lld match=%lld "
              "miss=%lld (max err %.2g) outside_box=%lld value_miss=%lld offset_miss=%lld "
              "rect_miss=%lld | compound=%lld sampled=%lld degenerate=%lld unenveloped=%lld%s%s",
-             g_objects, g_varying, g_rows, g_calls, g_match, g_miss, g_maxErr, g_outside,
+             g_objects, g_varying, g_rows, solverKills(), g_calls, g_match, g_miss, g_maxErr,
+             g_outside,
              g_valueMiss, g_offMiss, g_rectMiss, g_compound, g_sampled, g_degenerate,
              g_unenveloped,
              g_firstMiss.empty() ? "" : " | first: ", g_firstMiss.c_str());

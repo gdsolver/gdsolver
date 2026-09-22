@@ -144,8 +144,17 @@ inline void build(GJBaseGameLayer* l) {
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
         if (!obj) continue;
         const int t7 = (int)obj->m_objectType;
-        // Triggers never collide; even the measuring mode has no use for them.
-        if (t7 == 22 || t7 == 31) continue;
+        // [2026-09-20] TYPES 22 AND 31 ARE THE COINS, not triggers -- secret and
+        // user -- and they were skipped here under the heading "triggers never
+        // collide". They do collide, with the one body that matters for a coin
+        // route, and they MOVE: lv21's third coin sits at a node position of
+        // (21813,191) while its collision rect is at y=71 until ten pickups
+        // bring it up. Nothing in the model could see that, because the
+        // recording this filter writes is where the model reads a moving
+        // object's timeline from. A level holds at most three, so tracking them
+        // costs nothing measurable.
+        if ((t7 == 22 || t7 == 31) && !g_cfg.coinMode && !g_cfg.coinRoute)
+            continue;
         if (!g_all) {
             if (obj->m_groupCount <= 0) continue;
             // Decorations (7) are not tracked in the normal mode (the model only

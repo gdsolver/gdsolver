@@ -270,7 +270,9 @@ inline bool g_bandDbg = false;   // --banddbg: one line per wave tick near the b
 // actually fired. This prints what each gate computed, so the answer is read
 // rather than inferred.
 inline bool g_spdDbg = false;
-inline bool g_shipCeilSet = false;   // --shipceil given: pin the band by hand
+// Was "--shipceil given: pin the band by hand". The flag is gone (2026-08-31),
+// so this is false for the whole run and every reader of g_shipCeil is dead.
+inline bool g_shipCeilSet = false;
 // --rotport: treat a portal that a trigger ROTATES as a turned object even
 // while its angle still reads 0, so it is tested with the two-box SAT against
 // the player's turned box. Measured right (see Dynamics::turnedBox) but OFF by
@@ -377,8 +379,16 @@ inline FlyBand bandFor(double cy, double H) {
 // y=411.000 with onGround=1 and rides it, and a ball injected ABOVE it at
 // y=500 is put straight back to 411. A single global 420 would nail the cube to
 // the floor of the pad corridor at x=9,165, which GD plays at y=700..735. So
-// the knob carries an optional x window: `--ceil 420@13100:13600`, repeatable,
-// and a bare `--ceil 330` still means "everywhere" (lv9).
+// the knob carried an optional x window: `--ceil 420@13100:13600`, repeatable,
+// and a bare `--ceil 330` meant "everywhere" (lv9).
+//
+// [2026-08-31] THE FLAG IS GONE AND THIS LIST IS ALWAYS EMPTY, so playerCeilAt
+// returns 1e9 at every x and the two sites in step.hpp that call it are asking
+// about a ceiling nobody set. Nothing in the pipeline had been passing --ceil,
+// so lv9 and lv14 have been solving WITHOUT the numbers above for as long as
+// anyone has measured -- the readings are real, but the paragraph reads as
+// though they were in force, and they were not. Kept, unchanged, as the record
+// of two measurements and as dead code that is easy to remove on purpose.
 struct CeilBand {
     double y;
     double x0, x1;   // inclusive; -inf..+inf for a bare value

@@ -21,7 +21,13 @@ struct TickInfo {
 // id=kind (36=yellow 84=blue 141=pink).
 // dash (DashRing/GravityDashRing) is not a tap but "rides the rail only while
 // held" = the hold length is what matters
-struct Poi { float x; float y; int id = 0; bool dash = false; };
+// uid = m_uniqueID. Only the coins fill it, and only so that GD's own pickup
+// call -- which hands back the OBJECT, not an index -- can be matched to a row
+// here. Position cannot do that job: a coin under group control is not where
+// the dump says it is (lv21's third moves -120, lv22's third +180).
+// hw = half the object rect's width, coins only: how far past the coin's centre the player can
+// still be touching it, which is where cfg `coinroute` calls a coin missed.
+struct Poi { float x; float y; int id = 0; bool dash = false; int uid = -1; float hw = 0.f; };
 inline std::vector<Poi> g_pois;
 inline bool g_poisBuilt = false;
 // Latch to report dual entry only once (diagnostics)
@@ -34,8 +40,96 @@ inline bool g_deathBooked = false;
 // recorded. Does not depend on GD's coin state at all
 inline std::vector<Poi> g_coins;
 inline std::vector<long long> g_coinPickupTick; // -1=not picked up
-constexpr float COIN_RADIUS = 20.f; // more conservative than GD's real hitbox: our
-                                    // detection=pickup ⇒ the real game surely picks it up too
+// [2026-08-31] MEASURED against GD at last, by replaying all 22 stored solutions
+// with the pickupItem hook on (24 credited pickups). The half of the old comment
+// that survives is the direction: not one pickup was claimed here that GD did not
+// also credit. The rest of it was wrong in a way that matters.
+//   * IT IS NOT A CIRCLE AND IT IS NOT 20. GD credits the coin the moment the
+//     boxes overlap: the largest offsets seen at the crediting tick are
+//     |dx| 34.80 (lv5) and |dy| 34.86 (lv9), each with the other axis near zero,
+//     while lv6's is credited at (33.82, 32.13) AT ONCE -- 46.7 px away, which
+//     no circle that also stops at 34.9 on an axis can reach.
+//   * SO IT MISSES REAL PICKUPS: 4 of the 24 (lv4 #2, lv7 #0, lv10 #2, lv12 #1),
+//     one in six, all of them beyond 20 px in one axis or both.
+//   * AND IT IS LATE: 5 to 34 ticks behind GD, always behind, because it waits
+//     for the centres to close to 20 after the boxes have already touched.
+// THE RULE ITSELF was then measured on the coincal rig, which carries the table
+// (py/mklevel.py): the player's axis-aligned box against THE COIN'S OWN ORIENTED
+// box, the same 4-axis SAT the model already runs for portal firing. Touching
+// counts. Unturned it collapses to one number per axis, confirmed eight ways --
+// cube 35, mini 29, ball 35, robot 35, spider 33.5 (its half is 13.5 and it
+// rests at y=103.5, which is what made the first spider run look like a
+// different rule), and by scaling the COIN to move the boundary to 25, to 55,
+// and to 55-in-x-25-in-y with a non-uniform scale.
+// TURNED, THE BOUNDING BOX IS NOT IT: a coin at rot=45 is reported w=h=56.5686
+// but its three stations are credited at |dx| 43.05 / 38.06 / 14.91 -- three
+// different separating axes -- where the bounding box would say 43.28 for all
+// three. Wrong by 28 px at the far station, and wrong in the direction that
+// makes a route claim a coin GD never credits.
+// So on the COIN's side there is no constant to carry at all, only the object:
+// w0,h0, the per-axis scale and the rotation are all exported already. (64 of
+// the 66 official coins are a plain 40x40 at rot 0 and the other two are scaled
+// with rot 0, so the distinction costs the corpus nothing and is entirely about
+// custom levels.)
+// On the PLAYER's side it is a per-mode half, measured for all eight at both
+// sizes: 15 for cube/ship/ball/ufo/robot/swing, 13.5 for the spider, and 5 for
+// the WAVE -- which is not a box the model holds for anything else, and not the
+// one the wave sits on either (it rests 10 px above the floor). Mini is x0.6
+// throughout. The table with its brackets is in py/mklevel.py.
+// COIN_RADIUS is left at 20 all the same. Nothing reads it but the HUD and this
+// file's own bookkeeping, and the place to put the rule is the search, not a
+// second copy of it here.
+constexpr float COIN_RADIUS = 20.f;
+// ...and GD's OWN verdict on the same coins, one entry per g_coins row, written
+// by the pickupItem hook (hooks_gamelayer.cpp). -1 = GD never credited it.
+//
+// The two exist side by side because the sentence above -- "our detection means
+// the real game surely picks it up too" -- is an ASSERTION, and until this
+// column was added nothing had ever checked it against GD. A coin route is
+// built on that claim, so it has to become a measurement first.
+inline std::vector<long long> g_coinGdTick;
+// pickupItem calls that matched no row in g_coins. GD collects unique ITEMS
+// through the same call, so a non-zero count is information rather than an
+// error: it counts the collectibles the coin list does not know about (lv21's
+// ten id-1840 pickups are exactly this).
+inline int g_coinGdUnmatched = 0;
+// cfg `coinroute`: this attempt has already been told to end at a missed coin. GD does not
+// always take the order -- a player in the "moving zombie" state (alive, advancing, killable
+// by nothing; the loop's overlong guard is what ends those) refuses its own hazards' kills
+// too -- and without a latch the request, and its result line, repeat every tick: 45,606
+// lines on the 2026-09-20 run, 25,250 of them from one attempt.
+inline bool g_coinMissFired = false;
+// One `coinlive:` line per coin per attempt (hooks_gamelayer.cpp): where the
+// object actually is when the player draws level with it.
+inline std::vector<uint8_t> g_coinLiveSaid;
+// ...and whether this level turns the gameplay frame (id 2900 anywhere). Where it
+// does, travel is not one-way and a coin the player has passed can be reached
+// again -- lv22 runs -x through the maze its third coin sits in -- so the missed
+// verdict above has no bound to stand on and is withheld. The search's own miss
+// prune is gated on the same fact (dp cli.hpp).
+inline bool g_hasRotGameplay = false;
+// GD's own item counters, as its updateCounters tells them (hooks_gamelayer.cpp).
+// What a Count trigger compares against, and therefore what a re-anchored search
+// has to be told (repair.hpp passes it as --itembase): the pickups behind the
+// anchor are not in the window the model's own mask numbers. Per attempt.
+inline std::map<int, int> g_itemCounts;
+// Where a coin that only a counting tap's gate switches on is lost for good (dp
+// Outcome::coinGates, refreshed after every solve): the Stop that shuts the
+// tap's window, in GD's terms -- the rotation channel it sits on, its point and
+// that channel's direction -- and the count the gate needs. Per level.
+struct CoinGate {
+    int uid = 0, chan = 0, dir = 4, item = 0, need = 0;
+    double x = 0.0, y = 0.0;
+    // ...and, when the coin lies ahead of the shut point on that channel's run,
+    // the coin's far edge on it: passed without the coin, it is gone for good.
+    bool miss = false;
+    double mx = 0.0, my = 0.0;
+};
+inline std::vector<CoinGate> g_coinGates;
+// Line budget for the two observation hooks, reset per SESSION rather than left
+// as a function-local static: --one-session runs every level in one process, and
+// a static that ran out on level 1 would leave later levels silently unobserved.
+inline int g_coinLogLines = 0;
 // Hazard/solid geometry (sorted by x). Used by the clearance table (clearance.hpp)
 struct Obj { float x; float y; int id; };
 inline std::vector<Obj> g_hazards;
@@ -384,14 +478,33 @@ inline void buildPois(GJBaseGameLayer* l) {
     g_hazards.clear();
     g_solids.clear();
     g_coins.clear();
+    g_hasRotGameplay = false;
     if (!l || !l->m_objects) return;
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
         if (!obj) continue;
         // Coin extraction (142=secret, 1329=user)
         if (obj->m_objectID == 142 || obj->m_objectID == 1329) {
             auto p = obj->getPosition();
-            g_coins.push_back({p.x, p.y});
+            // The rect is the bounding box, so for a turned coin this is an over-estimate --
+            // the safe side for a "missed" verdict, which must never come early.
+            const float hw = obj->getObjectRect().size.width * 0.5f;
+            g_coins.push_back({p.x, p.y, obj->m_objectID, false, obj->m_uniqueID, hw});
+            // ...and whether GD has it switched OFF at load. A disabled coin is
+            // not credited however close the player passes (measured on the rig
+            // calib_coingate), so a route planned for one that is disabled is a
+            // route the game refuses without saying why -- and the model reads
+            // no initial disabled state from the level at all.
+            {
+                char cb[160];
+                snprintf(cb, sizeof(cb),
+                         "coinstate: uid=%d id=%d at (%.1f,%.1f) disabled=%d tempdisabled=%d",
+                         obj->m_uniqueID, obj->m_objectID, p.x, p.y,
+                         obj->m_isGroupDisabled ? 1 : 0,
+                         obj->m_isGroupDisabledTemp ? 1 : 0);
+                writeResult(cb);
+            }
         }
+        if (obj->m_objectID == 2900) g_hasRotGameplay = true;   // see the flag
         // Hazard/solid extraction (for the clearance table + diagnostics)
         if (obj->m_objectType == GameObjectType::Hazard) {
             auto p = obj->getPosition();
@@ -440,9 +553,14 @@ inline void buildPois(GJBaseGameLayer* l) {
     auto byX = [](const Obj& a, const Obj& b) { return a.x < b.x; };
     std::sort(g_hazards.begin(), g_hazards.end(), byX);
     std::sort(g_solids.begin(), g_solids.end(), byX);
-    std::sort(g_coins.begin(), g_coins.end(),
-        [](const Poi& a, const Poi& b) { return a.x < b.x; });
+    // x, then y: the same order dp's loader gives L.coins, because cfg `coinroute` hands the
+    // search a bitmask indexed by it (AnchorRow::coins). x alone would leave a tie unordered.
+    std::sort(g_coins.begin(), g_coins.end(), [](const Poi& a, const Poi& b) {
+        return a.x < b.x || (a.x == b.x && a.y < b.y);
+    });
     g_coinPickupTick.assign(g_coins.size(), -1);
+    g_coinGdTick.assign(g_coins.size(), -1);
+    g_coinGdUnmatched = 0;
     g_levelMaxX = 0;
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects))
         if (obj) g_levelMaxX = std::max(g_levelMaxX, obj->getPositionX());
@@ -643,11 +761,52 @@ inline void buildPois(GJBaseGameLayer* l) {
               // empty), because which field holds the source and which the
               // target is checked against the level string, not assumed from
               // the member names.
-              "remap\n";
+              // [2026-09-20] THE ITEM COUNTERS, appended for the coin gates.
+              // Four of the corpus' 66 coins are behind one: lv21's third waits
+              // for ten id-1840 pickups (an Instant Count at target 10 spawns
+              // the Move that brings it into reach), lv22's first waits for a
+              // Count, and lv22's third for an Item Compare fed by a Touch. None
+              // of that is visible in the columns above -- a Count trigger looks
+              // like any other spawn with a target group -- so the search saw the
+              // chain but never what opens it.
+              //   item/item2: m_itemID / m_itemID2 (properties 80 / 95)
+              //   count:      CountTriggerGameObject::m_pickupCount (77), the
+              //               target the counter is compared against
+              //   subcount:   m_subtractCount (78), a pickup that counts down
+              //   actgrp:     m_activateGroup (56) for EVERY id, not just the
+              //               Toggle the `togon` column above reports
+              //   thold/ttog/tdual: the Touch trigger's mode (81 / 82 / 89),
+              //               which decides whether a tap toggles or holds
+              //   cmode:      CountTriggerGameObject::m_pickupTriggerMode (88),
+              //               which of equals / larger / smaller the target is
+              //               compared with. Exported rather than assumed: every
+              //               Count in this corpus reads 0, and a rule written
+              //               from that alone would be a guess about the other
+              //               two.
+              //   the ITEM COMPARE / ITEM EDIT block (id 3620 / 3619,
+              //   ItemTriggerGameObject). lv22's third coin is behind one: a
+              //   tap chain feeds it and it switches the coin's group on. Every
+              //   field is exported rather than the two that look relevant,
+              //   because which of them carries the comparison is exactly what
+              //   is not known -- the names are the bindings' (properties
+              //   476-486, 578/579), the meanings are to be read off the level
+              //   this corpus already has.
+              "remap,item,item2,count,subcount,actgrp,thold,ttog,tdual,cmode,"
+              "i1mode,i2mode,tgtmode,mod1,mod2,res1,res2,res3,tol,rnd1,rnd2,"
+              "sgn1,sgn2\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
         gf << "uid,groups\n";
+        // ...and the PICKUPS, which are what a Count trigger is waiting for.
+        // A collectible carries an item id but no target group, so the trigger
+        // filter below drops it -- and it must not be written into triggers.txt
+        // instead: dp's chain walk treats every uid in that file as a trigger
+        // (the 2899/2900 pair cost lv22 a touch chain that way, see the note
+        // there), so this family gets its own file as they did.
+        std::ofstream itf(std::string(DATA_DIR) + "/items.txt", std::ios::trunc);
+        itf << "uid,id,cx,cy,w,h,item,points,pickup,toggle,subcount\n";
+        long long nItem = 0;
         // Is m_isGroupDisabled the byte toggleGroup writes (+0x28e, 0x223cbc)? The
         // bindings carry no offsets, and grouptrace's `on` column reads this field,
         // so whether `on` can witness a toggle depends on the answer. Read off a
@@ -693,6 +852,19 @@ inline void buildPois(GJBaseGameLayer* l) {
             // went 153 touch triggers to 152 -- quick_regress FAILED (tracked
             // 16,886 -> 16,666). The family gets its own file below instead,
             // which leaves this one byte-identical.
+            if (e && e->m_targetGroupID == 0
+                && (e->m_collectibleIsPickupItem || e->m_itemID != 0)) {
+                auto ir = obj->getObjectRect();
+                itf << obj->m_uniqueID << "," << obj->m_objectID << ","
+                    << (ir.origin.x + ir.size.width * 0.5f) << ","
+                    << (ir.origin.y + ir.size.height * 0.5f) << ","
+                    << ir.size.width << "," << ir.size.height << ","
+                    << e->m_itemID << "," << e->m_collectiblePoints << ","
+                    << (e->m_collectibleIsPickupItem ? 1 : 0) << ","
+                    << (e->m_collectibleIsToggleTrigger ? 1 : 0) << ","
+                    << (e->m_subtractCount ? 1 : 0) << "\n";
+                ++nItem;
+            }
             if (!e || e->m_targetGroupID == 0) continue;
             auto tr = obj->getObjectRect();
             tf << obj->m_uniqueID << "," << obj->m_objectID << ","
@@ -748,12 +920,38 @@ inline void buildPois(GJBaseGameLayer* l) {
                             + std::to_string(c.m_unk00c);
                     }
                 }
-                tf << (rm.empty() ? std::string("-") : rm) << "\n";
+                tf << (rm.empty() ? std::string("-") : rm) << ",";
+            }
+            {
+                // The item columns (see the header). m_pickupCount lives on the
+                // Count subclass only, so it is -1 where the object is not one --
+                // never 0, which is a legitimate target.
+                int cnt = -1, cmode = -1;
+                if (auto* c = geode::cast::typeinfo_cast<CountTriggerGameObject*>(obj)) {
+                    cnt = c->m_pickupCount;
+                    cmode = c->m_pickupTriggerMode;
+                }
+                tf << e->m_itemID << "," << e->m_itemID2 << "," << cnt << ","
+                   << (e->m_subtractCount ? 1 : 0) << ","
+                   << (e->m_activateGroup ? 1 : 0) << ","
+                   << (e->m_touchHoldMode ? 1 : 0) << ","
+                   << (int)e->m_touchToggleMode << ","
+                   << (e->m_isDualMode ? 1 : 0) << "," << cmode;
+                if (auto* it = geode::cast::typeinfo_cast<ItemTriggerGameObject*>(obj))
+                    tf << "," << it->m_item1Mode << "," << it->m_item2Mode << ","
+                       << it->m_targetItemMode << "," << it->m_mod1 << ","
+                       << it->m_mod2 << "," << it->m_resultType1 << ","
+                       << it->m_resultType2 << "," << it->m_resultType3 << ","
+                       << it->m_tolerance << "," << it->m_roundType1 << ","
+                       << it->m_roundType2 << "," << it->m_signType1 << ","
+                       << it->m_signType2 << "\n";
+                else
+                    tf << ",-1,-1,-1,0,0,-1,-1,-1,0,-1,-1,-1,-1\n";
             }
             ++nTrig;
         }
-        log::info("triggers: {} triggers with a target, {} grouped objects",
-                  nTrig, nGrp);
+        log::info("triggers: {} triggers with a target, {} grouped objects, "
+                  "{} pickups", nTrig, nGrp, nItem);
     }
     // ---- rotgameplay.txt: the 2.2 trigger queue's inputs ---------------------
     // 2900 (rotate gameplay) and 2899 carry no target group, so triggers.txt

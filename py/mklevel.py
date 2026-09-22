@@ -2608,6 +2608,63 @@ def slopespike_unit(x: float, oid: int, rot: float, fx: bool,
     return objs, x + slot + 6 * GRID, u
 
 
+HAZROT_ROTS = (0.0, 8.0, 15.0, 30.0, 45.0, 63.0, 90.0)
+
+
+def hazrot_unit(x: float, oid: int, rot: float) -> tuple[list[str], float, dict]:
+    u"""ONE TURNED HAZARD, alone, 150 px above the floor.
+
+    The game's hazard loop is the player's rect against the object's rect and then,
+    only for an oriented object, the two turned boxes (the disassembly is quoted at
+    hazardHit). The model's second test uses the RECORDED corners, and the note at
+    the wave's hazard branch already says those are not the game's shape either --
+    measured once, on lv20's spike id667 at rot -63, where the recorded box fitted
+    the three probed points only at a half of 2.96..2.98. Nothing has swept a turned
+    hazard on a rig, so the shape is a guess wherever the corpus has no probe.
+
+    One id per file and one rotation per unit, nothing else within 150 px, so a
+    column sweep reads that rotation alone. The unit's slot is wide enough (10 cells)
+    that the player's own box cannot reach the neighbours.
+    """
+    cx = x + 5 * GRID
+    cy = GROUND_TOP + 150.0
+    objs = [obj(oid, cx, cy, rot=rot)]
+    u = {"x0": x, "oid": oid, "rot": rot, "cx": cx, "cy": cy,
+         # three columns: through the centre and a cell either side, which is where
+         # a turned box and its bound differ most
+         "probe_x": [round(cx - GRID, 3), round(cx, 3), round(cx + GRID, 3)],
+         "probe_y": [cy - 40.0, cy + 40.0]}
+    return objs, x + 10 * GRID, u
+
+
+def build_hazrot(mode: str = "wave", oid: int = 368, mini: bool = False) -> str:
+    u"""Rig for THE SHAPE OF A TURNED HAZARD (2026-09-18).
+
+    lv19 t=7,131 is the case that needs it: the game kills a wave 0.08 px outside the
+    model's second test, and simply widening the first test costs 43 iterations
+    elsewhere -- so the second test's shape has to be measured rather than adjusted.
+
+    The verdict comes from py/hitbox_sweep.py (inject x and y, read life or death),
+    one unit per rotation, and the terminal spike past the last unit is load-bearing:
+    serve mode parks at the head of the attempt AFTER A DEATH, so a rig the player
+    survives ends the session and every later sweep fails with "the rerun never
+    landed".
+    """
+    UNITS.clear()
+    PLAN.clear()
+    objs: list[str] = []
+    x = 600.0
+    for rot in HAZROT_ROTS:
+        part, x, u = hazrot_unit(x, oid, rot)
+        objs += part
+        u["mode"] = mode
+        u["mini"] = int(mini)
+        UNITS.append(u)
+    objs.append(obj(SPIKE, x + 4 * GRID, GROUND_TOP + 6.0))
+    objs += floor_run(0, x + 300.0)
+    return header(start_mode=mode, mini=mini) + ";" + ";".join(objs) + ";"
+
+
 def build_slopespike_mode(mode: str, mini: bool = False,
                           flip_gravity: bool = False) -> str:
     u"""Rig for THE LETHAL BOUNDARY OF A SPIKED RAMP (2026-09-15).
@@ -5333,7 +5390,539 @@ def build_seam11() -> str:
     return build_seam()
 
 
+# ---- Coins -----------------------------------------------------------------
+# id 142 = SECRET coin (type 22, w=h=40 in every official dump), id 1329 = USER
+# coin. Both are what buildPois collects (src/solver/solver.hpp), and both reach
+# GJBaseGameLayer::pickupItem, which is where GD credits one -- the `coingd:`
+# line comes out of the hook on it.
+COIN_SECRET, COIN_USER = 142, 1329
+
+
+# Per-axis scale (GD 2.2). 32 is the uniform one obj() already writes; a level
+# author can set these two independently, so A COIN'S BOX IS NOT A CONSTANT and
+# the model cannot carry one -- it has to read the object.
+K_SCALE_X, K_SCALE_Y = 128, 129
+
+
+def coin_station(x: float, oid: int, dy: float, scale: float = 0.0,
+                 player_y: float = GROUND_TOP + 15.0, rot: float = 0.0,
+                 sx: float = 0.0, sy: float = 0.0) -> list[str]:
+    """One coin, dy above (or below) where a full-size cube's centre runs.
+
+    Nothing else within 300 px. The player runs flat past it with zero input, so
+    the only thing that can vary between stations is the coin's own placement.
+    """
+    extra: dict[int, str] = {}
+    if sx:
+        extra[K_SCALE_X] = f"{sx:g}"
+    if sy:
+        extra[K_SCALE_Y] = f"{sy:g}"
+    return [obj(oid, x, player_y + dy, rot=rot, scale=scale,
+                extra=extra or None)]
+
+
+# THREE COINS PER RIG, AND NOT ONE MORE. Measured: a cut of this rig placed 36
+# id-1329 stations and GD kept the first three (`pois: 0 orbs, 3 coins`, and the
+# objrects dump held three rows). A GD level holds three user coins; the rest are
+# dropped at load, silently, and a ladder built as one long level measures its
+# first three rungs and nothing else. So the ladder is spread over RUNS, three
+# rungs at a time, and `--coin` says which three.
+#
+# That is not the handicap it looks like: the corpus already brackets the
+# boundary in (34, 36], so three rungs at 34.5 / 35.0 / 35.5 settle it in one
+# run, and a run is about a second of game time.
+COINCAL = {"mode": "cube", "mini": False, "scale": 0.0,
+           "rot": 0.0, "sx": 0.0, "sy": 0.0,
+           "dys": [34.5, 35.0, 35.5]}
+
+
+def build_coincal() -> str:
+    u"""Where exactly does GD credit a coin? Three coins at offsets we choose.
+
+    THE OFFICIAL LEVELS CANNOT ANSWER THIS. Replaying the 22 solutions with the
+    pickup hook on (2026-08-31) yields 24 credited coins, and every one of them
+    is a sample taken AT THE CREDITING TICK -- i.e. from inside the boundary.
+    The largest offsets seen are |dx| 34.80 and |dy| 34.86, and lv6's is credited
+    at (33.82, 32.13) at once, which rules out a circle; but nothing in the
+    corpus stands JUST OUTSIDE, so the boundary itself is unmeasured. The model's
+    COIN_RADIUS of 20 is already known to be wrong (it misses 4 of the 24), and
+    replacing one guessed number with another is not what that finding asks for.
+    A rig puts a coin exactly where we choose and asks GD.
+
+    **A SECRET COIN (id 142) DOES NOT LOAD IN A GENERATED LEVEL.** The first cut
+    of this rig placed 22 of them and GD kept none: `pois: 0 orbs, 3 coins`, and
+    the objrects dump held only the three id-1329 stations. A secret coin needs
+    a level to be secret in. So the rig measures the USER coin, and the two are
+    the same object as far as this measurement goes: id 1329 comes back as
+    type 31, w=h=40, the same box the official 142s have (type 22, w=h=40), and
+    both reach pickupItem down the same two branches of collisionCheckObjects.
+    Neither type has a branch in leveldp's loader, so both are inert to the model.
+    (The cross-check that they behave alike: the corpus' 142s cap at 34.86 and
+    this rig's 1329s bracket the boundary in (34, 36] -- consistent, and the only
+    evidence there is that the type does not enter the test.)
+
+    The player runs flat with zero input, so the only thing that varies between
+    the three stations is the coin's own offset.
+
+    THE COINS ARE PLACED RELATIVE TO GROUND_TOP + 15 (or +9 for a mini), WHICH
+    IS AN ASSUMPTION, and one mode does not honour it: a spider rests at y=103.5,
+    not 105, so every `dy` in a spider rig is really dy+1.5. That is what made
+    the first spider run come back 0/3 at 34.5/35/35.5 and look like a different
+    rule. `player_y_assumed` in the unit table is only what the generator used;
+    THE REAL OFFSET IS (coin_y - the player y in the `coingd:` line). Put a dy=0
+    station in the first run of any new mode and read its resting y off that.
+
+    ANSWER (2026-08-31, nine rigs). THE PLAYER'S AXIS-ALIGNED BOX AGAINST THE
+    COIN'S OWN ORIENTED ONE -- the same 4-axis SAT the model already runs for
+    portal firing, not a radius and not a bounding box. Touching counts: exactly
+    on the boundary is credited.
+
+    Unturned, that collapses to one number per axis, and both are per-object.
+    THE PLAYER'S SIDE, all eight modes, both sizes (the boundary is that half
+    plus the coin's 20; `rest` is where the body sits on the floor with no
+    input, which the rig reads off its own dy=0 station):
+
+      | mode   | rest  | half | boundary | in / out    | mini rest | half | in / out    |
+      | cube   | 105   | 15   | 35       | 35.0 / 35.1 | 99        | 9    | 29.0 / 29.5 |
+      | ship   | 105   | 15   | 35       | 35.0 / 35.5 | 99        | 9    | 29.0 / 29.5 |
+      | ball   | 105   | 15   | 35       | 35.0 / 35.5 |           |      |             |
+      | ufo    | 105   | 15   | 35       | 35.0 / 35.5 |           |      |             |
+      | robot  | 105   | 15   | 35       | 35.0 / 35.5 |           |      |             |
+      | swing  | 105   | 15   | 35       | 35.0 / 35.5 |           |      |             |
+      | spider | 103.5 | 13.5 | 33.5     | 33.5 / 34.0 | 98.1      | 8.1  | 28.1 / 28.5 |
+      | wave   | 100   | 5    | 25       | 25.0 / 25.5 | 96        | 3    | 23.0 / 23.5 |
+
+    MINI IS x0.6 AND NOTHING ELSE, confirmed on three different bases (15->9,
+    13.5->8.1, 5->3).
+
+    THE WAVE IS ITS OWN BOX, AND NOT THE ONE IT SITS ON. Its coin half is 5
+    while it rests at y=100, i.e. 10 above the floor -- so the box the coin test
+    uses is half the box that holds it up, and a third of every other mode's.
+    That is the same family as the wave's already-known split between a solid
+    half of 1.5 and a hazard rect: the player's box is per purpose, and the coin
+    is a purpose of its own. (Measured in y; the x side agrees to within one
+    tick -- the credit lands at |dx| 24.87 against a predicted 25.)
+
+    THE COIN'S SIDE, at a full-size cube (half 15):
+
+      | coin                | coin half | boundary | in / out     |
+      | default 40x40       | 20        | 35       | 35.0 / 35.1  |
+      | scale 0.5           | 10        | 25       | 25.0 / 25.5  |
+      | scale 2             | 40        | 55       | 55.0 / 55.5  |
+      | sx=2 sy=0.5 (80x20) | 40 / 10   | 55 / 25  | y 25.0/25.5  |
+
+    The last one settles that the two axes are independent: GD reports w=80 h=20
+    and the coin is credited at |dx| 54.94 with the dy ladder breaking at 25.
+
+    TURNED, THE BOUNDING BOX IS WRONG. objrects reports w=h=56.5686 for a coin
+    at rot=45 (40*sqrt2, the AABB) with w0=h0=40, and if that were the box every
+    station would be credited at |dx| = 15 + 28.284 = 43.28. Measured, the three
+    stations are credited at three DIFFERENT offsets, each one the SAT bound of
+    a different separating axis:
+
+      | dy | binding axis | SAT bound | measured dx | AABB would say |
+      |  0 | x            | 43.284    | 43.05       | 43.28          |
+      | 20 | coin's u=45  | 38.284    | 38.06       | 43.28          |
+      | 43 | coin's u=45  | 15.284    | 14.91       | 43.28          |
+
+    all three inside their bound by 0.22..0.37 px, i.e. under one tick's 1.298.
+    At dy=43 the bounding box is wrong by 28 px, and wrong in the dangerous
+    direction: a model using it would plan routes that collect a coin GD never
+    credits.
+
+    So the coin's box has to be REBUILT from w0,h0 and rot (or read from the
+    obb.txt the mod already dumps for anything turned by a non-multiple of 90),
+    exactly as the turned-hazard path does. Only two of the 66 official coins are
+    even non-default -- lv22's first two are scaled to 56.8 and 48.8 with rot=0,
+    where the AABB and the OBB agree -- so this costs the official corpus
+    nothing and is entirely about custom levels, where an author sets the size
+    and the angle freely.
+
+    On the coin's side THE MODEL NEEDS NO NEW CONSTANT AT ALL, only the object:
+    w0,h0, the per-axis scale and the rotation are all already exported.
+    `COIN_RADIUS = 20` in src/solver/solver.hpp is not any of these numbers.
+    On the player's side it needs the table above -- eight halves, one of which
+    (the wave's) is not a box the model already carries for anything else.
+
+    The flight modes needed no plan in the end: with no input a ship, a UFO and a
+    swing simply sink onto the floor and slide, and so does a wave (which is why
+    the sawcal rigs run as one). Every row above is a zero-input run.
+
+    Reproduce (each about a second of game time):
+        python py/mklevel.py coincal --coin cube,0,0,34.5,35,35.5   --out data/rigs/calib_coincal.lvl
+        python py/mklevel.py coincal --coin cube,0,0,35.1,35.25,35.4 --out ...
+        python py/mklevel.py coincal --coin cube,1,0,28.5,29,29.5    --out ...
+        python py/mklevel.py coincal --coin cube,0,0.5,24.5,25,25.5  --out ...
+        python py/mklevel.py coincal --coin cube,0,2,54.5,55,55.5    --out ...
+        python py/mklevel.py coincal --coin ball,0,0,34.5,35,35.5    --out ...
+        python py/mklevel.py coincal --coin robot,0,0,34.5,35,35.5   --out ...
+        python py/mklevel.py coincal --coin spider,0,0,0,28,32       --out ...
+        python py/mklevel.py coincal --coin spider,0,0,32.5,33,34    --out ...
+        python py/mklevel.py coincal --coin cube,0,0,24.5,25,25.5 --coin-sxy 2,0.5 --out ...
+        python py/mklevel.py coincal --coin cube,0,0,0,20,43      --coin-rot 45  --out ...
+        python py/mklevel.py coincal --coin ship,0,0,0,25,35         --out ...   # and ufo / wave / swing
+        python py/mklevel.py coincal --coin ship,0,0,35.5,36,37      --out ...
+        python py/mklevel.py coincal --coin wave,0,0,20,22.5,24      --out ...
+        python py/mklevel.py coincal --coin wave,1,0,20,20.5,21      --out ...
+        python py/mklevel.py coincal --coin spider,1,0,27.2,27.6,28  --out ...
+    then run each with `coins=1` (py/run_calib.py ... coins=1) and read the
+    `coingd:` lines. The turned rig is read by its CREDIT OFFSETS, not by which
+    stations are credited -- all three are, and it is where they are credited
+    that separates the box from the bounding box.
+    """
+    ref = GROUND_TOP + (9.0 if COINCAL["mini"] else 15.0)
+    objs: list[str] = []
+    x = 600.0
+    for dy in COINCAL["dys"]:
+        x0 = x
+        objs += coin_station(x, COIN_USER, dy, COINCAL["scale"], ref,
+                             COINCAL["rot"], COINCAL["sx"], COINCAL["sy"])
+        UNITS.append({"x0": x0 - 300.0, "x1": x0 + 300.0, "coin_x": x0,
+                      "id": COIN_USER, "dy": dy, "scale": COINCAL["scale"],
+                      "rot": COINCAL["rot"],
+                      "sx": COINCAL["sx"], "sy": COINCAL["sy"],
+                      "mode": COINCAL["mode"], "mini": int(COINCAL["mini"]),
+                      "coin_y": ref + dy, "player_y_assumed": ref})
+        x += 600.0
+    # Mode and size portals well before the first station, so the player is
+    # already in the state under test when it gets there (a portal fires on box
+    # overlap, ~32 px before its own centre).
+    head = []
+    if COINCAL["mode"] != "cube":
+        head.append(obj(MODE_PORTAL[COINCAL["mode"]], 200.0, GROUND_TOP + 15.0))
+    if COINCAL["mini"]:
+        head.append(obj(SIZE_MINI, 300.0, GROUND_TOP + 15.0))
+    # Floor LAST = a larger uid than everything above it (build_ramps' lesson).
+    objs = head + objs + floor_run(0, x + 600.0)
+    return header() + ";" + ";".join(objs) + ";"
+
+
+# ---- Coins a TRIGGER controls (2026-09-20) ---------------------------------
+# The official levels gate four coins behind triggers -- lv20's first is toggled
+# in and out with the platform under it, lv22's first is alpha'd, lv22's third is
+# toggled on by a chain, lv21's third and lv22's second are MOVED into reach --
+# and the model has to know which of those a coin is still collectible under.
+# Two of those questions have no answer in the corpus at all, because a route
+# that never enables a coin never credits it either:
+#   * is a coin at ALPHA 0 (invisible) still credited?
+#   * is a coin whose group is toggled OFF still credited?
+# Guessing either way is a route the game refuses (or a coin the search refuses
+# to plan for), so the rig asks.
+#
+# THE KEYS ARE NOT MEASURED, the same caveat build_sawcal carries: 51 (target
+# group), 56 (activate group: 1 on, 0 off), 35 (opacity) and 57 (group list) come
+# from the community spec. The rig closes them itself -- the MOD's triggers.txt
+# dump reports target/togon back, and the coin's own row carries its group -- so
+# a wrong key shows up as a zero in the dump before anything rests on it.
+TRIG_ALPHA, TRIG_TOGGLE, TRIG_TOUCH = 1007, 1049, 1595
+# The Item Compare and one of the collectibles lv21 uses for its own counter.
+# 80 = item id, 381 = "this collectible is a pickup item" (the flag items.txt
+# reports, and the one that decides whether it moves a counter at all).
+TRIG_COMPARE, ITEM_PICKUP = 3620, 1614
+K_ITEM_ID, K_IS_PICKUP = 80, 381
+K_ACTIVATE, K_OPACITY = 56, 35
+
+COINGATE = {"variant": 1}
+
+
+def _coin_in_group(x: float, y: float, group: int) -> str:
+    return obj(COIN_USER, x, y, extra={K_GROUPS: str(group)})
+
+
+def build_coingate() -> str:
+    u"""Is a coin GD has hidden or switched off still credited?
+
+    Three stations, 600 px apart, all at dy=30 -- well inside the 35 the coincal
+    rig measured -- so a full-size cube running flat with no input touches every
+    one of them. What differs is only what a trigger did to the coin first.
+
+    variant 1 (the two open questions):
+      A  x=600   plain coin, no group             -- the control: must be credited
+      B  x=1200  coin in group 11, ALPHA 0 at x=900
+      C  x=1800  coin in group 12, TOGGLE OFF at x=900
+
+    variant 2 (the reversals, so that "not credited" in variant 1 is read as the
+    trigger's doing rather than as the group itself breaking something):
+      A  x=600   coin in group 11, toggle OFF at x=300 then ON at x=450
+      B  x=1200  coin in group 12, alpha 0 at x=900 then alpha 1 at x=1050
+      C  x=1800  coin in group 13, MOVED +90 in y at x=1500 -- credited only if
+                 the credit follows the object (it starts 120 above the player,
+                 i.e. out of reach, and the move brings it to dy=30)
+
+    Read the `coingd:` lines: they name the coin's uid and the offsets at the
+    crediting tick, so a station that is silent was not credited at all.
+    """
+    ref = GROUND_TOP + 15.0
+    objs: list[str] = []
+    xs = [600.0, 1200.0, 1800.0]
+    if COINGATE["variant"] == 1:
+        objs.append(obj(COIN_USER, xs[0], ref + 30.0))
+        objs.append(_coin_in_group(xs[1], ref + 30.0, 11))
+        objs.append(_coin_in_group(xs[2], ref + 30.0, 12))
+        objs.append(obj(TRIG_ALPHA, 900.0, ref, extra={
+            K_TARGET: "11", K_OPACITY: "0", K_DURATION: "0"}))
+        objs.append(obj(TRIG_TOGGLE, 900.0, ref + 60.0, extra={
+            K_TARGET: "12", K_ACTIVATE: "0"}))
+        kinds = ["plain", "alpha0", "toggle_off"]
+    elif COINGATE["variant"] == 3:
+        # DOES THE CREDIT FOLLOW THE OBJECT? Decided both ways in one rig, so
+        # neither answer can be read as "the move never happened":
+        #   A  x=600   plain coin in reach -- the control
+        #   B  x=1200  coin IN reach, moved UP 300 at x=900  -> credited only if
+        #              the credit is taken at the LOAD position (it would be a
+        #              contradiction of everything else the model relies on)
+        #   C  x=1800  coin OUT of reach (+150), moved DOWN 300 at x=1500 ->
+        #              credited only if the credit follows
+        # The `coingd:` line prints the coin's position AT THE CREDITING TICK, so
+        # whichever station is credited also measures the move offset's unit --
+        # the one thing build_sawcal's note says is not established.
+        objs.append(obj(COIN_USER, xs[0], ref + 30.0))
+        objs.append(_coin_in_group(xs[1], ref + 30.0, 12))
+        objs.append(_coin_in_group(xs[2], ref + 150.0, 13))
+        objs.append(obj(TRIG_MOVE, 900.0, ref, extra={
+            K_TARGET: "12", K_MOVE_X: "0", K_MOVE_Y: "300", K_DURATION: "0.2"}))
+        objs.append(obj(TRIG_MOVE, 1500.0, ref, extra={
+            K_TARGET: "13", K_MOVE_X: "0", K_MOVE_Y: "-300", K_DURATION: "0.2"}))
+        kinds = ["plain", "moved_up_out_of_reach", "moved_down_into_reach"]
+    elif COINGATE["variant"] == 6:
+        # WHICH WAY DOES AN ITEM COMPARE (3620) COMPARE? lv22's third coin is
+        # behind one, and its row reads item=1 mod1=1 **mod2=6** i1mode=1
+        # i2mode=0 tgtmode=1 res=(3,3,2) tol=0 -- so the target is 6 and the
+        # operator is in one of those columns, which is exactly what cannot be
+        # read off a name. The rig places N pickups of item 1 and one compare
+        # against a constant 3, and asks GD which N opens the coin's group.
+        #   pickups at x=600, 900, 1200, 1500 (as many as COINGATE["n"])
+        #   compare at x=1800, coin (group 40, switched off at x=300) at x=2400
+        n = int(COINGATE.get("n", 3))
+        objs.append(_coin_in_group(xs[2] + 600.0, ref + 30.0, 40))
+        objs.append(obj(TRIG_TOGGLE, 300.0, ref, extra={
+            K_TARGET: "40", K_ACTIVATE: "0"}))
+        for i in range(n):
+            # dy=0, not 30: a pickup's box is 25x20, so its credit bound in y is
+            # 10 + the player's 15 = 25, and the first cut placed them 30 above
+            # the player -- out of reach, which is why nothing counted.
+            objs.append(obj(ITEM_PICKUP, 600.0 + 300.0 * i, ref, extra={
+                K_ITEM_ID: "1", K_IS_PICKUP: "1"}))
+        # The compare SPAWNS its target group; it does not toggle objects. So
+        # its group holds a Toggle, and that is what switches the coin in.
+        #
+        # 62 = SPAWN TRIGGERED, and without it this rig measures nothing.
+        # Belonging to group 41 does not stop an ordinary trigger from firing on
+        # its OWN x-crossing, so the gate stood open whatever the compare said:
+        # measured 2026-09-20, N = 0, 2, 3, 4 and 6 pickups against a constant
+        # of 3 ALL credited the coin, the zero-pickup control included. Every
+        # link of lv22's own chain carries spawn=1 for this reason.
+        objs.append(obj(TRIG_TOGGLE, 2100.0, ref + 90.0, extra={
+            K_TARGET: "40", K_ACTIVATE: "1", K_GROUPS: "41", 62: "1"}))
+        # WHICH KEY IS THE CONSTANT? The bindings say m_mod2 is property 484 and
+        # the first cut wrote that -- GD read back 0. Rather than try the next
+        # number, every candidate goes in at once with a DISTINCT value, and the
+        # dump says which column each one landed in.
+        # MEASURED (2026-09-20, the probe that wrote 483/484/485/486 as 7/3/9/11
+        # and read them back as mod2/tol/rnd1/rnd2): **the constant is property
+        # 483 and the tolerance is 484**, the other way round from what the
+        # bindings' comments say. The first cut put the constant in 484, which
+        # GD read as a tolerance of 3 -- and 4 against 7 within 3 counts as
+        # equal, so the gate opened for the wrong reason.
+        objs.append(obj(TRIG_COMPARE, 1800.0, ref, extra={
+            K_TARGET: "41", K_ITEM_ID: "1",
+            476: "1", 477: "0", 478: "1", 479: "1",
+            483: "3", 484: "0",
+            480: "3", 481: "3", 482: "2"}))
+        kinds = [f"compare_vs_3_with_{n}_pickups"]
+        UNITS.append({"pickups": n, "compare_const": 3})
+        objs += floor_run(0, xs[-1] + 1500.0)
+        return header() + ";" + ";".join(objs) + ";"
+    elif COINGATE["variant"] == 8:
+        # DOES A PRESS THAT CANNOT JUMP STILL FIRE A TOUCH TRIGGER (1595)?
+        #
+        # lv22's third coin needs six of them inside a 240 px window (about 185
+        # ticks): a Touch trigger at x=15,525 feeds a Pickup, and an Item
+        # Compare opens the coin's group at item 1 >= 6. A grounded cube cannot
+        # jump six times in 0.77 s, so the question is whether the presses that
+        # land on an airborne cube -- which move nothing -- are counted.
+        #   the Touch trigger sits at x=820, target 60, activate=1
+        #   A  x=1800  coin in group 60, switched OFF at x=300
+        #   B  x=2400  a plain coin -- this run credits coins at all
+        # x(t) on this floor is 1.2983 px/tick (measured off calib_coingate7's
+        # own coingd ticks), so the plan taps at t=600 (x=779, BEFORE the
+        # trigger -- variant 5 measured that such a tap does nothing) and again
+        # at t=660 (x=857, past it and 60 ticks into a jump that lasts about
+        # 120). Run it twice: with the second tap and without. Credited only in
+        # the first means an airborne press fires one.
+        objs.append(_coin_in_group(1800.0, ref + 30.0, 60))
+        objs.append(obj(COIN_USER, 2400.0, ref + 30.0))
+        objs.append(obj(TRIG_TOGGLE, 300.0, ref + 60.0, extra={
+            K_TARGET: "60", K_ACTIVATE: "0"}))
+        objs.append(obj(TRIG_TOUCH, 820.0, ref, extra={
+            K_TARGET: "60", K_ACTIVATE: "1", K_DURATION: "0"}))
+        UNITS.append({"px_per_tick": 1.2983, "trigger_x": 820.0,
+                      "taps": "t=600 before, t=660 past it and airborne"})
+        for x0, kind in ((1800.0, "touch_by_airborne_press"), (2400.0, "plain")):
+            UNITS.append({"x0": x0 - 300.0, "x1": x0 + 300.0, "coin_x": x0,
+                          "id": COIN_USER, "kind": kind, "variant": 8,
+                          "player_y_assumed": ref})
+        objs += floor_run(0, 3000.0)
+        return header() + ";" + ";".join(objs) + ";"
+    elif COINGATE["variant"] == 7:
+        # DOES A TRIGGER MARKED "TOUCH TRIGGERED" NEED THE BUTTON HELD?
+        #
+        # Not the same object as the Touch trigger (1595) variant 5 measures.
+        # This is the flag an ordinary trigger carries -- the `touch` column of
+        # the MOD's triggers.txt, GJEffectManager's m_touchTriggered -- and
+        # lv22's first coin is behind seven of them (a counter reaches 5 and a
+        # Move brings the coin into reach).
+        #
+        # WHY A RIG AND NOT THE LEVEL: on lv22 the two runs that looked like an
+        # answer differed in the button AND in the trajectory, because for a
+        # cube the button IS the trajectory. The reference run passed the boxes
+        # at |dy|=36 with a gate of 30 -- it never entered them -- so "it did
+        # not fire" was geometry, not input. Here the box sits ON the player's
+        # own line, so a run with NO INPUT AT ALL goes straight through it.
+        #   A  x=1200  coin in group 50, switched OFF at x=300; a touch-
+        #              triggered TOGGLE ON at x=600, at the player's own y
+        #   B  x=1800  coin in group 51, switched OFF at x=300; the same toggle
+        #              at x=1500 STACKED eight high (ref .. ref+210), so a
+        #              jumping player is inside one of them whatever the arc
+        #   C  x=2400  coin in group 52, switched OFF at x=360 and NEVER turned
+        #              back on -- the control WITHOUT it, "A was credited" reads
+        #              equally as "the flag fired with no input" and as "the OFF
+        #              never took effect", and the first cut of this rig could
+        #              not tell those apart (every station came back credited)
+        # A GD level holds THREE user coins and drops the rest, so there is no
+        # room for a fourth "plain" station -- the first cut of this rig already
+        # credited a plain coin (uid14, no group) on the same floor, which is
+        # the "this run credits coins at all" control, spent.
+        # Run it with no input: if A is credited while C is not, the flag does
+        # not ask for the button and markTouched's box-only test is right. Then
+        # run it holding: B answers the same question off the ground.
+        objs.append(_coin_in_group(1200.0, ref + 30.0, 50))
+        objs.append(_coin_in_group(1800.0, ref + 30.0, 51))
+        objs.append(_coin_in_group(2400.0, ref + 30.0, 52))
+        objs.append(obj(TRIG_TOGGLE, 300.0, ref + 60.0, extra={
+            K_TARGET: "50", K_ACTIVATE: "0"}))
+        objs.append(obj(TRIG_TOGGLE, 330.0, ref + 60.0, extra={
+            K_TARGET: "51", K_ACTIVATE: "0"}))
+        objs.append(obj(TRIG_TOGGLE, 360.0, ref + 60.0, extra={
+            K_TARGET: "52", K_ACTIVATE: "0"}))
+        # 11 = "touch triggered" in the level string. NOT MEASURED -- but the
+        # rig closes it itself: the MOD dumps m_touchTriggered back as the
+        # `touch` column of triggers.txt, so a wrong key reads as a 0 there
+        # before any conclusion rests on it (the caveat build_coingate carries).
+        objs.append(obj(TRIG_TOGGLE, 600.0, ref, extra={
+            K_TARGET: "50", K_ACTIVATE: "1", 11: "1"}))
+        for i in range(8):
+            objs.append(obj(TRIG_TOGGLE, 1500.0, ref + 30.0 * i, extra={
+                K_TARGET: "51", K_ACTIVATE: "1", 11: "1"}))
+        UNITS.append({"touch_key": 11,
+                      "stations": "A=flat B=stacked C=off_forever"})
+        for x0, kind in ((1200.0, "touchflag_on_the_line"),
+                         (1800.0, "touchflag_stacked"),
+                         (2400.0, "off_and_never_on")):
+            UNITS.append({"x0": x0 - 300.0, "x1": x0 + 300.0, "coin_x": x0,
+                          "id": COIN_USER, "kind": kind, "variant": 7,
+                          "player_y_assumed": ref})
+        objs += floor_run(0, 3900.0)
+        return header() + ";" + ";".join(objs) + ";"
+    elif COINGATE["variant"] == 5:
+        # THE TOUCH TRIGGER (1595), which is not the same thing as a trigger
+        # marked "touch triggered": this one fires on the PLAYER'S TAP. lv22's
+        # third coin is behind one (a tap chain feeds an Item Compare that
+        # switches the coin's group on), so what has to be established is when
+        # it fires -- on any tap, or only while the player is inside it, or only
+        # after it has been crossed.
+        #   A  x=600   a coin in group 30, switched OFF at x=300
+        #   the Touch trigger sits at x=900, target 30, activate=1
+        #   B  x=1200  the same group -- so both stations answer at once
+        #   C  x=1800  a plain coin, the control that the run itself is sane
+        # Run it twice: with the rig's .plan.txt (a tap at t=520, i.e. around
+        # x=715, BEFORE the trigger's x) and without any input at all.
+        objs.append(_coin_in_group(xs[0], ref + 30.0, 30))
+        objs.append(_coin_in_group(xs[1], ref + 30.0, 30))
+        objs.append(obj(COIN_USER, xs[2], ref + 30.0))
+        objs.append(obj(TRIG_TOGGLE, 300.0, ref, extra={
+            K_TARGET: "30", K_ACTIVATE: "0"}))
+        objs.append(obj(TRIG_TOUCH, 900.0, ref, extra={
+            K_TARGET: "30", K_ACTIVATE: "1", K_DURATION: "0"}))
+        kinds = ["group30_before_trigger", "group30_after_trigger", "plain"]
+    elif COINGATE["variant"] == 4:
+        # WHAT IS THE MOVE OFFSET'S UNIT? Three coins 150 above the player's
+        # centre (out of reach: 150 > the measured 35), each pulled down by a
+        # different amount. Under "1 unit = 1 px" the -120 and -180 stations land
+        # at dy 30 and -30 and are credited; under 1/3 px none is; under 3 px
+        # only the -60 one is. The `coingd:` line's obj y says it outright.
+        for i, dv in enumerate((-60, -120, -180)):
+            objs.append(_coin_in_group(xs[i], ref + 150.0, 20 + i))
+            objs.append(obj(TRIG_MOVE, xs[i] - 300.0, ref, extra={
+                K_TARGET: str(20 + i), K_MOVE_X: "0", K_MOVE_Y: str(dv),
+                K_DURATION: "0.2"}))
+        kinds = ["move_-60", "move_-120", "move_-180"]
+    else:
+        objs.append(_coin_in_group(xs[0], ref + 30.0, 11))
+        objs.append(_coin_in_group(xs[1], ref + 30.0, 12))
+        objs.append(_coin_in_group(xs[2], ref + 120.0, 13))
+        objs.append(obj(TRIG_TOGGLE, 300.0, ref, extra={
+            K_TARGET: "11", K_ACTIVATE: "0"}))
+        objs.append(obj(TRIG_TOGGLE, 450.0, ref + 60.0, extra={
+            K_TARGET: "11", K_ACTIVATE: "1"}))
+        objs.append(obj(TRIG_ALPHA, 900.0, ref, extra={
+            K_TARGET: "12", K_OPACITY: "0", K_DURATION: "0"}))
+        objs.append(obj(TRIG_ALPHA, 1050.0, ref + 60.0, extra={
+            K_TARGET: "12", K_OPACITY: "1", K_DURATION: "0"}))
+        objs.append(obj(TRIG_MOVE, 1500.0, ref, extra={
+            K_TARGET: "13", K_MOVE_X: "0", K_MOVE_Y: "-30",
+            K_DURATION: "0.5"}))
+        kinds = ["toggle_off_then_on", "alpha_0_then_1", "moved_into_reach"]
+    for x0, kind in zip(xs, kinds):
+        UNITS.append({"x0": x0 - 300.0, "x1": x0 + 300.0, "coin_x": x0,
+                      "id": COIN_USER, "kind": kind,
+                      "variant": COINGATE["variant"],
+                      "player_y_assumed": ref})
+    objs += floor_run(0, xs[-1] + 900.0)
+    return header() + ";" + ";".join(objs) + ";"
+
+
+def build_coingate2() -> str:
+    COINGATE["variant"] = 2
+    return build_coingate()
+
+
+def build_coingate3() -> str:
+    COINGATE["variant"] = 3
+    return build_coingate()
+
+
+def build_coingate4() -> str:
+    COINGATE["variant"] = 4
+    return build_coingate()
+
+
+def build_coingate5() -> str:
+    COINGATE["variant"] = 5
+    return build_coingate()
+
+
+def build_coingate6() -> str:
+    COINGATE["variant"] = 6
+    return build_coingate()
+
+
+def build_coingate7() -> str:
+    COINGATE["variant"] = 7
+    return build_coingate()
+
+
+def build_coingate8() -> str:
+    COINGATE["variant"] = 8
+    return build_coingate()
+
+
 BUILDERS = {"probe": build_probe, "slopes": build_slopes,
+            "coincal": build_coincal,
+            "coingate": build_coingate, "coingate2": build_coingate2,
+            "coingate3": build_coingate3, "coingate4": build_coingate4,
+            "coingate5": build_coingate5, "coingate6": build_coingate6,
+            "coingate7": build_coingate7, "coingate8": build_coingate8,
             "crush": build_crush, "sawcal": build_sawcal,
             "sawcal_wave": lambda: build_sawcal_mode("wave"),
             "sawcal_ship": lambda: build_sawcal_mode("ship"),
@@ -5363,6 +5952,8 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
             "slopespike_ship": lambda: build_slopespike_mode("ship"),
             "slopespike_cube": lambda: build_slopespike_mode("cube"),
             "slopespike_wave_mini": lambda: build_slopespike_mode("wave", True),
+            "hazrot_wave": lambda: build_hazrot("wave"),
+            "hazrot_cube": lambda: build_hazrot("cube"),
             "slopespike_wave_flip": lambda: build_slopespike_mode("wave", False, True),
             "expease": build_expease,
             "cprot": build_cprot,
@@ -5488,6 +6079,20 @@ def main() -> int:
                     help="the dump.csv of slopeland pass1. The pad arc is "
                          "measured from it to place the slopes; without it the "
                          "rig has pads only")
+    ap.add_argument("--coin", default=None,
+                    help="coincal only: mode,mini,scale,dy1[,dy2,dy3] -- e.g. "
+                         "cube,0,0,34.5,35,35.5. At most three dy values (a GD "
+                         "level holds three user coins and drops the rest)")
+    ap.add_argument("--coin-rot", type=float, default=0.0,
+                    help="coincal only: turn the coin. A turn that is not a "
+                         "multiple of 90 makes objrects' w,h the BOUNDING BOX "
+                         "of the turned square, which is what this measures")
+    ap.add_argument("--coin-n", type=int, default=None,
+                    help="coingate6 only: how many item-1 pickups to place "
+                         "before the compare (the compare's constant is 3)")
+    ap.add_argument("--coin-sxy", default=None,
+                    help="coincal only: sx,sy -- per-axis scale (level-string "
+                         "keys 128/129), for a coin that is not square")
     ap.add_argument("--ka39", action="store_true",
                     help="write kA39,1 (fixRadiusCollision) into the header -- "
                          "the lv22 flag world. Record it with the rig's "
@@ -5496,6 +6101,22 @@ def main() -> int:
     if a.ka39:
         global KA39
         KA39 = True
+    if a.coin_n is not None:
+        COINGATE["n"] = a.coin_n
+    COINCAL["rot"] = a.coin_rot
+    if a.coin_sxy:
+        sx, sy = a.coin_sxy.split(",")
+        COINCAL["sx"], COINCAL["sy"] = float(sx), float(sy)
+    if a.coin:
+        f = a.coin.split(",")
+        if len(f) < 4:
+            ap.error("--coin needs mode,mini,scale and at least one dy")
+        COINCAL["mode"] = f[0]
+        COINCAL["mini"] = f[1] not in ("0", "", "false", "False")
+        COINCAL["scale"] = float(f[2])
+        COINCAL["dys"] = [float(v) for v in f[3:]]
+        if len(COINCAL["dys"]) > 3:
+            ap.error("at most three dy values -- GD drops the fourth coin")
     if a.xmap:
         load_xmap(Path(a.xmap))
         print(f"xmap: {len(XMAP)} ticks (ends at x={XMAP[-1][1]:.0f})")

@@ -131,6 +131,22 @@ struct State {
     // velocities the corpus never contains, and there the proxy and the
     // mechanism part company where no replay instrument can see it.
     uint8_t rideLanded = 0;
+    // --lawseatonslope only (0 otherwise): ticks the --slopelaw seat has held this
+    // body on a floor ramp before the model's own ride (onSlope) began, saturated
+    // at 24. GD sets m_isOnSlope and m_slopeStartTime on the SEAT, before and
+    // regardless of the 5.0 landing test (lv19 dump row 14,916, `slp:` lines: seat
+    // at vy 5.839, start time changes on the next call); the model's ride starts
+    // at its landing, 6 ticks later there, so the exit launch came out at 19/24.
+    // When the ride starts, slopeT starts from this count instead of 0. It is not
+    // carried by --start (same documented hole as pressSpent / ringHold).
+    uint8_t seatT = 0;
+    // --mpushlaunch only (0 otherwise): last tick's GD m_c6 (player+0x630, the
+    // velocity a rising solid or a ramp left on the player), in 0.001 units --
+    // GD rounds what it launches with to 0.001 anyway. postCollision launches
+    // from it (0x38eb5c) on the tick contact with a fast face ends. It is not
+    // carried by --start (same documented hole as pressSpent / seatT), and a
+    // dual's two bodies share it (not in swapHalves).
+    int16_t prevC6q = 0;
     float slopeM;
     // Ticks since gravity last flipped, saturated at 24 -- the same 0.1 s at
     // 240 ticks/s as slopeT above, and read the same way: GD stamps the time in
@@ -156,6 +172,12 @@ struct State {
     // anything must come out UNARMED, and the step's increment clamps it back
     // to the cap. Carried by the anchor as --start field 29 (-1 = not said).
     uint8_t armT = 255;
+    // --cubeceilgrace only (255 otherwise): ticks since the game mode last
+    // changed, saturated at kFlipGraceTicks -- GD's +0x7d8, stamped by the
+    // seven mode-toggle functions (toggleFlyMode 0x39a519 and its siblings) and
+    // read by the cube family's ceiling-ramp seat the same way flipT is. 255 =
+    // no grace, as for flipT. Not carried by --start.
+    uint8_t modeT = 255;
     // ...and the same shape for the DART SLIDE arm (id 1755): while it holds, a
     // WAVE is pushed out of a solid's top instead of passing through it
     // (modifiers.hpp, slideBoxTouch). 255 = never armed, for the same reason
@@ -236,7 +258,7 @@ struct State {
     // that two states at the same tick can disagree about whether a door is
     // open. It is NOT in keyOf -- the layer is partitioned by it instead, the
     // same way `dx` is, so states with different masks can never merge.
-    uint32_t trig = 0;
+    TouchMask trig = 0;
     int32_t trigT = -1;
     // Which of the level's gravity portals this state has already SPENT. GD
     // latches one on first overlap, not on first firing, so a pass taken at
@@ -288,7 +310,7 @@ struct State {
     // capped by count, not by bytes, so this is memory rather than search
     // width -- but it is the largest single addition the struct has taken, and
     // the cost lands in the cold loop rather than in any replay harness.
-    uint16_t fireB[32] = {};
+    uint16_t fireB[kTouchBits] = {};
     // How far this state has travelled since it punched the locked box
     // (g_lockBox), while that lock is open. The lock makes an object's x the
     // player's own, offset by wherever both were when it fired:
@@ -319,6 +341,13 @@ struct State {
     // The channel being walked. Not derivable: it is whatever the last 2900
     // with `swarm` set pointed at.
     uint8_t rotChan = 0;
+    // --tpbandskip only (0 otherwise): a teleport fired on this tick, so the
+    // next tick's band clamps are skipped -- GD's player+0x560, set by
+    // teleportPlayer (0x20fe02) and read-and-cleared at the head of
+    // checkCollisions (0x21384e), which skips the band block while it is set.
+    // One tick of life; not carried by --start; a dual's two bodies share it.
+    // (Here because rotChan leaves a byte of padding before rotRev.)
+    uint8_t tpSkip = 0;
     // Per-channel reverse, one bit per channel. Also not derivable -- lv22's
     // channel 1 is reached both from a 2900 with gnddir=2 (reverse) and from
     // five with gnddir=0 (not), so the value depends on which fired last.
@@ -380,6 +409,10 @@ struct State {
     // above, and carried by the anchor (--start field 25, read straight off
     // GD's own byte).
     uint8_t boost = 0;
+    // --ceilreleasemode only (0 otherwise): the mode the body was in on the
+    // last ceiling-ramp press, which is the mode GD's slope impulse (+0x9b4)
+    // was computed for. Not carried by --start; a dual's two bodies share it.
+    uint8_t ceilMode = 0;
     // [2026-08-21 r93] Marks the tick on which a warp interrupted a ride = THE
     // RAMP'S SLOPE-EXIT LAUNCH VALUE TO EMIT ON THE NEXT TICK (0 = none). Same
     // 1-tick lifetime as pFlap, not carried by the anchor. It holds
@@ -798,7 +831,53 @@ struct State {
     // 1859) had its decay measured explicitly ("set to 2 by the touch and
     // stepped down every tick"), so the assumption was never tested rather than
     // tested and confirmed.
+    // [2026-09-20] --fgarmlive REUSES THIS BYTE AS GD'S OWN COUNTER, rather
+    // than adding a field: GD's m_stateFlipGravity (player+0xb80) is set to 2
+    // by the 2866 contact (0x215ba1) and decremented every tick by
+    // PlayerObject::update (0x389f40), so 0..kArmTicks here means exactly what
+    // GD holds and `> 0` is armed. Every reader is already a truth test
+    // (`s.fgArm`), so they are unchanged; keyOf switches to a multiply under
+    // the flag, because `<< 63` throws away everything above 1.
+    //
+    // WHY NOT A NEW FIELD: there is no tail padding left (groundUid took the
+    // last of it), so one more byte grows State from 344 to 352 for a flag that
+    // is off. The counter counts DOWN for the same reason the note above gives
+    // about defaults -- 0 is NOT ARMED, which is what an anchor that does not
+    // carry it should mean. Counting up would make 0 read as "touched this very
+    // tick" and hand every anchored replay a spurious arm.
+    // STILL UNSEEDED: --start does not carry this, before or after the flag. An
+    // anchor taken inside lv22's ride starts unarmed where GD is armed -- the
+    // same unseeded-history hole rideLanded and groundUid carry, and the reason
+    // the sectioned instruments never saw t=11,342 in the first place.
     uint8_t fgArm = 0;
+    // --coins: which of the level's coins this lineage has collected, one bit
+    // per L.coins entry in x order. 0 without the flag, so every existing key,
+    // cap family and goal test is bit-identical when it is off. Same placement
+    // rule as ceilPin -- after the positionally-initialised members.
+    //
+    // It is WORLD STATE, not position: two states at the same (x, y, vy) that
+    // differ in it are not interchangeable, and the dedupe would otherwise keep
+    // whichever arrived first -- usually the one that flew straight past. That
+    // only bites INSIDE a coin's window, because a state that leaves one behind
+    // is killed on the spot (see the miss prune in cli.hpp), so the extra cells
+    // are confined to a ~70 px band around each coin.
+    uint8_t coins = 0;
+    // --coins: the counting TAP's window and presses (TouchTrig::tapCloseX;
+    // lv22's third coin needs six). Low six bits: presses counted; 0x80: the
+    // window has opened; 0x40: it has shut. World state like `coins`, and 0
+    // without the flag. Not seeded at a --start anchor on purpose: the presses
+    // before it reach the search as GD's own counter (--itembase), and whether
+    // the window is open is re-derived from the queue's record (cli.hpp,
+    // passedOn). The count is dropped once it can no longer matter (window
+    // shut or gate already fired), so it splits the key only inside the window.
+    uint8_t taps = 0;
+    // --coins: which of the level's PICKUP ITEMS this lineage has taken, one bit
+    // per g_collect entry in x order. What a Count trigger counts (lv21: ten of
+    // item 1 open the group that moves the third coin into reach), so it is
+    // world state for the same reason `coins` is -- and 0 without the flag,
+    // which is what keeps every key bit-identical when it is off.
+    uint16_t items = 0;
+
     uint32_t parent;  // node arena index
     uint8_t action;   // input level THIS tick (for plan reconstruction)
     // --latgap: this tick ended in a latency-2 mode (ship/UFO) and the tick before in a
@@ -878,6 +957,15 @@ struct State {
     //
     // **At the END of the struct on purpose** -- same reason as jumpBuf above.
     float rotStep = 0.f;
+    // --stickseam: the uid of the solid GD's stick re-land is tied to (+0x608,
+    // PlayerObject::postCollision 0x38e76f-0x38ea48), -1 when none. Written and
+    // read only under the flag. It ACCUMULATES (it is chosen on the first
+    // grounded tick of a ride and kept while the ride is carried by a receding
+    // floor), and the --start anchor does not seed it: an anchor mid-ride starts
+    // at -1 and re-ties to the lowest-uid support, which is not GD's choice when
+    // the anchor sits after a seam the rider already crossed. Placed in the tail
+    // padding, so sizeof is unchanged.
+    int32_t groundUid = -1;
 };
 
 // THIS ASSERT IS A QUESTION, NOT A BUDGET. If you added a field and the build
@@ -919,7 +1007,27 @@ struct State {
 // cannot: the three per-half sites if it has a second body (declaration,
 // swapHalves, the merge list in fixup.hpp) and which --start field, if any,
 // seeds it.
-static_assert(sizeof(State) == 344,
+// THE EXPECTED SIZE FOLLOWS kTouchBits, because widening the touch mask is an
+// INTENDED growth and pinning a single number would make every width change
+// look like the accident this assert exists to catch. MEASURED, not derived:
+// 344 bytes at kTouchBits 32 and 416 at 64 on the census line, and the
+// expression below returns both. What grows is the mask itself (4 -> 8) and the
+// per-box fire ticks (2 bytes each), rounded up to the struct's 8-byte
+// alignment.
+//
+// [2026-09-20] THE BASE IS 352 HERE, not 344: `coins` and `items`, both --coins
+// only and both 0 without it. They DO accumulate, and each is seeded at an
+// anchor -- the coin mask by --coinmask (the repair loop passes GD's own
+// credited set), the item mask NOT by a mask at all but by --itembase, which
+// carries the COUNT a Count trigger is comparing against. The mask cannot be
+// seeded honestly: it says which of THIS window's pickups a lineage took, and a
+// pickup behind the anchor is not in the window. The count is what the trigger
+// reads, the pickups behind cannot be taken twice (x only grows where the prune
+// applies), so base + the bits ahead is the same number GD holds.
+constexpr size_t kStateBytes =
+    (352u + (size_t)(kTouchBits - 32) * sizeof(uint16_t)
+          + (sizeof(TouchMask) - sizeof(uint32_t)) + 7u) / 8u * 8u;
+static_assert(sizeof(State) == kStateBytes,
               "State changed size. If the new field ACCUMULATES over ticks, "
               "seed it in the --start anchor scan, print it in --seeddump, and "
               "run oneoff/py/seedcheck.py to zero before updating this. (This "

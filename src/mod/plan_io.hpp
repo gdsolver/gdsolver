@@ -69,6 +69,20 @@ inline void resetSessionState() {
     solver::g_injThisAttempt = 0; solver::g_injAtDeath = 0;
     solver::g_restoreTickDbg = -1;
     solver::g_pois.clear(); solver::g_poisBuilt = false;
+    // The coin tables belong to one level, and --one-session runs every level in
+    // one process. buildPois rebuilds them, but only when it runs -- a session
+    // that never reaches it would otherwise report the PREVIOUS level's coins,
+    // which is the leak class CLAUDE.md names (one level's recording adopted by
+    // the next, green for months under a per-level launch).
+    solver::g_coins.clear();
+    solver::g_coinPickupTick.clear();
+    solver::g_coinGdTick.clear();
+    solver::g_coinGdUnmatched = 0;
+    solver::g_coinMissFired = false;
+    solver::g_hasRotGameplay = false;
+    solver::g_itemCounts.clear();
+    solver::g_coinGates.clear();
+    solver::g_coinLogLines = 0;
     // The iteration map belongs to one level's run. Left behind, the next session's F10 would
     // draw the PREVIOUS level's rounds over this one -- the same family of bug as the grouptrace
     // and HUD leaks above, and just as convincing to look at.
@@ -197,7 +211,8 @@ inline void loadPlanExtras(const std::string& path) {
 }
 
 // Configure the session on level entry (level selection is left to the game's own UI).
-// The panel only does Replay: replays data/solution_lv{N}_dp.txt at realtime with rendering.
+// The panel's Replay plays data/solution_lv{N}_dp.txt -- or solution_lv{N}_coins.txt with its
+// Coins switch on -- at realtime with rendering (session.hpp, uiConfigureSession).
 // Return value false = no session started, normal play (including when there is no solution
 // file)
 

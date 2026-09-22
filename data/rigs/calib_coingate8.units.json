@@ -1,0 +1,25 @@
+[
+ {
+  "px_per_tick": 1.2983,
+  "trigger_x": 820.0,
+  "taps": "t=600 before, t=660 past it and airborne"
+ },
+ {
+  "x0": 1500.0,
+  "x1": 2100.0,
+  "coin_x": 1800.0,
+  "id": 1329,
+  "kind": "touch_by_airborne_press",
+  "variant": 8,
+  "player_y_assumed": 105.0
+ },
+ {
+  "x0": 2100.0,
+  "x1": 2700.0,
+  "coin_x": 2400.0,
+  "id": 1329,
+  "kind": "plain",
+  "variant": 8,
+  "player_y_assumed": 105.0
+ }
+]

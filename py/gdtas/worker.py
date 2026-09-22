@@ -543,7 +543,9 @@ class Worker(_WorkerBase):
             "worker_id": self.worker_id, "level": self.level,
             "alive": self.is_alive(), "mod_sha1": self.mod_digest,
             "data_root": str(self.data),
-            "cfg": {k: v for k, v in self.cfg.items() if k not in BASE_CFG},
+            # ...and an override of a base key is part of "what this session is",
+            # for the same reason _reopen has to carry it.
+            "cfg": {k: v for k, v in self.cfg.items() if BASE_CFG.get(k) != v},
         }
 
     # ---------- supply ----------
@@ -552,8 +554,15 @@ class Worker(_WorkerBase):
         return R.read_lines(self.data / "result.txt")
 
     def _reopen(self) -> None:
+        # EVERY key the caller set, not only the ones BASE_CFG has no name for.
+        # An override that shares a name with a base key was dropped here, so the
+        # reopened session came back running the DEFAULT and said nothing about
+        # it: measured 2026-09-20 on a coin rig, where `coins=1` reverted to the
+        # base's 0 and the whole run produced no pickup lines at all. A reopen is
+        # invisible from outside (it happens inside run()), so this reads as "the
+        # feature did not work" rather than as "the session was restarted".
         extra = {k: v for k, v in self.cfg.items()
-                 if k not in BASE_CFG and k != "level"}
+                 if k != "level" and BASE_CFG.get(k) != v}
         self.open(self.level, extra, initial_plan=self._initial_plan or None)
 
     def wait_initial(self, timeout_s: float = 180.0) -> RunResult:

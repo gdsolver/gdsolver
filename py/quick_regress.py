@@ -470,7 +470,52 @@ def rot_anchor_args(level: int, t0: int) -> list[str]:
     spent = spent2900_from_dump(REF / f"lv{level}.csv", -1, t0, rots)
     if spent:
         extra += ["--spentrot", ",".join(str(u) for u in spent)]
+    if ROT_SEED:
+        extra += rot_seed_args(level, t0)
     return extra
+
+
+# Set by either instrument's --rotseed. Module-level for the same reason as
+# NO_SPENTPAD below: fixcensus builds its sections through these helpers.
+ROT_SEED = False
+ROT_SEED_LEVEL = 1   # 1 = A (the loop's default cfg dprotseed), 2 = E
+ROT_SEED_EXE: Path | None = None
+_ROTSEED_ROWS: dict[int, dict] = {}
+_ROTSEED_LOCK = threading.Lock()
+
+
+def rot_seed_args(level: int, t0: int) -> list[str]:
+    """--rotseed: hand a section the rotation queue the loop would hand it.
+
+    The loop gives every call the level's rotgameplay table, and gives the
+    queue (--rotqueue --startrotq, with the touch Toggle rule --rotqtoggle
+    --touchseed) only to the calls whose seed the recording fixes exactly
+    (cfg dprotseed at level A, src/mod/repair.hpp rotSeedArgs). Without this a
+    section on a 2900 level measures the pre-queue rotation rule, which the
+    loop no longer uses for those calls. The seed is gdtas.rotseed's port of
+    the loop's derivation, read off the reference instead of an attempt.
+    """
+    from gdtas import rotseed
+    with _ROTSEED_LOCK:
+        q = rotseed.queue(level, ROT_SEED_EXE or Path(LEVELDP_EXE), LEVEL_DATA)
+        if not q:
+            return []
+        if level not in _ROTSEED_ROWS:
+            _ROTSEED_ROWS[level] = read_ref(level)
+        rows = _ROTSEED_ROWS[level]
+        togs = rotseed.toggles(level, LEVEL_DATA)
+    out = ["--rotgameplay", str(LEVEL_DATA / f"rotgameplay_lv{level}.txt")]
+    if ROT_SEED_LEVEL == 4:   # S: the game's consumption loop replayed on the recording
+        cls, _why, seed = rotseed.seed_sim(rows, t0, q)
+    else:
+        cls, _why, seed = rotseed.seed_for(rows, t0, q, ROT_SEED_LEVEL)
+    if cls != "exact":
+        return out
+    out += ["--rotqueue", "--startrotq", seed, "--rotqtoggle"]
+    ts = rotseed.touch_seed(rows, t0, togs, MODE_ID, now_only=(ROT_SEED_LEVEL == 4))
+    if ts:
+        out += ["--touchseed", ts]
+    return out
 
 
 _PADHIST: dict[tuple, object] = {}
@@ -673,6 +718,12 @@ def seg_jobs(level: int, a) -> tuple[dict, list]:
         common += ["--obb", str(obb)]
     common += groups_args(plan)
     common += ctrlwin_args(level)
+    # ...and whatever arm this run is. deathref has carried one of these since
+    # it started measuring flags; this one did not, so an arm that only shows
+    # up at an ANCHOR -- the auto-window gate, the rotation seed, anything
+    # reading --start -- had no cheap instrument at all: the whole-run replay
+    # begins at t=0 and never exercises it, and the next thing up is a cold.
+    common += a.extra_flag
 
     jobs = []
     t = a.seg_start
@@ -797,6 +848,7 @@ def seg_check(level: int, a) -> dict:
         if obb.exists():
             args += ["--obb", str(obb)]
         args += groups_args(plan)
+        args += a.extra_flag        # the same arm as the main path above
         subprocess.run([a.leveldp] + args, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
         d = diff_trace(Path(str(base) + ".trace.csv"), REF / f"lv{level}.csv",
@@ -1044,6 +1096,10 @@ def main(argv=None) -> int:
     ap.add_argument("--plans", default=str(DATA / "solution_lv{}_dp.txt"))
     ap.add_argument("--leveldp", default=str(LEVELDP_EXE))
     ap.add_argument("--tol", type=float, default=0.3)
+    ap.add_argument("--extra-flag", action="append", default=[], metavar="FLAG",
+                    help="extra leveldp flag for every section, repeatable; "
+                         "write it as --extra-flag=--trigwinsel, or argparse "
+                         "reads the value as an option of its own")
     ap.add_argument("--with-fixups", action="store_true")
     ap.add_argument("--tmp", default=None,
                     help="where the section traces are written. THE DEFAULT IS "
@@ -1081,13 +1137,27 @@ def main(argv=None) -> int:
                     help="the A/B arm: still name the pads the run had fired "
                          "before each anchor, but tell the solver to ignore "
                          "them (pre-2026-09-06 seeding)")
+    ap.add_argument("--rotseed", action="store_true",
+                    help="give sections on a 2900 level the rotation queue the "
+                         "loop gives an exactly seeded call (rot_seed_args). Not "
+                         "the baseline's arrangement, so --bless refuses it")
+    ap.add_argument("--rotseed-level", choices=["A", "E", "S"], default="A",
+                    help="which witnesses count for --rotseed, as cfg dprotseed "
+                         "(A is the loop's default); S replays the game's own "
+                         "consumption loop over the recording (rotseed.seed_sim)")
     ap.add_argument("--pool", nargs="+", type=int,
                     default=[90, 91, 92, 93, 94, 95])
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     ap.add_argument("--timeout-minutes", type=float, default=6.0)
     a = ap.parse_args(argv)
-    global NO_SPENTPAD
+    global NO_SPENTPAD, ROT_SEED, ROT_SEED_EXE, ROT_SEED_LEVEL
     NO_SPENTPAD = bool(a.no_spentpad)
+    ROT_SEED = bool(a.rotseed)
+    ROT_SEED_LEVEL = {"A": 1, "E": 2, "S": 4}[a.rotseed_level]
+    ROT_SEED_EXE = Path(a.leveldp)
+    if a.rotseed and a.bless:
+        print("--bless refuses --rotseed: the baseline is measured without the queue")
+        return 2
 
     # REJECT --bless ON A RESTRICTED RUN AT THE DOOR. bless REPLACES
     # `all_base[key]` WHOLESALE with "the rows of the levels that ran this

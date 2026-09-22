@@ -317,7 +317,14 @@ inline uint64_t keyOf(const State& s, long long t) {
            // depending on it, so the dedupe must not merge them. 0 in every
            // level without an id-2866 object, so every existing key is
            // bit-identical.
-           ^ ((uint64_t)s.fgArm << 63)
+           // --fgarmlive turns fgArm into GD's countdown (0..kArmTicks), and
+           // `<< 63` throws away everything above 1: two armed cubes with 1 and
+           // 2 ticks left would get the same key while answering a ceiling two
+           // ticks from now differently. So the flag switches the term to a
+           // multiply. Without the flag the byte is still 0/1 and the shift is
+           // what it always was, so every key is bit-identical.
+           ^ (g_fgArmLive ? ((uint64_t)s.fgArm * 0xBF58476D1CE4E5B9ull)
+                          : ((uint64_t)s.fgArm << 63))
            // ...and the id-1859 ceiling arm WOULD be the same kind of world
            // state, for the same reason: two cubes at the same (y, vy) answer
            // the ceiling above them with a bonk or with a death depending on
@@ -331,6 +338,26 @@ inline uint64_t keyOf(const State& s, long long t) {
            // every existing key stays bit-identical.
            // --bonkarm puts the gate back, so it puts the bit back with it.
            ^ ((g_bonkArm && s.armT < kArmTicks) ? 0xFF51AFD7ED558CCDull : 0)
+           // --coins: the collected set (State::coins). Same argument as the
+           // trigger mask -- a state that took the coin and one that flew
+           // through the same cell without it answer the rest of the level
+           // differently, and only one of them can ever reach the goal. Gated
+           // on non-zero so every run without the flag keeps a bit-identical
+           // key; with it, only the cells inside a coin's window ever split.
+           // Its own multiplier: with the arm bit's, coins == 1 and an armed
+           // state would cancel to the key of neither.
+           ^ (s.coins ? ((uint64_t)s.coins * 0x2545F4914F6CDD1Dull) : 0)
+           // ...and the pickup items -- but as a COUNT, not as the set. What
+           // reads them is a Count trigger, which compares the number; and the
+           // pickups are passed in x order, so two states at the same x that
+           // took different ones have the same ones left to take. Keying the
+           // set instead splits every cell into up to 2^n worlds (lv21 has 11
+           // pickups) and the frontier fills with lineages that are the same
+           // world -- measured as a fourfold slowdown against the same level
+           // without coins.
+           ^ (s.items ? ((uint64_t)popCount32(s.items) * 0xD1B54A32D192ED03ull) : 0)
+           // ...and the counting tap's presses, a number for the same reason.
+           ^ (s.taps ? ((uint64_t)s.taps * 0x9FB21C651E98DF25ull) : 0)
            // [r52] The frame-change bit goes in the key too (it is set only on
            // the tick after the change, so the partition granularity barely
            // moves)
@@ -376,12 +403,25 @@ inline uint64_t keyOf(const State& s, long long t) {
     // nothing have g_touchMoveTicks all zero, so the loop adds nothing and
     // their keys stay bit-identical.
     if (s.trig) {
-        const size_t n = std::min<size_t>(g_touchMoveTicks.size(), 32);
+        // kTouchBits, not 32: b indexes a touch BOX, and s.fireB is sized by
+        // the constant. At a width of 64 the old cap left boxes 32..63 out of
+        // the key's "is this box still moving" term, so two states that differ
+        // only in a high box's motion merged.
+        const size_t n = std::min<size_t>(g_touchMoveTicks.size(),
+                                          (size_t)kTouchBits);
         for (size_t b = 0; b < n; ++b) {
-            if (!((s.trig >> b) & 1u)) continue;
+            if (!((s.trig >> b) & (TouchMask)1)) continue;
             const long long moving = g_touchMoveTicks[b];
             if (moving <= 0) continue;
             if (t - (long long)s.fireB[b] >= moving) continue;   // at rest
+            // --keycensus: WHICH boxes are splitting the frontier. The cost of
+            // the touch window lands here and nowhere else -- a box in the
+            // window is a box the key divides on for as long as it is moving --
+            // so widening to 64 cost lv22 the solve (41 iterations to 201) even
+            // though it fixed the coverage. If a few boxes account for the
+            // splitting, the selection can be tightened without giving the
+            // coverage back. Counted, not inferred.
+            if (g_keyCensus) ++g_keyCount[b];
             k ^= ((uint64_t)(s.fireB[b] >> 2) * 0x9E3779B97F4A7C15ull)
                  ^ ((uint64_t)(b + 1) * 0xBF58476D1CE4E5B9ull);
         }
