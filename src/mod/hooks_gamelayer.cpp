@@ -2,7 +2,9 @@
 #include "mod/playlayer_helpers.hpp"
 // For PROCESS_MEMORY_COUNTERS's named fields -- the struct is only used through
 // GetProcAddress("K32GetProcessMemoryInfo"), so nothing links psapi.
+#ifdef GEODE_IS_WINDOWS
 #include <psapi.h>
+#endif
 
 using namespace p1;
 
@@ -86,6 +88,9 @@ static void clearCheckpointsUnsectioned(PlayLayer* pl) {
 // which is a completely different hypothesis (something held until the frame ends,
 // not something transient). No third guess: the struct has names.
 static void procMemMB(size_t& cur, size_t& peak) {
+#ifndef GEODE_IS_WINDOWS
+    cur = peak = 0;   // Windows only; 0 = not measured
+#else
     using Fn = int(__stdcall*)(HANDLE, PROCESS_MEMORY_COUNTERS*, DWORD);
     static Fn fn = (Fn)GetProcAddress(GetModuleHandleA("kernel32.dll"),
                                       "K32GetProcessMemoryInfo");
@@ -96,6 +101,7 @@ static void procMemMB(size_t& cur, size_t& peak) {
         cur = pmc.WorkingSetSize / (1024 * 1024);
         peak = pmc.PeakWorkingSetSize / (1024 * 1024);
     }
+#endif
 }
 
 // NOT counting the autorelease pool directly: CCPoolManager::getCurReleasePool is
@@ -1734,11 +1740,16 @@ class $modify(GJBaseGameLayer) {
     }
 
     void safeVisit() {
+#ifdef GEODE_IS_WINDOWS
         __try {
             GJBaseGameLayer::visit();
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             logVisitCrashSwallowed();
         }
+#else
+        // No SEH on Android: the draw runs unguarded, and a fault in it ends the game.
+        GJBaseGameLayer::visit();
+#endif
     }
 
     // ---- Section-limited GD solver (read the design notes in src/solver/secsolve.hpp) ----

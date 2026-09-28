@@ -23,6 +23,8 @@
 // recorded on a pad inside a worker needs controller=on.
 #include "mod/config.hpp"
 
+#ifdef GEODE_IS_WINDOWS   // XInput exists only on Windows; the file is empty elsewhere
+
 using namespace p1;
 
 namespace {
@@ -70,3 +72,5 @@ $execute {
     if (n == 0)
         log::warn("controller: no XInput entry point found — the pad is NOT blocked");
 }
+
+#endif  // GEODE_IS_WINDOWS

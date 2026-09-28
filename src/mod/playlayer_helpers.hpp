@@ -10,6 +10,7 @@ using namespace p1;
 // instruction as an offset into the game module (0 = outside it, then the raw address) and the
 // address it tried to read. A count alone said the pass broke, not on what.
 inline uintptr_t g_visAvRip = 0, g_visAvRead = 0, g_visAvRet = 0;
+#ifdef GEODE_IS_WINDOWS
 inline int visAvNote(EXCEPTION_POINTERS* ep) {
     if (ep && ep->ExceptionRecord) {
         const uintptr_t base = (uintptr_t)GetModuleHandleW(nullptr);
@@ -32,6 +33,7 @@ inline int visAvNote(EXCEPTION_POINTERS* ep) {
     }
     return EXCEPTION_EXECUTE_HANDLER;
 }
+#endif
 inline void logVisibilityCrashSwallowed() {
     static int s_count = 0;
     ++g_visAVs;   // the real count is this one (the log is cut off at 5 entries, so it cannot

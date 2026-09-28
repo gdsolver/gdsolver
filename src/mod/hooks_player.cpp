@@ -321,7 +321,8 @@ class $modify(PlayerObject) {
         // Name the caller by RVA. flipGravity has 23 xrefs, and static reading alone cannot
         // decide "which one took effect on this tick".
         // Only frames inside the GD binary itself are picked up and printed (Geode's
-        // trampolines live in another module, so they drop out naturally).
+        // trampolines live in another module, so they drop out naturally). Windows only.
+#ifdef GEODE_IS_WINDOWS
         {
             void* fr[24];
             const USHORT n = RtlCaptureStackBackTrace(0, 24, fr, nullptr);
@@ -342,6 +343,7 @@ class $modify(PlayerObject) {
                          + " base=" + std::to_string((long long)base)
                          + cs).c_str());
         }
+#endif
         char b[224];
         snprintf(b, sizeof(b),
                  "pfg: t=%lld flip=%d noFx=%d up %d->%d x=%.3f y=%.3f vy=%.3f "

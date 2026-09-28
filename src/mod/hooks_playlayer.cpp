@@ -62,11 +62,16 @@ class $modify(PlayLayer) {
     }
 
     void safeUpdateVisibility(float dt) {
+#ifdef GEODE_IS_WINDOWS
         __try {
             PlayLayer::updateVisibility(dt);
         } __except (visAvNote(GetExceptionInformation())) {
             logVisibilityCrashSwallowed();
         }
+#else
+        // No SEH on Android: the pass runs unguarded, and a fault in it ends the game.
+        PlayLayer::updateVisibility(dt);
+#endif
     }
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
         // A session is configured here for the level the play menu's Start was pressed for, in
@@ -481,6 +486,7 @@ class $modify(PlayLayer) {
             // `killer:` line below waits for.
             if (g_cfg.killerSite && !player->m_isDead && !secsolve::g_noKill
                 && !secsolve::g_active && !g_cfg.noDeath) {
+#ifdef GEODE_IS_WINDOWS
                 static uintptr_t base = 0, size = 0;
                 if (!base) {
                     base = (uintptr_t)GetModuleHandleW(nullptr);
@@ -516,6 +522,11 @@ class $modify(PlayLayer) {
                     }
                 }
                 if (!kept) snprintf(sb + o, kSb - o, "(none in module)");
+#else
+                // The stack scan reads the PE image and Windows' memory map; not on Android.
+                snprintf(siteBuf, sizeof siteBuf, "killsite: t=%lld obj=%s rva=(unavailable)",
+                         (long long)g_tick, object ? "yes" : "NULL");
+#endif
                 siteArmed = true;
             }
             // The same verdict, latched for the iteration map (itermap.hpp). GD holds the killer
