@@ -69,13 +69,24 @@ jobs:
         uses: geode-sdk/build-geode-mod@main
         with:
           target: Android64
-          configure-args: -DGDSOLVER_BUILD_DP=OFF
+          configure-args: -DGDSOLVER_BUILD_DP=OFF -DCMAKE_CXX_FLAGS=-ferror-limit=0
 
       # ninja stops at the first failing file. While the port is incomplete, go on through
-      # the same build directory and print every error, so one run gives the whole list.
+      # the same build directory, keep every error, and end the log with each distinct one
+      # once (most frequent first), so one run gives the whole list in its last lines.
       - name: List every compile error
         if: steps.build.outcome == 'failure'
-        run: cmake --build build -- -k 0
+        shell: bash
+        run: |
+          set +e
+          cmake --build build -- -k 0 > build-errors.log 2>&1
+          status=$?
+          echo "=== distinct errors (count, place, message) ==="
+          grep -E "error:" build-errors.log | sed -E "s#${GITHUB_WORKSPACE}/##" \
+            | sort | uniq -c | sort -rn
+          echo "=== translation units that failed ==="
+          grep -E "^FAILED:" build-errors.log | sed -E 's#.* -c ##; s#'"${GITHUB_WORKSPACE}"'/##' | sort -u
+          exit $status
 
       - name: Upload the package
         if: steps.build.outcome == 'success'
