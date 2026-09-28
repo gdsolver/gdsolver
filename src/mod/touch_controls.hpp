@@ -268,7 +268,12 @@ private:
 // level the run has got (the deepest verified point, which only grows), and -- while a search is
 // running -- how much of it is done, in ticks, so the bar reaches the end when the search does.
 // Solve sessions only, like the text.
-constexpr float kBarW = 220.f, kBarH = 7.f, kBarTop = 30.f;
+//
+// They are GD's own level bar, twice: the groove "slidergroove2.png" with "sliderBar2.png" inside
+// it, the fill's texture repeating and its rect cut to the fraction -- which is how
+// PlayLayer::setupHasCompleted builds the one at the top of the screen. Below that one, so the
+// game's bar (when it is on) is left as it is. Plain rectangles stand in if the images are missing.
+constexpr float kBarW = 200.f, kBarH = 7.f, kBarTop = 30.f, kRowGap = 22.f;
 
 class Bars : public cocos2d::CCNode {
 public:
@@ -291,8 +296,8 @@ public:
         const auto win = CCDirector::sharedDirector()->getWinSize();
         const float x = (win.width - kBarW) / 2.f;
         const float y0 = win.height - kBarTop;
-        makeRow(0, x, y0, {80, 220, 100, 255}, "level");
-        makeRow(1, x, y0 - kBarH - 12.f, {90, 170, 255, 255}, "search");
+        makeRow(0, x, y0, {80, 220, 100}, "level");
+        makeRow(1, x, y0 - kRowGap, {90, 170, 255}, "search");
         return true;
     }
 
@@ -305,35 +310,63 @@ public:
     }
 
 private:
-    cocos2d::CCLayerColor* m_track[2] = {};
-    cocos2d::CCLayerColor* m_fill[2] = {};
+    cocos2d::CCNode* m_track[2] = {};          // the groove sprite, or the plain track
+    cocos2d::CCSprite* m_fillSprite[2] = {};   // GD's fill, cut by texture rect...
+    cocos2d::CCLayerColor* m_fillRect[2] = {}; // ...or the plain fill
+    float m_fillW[2] = {}, m_fillH[2] = {};    // the fill at 100%, in the groove's own units
     cocos2d::CCLabelBMFont* m_text[2] = {};
 
-    void makeRow(int r, float x, float y, cocos2d::ccColor4B color, const char* name) {
+    void makeRow(int r, float x, float y, cocos2d::ccColor3B color, const char* name) {
         using namespace cocos2d;
-        m_track[r] = CCLayerColor::create({0, 0, 0, 150}, kBarW, kBarH);
-        m_track[r]->setPosition({x, y});
-        m_track[r]->setID(fmt::format("{}-track", name));
-        m_fill[r] = CCLayerColor::create(color, 0.f, kBarH);
-        m_fill[r]->setPosition({x, y});
-        m_fill[r]->setID(fmt::format("{}-fill", name));
+        auto* groove = CCSprite::create("slidergroove2.png");
+        auto* fill = groove ? CCSprite::create("sliderBar2.png") : nullptr;
+        if (groove && fill) {
+            const auto gs = groove->getTextureRect().size;
+            groove->setScale(kBarW / std::max(gs.width, 1.f));
+            groove->setAnchorPoint({0.f, 0.5f});
+            groove->setPosition({x, y + kBarH / 2.f});
+            groove->setID(fmt::format("{}-groove", name));
+            ccTexParams params{GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_REPEAT};
+            fill->getTexture()->setTexParameters(&params);
+            fill->setColor(color);
+            fill->setAnchorPoint({0.f, 0.f});
+            m_fillW[r] = gs.width - 4.f;
+            m_fillH[r] = 8.f;
+            fill->setPosition({2.f, (gs.height - m_fillH[r]) / 2.f});
+            fill->setTextureRect({0.f, 0.f, 0.f, m_fillH[r]});
+            groove->addChild(fill, -1);
+            this->addChild(groove);
+            m_track[r] = groove;
+            m_fillSprite[r] = fill;
+        } else {
+            auto* track = CCLayerColor::create({0, 0, 0, 150}, kBarW, kBarH);
+            track->setPosition({x, y});
+            track->setID(fmt::format("{}-track", name));
+            auto* rect = CCLayerColor::create({color.r, color.g, color.b, 255}, 0.f, kBarH);
+            rect->setPosition({x, y});
+            rect->setID(fmt::format("{}-fill", name));
+            this->addChild(track);
+            this->addChild(rect);
+            m_track[r] = track;
+            m_fillRect[r] = rect;
+        }
         m_text[r] = CCLabelBMFont::create("", "chatFont.fnt");
         m_text[r]->setScale(0.45f);
         m_text[r]->setAnchorPoint({0.5f, 0.f});
-        m_text[r]->setPosition({x + kBarW / 2.f, y + kBarH + 1.f});
+        m_text[r]->setPosition({x + kBarW / 2.f, y + kBarH + 2.f});
         m_text[r]->setID(fmt::format("{}-text", name));
-        this->addChild(m_track[r]);
-        this->addChild(m_fill[r]);
         this->addChild(m_text[r]);
     }
 
     void setRow(int r, bool on, double frac, const char* text) {
         m_track[r]->setVisible(on);
-        m_fill[r]->setVisible(on);
+        if (m_fillRect[r]) m_fillRect[r]->setVisible(on);
         m_text[r]->setVisible(on);
         if (!on) return;
         const double f = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
-        m_fill[r]->setContentSize({(float)(f * kBarW), kBarH});
+        if (m_fillSprite[r])
+            m_fillSprite[r]->setTextureRect({0.f, 0.f, (float)(f * m_fillW[r]), m_fillH[r]});
+        if (m_fillRect[r]) m_fillRect[r]->setContentSize({(float)(f * kBarW), kBarH});
         m_text[r]->setString(text);
     }
 };
