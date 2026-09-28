@@ -3937,10 +3937,14 @@ inline bool autoFire(const char* why) {
     // 139 -> 6.3 s, 94 -> 4.1 s; lv4003, old model), and every splice held in the game. Its one
     // error, a missed death, is what the cross-check and the leaf replay are there to catch; a
     // section with moving portals still falls back to the checkpoint inside the search.
+    // Windows only: psnap's member table and state copy are unmeasured on Android, so there the
+    // search stays on GD's own checkpoint unless the session asks for psnap (secsnap).
+#ifdef GEODE_IS_WINDOWS
     if (secsolve::g_snapMode == 0 && secsolve::g_verifyEvery == 0) {
         secsolve::g_snapMode = 2;
         secsolve::g_verifyEvery = 20;
     }
+#endif
     snprintf(b, sizeof(b), "dpsolve:   [secauto] %s at the wall t=%lld x=%.1f (rounds %d, "
              "no-record %d, head %lld, try %d) - a section solve from t=%lld (%s), alive to "
              "t=%lld (depth %lld), horizon %lld cap %d", why, rungWall(),
