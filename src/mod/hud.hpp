@@ -362,6 +362,10 @@ inline void updateOverlays(cocos2d::CCNode* gameLayer) {
     //    at the point it stopped, and the one thing worth reading then is how far it got.
     fillSessionHud(overlayLabel(parent, HUD_TAG, "session-hud"_spr, "chatFont.fnt", 0.6f,
                                 show && showingSolve(), cur));
+#ifndef GEODE_IS_WINDOWS
+    //    ...and its two drawn bars, as the next row of the column (touch_controls.hpp)
+    touchpad::updateBars(parent, show, cur.y);
+#endif
     // 3. the keys, the current speed and whether time is stopped. Only while the mod is
     //    driving: during ordinary play these keys do nothing, and a legend for them on screen
     //    reads as "the mod is running something", which is exactly the wrong impression

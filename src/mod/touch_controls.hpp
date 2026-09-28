@@ -271,9 +271,14 @@ private:
 //
 // They are GD's own level bar, twice: the groove "slidergroove2.png" with "sliderBar2.png" inside
 // it, the fill's texture repeating and its rect cut to the fraction -- which is how
-// PlayLayer::setupHasCompleted builds the one at the top of the screen. Below that one, so the
-// game's bar (when it is on) is left as it is. Plain rectangles stand in if the images are missing.
-constexpr float kBarW = 200.f, kBarH = 7.f, kBarTop = 30.f, kRowGap = 22.f;
+// PlayLayer::setupHasCompleted builds the one at the top of the screen. Plain rectangles stand in
+// if the images are missing.
+//
+// They are a row of the overlay column (hud.hpp), placed by its cursor under the session text, so
+// no line of that text can run into them. Both rows keep their place while the search row is
+// hidden, or the column would jump every time a search started.
+constexpr float kBarW = 200.f, kBarH = 7.f, kRowGap = 20.f;
+constexpr float kBarsH = kRowGap + kBarH + 12.f;   // two rows, the upper one's caption included
 
 class Bars : public cocos2d::CCNode {
 public:
@@ -293,11 +298,8 @@ public:
         this->setTag(BAR_TAG);
         this->setID("progress-bars"_spr);
         this->setZOrder(1 << 20);
-        const auto win = CCDirector::sharedDirector()->getWinSize();
-        const float x = (win.width - kBarW) / 2.f;
-        const float y0 = win.height - kBarTop;
-        makeRow(0, x, y0, {80, 220, 100}, "level");
-        makeRow(1, x, y0 - kRowGap, {90, 170, 255}, "search");
+        makeRow(0, 0.f, kRowGap, {80, 220, 100}, "level");
+        makeRow(1, 0.f, 0.f, {90, 170, 255}, "search");
         return true;
     }
 
@@ -352,8 +354,8 @@ private:
         }
         m_text[r] = CCLabelBMFont::create("", "chatFont.fnt");
         m_text[r]->setScale(0.45f);
-        m_text[r]->setAnchorPoint({0.5f, 0.f});
-        m_text[r]->setPosition({x + kBarW / 2.f, y + kBarH + 2.f});
+        m_text[r]->setAnchorPoint({0.f, 0.f});
+        m_text[r]->setPosition({x, y + kBarH + 2.f});
         m_text[r]->setID(fmt::format("{}-text", name));
         this->addChild(m_text[r]);
     }
@@ -371,9 +373,11 @@ private:
     }
 };
 
-inline void updateBars(cocos2d::CCNode* parent) {
+// One row of the overlay column: drawn with its top at `y`, which then moves below it.
+inline void updateBars(cocos2d::CCNode* parent, bool show, float& y) {
+    if (!parent) return;
     auto* bars = static_cast<Bars*>(parent->getChildByTag(BAR_TAG));
-    const bool want = showingSolve() && g_cfg.dpSolve && PlayLayer::get() != nullptr;
+    const bool want = show && showingSolve() && g_cfg.dpSolve && PlayLayer::get() != nullptr;
     if (!bars) {
         if (!want) return;
         bars = Bars::create();
@@ -384,6 +388,8 @@ inline void updateBars(cocos2d::CCNode* parent) {
         bars->refresh(false, 0, "", false, 0, "");
         return;
     }
+    bars->setPosition({10.f, y - kBarsH});
+    y -= kBarsH + 3.f;
     // setString rebuilds glyph sprites; a few times a second is plenty for a progress bar.
     static auto s_last = std::chrono::steady_clock::time_point{};
     const auto now = std::chrono::steady_clock::now();
@@ -417,7 +423,6 @@ inline void update(cocos2d::CCNode* parent) {
         if (pad) parent->addChild(pad);
     }
     if (pad) pad->refresh(want);
-    updateBars(parent);
 }
 
 }  // namespace touchpad
