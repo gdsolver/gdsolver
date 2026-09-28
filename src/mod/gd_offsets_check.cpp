@@ -5,7 +5,7 @@
 // android64 it holds the values measured on the Android binary against the same bindings as
 // the Android compiler lays them out, which is the check that the layout the measurement
 // assumed is the one the mod is built with. The RVAs of the three seeds are not members and
-// have no check here; docs/ANDROID.md gives their evidence.
+// have no check here; tools/android_offsets.py finds them in the binary.
 #include <Geode/Geode.hpp>
 
 #include <cstddef>

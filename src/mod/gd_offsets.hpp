@@ -8,8 +8,8 @@
 // libcocos2dcpp.so, arm64-v8a, 2.2081, sha256
 //   dda3752ab3a912fd2293561e157ecc98eca799056abd9223a331c1c514175df7
 // by finding each field in the Android function the Windows comment names (the Windows
-// function and address are given where the value is used). docs/ANDROID.md has the method
-// and the per-offset evidence.
+// function and address are given where the value is used). tools/android_offsets.py re-checks
+// every value against the bindings and that binary.
 //
 // The member each offset belongs to is named beside it. src/mod/gd_offsets_check.cpp holds
 // each value against offsetof(<class>, <member>) on both platforms, so a bindings update or

@@ -1,5 +1,6 @@
-# Windows only, because mod.json declares `gd.win` and nothing else. The other platforms in
-# Geode's example workflow cannot build this and claiming them would be a lie about what runs.
+# Windows, and Android as an experiment (docs/ANDROID.md). The Android job may fail while the
+# port is under way and never decides the run; only the Windows package is attached to a release.
+# The other platforms in Geode's example workflow cannot build this.
 #
 # The point of building here rather than locally is that the binary attached to a release can be
 # traced to a commit of the public tree. The pitfalls page asks for it for that reason ("makes it
@@ -52,3 +53,23 @@ jobs:
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
             "${{ steps.build.outputs.build-output }}"/*.geode --clobber
+
+  android:
+    name: Android64 (experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the mod
+        id: build
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          target: Android64
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: geode-package-android64
+          path: ${{ steps.build.outputs.build-output }}

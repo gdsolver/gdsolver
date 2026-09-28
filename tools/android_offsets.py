@@ -16,7 +16,7 @@ Three checks, all read-only:
    of the classes that own the member. Zero is reported, not failed: an array read through an
    index register, for example, has no immediate to find.
 3. The three LCG states (kSeed*Rva): each must be the global an inlined x * 214013 + 2531011
-   in the function docs/ANDROID.md names reads and writes.
+   in the function SEED_SITES names reads and writes.
 
 The class starts the model cannot derive (the cocos2d base sizes) are fixed in ROOTS below,
 with where each was measured. Needs capstone and lief for --so (pip install capstone lief).
@@ -372,7 +372,9 @@ def width_ok(t: str, mnemonic: str, reg: str) -> bool:
     return reg.startswith(("x", "q", "d", "s", "w"))
 
 
-# The functions whose inlined LCG reads and writes each seed (docs/ANDROID.md).
+# The functions whose inlined LCG reads and writes each seed: the trigger seed is
+# GameToolbox::fast_rand's state, the variance-index seed the one resetObject draws from, the
+# variance-table seed the one GJBaseGameLayer::init fills m_varianceValues from.
 SEED_SITES = {
     "kSeedTriggerRva": "GameToolbox::fast_rand()",
     "kSeedVarIndexRva": "GameObject::resetObject()",

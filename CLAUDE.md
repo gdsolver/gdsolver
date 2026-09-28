@@ -18,7 +18,7 @@ mcp/      MCP server: ask the running game questions interactively
 data/     solutions (tracked) and per-run working files (not tracked)
 data/rigs calibration levels (.lvl / .units.json / .plan.txt)
 docs/     architecture, the section solver, coins, the level slice,
-          custom levels, watching a run, the Android offsets
+          custom levels, watching a run, Android (experimental)
 tools/    repo utilities (e.g. check_code_only_diff.py)
 ```
 
