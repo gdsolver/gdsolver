@@ -59,6 +59,9 @@ inline bool keyLive(Key k) {
         case Key::Render: return showingSolve();
         case Key::SeekBack:
         case Key::SeekForward: return !showingSolve();
+        // A step advances a stopped game; while time runs there is nothing for it to do.
+        case Key::Step1:
+        case Key::Step10: return manualPaused();
         default: return true;
     }
 }
