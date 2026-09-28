@@ -62,13 +62,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The solver CLI (leveldp and its test drivers) is a desktop tool; only the mod is built.
       - name: Build the mod
         id: build
+        continue-on-error: true
         uses: geode-sdk/build-geode-mod@main
         with:
           target: Android64
+          configure-args: -DGDSOLVER_BUILD_DP=OFF
+
+      # ninja stops at the first failing file. While the port is incomplete, go on through
+      # the same build directory and print every error, so one run gives the whole list.
+      - name: List every compile error
+        if: steps.build.outcome == 'failure'
+        run: cmake --build build -- -k 0
 
       - name: Upload the package
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: geode-package-android64

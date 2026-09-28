@@ -32,7 +32,9 @@
 #include "dp/clearance.hpp"
 #include "dp/refwatch.hpp"
 #include "dp/search_census.hpp"
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
 #include <xmmintrin.h>   // _mm_getcsr: see the fpenv line at the top of cliMain
+#endif
 
 namespace dp {
 
@@ -257,12 +259,21 @@ inline int cliMainOnce(int argc, char** argv) {
     // sends stdout to DEVNULL (py/quick_regress.py:717), so this changes no
     // acceptance. `--mxcsr <hex>` then sets it, which is what turns the reading
     // into an experiment -- without the flag nothing here alters a single bit.
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
     std::printf("fpenv: mxcsr=0x%04x\n", (unsigned)_mm_getcsr());
     for (int i = 1; i + 1 < argc; ++i)
         if (!std::strcmp(argv[i], "--mxcsr")) {
             _mm_setcsr((unsigned)std::strtoul(argv[i + 1], nullptr, 0));
             std::printf("fpenv: mxcsr set to 0x%04x\n", (unsigned)_mm_getcsr());
         }
+#elif defined(__aarch64__)
+    // AArch64 keeps flush-to-zero and the rounding mode in FPCR. Read only: --mxcsr is x86's.
+    {
+        unsigned long long fpcr = 0;
+        __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+        std::printf("fpenv: fpcr=0x%08llx\n", fpcr);
+    }
+#endif
     // --eval-padgate: evaluate orientedHit() -- the SHIPPED pad predicate the
     // step.hpp pad loop calls -- on cases read from stdin, and exit. No level,
     // no search.

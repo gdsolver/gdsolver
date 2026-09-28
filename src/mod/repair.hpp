@@ -5,7 +5,9 @@
 #include <set>
 #include <sstream>
 #include <thread>        // the solver worker
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
 #include <xmmintrin.h>   // _mm_getcsr: see the fpenv line in logSolverArgs
+#endif
 // Stage C: the repair loop, inside the game.
 //
 // The loop is a loop around two things the mod already has: solving (dp/, linked in since
@@ -2181,8 +2183,14 @@ inline void logSolverArgs(const std::vector<std::string>& a) {
     // Rounding mode is a runtime property of the process, and the process the
     // mod lives in has had cocos2d, fmod and the graphics driver in it first.
     char fb[64];
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
     std::snprintf(fb, sizeof fb, "dpsolve: fpenv mxcsr=0x%04x",
                   (unsigned)_mm_getcsr());
+#elif defined(__aarch64__)
+    unsigned long long fpcr = 0;   // AArch64's flush-to-zero and rounding mode
+    __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+    std::snprintf(fb, sizeof fb, "dpsolve: fpenv fpcr=0x%08llx", fpcr);
+#endif
     writeResult(fb);
     // ...and WHICH BYTES the file arguments held when this call was made.
     //
