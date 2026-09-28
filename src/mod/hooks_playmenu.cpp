@@ -389,11 +389,11 @@ $on_mod(Loaded) {
 // The early-outs below are the first tests each onPlay makes, by the offsets the 2.2081 binary
 // tests them at. The asserts tie each to the member the bindings give that offset, so a
 // bindings update that moves one fails here instead of opening the menu over a dead press.
-static_assert(offsetof(LevelInfoLayer, m_isBusy) == 0x1e0);
-static_assert(offsetof(LevelInfoLayer, m_enterTransitionFinished) == 0x275);
-static_assert(offsetof(LevelPage, m_isBusy) == 0x1a0);
-static_assert(offsetof(EditLevelLayer, m_exiting) == 0x1e0);
-static_assert(offsetof(GJGameLevel, m_requiredCoins) == 0x434);
+static_assert(offsetof(LevelInfoLayer, m_isBusy) == gdoff::kLevelInfoBusy);
+static_assert(offsetof(LevelInfoLayer, m_enterTransitionFinished) == gdoff::kLevelInfoTransitionDone);
+static_assert(offsetof(LevelPage, m_isBusy) == gdoff::kLevelPageBusy);
+static_assert(offsetof(EditLevelLayer, m_exiting) == gdoff::kEditLevelExiting);
+static_assert(offsetof(GJGameLevel, m_requiredCoins) == gdoff::kLevelRequiredCoins);
 
 // Online or downloaded levels. onPlay returns at once while busy or before the page has finished
 // coming in, and hands a level that is not downloaded yet to the download; none of those start

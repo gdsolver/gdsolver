@@ -54,26 +54,40 @@
 
 namespace areaenv {
 
-// ---- raw offsets, 2.2081 (the functions above) ----
-constexpr size_t kLayerVar = 0x10cc;        // float[2000]
-constexpr size_t kLayerEase = 0x3020;       // float*, easing tables
-constexpr size_t kLayerGroupDicts = 0xf78;  // CCArray* of CCDictionary, targetGroups lookup
+// ---- raw offsets, 2.2081 (the functions above); the values per platform are in
+// mod/gd_offsets.hpp, where the Windows column is what stood here ----
+constexpr size_t kLayerVar = gdoff::kLayerVarianceValues;          // float[2000]
+constexpr size_t kLayerEase = gdoff::kLayerEnterEasingValues;      // float*, easing tables
+constexpr size_t kLayerGroupDicts = gdoff::kLayerTargetGroupsArray;  // CCArray* of CCDictionary
 // EnterEffectInstance
-constexpr size_t kLen = 0x10, kLenV = 0x14, kOffV = 0x1c, kOffYV = 0x24, kModFront = 0x28,
-                 kModBack = 0x2c, kDeadzone = 0x30, kDist = 0x34, kDistV = 0x38, kAngle = 0x3c,
-                 kAngleV = 0x40, kMoveX = 0x44, kMoveXV = 0x48, kMoveY = 0x4c, kMoveYV = 0x50,
-                 kRotV = 0x74, kScaleXV = 0x5c, kScaleYV = 0x64, kTrigger = 0xa0,
-                 kGroupIndex = 0xc0;
+constexpr size_t kLen = gdoff::kInstLength, kLenV = gdoff::kInstLengthVariance,
+                 kOffV = gdoff::kInstOffsetVariance, kOffYV = gdoff::kInstOffsetYVariance,
+                 kModFront = gdoff::kInstModFront, kModBack = gdoff::kInstModBack,
+                 kDeadzone = gdoff::kInstDeadzone, kDist = gdoff::kInstMoveDistance,
+                 kDistV = gdoff::kInstMoveDistanceVariance, kAngle = gdoff::kInstMoveAngle,
+                 kAngleV = gdoff::kInstMoveAngleVariance, kMoveX = gdoff::kInstMoveX,
+                 kMoveXV = gdoff::kInstMoveXVariance, kMoveY = gdoff::kInstMoveY,
+                 kMoveYV = gdoff::kInstMoveYVariance, kRotV = gdoff::kInstRotateVariance,
+                 kScaleXV = gdoff::kInstScaleXVariance, kScaleYV = gdoff::kInstScaleYVariance,
+                 kTrigger = gdoff::kInstGameObject, kGroupIndex = gdoff::kInstTargetGroupIndex;
 // EnterEffectObject (the trigger)
-constexpr size_t kFixedDir = 0x77c, kDirVec = 0x780, kRelative = 0x788, kRelFade = 0x78c,
-                 kEaseInType = 0x790, kEaseInRate = 0x794, kEaseInBuf = 0x798,
-                 kEaseOutType = 0x79c, kEaseOutRate = 0x7a0, kEaseOutBuf = 0x7a4,
-                 kDirType = 0x7c0, kXY = 0x7c4, kEaseOut = 0x7c5, kInwards = 0x7ec,
-                 kSkipParent = 0x7f5;
+constexpr size_t kFixedDir = gdoff::kEnterStartAngle, kDirVec = gdoff::kEnterAnglePosition,
+                 kRelative = gdoff::kEnterRelative, kRelFade = gdoff::kEnterRelativeFade,
+                 kEaseInType = gdoff::kEnterEasingInType, kEaseInRate = gdoff::kEnterEasingInRate,
+                 kEaseInBuf = gdoff::kEnterEasingInBuffer,
+                 kEaseOutType = gdoff::kEnterEasingOutType,
+                 kEaseOutRate = gdoff::kEnterEasingOutRate,
+                 kEaseOutBuf = gdoff::kEnterEasingOutBuffer, kDirType = gdoff::kEnterDirectionType,
+                 kXY = gdoff::kEnterXYMode, kEaseOut = gdoff::kEnterEaseOutEnabled,
+                 kInwards = gdoff::kEnterInbound, kSkipParent = gdoff::kEnterDontEditAreaParent;
 // GameObject
-constexpr size_t kLockX = 0x2c8, kOffX = 0x2a0, kOffY = 0x2a4, kGroupKey = 0x39c,
-                 kVarIdx = 0x3f4, kStamp = 0x4e0, kMoveSkip = 0x520;
+constexpr size_t kLockX = gdoff::kObjTempOffsetXRelated, kOffX = gdoff::kObjPositionXOffset,
+                 kOffY = gdoff::kObjPositionYOffset, kGroupKey = gdoff::kObjUniqueID,
+                 kVarIdx = gdoff::kObjVarianceIndex, kStamp = gdoff::kObjAreaStamp,
+                 kMoveSkip = gdoff::kObjAreaMoveSkip;
+#if defined(GEODE_IS_WINDOWS)
 constexpr size_t kPosSlot = 0x4a8;          // virtual, the position getAreaObjectValue reads
+#endif
 // V offsets per quantity (processAreaMoveGroupAction / getAreaObjectValue)
 constexpr int kVLen = 0, kVOff = 1, kVOffY = 2, kVMoveX = 8, kVMoveY = 9, kVDist = 10,
               kVAngle = 11;
@@ -85,11 +99,18 @@ inline T& fld(const void* p, size_t off) {
 
 // The position GD's area code reads: the object's virtual at +0x4a8, called the way
 // processAreaMoveGroupAction calls it (this in rcx, the result through rdx).
+// On android64 processAreaMoveGroupAction reaches the same position through vtable +0x540,
+// which the Android binary's GameObject vtable resolves to GameObject::getRealPosition(); a
+// named virtual call takes that slot, with the result through x8 as that ABI returns a CCPoint.
 inline cocos2d::CCPoint areaPos(GameObject* o) {
+#if defined(GEODE_IS_WINDOWS)
     using Fn = cocos2d::CCPoint* (*)(GameObject*, cocos2d::CCPoint*);
     auto fn = reinterpret_cast<Fn>((*reinterpret_cast<void***>(o))[kPosSlot / 8]);
     cocos2d::CCPoint p;
     return *fn(o, &p);
+#else
+    return o->getRealPosition();
+#endif
 }
 
 struct Range {

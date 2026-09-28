@@ -96,7 +96,8 @@ class $modify(PlayLayer) {
         if (g_rngFresh) {
             static bool saved = false;
             static long long seeds[3];
-            static const uintptr_t kSeedRva[3] = {0x6c2e90, 0x6c2ee0, 0x6c2ef8};
+            static const uintptr_t kSeedRva[3] = {gdoff::kSeedTriggerRva, gdoff::kSeedVarIndexRva,
+                                                  gdoff::kSeedVarTableRva};
             auto* base = reinterpret_cast<unsigned char*>(geode::base::get());
             for (int k = 0; k < 3; ++k) {
                 auto* p = reinterpret_cast<long long*>(base + kSeedRva[k]);

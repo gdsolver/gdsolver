@@ -21,6 +21,7 @@
 #include <Geode/modify/GJGameLevel.hpp>
 #include <Geode/modify/FMODAudioEngine.hpp>
 #include <Geode/modify/AppDelegate.hpp>
+#include "mod/gd_offsets.hpp"   // raw offsets into GD, per platform
 #ifdef GEODE_IS_WINDOWS
 #include <Windows.h>
 #endif

@@ -1149,12 +1149,12 @@ constexpr long long kRngFixEE0 = 2531011, kRngFixEF8 = 0;
 // between the reseed and the end of the reset, the seed would no longer equal +0x32e0; that is
 // counted (g_rngDrawnInReset) rather than assumed not to happen.
 constexpr long long kRngFixE90 = 0;
-constexpr size_t kRandomSeedOff = 0x32e0;   // PlayLayer (GJBaseGameLayer::m_randomSeed)
+constexpr size_t kRandomSeedOff = gdoff::kLayerRandomSeed;   // GJBaseGameLayer::m_randomSeed
 inline long long g_rngDrawnInReset = 0;     // resets whose trigger seed was drawn before rngfix
 inline void rngFixAfterReset(void* layer) {
     if (!botDriving() || !g_rngFix || !layer) return;
     auto* base = reinterpret_cast<unsigned char*>(geode::base::get());
-    auto& seed = *reinterpret_cast<long long*>(base + 0x6c2e90);
+    auto& seed = *reinterpret_cast<long long*>(base + gdoff::kSeedTriggerRva);
     auto& kept = *reinterpret_cast<long long*>(reinterpret_cast<char*>(layer) + kRandomSeedOff);
     if (seed != kept) ++g_rngDrawnInReset;
     seed = kRngFixE90;
@@ -1163,8 +1163,10 @@ inline void rngFixAfterReset(void* layer) {
 inline void rngFixApply() {
     if (!botDriving() || !(g_rngFix || g_rngSeedSet)) return;
     auto* base = reinterpret_cast<unsigned char*>(geode::base::get());
-    *reinterpret_cast<long long*>(base + 0x6c2ee0) = g_rngSeedSet ? g_rngSeedEE0 : kRngFixEE0;
-    *reinterpret_cast<long long*>(base + 0x6c2ef8) = g_rngSeedSet ? g_rngSeedEF8 : kRngFixEF8;
+    *reinterpret_cast<long long*>(base + gdoff::kSeedVarIndexRva) =
+        g_rngSeedSet ? g_rngSeedEE0 : kRngFixEE0;
+    *reinterpret_cast<long long*>(base + gdoff::kSeedVarTableRva) =
+        g_rngSeedSet ? g_rngSeedEF8 : kRngFixEF8;
 }
 inline long long g_areaT0 = 0, g_areaT1 = -1;
 inline std::vector<int> g_areaUids;

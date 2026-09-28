@@ -235,9 +235,9 @@ inline long long depth() { return (long long)g_src->size(); }
 inline void slopeTrace(GJBaseGameLayer* l, long long t) {
     if (!l || !l->m_player1 || t < g_slopeT0 || t > g_slopeT1) return;
     auto const* pb = reinterpret_cast<uint8_t const*>(l->m_player1);
-    auto* ramp = *reinterpret_cast<GameObject* const*>(pb + 0x678);
-    const double st = *reinterpret_cast<double const*>(pb + 0x598);
-    const double tt = *reinterpret_cast<double const*>(pb + 0xaa0);
+    auto* ramp = *reinterpret_cast<GameObject* const*>(pb + gdoff::kPlayerCurrentSlope);
+    const double st = *reinterpret_cast<double const*>(pb + gdoff::kPlayerSlopeStartTime);
+    const double tt = *reinterpret_cast<double const*>(pb + gdoff::kPlayerTotalTime);
     char b[256];
     // `att=` is the identity, and it is not decoration: a cold run puts dozens of attempts
     // through the same tick -- measured, 43 of them at t=4,353 of one lv16 run -- so joining
@@ -246,7 +246,7 @@ inline void slopeTrace(GJBaseGameLayer* l, long long t) {
     snprintf(b, sizeof(b),
              "slprec: att=%d t=%lld onslp=%d under=%d uid=%d slpst=%.6f ttime=%.6f age=%.3f "
              "og=%d y=%.4f vy=%.4f",
-             g_attempt, t, pb[0x9b0] ? 1 : 0, pb[0x9b8] ? 1 : 0,
+             g_attempt, t, pb[gdoff::kPlayerOnSlope] ? 1 : 0, pb[gdoff::kPlayerUpsideDownSlope] ? 1 : 0,
              ramp ? ramp->m_uniqueID : -1, st, tt,
              (tt - st) * 240.0, l->m_player1->m_isOnGround ? 1 : 0,
              (double)l->m_player1->getPositionY(), (double)l->m_player1->m_yVelocity);
@@ -297,40 +297,40 @@ inline void record(GJBaseGameLayer* l, long long t) {
     r.snapDist = p->m_snapDistance;
     r.pmin = l->getMinPortalY();
     r.pmax = l->getMaxPortalY();
-    r.freeMode = *(reinterpret_cast<uint8_t const*>(l) + 0x311) ? 1 : 0;
+    r.freeMode = *(reinterpret_cast<uint8_t const*>(l) + gdoff::kLayerFreeMode) ? 1 : 0;
     // The velocity-limit exemption has no bindings name; the offset is the one
     // updateJump's clamp gate reads (0x38ca9f: cmp [player+0x952],0), pinned
     // to 2.2081 like every other raw offset here.
-    r.boost = *(reinterpret_cast<uint8_t const*>(p) + 0x952) ? 1 : 0;
+    r.boost = *(reinterpret_cast<uint8_t const*>(p) + gdoff::kPlayerAccelerating) ? 1 : 0;
     r.ctrlOff = p->m_controlsDisabled ? 1 : 0;
     // The press latch (see AnchorRow::b985). Raw 2.2081 offsets: pushButton sets
     // both at 0x397fbc, releaseButton clears them, a consumer clears 0x986.
-    r.b985 = *(reinterpret_cast<uint8_t const*>(p) + 0x985) ? 1 : 0;
-    r.b986 = *(reinterpret_cast<uint8_t const*>(p) + 0x986) ? 1 : 0;
+    r.b985 = *(reinterpret_cast<uint8_t const*>(p) + gdoff::kPlayerJumpBuffered) ? 1 : 0;
+    r.b986 = *(reinterpret_cast<uint8_t const*>(p) + gdoff::kPlayerStateRingJump) ? 1 : 0;
     if (r.dual && l->m_player2) {
         auto const* q = reinterpret_cast<uint8_t const*>(l->m_player2);
-        r.b985_2 = q[0x985] ? 1 : 0;
-        r.b986_2 = q[0x986] ? 1 : 0;
+        r.b985_2 = q[gdoff::kPlayerJumpBuffered] ? 1 : 0;
+        r.b986_2 = q[gdoff::kPlayerStateRingJump] ? 1 : 0;
     } else {
         r.b985_2 = r.b986_2 = -1;
     }
     // The slope ride (see AnchorRow::onSlope). Raw offsets, like the press latch.
     {
         auto const* pb = reinterpret_cast<uint8_t const*>(p);
-        r.onSlope = pb[0x9b0] ? 1 : 0;
-        r.slopeUnder = pb[0x9b8] ? 1 : 0;
-        auto* ramp = *reinterpret_cast<GameObject* const*>(pb + 0x678);
+        r.onSlope = pb[gdoff::kPlayerOnSlope] ? 1 : 0;
+        r.slopeUnder = pb[gdoff::kPlayerUpsideDownSlope] ? 1 : 0;
+        auto* ramp = *reinterpret_cast<GameObject* const*>(pb + gdoff::kPlayerCurrentSlope);
         r.slopeUid = ramp ? ramp->m_uniqueID : -1;
-        r.slopeStart = *reinterpret_cast<double const*>(pb + 0x598);
-        r.totalTime = *reinterpret_cast<double const*>(pb + 0xaa0);
-        r.spiderStamp = *reinterpret_cast<double const*>(pb + 0x820);
+        r.slopeStart = *reinterpret_cast<double const*>(pb + gdoff::kPlayerSlopeStartTime);
+        r.totalTime = *reinterpret_cast<double const*>(pb + gdoff::kPlayerTotalTime);
+        r.spiderStamp = *reinterpret_cast<double const*>(pb + gdoff::kPlayerLastSpiderFlipTime);
     }
     // ...and GD's MAX GAMEPLAY Y, the world-y bound whose crossing (two ticks
     // running) is the environment kill with a NULL object. Written by
     // updateMaxGameplayY into layer+0x36a8; read live rather than re-deriving
     // the formula, because on dynamic-height levels it moves with the world.
     g_maxPlayYLive = *reinterpret_cast<float const*>(
-        reinterpret_cast<char const*>(l) + 0x36a8);
+        reinterpret_cast<char const*>(l) + gdoff::kLayerMaxGameplayY);
     r.coins = 0;
     r.item1 = r.item2 = -1;
     r.cnt1 = r.cnt2 = 0;

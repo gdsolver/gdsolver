@@ -32,7 +32,7 @@ inline unsigned char g_ckptOobLatch = 0;
 //                what :108 does every substep.
 //
 // So the latch is 0xC38 and the audit's correction was the wrong way round.
-inline constexpr std::size_t kOobLatchOff = 0xC38;
+inline constexpr std::size_t kOobLatchOff = gdoff::kPlayerOutOfBounds;   // 0xC38 on Windows
 // (the dash held across a restore lives with its type, in secsolve.hpp)
 // y velocity at the checkpoint, full precision, for hole 3 -- the
 // restore is read as re-rounding it onto the 0.001 grid, which would lose the

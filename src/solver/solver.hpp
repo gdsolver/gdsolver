@@ -518,7 +518,7 @@ inline void writeObjRects(std::ostream& rf, GJBaseGameLayer* l) {
            << "," << forceOf(obj)
            << "," << freem << "," << touch << "," << spawn << "," << chan
            << "," << axis << "," << exstat << "," << rev
-           << "," << (int)(unsigned char)reinterpret_cast<const char*>(obj)[0x515]
+           << "," << (int)(unsigned char)reinterpret_cast<const char*>(obj)[gdoff::kObjPassable]
            << "\n";
     }
 }

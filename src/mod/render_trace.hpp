@@ -25,11 +25,11 @@ inline void traceModifierCounters(PlayerObject* p) {
     if (!g_cfg.hitboxTrace || !g_started || g_sessionOver) return;
     const char* pb = reinterpret_cast<const char*>(p);
     int v[5];
-    memcpy(&v[0], pb + 0xb74, 4);   // NoAutoJump
-    memcpy(&v[1], pb + 0xb78, 4);   // DartSlide
-    memcpy(&v[2], pb + 0xb7c, 4);   // HitHead
-    memcpy(&v[3], pb + 0xb80, 4);   // FlipGravity
-    memcpy(&v[4], pb + 0xb88, 4);   // Force
+    memcpy(&v[0], pb + gdoff::kPlayerStateNoAutoJump, 4);
+    memcpy(&v[1], pb + gdoff::kPlayerStateDartSlide, 4);
+    memcpy(&v[2], pb + gdoff::kPlayerStateHitHead, 4);
+    memcpy(&v[3], pb + gdoff::kPlayerStateFlipGravity, 4);
+    memcpy(&v[4], pb + gdoff::kPlayerStateForce, 4);
     static int prev[5] = {0, 0, 0, 0, 0};
     bool up = false;
     for (int i = 0; i < 5; ++i) {

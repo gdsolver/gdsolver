@@ -135,8 +135,9 @@ class $modify(PlayerObject) {
         char b[200];
         snprintf(b, sizeof(b),
                  "press: t=%lld at=%s b985=%d b986=%d b98a=%d onGround=%d vy=%.4f y=%.4f",
-                 (long long)g_tick, where, (int)raw[0x985], (int)raw[0x986], (int)raw[0x98a],
-                 (int)raw[0x9c1], (double)this->m_yVelocity, this->getPositionY());
+                 (long long)g_tick, where, (int)raw[gdoff::kPlayerJumpBuffered],
+                 (int)raw[gdoff::kPlayerStateRingJump], (int)raw[gdoff::kPlayerStateRingJump2],
+                 (int)raw[gdoff::kPlayerOnGround], (double)this->m_yVelocity, this->getPositionY());
         writeResult(b);
     }
 
@@ -163,14 +164,16 @@ class $modify(PlayerObject) {
             auto* o = *reinterpret_cast<GameObject* const*>(raw + off);
             return o ? o->m_uniqueID : -1;
         };
-        const long long q0 = *reinterpret_cast<const long long*>(raw + 0x5b8);
-        const long long q1 = *reinterpret_cast<const long long*>(raw + 0x5c0);
+        const long long q0 = *reinterpret_cast<const long long*>(raw + gdoff::kPlayerCollisionLogBottom);
+        const long long q1 = *reinterpret_cast<const long long*>(raw + gdoff::kPlayerCollisionLogLeft);
         char b[288];
         snprintf(b, sizeof(b),
                  "stick: t=%lld dt=%lld at=%s g608=%d s600=%d f658=%d slope=%d q5b8=%lld "
                  "ax=%d og=%d x=%.4f y=%.4f vy=%.4f",
-                 (long long)g_tick, (long long)g_tick + 1, where, uidAt(0x608), uidAt(0x600),
-                 (int)raw[0x658], uidAt(0x5e8), q1 - q0, (int)raw[0x9c3], (int)raw[0x9c1],
+                 (long long)g_tick, (long long)g_tick + 1, where, uidAt(gdoff::kPlayerLastGroundObject),
+                 uidAt(gdoff::kPlayerCollidedObject), (int)raw[gdoff::kPlayerCollidingWithSlope],
+                 uidAt(gdoff::kPlayerCurrentSlope2), q1 - q0, (int)raw[gdoff::kPlayerSideways],
+                 (int)raw[gdoff::kPlayerOnGround],
                  this->getPositionX(), this->getPositionY(), (double)this->m_yVelocity);
         writeResult(b);
     }
@@ -204,9 +207,9 @@ class $modify(PlayerObject) {
         const float y0 = this->getPositionY();
         PlayerObject::spiderTestJump(dynamic);
         if (!isP1 || !g_cfg.standTrace || !g_started || g_sessionOver) return;
-        auto* tg = *reinterpret_cast<GameObject**>((char*)this + 0x5e8);
-        const double lo = *reinterpret_cast<double*>((char*)this + 0x960);
-        const double hi = *reinterpret_cast<double*>((char*)this + 0x968);
+        auto* tg = *reinterpret_cast<GameObject**>((char*)this + gdoff::kPlayerCurrentSlope2);
+        const double lo = *reinterpret_cast<double*>((char*)this + gdoff::kPlayerCollidedBottomMaxY);
+        const double hi = *reinterpret_cast<double*>((char*)this + gdoff::kPlayerCollidedLeftMaxX);
         char tb[192] = "-";
         if (tg) {
             auto q = tg->getPosition();
@@ -272,9 +275,9 @@ class $modify(PlayerObject) {
             if (++lines <= 400) {
                 const char* pb = reinterpret_cast<const char*>(this);
                 int b80 = 0, b74 = 0; float b84 = 0.f;
-                memcpy(&b80, pb + 0xb80, 4);
-                memcpy(&b74, pb + 0xb74, 4);
-                memcpy(&b84, pb + 0xb84, 4);
+                memcpy(&b80, pb + gdoff::kPlayerStateFlipGravity, 4);
+                memcpy(&b74, pb + gdoff::kPlayerStateNoAutoJump, 4);
+                memcpy(&b84, pb + gdoff::kPlayerGravityMod, 4);
                 // Pin down what b80/b74 are by name. From the raw offset values alone it
                 // cannot be decided what the "2" is a 2 of
                 const char* self = pb;
@@ -429,7 +432,7 @@ class $modify(PlayerObject) {
         bool isP1 = object && l && this == l->m_player1;
         // ringseed (sweep.hpp), for dp --spentorb: a call that fires sets one of the per-tick
         // fire latches 0x98b / 0x98c / 0x98d; one that returns early leaves them alone.
-        const unsigned char* const fireLatch = (const unsigned char*)this + 0x98b;
+        const unsigned char* const fireLatch = (const unsigned char*)this + gdoff::kPlayerTouchedRing;
         auto latchBits = [&]() {
             return (fireLatch[0] ? 1 : 0) | (fireLatch[1] ? 2 : 0) | (fireLatch[2] ? 4 : 0);
         };
@@ -456,7 +459,7 @@ class $modify(PlayerObject) {
         // this way must never reach gdref or a baseline.
         const bool inWin = g_tick >= g_cfg.hbFrom
                         && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
-        unsigned char* const spentMirror = (unsigned char*)this + 0x98a;
+        unsigned char* const spentMirror = (unsigned char*)this + gdoff::kPlayerStateRingJump2;
         const bool subst = g_cfg.subRingSpent && isP1 && inWin;
         const unsigned char savedSpent = subst ? *spentMirror : (unsigned char)0;
         if (subst) {
@@ -510,9 +513,10 @@ class $modify(PlayerObject) {
                 "orbcall: t=%lld uid=%d id=%d vy=%.4f "
                 "b989=%d b98a=%d b98b=%d b98c=%d b98d=%d b9e4=%d claim=%d",
                 (long long)g_tick, object->m_uniqueID, object->m_objectID,
-                vyBefore, bit(0x989), bit(0x98a), bit(0x98b), bit(0x98c),
-                bit(0x98d), bit(0x9e4),
-                (int)*((unsigned char*)object + 0x740));
+                vyBefore, bit(gdoff::kPlayerStateJumpBuffered), bit(gdoff::kPlayerStateRingJump2),
+                bit(gdoff::kPlayerTouchedRing), bit(gdoff::kPlayerTouchedRing + 1),
+                bit(gdoff::kPlayerTouchedRing + 2), bit(gdoff::kPlayerDashing),
+                (int)*((unsigned char*)object + gdoff::kRingClaimTouch));
             writeResult(cb);
             ++orbtrace::g_lines;
         }
@@ -745,13 +749,13 @@ class $modify(PlayerObject) {
         //   p9b8  -- m_maybeUpsideDownSlope, GD's own "this contact is the
         //            underside branch" flag (the side the nudge's sign follows)
         const unsigned char* raw = reinterpret_cast<const unsigned char*>(this);
-        const unsigned char p986 = *(raw + 0x986);
+        const unsigned char p986 = *(raw + gdoff::kPlayerStateRingJump);
         // The two the nudge's gate is said to read: +0x68c (bVar22, saved) and
         // +0x985. m_jumpBuffered is printed beside +0x985 because they are
         // supposed to be the same byte -- if they disagree the offset is wrong,
         // and the rest of the row would be read against the wrong field.
-        const unsigned char b68c = *(raw + 0x68c);
-        const unsigned char b985 = *(raw + 0x985);
+        const unsigned char b68c = *(raw + gdoff::kPlayerSlopeFlipGravity);
+        const unsigned char b985 = *(raw + gdoff::kPlayerJumpBuffered);
         // 640, not 416: the IN block above adds about 130 characters and
         // snprintf TRUNCATES SILENTLY -- the new fields sit at the end of the
         // line, so an undersized buffer would drop exactly the ones this trace
@@ -836,11 +840,11 @@ class $modify(PlayerObject) {
             if (++fpLines <= 40000) {
                 const char* ob = reinterpret_cast<const char*>(obj);
                 const char* pb = reinterpret_cast<const char*>(this);
-                const int o515 = (int)(unsigned char)ob[0x515];
+                const int o515 = (int)(unsigned char)ob[gdoff::kObjPassable];
                 float s394 = 0.f, s398 = 0.f;
-                memcpy(&s394, pb + 0x394, sizeof(float));
-                memcpy(&s398, pb + 0x398, sizeof(float));
-                const int plat = (int)(unsigned char)pb[0xb70];
+                memcpy(&s394, pb + gdoff::kPlayerSpriteWidthScale, sizeof(float));
+                memcpy(&s398, pb + gdoff::kPlayerSpriteHeightScale, sizeof(float));
+                const int plat = (int)(unsigned char)pb[gdoff::kPlayerPlatformer];
                 // +0xc44 is the escape hatch in collidedWithSlopeInternal's kill
                 // gate: `(m_slopeIsHazard == 0 && (A||B)) || player+0xc44` means
                 // a SPIKED ramp kills unless this byte is set. The model kills
@@ -855,20 +859,26 @@ class $modify(PlayerObject) {
                 // So whether the model over-kills is one empirical question:
                 // does this byte ever read 1 on the corpus? Printed here rather
                 // than guessed, under the same runtime layout canary.
-                const int c44 = (int)(unsigned char)pb[0xc44];
+                const int c44 = (int)(unsigned char)pb[gdoff::kPlayerIgnoreDamage];
                 // The canary is a RUNTIME layout measurement, not offsetof: it needs no header,
                 // and it checks the object in front of us rather than a compile-time constant.
                 const unsigned ofsUp = (unsigned)(
                     reinterpret_cast<const char*>(&this->m_isUpsideDown) - pb);
+                // The column names keep the Windows offsets (o515, p394, ...) so that logs from
+                // both platforms parse alike; ofs=() prints the offsets this build read.
                 char fb[288];
                 snprintf(fb, sizeof(fb),
                     "fprobe: t=%lld who=%s obj=%d id=%d hit=%d size=%.2f "
                     "o515=%d p394=%.4f p398=%.4f plat=%d c44=%d "
-                    "ofs=(0x515,0x394,0x398,0xb70,0xc44) canary_up=0x%x want=0x9bf %s",
+                    "ofs=(0x%x,0x%x,0x%x,0x%x,0x%x) canary_up=0x%x want=0x%x %s",
                     (long long)g_tick, who, obj->m_uniqueID, obj->m_objectID,
                     r ? 1 : 0, this->m_vehicleSize,
                     o515, (double)s394, (double)s398, plat, c44,
-                    ofsUp, ofsUp == 0x9bf ? "LAYOUT-OK" : "LAYOUT-MISMATCH");
+                    (unsigned)gdoff::kObjPassable, (unsigned)gdoff::kPlayerSpriteWidthScale,
+                    (unsigned)gdoff::kPlayerSpriteHeightScale, (unsigned)gdoff::kPlayerPlatformer,
+                    (unsigned)gdoff::kPlayerIgnoreDamage, ofsUp,
+                    (unsigned)gdoff::kPlayerUpsideDown,
+                    ofsUp == gdoff::kPlayerUpsideDown ? "LAYOUT-OK" : "LAYOUT-MISMATCH");
                 writeResult(fb);
             }
         }

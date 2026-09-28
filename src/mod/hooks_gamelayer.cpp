@@ -43,7 +43,7 @@ static double g_secStepMs = 0.0;
 // nothing but the player (user report on the panel, 2026-09-25; reproduced in a worker with
 // skiprender=0: the faults began with the reset after the first rung).
 static void clearCheckpointsUnsectioned(PlayLayer* pl) {
-    static_assert(offsetof(CheckpointObject, m_physicalCheckpointObject) == 0xe58,
+    static_assert(offsetof(CheckpointObject, m_physicalCheckpointObject) == gdoff::kCheckpointObject,
                   "the object removeCheckpoint takes out of its section");
     if (!pl || !pl->m_checkpointArray) return;
     for (unsigned i = 0; i < pl->m_checkpointArray->count(); ++i) {
@@ -60,7 +60,7 @@ static void clearCheckpointsUnsectioned(PlayLayer* pl) {
         // 5,710 -> 41,726 children over one run of a custom level's slice, the restore 24 -> 72 us.
         if (o) {
             auto*& attached = *reinterpret_cast<cocos2d::CCNode**>(
-                reinterpret_cast<char*>(o) + 0x2f0);
+                reinterpret_cast<char*>(o) + gdoff::kObjGlowSprite);
             if (attached) {
                 attached->removeFromParentAndCleanup(true);
                 attached->release();
@@ -159,7 +159,9 @@ static void sectionCensus(GJBaseGameLayer* layer, size_t& live, size_t& phys) {
         if (!beg || !end || end < beg) return 0;
         return (size_t)(end - beg) / elem;
     };
-    const size_t fam[2][2] = {{0x35b0, 0x3658}, {0x35c8, 0x3670}};
+    const size_t fam[2][2] = {
+        {gdoff::kLayerNonEffectObjects, gdoff::kLayerNonEffectObjectsSizes},
+        {gdoff::kLayerCollisionBlockSections, gdoff::kLayerCollisionBlockSectionSizes}};
     for (const auto& f : fam) {
         const uint8_t* secV = b + f[0];
         const uint8_t* cntV = b + f[1];
@@ -547,7 +549,7 @@ class $modify(GJBaseGameLayer) {
                              found->hasBeenActivatedByPlayer(player) ? 1 : 0,
                              (int)found->m_isGroupDisabled,
                              (int)found->m_isGroupDisabledTemp,
-                             (int)*((unsigned char*)found + 0x740));
+                             (int)*((unsigned char*)found + gdoff::kRingClaimTouch));
                 }
                 char b[448];
                 snprintf(b, sizeof(b),
@@ -4229,8 +4231,12 @@ class $modify(GJBaseGameLayer) {
                         return n ? (long long)n->getChildrenCount() : -1;
                     };
                     snprintf(sn, sizeof(sn), " shd=%lld,%lld,%lld,%lld,%lld,%lld",
-                             kidsAt(0xfd0), kidsAt(0xfe0), kidsAt(0xfe8), kidsAt(0xff0),
-                             kidsAt(0xff8), kidsAt(0x3178));
+                             kidsAt(gdoff::kLayerObjectParent),
+                             kidsAt(gdoff::kLayerAboveShaderParent),
+                             kidsAt(gdoff::kLayerObjectLayer),
+                             kidsAt(gdoff::kLayerInShaderObjectLayer),
+                             kidsAt(gdoff::kLayerAboveShaderObjectLayer),
+                             kidsAt(gdoff::kLayerShaderLayer));
                     strncat(lb, sn, sizeof(lb) - strlen(lb) - 1);
                     // resetLevel sorts the children of every child of the node at +0x1028
                     // (qsortAllChildrenWithIndex, 3b8eb0): how many there are, in total, and the
@@ -4239,7 +4245,7 @@ class $modify(GJBaseGameLayer) {
                         long long sortKids = -1, sortGrand = 0, sortMax = 0, dirty = 0;
                         // A CCArray, not a node: resetLevel reads its ccArray at +0x38.
                         auto* ch = *reinterpret_cast<cocos2d::CCArray* const*>(
-                            reinterpret_cast<const char*>(this) + 0x1028);
+                            reinterpret_cast<const char*>(this) + gdoff::kLayerBatchNodes);
                         if (ch) {
                             sortKids = ch->count();
                             for (unsigned i = 0; i < ch->count(); ++i) {
@@ -4687,8 +4693,8 @@ class $modify(GJBaseGameLayer) {
                      m_player1->m_isOnGround ? 1 : 0, secsolve::g_held,
                      m_player1->getPositionX(), m_player1->m_playerSpeed,
                      m_player1->m_isGoingLeft ? 1 : 0, m_player1->m_isSideways ? 1 : 0,
-                     m_player1->m_isPlatformer ? 1 : 0, lb[0x418] ? 1 : 0,
-                     *reinterpret_cast<const float*>(lb + 0x41c), (double)dt);
+                     m_player1->m_isPlatformer ? 1 : 0, lb[gdoff::kLayerUnkBool10] ? 1 : 0,
+                     *reinterpret_cast<const float*>(lb + gdoff::kLayerLevelFlipping), (double)dt);
             writeResult(rb);
         }
         // Keep what this pass does over each snapshot's
@@ -4825,12 +4831,12 @@ class $modify(GJBaseGameLayer) {
                     // measurement. The magnitude is closed, so only these 3 signs remain.
                     // Their names cannot be pulled from bindings, so emit raw bytes.
                     const char* pb = reinterpret_cast<const char*>(m_player1);
-                    const int f1 = (int)(unsigned char)pb[0x9bf];
-                    const int f2 = (int)(unsigned char)pb[0x9c2];
-                    const int f3 = (int)(unsigned char)pb[0x9c3];
+                    const int f1 = (int)(unsigned char)pb[gdoff::kPlayerUpsideDown];
+                    const int f2 = (int)(unsigned char)pb[gdoff::kPlayerGoingLeft];
+                    const int f3 = (int)(unsigned char)pb[gdoff::kPlayerSideways];
                     float rmul = 0.f, rspd = 0.f;
-                    std::memcpy(&rmul, pb + 0xb84, sizeof(float));
-                    std::memcpy(&rspd, pb + 0x720, sizeof(float));
+                    std::memcpy(&rmul, pb + gdoff::kPlayerGravityMod, sizeof(float));
+                    std::memcpy(&rspd, pb + gdoff::kPlayerRotationSpeed, sizeof(float));
                     char b[512];
                     snprintf(b, sizeof(b),
                         "pobb: t=%lld size=%.3f rot=%.3f "
@@ -4861,7 +4867,8 @@ class $modify(GJBaseGameLayer) {
             && (g_cfg.hbTo == 0 || g_tick <= g_cfg.hbTo)) {
             const char* pb = reinterpret_cast<const char*>(m_player1);
             // 0x600-0xa20 in chunks of 0x80 bytes (384 characters per line)
-            for (int base = 0x600; base < 0xa20; base += 0x80) {
+            for (int base = (int)gdoff::kPlayerFlagsDumpBegin;
+                 base < (int)gdoff::kPlayerFlagsDumpEnd; base += 0x80) {
                 char b[600];
                 int n = snprintf(b, sizeof(b), "pflags: t=%lld o=%03x",
                                  (long long)g_tick, base);
@@ -4893,11 +4900,11 @@ class $modify(GJBaseGameLayer) {
             // t=1,469 and is never updated, so the teleport target surface can only be
             // named by this raw field. 0x960/0x968 are the candidates' min/max.
             GameObject* tg =
-                *reinterpret_cast<GameObject**>((char*)p + 0x5e8);
+                *reinterpret_cast<GameObject**>((char*)p + gdoff::kPlayerCurrentSlope2);
             const double tgLo =
-                *reinterpret_cast<double*>((char*)p + 0x960);
+                *reinterpret_cast<double*>((char*)p + gdoff::kPlayerCollidedBottomMaxY);
             const double tgHi =
-                *reinterpret_cast<double*>((char*)p + 0x968);
+                *reinterpret_cast<double*>((char*)p + gdoff::kPlayerCollidedLeftMaxX);
             const int snId = sn ? sn->m_uniqueID : -1;
             const int slId = sl ? sl->m_uniqueID : -1;
             const int tgId = tg ? tg->m_uniqueID : -1;
@@ -5461,7 +5468,8 @@ class $modify(GJBaseGameLayer) {
             && !dpsolve::g_recordAttempt && !dpsolve::g_running.load() && !secsolve::g_active
             && !secsolve::g_on && dpsolve::g_planClaimsGoal) {
             const int ch =
-                *reinterpret_cast<int const*>(reinterpret_cast<char const*>(this) + 0x33c);
+                *reinterpret_cast<int const*>(reinterpret_cast<char const*>(this)
+                                               + gdoff::kLayerCurrentChannel);
             const double wx = m_player1->getPositionX(), wy = m_player1->getPositionY();
             for (const solver::CoinGate& g : solver::g_coinGates) {
                 if (ch != g.chan) continue;
@@ -5569,7 +5577,7 @@ class $modify(GJBaseGameLayer) {
         // of lines per attempt; not gated on dpsolve so a plain replay shows it.
         if (g_started && !g_sessionOver) {
             const float mp = *reinterpret_cast<float const*>(
-                reinterpret_cast<char const*>(this) + 0x36a8);
+                reinterpret_cast<char const*>(this) + gdoff::kLayerMaxGameplayY);
             static float mpLast = -1.f;
             if (std::fabs(mp - mpLast) > 0.5f) {
                 mpLast = mp;
@@ -5643,7 +5651,7 @@ class $modify(GJBaseGameLayer) {
                    // (= height 300 divided by 0.92593 and 0.74074). Read by raw offset
                    // because bindings has no name for it
                    << ',' << *reinterpret_cast<const float*>(
-                                 reinterpret_cast<const char*>(this) + 0x1a8)
+                                 reinterpret_cast<const char*>(this) + gdoff::kLayerCameraZoom)
                    // gframe: current rotation (0/1/2/3 = 0/90/180/270).
                    // Needed for re-anchoring. Starting with --start inside a rotated
                    // gameplay section, the model has no way to know which orientation it
@@ -5738,14 +5746,19 @@ class $modify(GJBaseGameLayer) {
                    // The size check is the layout check: MSVC's unordered_map is
                    // 0x40 bytes, which is exactly the distance between the two.
                    << ',' << [this]() {
-                          static_assert(sizeof(std::unordered_map<int, int>) == 0x40);
-                          static_assert(sizeof(std::unordered_map<int, bool>) == 0x40);
+                          // gd::unordered_map is std::unordered_map on Windows and GD's
+                          // GNU-STL layout on Android (0x38 bytes there).
+                          static_assert(sizeof(gd::unordered_map<int, int>)
+                                        == gdoff::kLayerSpawnChannel1 - gdoff::kLayerSpawnChannel0);
+                          static_assert(sizeof(gd::unordered_map<int, bool>)
+                                        == gdoff::kLayerSpawnChannel1 - gdoff::kLayerSpawnChannel0);
                           auto const* base = reinterpret_cast<char const*>(this);
-                          const int ch = *reinterpret_cast<int const*>(base + 0x33c);
-                          auto const& idx = *reinterpret_cast<
-                              std::unordered_map<int, int> const*>(base + 0x348);
-                          auto const& rev = *reinterpret_cast<
-                              std::unordered_map<int, bool> const*>(base + 0x388);
+                          const int ch =
+                              *reinterpret_cast<int const*>(base + gdoff::kLayerCurrentChannel);
+                          auto const& idx = *reinterpret_cast<gd::unordered_map<int, int> const*>(
+                              base + gdoff::kLayerSpawnChannel0);
+                          auto const& rev = *reinterpret_cast<gd::unordered_map<int, bool> const*>(
+                              base + gdoff::kLayerSpawnChannel1);
                           auto const i = idx.find(ch);
                           auto const r = rev.find(ch);
                           return std::to_string(ch) + ','
@@ -5782,7 +5795,7 @@ class $modify(GJBaseGameLayer) {
                           for (auto const& [uid, o] : objs) {
                               if (!s.empty()) s += '|';
                               s += std::to_string(uid) + ':' + std::to_string(
-                                  o ? (int)*(reinterpret_cast<uint8_t const*>(o) + 0x28e) : -1);
+                                  o ? (int)*(reinterpret_cast<uint8_t const*>(o) + gdoff::kObjGroupDisabled) : -1);
                           }
                           return s;
                       }()
@@ -5799,17 +5812,17 @@ class $modify(GJBaseGameLayer) {
                    // portal band off the grid (SubZero 4003's spider band 1354.5/1651.5 is
                    // 270 / 0.9091 high). Read by raw offset; bindings name none of the three.
                    << ',' << *reinterpret_cast<const float*>(
-                                 reinterpret_cast<const char*>(this) + 0x23c)
-                   << ',' << (int)*(reinterpret_cast<const uint8_t*>(this) + 0x2a0)
+                                 reinterpret_cast<const char*>(this) + gdoff::kLayerUnkPoint17Y)
+                   << ',' << (int)*(reinterpret_cast<const uint8_t*>(this) + gdoff::kLayerUnkBool1)
                    << ',' << *reinterpret_cast<const float*>(
-                                 reinterpret_cast<const char*>(this) + 0x1b4)
+                                 reinterpret_cast<const char*>(this) + gdoff::kLayerCameraOffsetY)
                    // freemode/bandforce: the two layer bytes checkCollisions reads before it
                    // clamps at all (0x2139b8). [+0x311] set = no band clamp for any mode;
                    // it is the Free Mode byte (property 111) that playerWillSwitchMode
                    // (0x212ef0) copies from each mode portal it takes. [+0x422] set = clamp
                    // even outside the six flying modes. Read by raw offset.
-                   << ',' << (int)*(reinterpret_cast<const uint8_t*>(this) + 0x311)
-                   << ',' << (int)*(reinterpret_cast<const uint8_t*>(this) + 0x422)
+                   << ',' << (int)*(reinterpret_cast<const uint8_t*>(this) + gdoff::kLayerFreeMode)
+                   << ',' << (int)*(reinterpret_cast<const uint8_t*>(this) + gdoff::kLayerDualMode)
                    << '\n';
         }
     }
@@ -5902,7 +5915,7 @@ class $modify(GJBaseGameLayer) {
     // a removed object is marked out, so a second removal is GD's own no-op.
     void removeObjectFromSection(GameObject* object) {
         GJBaseGameLayer::removeObjectFromSection(object);
-        static_assert(offsetof(GameObject, m_outerSectionIndex) == 0x278,
+        static_assert(offsetof(GameObject, m_outerSectionIndex) == gdoff::kObjOuterSectionIndex,
                       "the index removeObjectFromSection tests on entry");
         if (secsolve::g_on && object) object->m_outerSectionIndex = -1;
     }

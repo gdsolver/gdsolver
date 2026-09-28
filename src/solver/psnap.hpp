@@ -858,12 +858,13 @@ inline void restoreEM(GJBaseGameLayer* l,
 // on restore: on a custom level (2026-09-26), from the tick the player touches the mirror portal at x=13,095,
 // psnap's x ran 0.7, 1.7, 2.7 ... px a tick ahead of GD's own run and every window died short of
 // the wall. Outside a transition the two are the same point, so nothing else moves.
-static_assert(offsetof(PlayerObject, m_position) == 0xa90, "PlayerObject::m_position moved");
+static_assert(offsetof(PlayerObject, m_position) == gdoff::kPlayerPosition,
+              "PlayerObject::m_position moved");
 inline cocos2d::CCPoint physPosition(PlayerObject* p, GJBaseGameLayer* l) {
     if (p && l) {
         const auto* lb = reinterpret_cast<const uint8_t*>(l);
-        const float t = *reinterpret_cast<const float*>(lb + 0x41c);
-        const bool stored = reinterpret_cast<const uint8_t*>(p)[0xa2a] == 0;
+        const float t = *reinterpret_cast<const float*>(lb + gdoff::kLayerLevelFlipping);
+        const bool stored = reinterpret_cast<const uint8_t*>(p)[gdoff::kPlayerLocked] == 0;
         if (t > 0.f && t < 1.f && stored) return p->m_position;
     }
     return p ? p->getPosition() : cocos2d::CCPoint{};
