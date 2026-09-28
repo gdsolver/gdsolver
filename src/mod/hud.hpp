@@ -4,6 +4,8 @@
 
 using namespace p1;
 
+#include "mod/touch_controls.hpp"   // Android: the on-screen buttons that stand in for the keys
+
 // ---- On-screen HUD: keeps progress visible even in fast mode (render skip) ----
 // Attached to the game layer's parent (the scene), so even when PlayLayer::visit skips rendering
 // it is drawn independently by the scene's visit. Progress text sits on top of the black screen.
@@ -110,6 +112,21 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
                          : !g_paused      ? ""
                          : solvingNow()   ? "  [HELD - SEARCHING]"
                                           : "  [PAUSED]";
+#ifndef GEODE_IS_WINDOWS
+    // No keyboard: the buttons carry their own names (touch_controls.hpp), so what is left to say
+    // is the state they act on -- the speed, whether time is stopped, and what the arrows do now.
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "SPEED  %s%s%s\n< >  %s\nMAP  %s",
+                 spd, stopPart, renderPart,
+                 showingSolve()                ? "(disabled while solving)"
+                 : (g_paused || probe::g_pause) ? "step back / forward (10 substeps)"
+                                                : "seek back / forward (hold to accelerate)",
+                 itermap::mapWanted() ? "on" : "off");
+        lbl->setString(buf);
+        return;
+    }
+#endif
     // Listed in key order. Anything else reads as a jumble -- there is no other order a reader
     // can predict, and this list is scanned, not read.
     // The key names are read from the bindings rather than spelled out, since they can be rebound.
@@ -350,4 +367,9 @@ inline void updateOverlays(cocos2d::CCNode* gameLayer) {
     //    where a timeline sits on top of the thing it is a timeline OF. It takes no part in the
     //    cursor above, so turning it on cannot move any of the lines already there.
     itermap::draw(parent, PlayLayer::get());
+#ifndef GEODE_IS_WINDOWS
+    // 5. the buttons standing in for the keys. Not hidden by the TEXT button (it would hide
+    //    itself), only folded by their own top button.
+    touchpad::update(parent);
+#endif
 }
