@@ -1,14 +1,17 @@
 #pragma once
-// On-screen buttons for the session keys, for platforms without a keyboard (Android).
+// On-screen controls for platforms without a keyboard (Android): buttons for the session keys and
+// a drawn progress bar.
 //
 // Every session key is read as a held state, g_keyDown[Key] (session_hotkeys.hpp), which the
 // polls turn into presses, repeats and holds. A button here writes the same state while a finger
 // is on it, so it does exactly what its key does -- step and seek repeat when held, the speed
-// steps once per press -- and there is no second copy of any of that behaviour to drift.
+// steps once per press -- and there is no second copy of any of that behaviour to drift. A button
+// whose key would be refused right now is dimmed and takes no press.
 //
 // The pad is a column of buttons down the right edge, under GD's own pause button, and only
 // while the mod is driving (the same condition as the key legend it replaces). A touch that lands
 // on a button is taken; any other touch goes on to the game. The top button folds the pad away.
+// Icons are GD's own sprites; a frame the game has not loaded falls back to the text label.
 #include <Geode/platform/cplatform.h>
 
 #ifndef GEODE_IS_WINDOWS
@@ -16,35 +19,58 @@
 namespace touchpad {
 
 constexpr int PAD_TAG = 0x51D70;
+constexpr int BAR_TAG = 0x51D71;
 
 struct ButtonSpec {
     int key;             // (int)Key, or -1 for the fold button
-    const char* label;
+    const char* label;   // shown when there is no icon, or the icon's frame is missing
+    const char* icon;    // a sprite frame of GD's, or nullptr
+    bool flipIcon;       // mirror the icon (one arrow sprite serves both directions)
 };
 // Two columns, top to bottom. Pairs sit side by side: the pair is the same kind of thing.
 inline constexpr ButtonSpec kButtons[] = {
-    {-1, "MENU"},                     {(int)Key::Overlay, "TEXT"},
-    {(int)Key::Pause, "PAUSE"},       {(int)Key::Quit, "QUIT"},
-    {(int)Key::Step1, "+1"},          {(int)Key::Step10, "+10"},
-    {(int)Key::SeekBack, "<"},        {(int)Key::SeekForward, ">"},
-    {(int)Key::Slower, "<<"},         {(int)Key::Faster, ">>"},
-    {(int)Key::Replay, "REPLAY"},     {(int)Key::Itermap, "MAP"},
-    {(int)Key::Render, "SCREEN"},     {(int)Key::Hitboxes, "HITBOX"},
+    {-1, "<", "GJ_arrow_01_001.png", false},
+    {(int)Key::Overlay, "TEXT", "GJ_infoIcon_001.png", false},
+    {(int)Key::Pause, "PAUSE", "GJ_pauseEditorBtn_001.png", false},
+    {(int)Key::Quit, "QUIT", "GJ_closeBtn_001.png", false},
+    {(int)Key::Step1, "+1", nullptr, false},
+    {(int)Key::Step10, "+10", nullptr, false},
+    {(int)Key::SeekBack, "<", "edit_leftBtn_001.png", false},
+    {(int)Key::SeekForward, ">", "edit_rightBtn_001.png", false},
+    {(int)Key::Slower, "<<", nullptr, false},
+    {(int)Key::Faster, ">>", nullptr, false},
+    {(int)Key::Replay, "REPLAY", "GJ_replayBtn_001.png", false},
+    {(int)Key::Itermap, "MAP", nullptr, false},
+    {(int)Key::Render, "SCREEN", nullptr, false},
+    {(int)Key::Hitboxes, "HITBOX", nullptr, false},
 };
 constexpr int kCount = (int)(sizeof(kButtons) / sizeof(kButtons[0]));
 constexpr float kW = 46.f, kH = 24.f, kGap = 4.f;
 // Below GD's pause button in the top-right corner.
 constexpr float kTopMargin = 44.f, kRightMargin = 6.f;
 
-// Whether a key does anything right now: a button that would be refused is drawn dimmed, the
-// same conditions the polls apply.
+// Whether a key does anything right now. The polls apply their own conditions too; these are
+// the ones a person watching can tell apart, and a button outside them neither lights nor acts.
 inline bool keyLive(Key k) {
     switch (k) {
         case Key::Overlay: return !solvingNow();
-        case Key::Render: return solveSession();
+        // The screen switch belongs to the solve. Once the solution is being shown it is a
+        // replay, and a replay that cannot be seen is not a replay.
+        case Key::Render: return showingSolve();
         case Key::SeekBack:
         case Key::SeekForward: return !showingSolve();
         default: return true;
+    }
+}
+
+// The buttons that are switches, and whether each is on. Without this a press that turned the map
+// off (its first press in a solve, where it starts on) looked the same as one that did nothing.
+inline bool switchedOn(Key k) {
+    switch (k) {
+        case Key::Itermap: return itermap::mapWanted();
+        case Key::Overlay: return g_overlayHidden;
+        case Key::Render: return !renderingOn();
+        default: return false;
     }
 }
 
@@ -76,11 +102,27 @@ public:
             bg->setPosition({x, y});
             bg->setTag(i);
             bg->setID(fmt::format("button-{}", i));
-            auto* lbl = CCLabelBMFont::create(kButtons[i].label, "bigFont.fnt");
-            lbl->limitLabelWidth(kW - 8.f, 0.4f, 0.1f);
-            lbl->setPosition({kW / 2.f, kH / 2.f});
-            lbl->setTag(1);
-            bg->addChild(lbl);
+            CCNode* face = nullptr;
+            if (kButtons[i].icon) {
+                if (auto* spr = CCSprite::createWithSpriteFrameName(kButtons[i].icon)) {
+                    m_sprite[i] = spr;
+                    const auto sz = spr->getContentSize();
+                    const float fit = std::min((kW - 6.f) / std::max(sz.width, 1.f),
+                                               (kH - 4.f) / std::max(sz.height, 1.f));
+                    spr->setScale(fit);
+                    spr->setFlipX(kButtons[i].flipIcon);
+                    face = spr;
+                }
+            }
+            if (!face) {
+                auto* lbl = CCLabelBMFont::create(kButtons[i].label, "bigFont.fnt");
+                lbl->limitLabelWidth(kW - 8.f, 0.4f, 0.1f);
+                m_label[i] = lbl;
+                face = lbl;
+            }
+            face->setPosition({kW / 2.f, kH / 2.f});
+            face->setTag(1);
+            bg->addChild(face);
             this->addChild(bg);
             m_bg[i] = bg;
         }
@@ -100,6 +142,9 @@ public:
         if (!isVisible() || blockedByMenu()) return false;
         const int i = hit(touch);
         if (i < 0) return false;
+        // A dimmed button still takes the touch (it is on top of the level), it just does nothing.
+        const int k = kButtons[i].key;
+        if (k >= 0 && !keyLive((Key)k)) return true;
         m_touch[touch->getID() & 15] = i;
         press(i, true);
         return true;
@@ -115,6 +160,7 @@ public:
 
     // Once a frame: visibility, the folded state and which buttons are live.
     void refresh(bool visible) {
+        using namespace cocos2d;
         if (!visible) {
             if (isVisible()) releaseAll();
             setVisible(false);
@@ -127,23 +173,44 @@ public:
             const int k = kButtons[i].key;
             bg->setVisible(k < 0 || !m_folded);
             const bool live = k < 0 || keyLive((Key)k);
+            // A live key that stopped being live while held (the solve ended under a finger) is
+            // let go here, so nothing stays pressed on a dimmed button.
+            if (!live) releaseKey(k);
             const bool held = k >= 0 && g_keyDown[(size_t)k];
             bg->setOpacity(held ? 220 : 140);
-            if (auto* lbl = static_cast<cocos2d::CCLabelBMFont*>(bg->getChildByTag(1)))
-                lbl->setOpacity(live ? 255 : 90);
+            // A switch shows which way it is set: the map drawn, the text hidden, the screen off.
+            bg->setColor(k >= 0 && switchedOn((Key)k) ? cocos2d::ccColor3B{40, 90, 170}
+                                                      : cocos2d::ccColor3B{0, 0, 0});
+            if (m_sprite[i]) m_sprite[i]->setOpacity(live ? 255 : 70);
+            if (m_label[i]) m_label[i]->setOpacity(live ? 255 : 70);
         }
-        if (auto* lbl = m_bg[0] ? static_cast<cocos2d::CCLabelBMFont*>(m_bg[0]->getChildByTag(1))
-                                : nullptr)
-            lbl->setString(m_folded ? "KEYS" : "MENU");
+        // The fold button: the arrow points the way the pad will go.
+        if (m_sprite[0]) m_sprite[0]->setFlipX(!m_folded);
+        if (m_label[0]) m_label[0]->setString(m_folded ? "<" : ">");
+        // PAUSE shows what a press will do: resume while stopped.
+        if (auto* spr = m_sprite[2]) {
+            const bool stopped = probe::g_pause || g_paused;
+            const char* want = stopped ? "GJ_playEditorBtn_001.png" : "GJ_pauseEditorBtn_001.png";
+            if (want != m_pauseFrame) {
+                if (auto* frame = CCSpriteFrameCache::sharedSpriteFrameCache()
+                                      ->spriteFrameByName(want)) {
+                    spr->setDisplayFrame(frame);
+                    m_pauseFrame = want;
+                }
+            }
+        }
     }
 
 private:
     cocos2d::CCLayerColor* m_bg[kCount] = {};
+    cocos2d::CCSprite* m_sprite[kCount] = {};       // the button's icon, when it has one
+    cocos2d::CCLabelBMFont* m_label[kCount] = {};   // ...or its text
     int m_touch[16] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bool m_folded = false;
+    const char* m_pauseFrame = "GJ_pauseEditorBtn_001.png";
 
-    // GD's pause menu (and anything like it) sits over the level; the pad must not take its
-    // taps. The menu is a child of the play layer.
+    // GD's pause menu sits over the level; the pad must not take its taps. The menu is a child of
+    // the play layer.
     bool blockedByMenu() {
         auto* pl = PlayLayer::get();
         return pl && pl->getChildByType<PauseLayer>(0) != nullptr;
@@ -177,6 +244,16 @@ private:
         slot = -1;
     }
 
+    void releaseKey(int k) {
+        if (k < 0) return;
+        for (int& slot : m_touch) {
+            if (slot >= 0 && kButtons[slot].key == k) {
+                g_keyDown[(size_t)k] = false;
+                slot = -1;
+            }
+        }
+    }
+
     // A key must never stay down after the finger that held it is gone from the pad.
     void releaseAll() {
         for (int& slot : m_touch) {
@@ -186,18 +263,128 @@ private:
     }
 };
 
+// ---- The progress bar ----
+// Two drawn bars at the top centre, the same two numbers the session text gives: how far into the
+// level the run has got (the deepest verified point, which only grows), and -- while a search is
+// running -- how much of it is done, in ticks, so the bar reaches the end when the search does.
+// Solve sessions only, like the text.
+constexpr float kBarW = 220.f, kBarH = 7.f, kBarTop = 30.f;
+
+class Bars : public cocos2d::CCNode {
+public:
+    static Bars* create() {
+        auto* b = new Bars();
+        if (b && b->init()) {
+            b->autorelease();
+            return b;
+        }
+        delete b;
+        return nullptr;
+    }
+
+    bool init() override {
+        using namespace cocos2d;
+        if (!CCNode::init()) return false;
+        this->setTag(BAR_TAG);
+        this->setID("progress-bars"_spr);
+        this->setZOrder(1 << 20);
+        const auto win = CCDirector::sharedDirector()->getWinSize();
+        const float x = (win.width - kBarW) / 2.f;
+        const float y0 = win.height - kBarTop;
+        makeRow(0, x, y0, {80, 220, 100, 255}, "level");
+        makeRow(1, x, y0 - kBarH - 12.f, {90, 170, 255, 255}, "search");
+        return true;
+    }
+
+    void refresh(bool visible, double levelFrac, const char* levelText, bool searching,
+                 double searchFrac, const char* searchText) {
+        setVisible(visible);
+        if (!visible) return;
+        setRow(0, true, levelFrac, levelText);
+        setRow(1, searching, searchFrac, searchText);
+    }
+
+private:
+    cocos2d::CCLayerColor* m_track[2] = {};
+    cocos2d::CCLayerColor* m_fill[2] = {};
+    cocos2d::CCLabelBMFont* m_text[2] = {};
+
+    void makeRow(int r, float x, float y, cocos2d::ccColor4B color, const char* name) {
+        using namespace cocos2d;
+        m_track[r] = CCLayerColor::create({0, 0, 0, 150}, kBarW, kBarH);
+        m_track[r]->setPosition({x, y});
+        m_track[r]->setID(fmt::format("{}-track", name));
+        m_fill[r] = CCLayerColor::create(color, 0.f, kBarH);
+        m_fill[r]->setPosition({x, y});
+        m_fill[r]->setID(fmt::format("{}-fill", name));
+        m_text[r] = CCLabelBMFont::create("", "chatFont.fnt");
+        m_text[r]->setScale(0.45f);
+        m_text[r]->setAnchorPoint({0.5f, 0.f});
+        m_text[r]->setPosition({x + kBarW / 2.f, y + kBarH + 1.f});
+        m_text[r]->setID(fmt::format("{}-text", name));
+        this->addChild(m_track[r]);
+        this->addChild(m_fill[r]);
+        this->addChild(m_text[r]);
+    }
+
+    void setRow(int r, bool on, double frac, const char* text) {
+        m_track[r]->setVisible(on);
+        m_fill[r]->setVisible(on);
+        m_text[r]->setVisible(on);
+        if (!on) return;
+        const double f = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
+        m_fill[r]->setContentSize({(float)(f * kBarW), kBarH});
+        m_text[r]->setString(text);
+    }
+};
+
+inline void updateBars(cocos2d::CCNode* parent) {
+    auto* bars = static_cast<Bars*>(parent->getChildByTag(BAR_TAG));
+    const bool want = showingSolve() && g_cfg.dpSolve && PlayLayer::get() != nullptr;
+    if (!bars) {
+        if (!want) return;
+        bars = Bars::create();
+        if (!bars) return;
+        parent->addChild(bars);
+    }
+    if (!want) {
+        bars->refresh(false, 0, "", false, 0, "");
+        return;
+    }
+    // setString rebuilds glyph sprites; a few times a second is plenty for a progress bar.
+    static auto s_last = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - s_last).count() < 250
+        && bars->isVisible())
+        return;
+    s_last = now;
+    float len = 0.f;
+    if (auto* pl = PlayLayer::get()) len = pl->m_levelLength;
+    const double lvl = (len > 1.f) ? (double)len : 0.0;
+    const double lf = lvl > 0.0 ? (double)g_hudVerifiedX / lvl : 0.0;
+    char lt[96];
+    snprintf(lt, sizeof(lt), "level %.1f%%   iter %d", lf * 100.0, g_hudIter);
+    const dpbridge::SolveProgress pr = dpbridge::progress();
+    double sf = 0.0;
+    char st[96] = "";
+    if (pr.running && pr.horizon > pr.from) {
+        sf = (double)(pr.tick - pr.from) / (double)(pr.horizon - pr.from);
+        snprintf(st, sizeof(st), "search %.1f%%", sf * 100.0);
+    }
+    bars->refresh(true, lf, lt, pr.running, sf, st);
+}
+
 // Called once a frame from updateOverlays, with the scene the overlays hang from.
 inline void update(cocos2d::CCNode* parent) {
     if (!parent) return;
     auto* pad = static_cast<Pad*>(parent->getChildByTag(PAD_TAG));
     const bool want = botDriving() && PlayLayer::get() != nullptr;
-    if (!pad) {
-        if (!want) return;
+    if (!pad && want) {
         pad = Pad::create();
-        if (!pad) return;
-        parent->addChild(pad);
+        if (pad) parent->addChild(pad);
     }
-    pad->refresh(want);
+    if (pad) pad->refresh(want);
+    updateBars(parent);
 }
 
 }  // namespace touchpad

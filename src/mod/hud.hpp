@@ -235,9 +235,14 @@ inline int barLine(char* out, size_t cap, const char* label,
                    double done, double total, const char* detail) {
     if (cap == 0) return 0;
     const double f = barFraction(done, total);
+#ifndef GEODE_IS_WINDOWS
+    // The bars are drawn (touch_controls.hpp); the text keeps the numbers.
+    const int n = snprintf(out, cap, "%s %5.1f%%   %s\n", label, f * 100.0, detail);
+#else
     char bar[BAR_CELLS + 1];
     barCells(bar, f);
     const int n = snprintf(out, cap, "%s [%s] %5.1f%%   %s\n", label, bar, f * 100.0, detail);
+#endif
     if (n < 0) return 0;
     return (n < (int)cap) ? n : (int)cap - 1;
 }
