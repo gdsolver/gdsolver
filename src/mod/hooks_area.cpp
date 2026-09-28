@@ -26,9 +26,22 @@ bool rotScaleVaries(EnterEffectInstance* inst) {
            || fld<float>(inst, kScaleXV) != 0.f || fld<float>(inst, kScaleYV) != 0.f;
 }
 
+#ifndef GEODE_IS_WINDOWS
+// Android: an Area Move whose displacement can vary, which this platform counts instead of
+// enveloping (see processAreaMoveGroupAction below).
+bool moveVaries(EnterEffectInstance* inst) {
+    using namespace areaenv;
+    return fld<float>(inst, kLenV) != 0.f || fld<float>(inst, kOffV) != 0.f
+           || fld<float>(inst, kOffYV) != 0.f || fld<float>(inst, kDistV) != 0.f
+           || fld<float>(inst, kAngleV) != 0.f || fld<float>(inst, kMoveXV) != 0.f
+           || fld<float>(inst, kMoveYV) != 0.f;
+}
+#endif
+
 }  // namespace
 
 class $modify(AreaEnvLayer, GJBaseGameLayer) {
+#ifdef GEODE_IS_WINDOWS
     void processAreaMoveGroupAction(cocos2d::CCArray* objects, EnterEffectInstance* instance,
                                     cocos2d::CCPoint position, int outerMin, int outerMax,
                                     int middleMin, int middleMax, int startIndex,
@@ -65,6 +78,21 @@ class $modify(AreaEnvLayer, GJBaseGameLayer) {
         if (areaenv::g_act.on && areaenv::g_act.l == this && object)
             areaenv::onMove(object, dx, dy);
     }
+#else
+    // Android inlines resetAreaObjectValues and moveAreaObject into this function, so the two
+    // per-object moments the envelope is built and checked at cannot be hooked. A varying Area
+    // Move is counted instead, the way Area Rotate / Scale are on every platform.
+    void processAreaMoveGroupAction(cocos2d::CCArray* objects, EnterEffectInstance* instance,
+                                    cocos2d::CCPoint position, int outerMin, int outerMax,
+                                    int middleMin, int middleMax, int startIndex,
+                                    bool targetGroups, bool reset) {
+        if (envActive() && instance && objects && objects->count() > 0 && moveVaries(instance))
+            ++areaenv::g_unenveloped;
+        GJBaseGameLayer::processAreaMoveGroupAction(objects, instance, position, outerMin,
+                                                    outerMax, middleMin, middleMax, startIndex,
+                                                    targetGroups, reset);
+    }
+#endif
 
     void processAreaRotateGroupAction(cocos2d::CCArray* objects, EnterEffectInstance* instance,
                                       cocos2d::CCPoint position, int outerMin, int outerMax,

@@ -646,6 +646,7 @@ inline void restoreTouch(PlayerObject* p, const Touch& in, GJBaseGameLayer* l = 
 // which is all anything reads of an ordered map; only the nodes are not new. Everything else is
 // the plain member-wise assignment, done with the maps moved out of both sides for its duration
 // (a swap: O(1), and it puts the very same nodes back).
+#ifdef GEODE_IS_WINDOWS
 template <class M>
 inline void syncOrderedMap(M& dst, const M& src) {
     auto d = dst.begin();
@@ -697,6 +698,15 @@ inline void assignState(GJGameState& dst, GJGameState& src) {
     syncOrderedMap(dst.m_unkMapPairGJGameEventIntInt, src.m_unkMapPairGJGameEventIntInt);
     syncOrderedMap(dst.m_proximityVolumeRelated, src.m_proximityVolumeRelated);
 }
+#else
+// Android: GD's maps are Geode's GNU STL copies, whose swap does not compile against the NDK's
+// libc++ (and whose iterators std::next does not accept). The plain member-wise assignment
+// gives the same keys and values in the same order, only with new nodes and more time.
+inline void assignState(GJGameState& dst, GJGameState& src) {
+    if (&dst == &src) return;
+    dst = src;
+}
+#endif
 
 inline void captureState(GJBaseGameLayer* l, GJGameState& out) {
     if (l) assignState(out, l->m_gameState);
