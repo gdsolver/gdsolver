@@ -29,7 +29,7 @@ struct ButtonSpec {
 };
 // Two columns, top to bottom. Pairs sit side by side: the pair is the same kind of thing.
 inline constexpr ButtonSpec kButtons[] = {
-    {-1, "<", "GJ_arrow_01_001.png", false},
+    {-1, "MENU", nullptr, false},   // the fold handle: a chevron and the word (makeHandle)
     {(int)Key::Overlay, "TEXT", "GJ_infoIcon_001.png", false},
     {(int)Key::Pause, "PAUSE", "GJ_pauseEditorBtn_001.png", false},
     {(int)Key::Quit, "QUIT", "GJ_closeBtn_001.png", false},
@@ -105,6 +105,12 @@ public:
             bg->setPosition({x, y});
             bg->setTag(i);
             bg->setID(fmt::format("button-{}", i));
+            if (kButtons[i].key < 0) {
+                makeHandle(bg);
+                this->addChild(bg);
+                m_bg[i] = bg;
+                continue;
+            }
             CCNode* face = nullptr;
             if (kButtons[i].icon) {
                 if (auto* spr = CCSprite::createWithSpriteFrameName(kButtons[i].icon)) {
@@ -182,14 +188,25 @@ public:
             const bool held = k >= 0 && g_keyDown[(size_t)k];
             bg->setOpacity(held ? 220 : 140);
             // A switch shows which way it is set: the map drawn, the text hidden, the screen off.
-            bg->setColor(k >= 0 && switchedOn((Key)k) ? cocos2d::ccColor3B{40, 90, 170}
-                                                      : cocos2d::ccColor3B{0, 0, 0});
+            bg->setColor(k < 0 ? kHandleColor
+                         : switchedOn((Key)k) ? cocos2d::ccColor3B{40, 90, 170}
+                                              : cocos2d::ccColor3B{0, 0, 0});
             if (m_sprite[i]) m_sprite[i]->setOpacity(live ? 255 : 70);
             if (m_label[i]) m_label[i]->setOpacity(live ? 255 : 70);
         }
         // The fold button: the arrow points the way the pad will go.
-        if (m_sprite[0]) m_sprite[0]->setFlipX(!m_folded);
-        if (m_label[0]) m_label[0]->setString(m_folded ? "<" : ">");
+        // The handle's chevron points the way a press moves the pad: in (right) while it is out,
+        // out (left) while it is folded.
+        if (m_chevron) {
+            const char* want = m_folded ? "edit_leftBtn_001.png" : "edit_rightBtn_001.png";
+            if (want != m_chevronFrame) {
+                if (auto* frame = cocos2d::CCSpriteFrameCache::sharedSpriteFrameCache()
+                                      ->spriteFrameByName(want)) {
+                    m_chevron->setDisplayFrame(frame);
+                    m_chevronFrame = want;
+                }
+            }
+        }
         // PAUSE shows what a press will do: resume while stopped.
         if (auto* spr = m_sprite[2]) {
             const bool stopped = probe::g_pause || g_paused;
@@ -211,6 +228,29 @@ private:
     int m_touch[16] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bool m_folded = false;
     const char* m_pauseFrame = "GJ_pauseEditorBtn_001.png";
+    cocos2d::CCSprite* m_chevron = nullptr;
+    const char* m_chevronFrame = "edit_rightBtn_001.png";
+    static constexpr cocos2d::ccColor3B kHandleColor{70, 70, 90};
+
+    // The fold handle reads as one: a chevron on the left and the word beside it, on a background
+    // of its own colour. Only the word if the chevron's frame is not loaded.
+    void makeHandle(cocos2d::CCLayerColor* bg) {
+        using namespace cocos2d;
+        float textLeft = 4.f;
+        if (auto* chev = CCSprite::createWithSpriteFrameName("edit_rightBtn_001.png")) {
+            const auto sz = chev->getContentSize();
+            chev->setScale((kH - 8.f) / std::max(sz.height, 1.f));
+            chev->setPosition({4.f + chev->getScaledContentSize().width / 2.f, kH / 2.f});
+            bg->addChild(chev);
+            m_chevron = chev;
+            textLeft = 6.f + chev->getScaledContentSize().width;
+        }
+        auto* lbl = CCLabelBMFont::create("MENU", "bigFont.fnt");
+        lbl->limitLabelWidth(kW - textLeft - 3.f, 0.35f, 0.1f);
+        lbl->setAnchorPoint({0.f, 0.5f});
+        lbl->setPosition({textLeft, kH / 2.f});
+        bg->addChild(lbl);
+    }
 
     // GD's pause menu sits over the level; the pad must not take its taps. The menu is a child of
     // the play layer.
