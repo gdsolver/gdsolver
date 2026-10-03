@@ -181,12 +181,36 @@ class $modify(PlayerObject) {
         writeResult(b);
     }
 
+    // Observe collision bookkeeping around the original call without changing its verdict.
     void postCollision(float dt, bool betweenSteps) {
         auto* l = GJBaseGameLayer::get();
         const bool isP1 = l && this == l->m_player1;
         if (isP1) { stickLine("post-in"); g_inPostCollP1 = true; }
+        secsolve::diagnosticStage("postCollision_in", this, 0, betweenSteps, -1, dt);
         PlayerObject::postCollision(dt, betweenSteps);
+        secsolve::diagnosticStage("postCollision_out", this, 0, betweenSteps, -1, dt);
         if (isP1) { g_inPostCollP1 = false; stickLine("post-out"); }
+    }
+
+    // Locate the first input-to-velocity divergence in the game's own jump implementation.
+    void updateJump(float dt) {
+        secsolve::diagnosticStage("updateJump_in", this, 0, 0, -1, dt);
+        PlayerObject::updateJump(dt);
+        secsolve::diagnosticStage("updateJump_out", this, 0, 0, -1, dt);
+    }
+
+    // Observe native speed changes separately from wave integration and restore-only releases.
+    void updateTimeMod(float speed, bool noEffects) {
+        secsolve::diagnosticStage("updateTimeMod_in", this, 0, noEffects, -1, speed);
+        PlayerObject::updateTimeMod(speed, noEffects);
+        secsolve::diagnosticStage("updateTimeMod_out", this, 0, noEffects, -1, speed);
+    }
+
+    // Inspect the actual spider query boundary, rather than a later cleared contact field.
+    void spiderTestJumpInternal(bool dynamic) {
+        secsolve::diagnosticStage("spider_query_in", this, 0, dynamic);
+        PlayerObject::spiderTestJumpInternal(dynamic);
+        secsolve::diagnosticStage("spider_query_out", this, 0, dynamic);
     }
 
     // Name the spider's teleport target ON THE SPOT (cfg `standtrace=1`).
@@ -637,6 +661,7 @@ class $modify(PlayerObject) {
     }
 
     bool collidedWithObject(float dt, GameObject* obj, cocos2d::CCRect rect, bool skip) {
+        const size_t diagnosticContact = secsolve::diagnosticCollisionContact(this, obj, dt, skip);
         auto* l = GJBaseGameLayer::get();
         const char* who = hbWho();
         // The player rect BEFORE resolution. This function pushes the player out in the
@@ -659,6 +684,7 @@ class $modify(PlayerObject) {
             writeResult(sb);
         }
         bool r = PlayerObject::collidedWithObject(dt, obj, rect, skip);
+        secsolve::finishDiagnosticCollisionContact(diagnosticContact, this, r);
         // Hitbox observation (cfg `hitboxtrace=1`). Emits the partner rect exactly as GD
         // passed it, plus the player rect of the same tick and the test result (without
         // both, it cannot be told whether the shrunk side is the partner or the player)
@@ -890,18 +916,25 @@ class $modify(PlayerObject) {
         return r;
     }
 
+    // Observe both players' input buffers while preserving the original button result.
     bool pushButton(PlayerButton button) {
         auto* l = GJBaseGameLayer::get();
         if (l && this == l->m_player1) ev("PO_pushButton", (int)button);
+        secsolve::diagnosticStage("pushButton_in", this, (int)button);
         const bool r = PlayerObject::pushButton(button);
+        secsolve::diagnosticStage("pushButton_out", this, (int)button, 0, r);
         if (l && this == l->m_player1) pressLine("pushButton-out");
         return r;
     }
 
+    // Record release side effects, including the restore-only rearm prelude.
     bool releaseButton(PlayerButton button) {
         auto* l = GJBaseGameLayer::get();
         if (l && this == l->m_player1) ev("PO_releaseButton", (int)button);
-        return PlayerObject::releaseButton(button);
+        secsolve::diagnosticStage("releaseButton_in", this, (int)button);
+        const bool r = PlayerObject::releaseButton(button);
+        secsolve::diagnosticStage("releaseButton_out", this, (int)button, 0, r);
+        return r;
     }
 };
 

@@ -29,6 +29,10 @@ inline std::string summary();
 inline void resetSessionState() {
     g_started = false; g_sessionOver = false; g_uiSession = false;
     g_attempt = 0; g_finishedAttempts = 0;
+    g_stallResetPending = false;
+    solver::g_deathBooked = false;
+    solver::g_unbookedP2Death = {};
+    solver::g_deathMissLogs = 0;
     g_nextInput = 0; g_nextToggle = 0;
     g_frame = 0; g_tick = 0; g_traceLines = 0; g_gameFrame = 0;
     g_endzoneBurn = false;   // carried into the next session, rendering would stay stopped

@@ -340,6 +340,14 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
         if (g_fxWatchT >= 0 && K.t == g_fxWatchT) fxDescribe(s, input, K, c, fxHits0);
         return c;
     }
+    // Native 2.2081 update (0x23850e..0x238561) checks the entry dual flag
+    // AND the live flag after p1's collision pass before advancing p2.
+    if (!c.dual) {
+        dead = d1;
+        markTouched(c, K, touchPreY(s, c, preBtnSet, preBtnY), s.action != 0);
+        if (!g_fixups.empty()) applyFixup(s, input, c, dead);
+        return c;
+    }
     State sb = s;
     swapHalves(sb);
     // GD PROCESSES p1 FIRST, so the second body sees the first one's FINISHED tick -- and the
@@ -400,11 +408,14 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead) {
     const bool p2Tapped = g_ballTapped;   // --repelland
     const uint8_t p2HitG = g_hitGRepel;   // --repela0c
     swapHalves(cb);
-    // shared fields (x, speed, dual) come from the first half; the second half
+    // Shared x/speed come from the first half; the second half
     // only contributes its own body -- and `mode` / `mini` / the ceiling press
     // counters are ITS fields now, not shared ones (State::mode2 / mini2 say
     // why). SIZE left this list on 2026-08-28: it was the last thing a portal
     // could change for one half while the merge threw the answer away.
+    // Native collisionCheckObjects (0x21580d) lets p2 exit dual too; its
+    // layer flag write survives the rest of this already-started collision pass.
+    c.dual = cb.dual;
     c.y2 = cb.y2;            c.vy2 = cb.vy2;
     c.mode2 = cb.mode2;      c.mini2 = cb.mini2;
     c.ceilT2 = cb.ceilT2;    c.ceilM42 = cb.ceilM42;

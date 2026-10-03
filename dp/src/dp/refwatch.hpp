@@ -26,6 +26,7 @@
 
 #include "dp/frames.hpp"
 #include "dp/state.hpp"
+#include "dp/search_key.hpp"
 
 namespace dp {
 
@@ -50,7 +51,8 @@ struct RefRow {
     // carried it. --rejoinfull requires it to match: y, vy, mode, flip and frame are what the trace
     // shows, and a state equal on those can still differ in what the key holds (held, grounded,
     // the trigger and orb bits) -- lv20's t=17137 join left the old walk the very next tick.
-    uint64_t key = 0;
+    // Only key_fields carries this identity; the numeric key column is diagnostic.
+    SearchKey key{};
     bool haveKey = false;
     bool have = false;
 };
@@ -89,7 +91,7 @@ inline int g_refParent = -1;      // index into `cur` of the reference's parent
 // matches, that is itself the finding and it is reported as one.
 inline int g_refKidFate[2] = {-1, -1};   // -1 unknown, 0 not expanded, 1 died, 2 alive
 inline const char* g_refKidWhy[2] = {"", ""};
-inline uint64_t g_refKidKey[2] = {0, 0};
+inline SearchKey g_refKidKey[2]{};
 inline State g_refKidState[2]{};
 inline long long g_refLostAt = -1;
 
@@ -133,7 +135,7 @@ inline bool loadTraceInto(const char* path, std::map<long long, RefRow>& rows) {
     };
     const int cT = col("tick"), cX = col("x"), cY = col("y"),
               cV = col("vy"), cM = col("mode"), cA = col("act"),
-              cF = col("flip"), cFr = col("frame"), cD = col("dead"), cK = col("key");
+              cF = col("flip"), cFr = col("frame"), cD = col("dead"), cK = col("key_fields");
     if (cT < 0 || cY < 0 || cV < 0) return false;
     while (std::getline(f, line)) {
         std::vector<std::string> v;
@@ -152,8 +154,7 @@ inline bool loadTraceInto(const char* path, std::map<long long, RefRow>& rows) {
         r.frame = cFr >= 0 && (int)v.size() > cFr ? std::atoi(v[(size_t)cFr].c_str()) : -1;
         r.dead = cD >= 0 && (int)v.size() > cD ? std::atoi(v[(size_t)cD].c_str()) : -1;
         if (cK >= 0 && (int)v.size() > cK && !v[(size_t)cK].empty()) {
-            r.key = std::strtoull(v[(size_t)cK].c_str(), nullptr, 10);
-            r.haveKey = true;
+            r.haveKey = parseKeyText(v[(size_t)cK], r.key);
         }
         rows[std::atoll(v[(size_t)cT].c_str())] = r;
     }
@@ -300,7 +301,7 @@ inline int refFindExact(const std::vector<State>& v, const State& s) {
 // the one the compared keys were built at: a key from another layer silently
 // fails to match and reads as "the reference left the frontier".
 template <class KeyFn>
-inline int refNearestInCell(const std::vector<State>& v, uint64_t key,
+inline int refNearestInCell(const std::vector<State>& v, const SearchKey& key,
                             const State& want, KeyFn keyFn) {
     int best = -1;
     double bd = 1e18;

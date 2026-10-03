@@ -203,10 +203,8 @@ inline double g_dt = 1.0 / 240.0;
 // ticks early" -- which is a misdiagnosis of a knob that exists precisely
 // because the answer is not derivable.
 inline int g_off = 0;
-// cfg `secpsnap=N`: measure over N ticks whether a player-only snapshot restore
-// can replace a full checkpoint restore (no search). `secpsnapreps=R` sets the
-// repetition count. In sections where this passes, one branch goes from
-// 2.02ms/0.95MB to a single memcpy.
+// cfg `secpsnap=N`: measure over N ticks whether the production composite snapshot
+// can replace a full checkpoint restore (no search), including pollution and chain tests.
 inline int g_snapCmp = 0;
 inline int g_snapReps = 3;
 // cfg `secsnap`: choice of branch primitive. 0=checkpoint only / 1=force psnap /
@@ -240,7 +238,9 @@ inline std::vector<GameObject*> g_movSet;   // decided once at the section start
 // cfg `secworld=N`: compare the world object-by-object after checkpoint restore
 // vs after psnap restore
 inline int g_worldDiff = 0;
-// WHAT THIS SEARCH CANNOT SEE [2026-08-27, measured on a custom level]
+// HISTORICAL SNAPSHOT OMISSION [2026-08-27, measured on a custom level]
+// The composite snapshot now carries both players' out-of-bounds latch; continuous
+// replay verification remains necessary for any other unsaved accumulating state.
 // A branch is one restore plus one step, so any death GD only reaches by
 // ACCUMULATING state over consecutive ticks -- the out-of-bounds latch that
 // wants two of them, a one-shot trigger the restore puts back -- is reset
@@ -264,7 +264,10 @@ inline int g_worldDiff = 0;
 // checkpoint; only sections with deaths split", so the clean fix is to NOT LET
 // THE DEATH HAPPEN AT ALL. Collision remains, so portals and triggers fire
 // normally (same as cfg nodeath).
-inline bool g_noKill = false;   // set only by the search proper (not by the sweep)
+inline bool g_noKill = false;   // search and restore diagnostics swallow but observe deaths
+// First death callback in a diagnostic step; a swallowed call is not an actual death.
+inline int g_diagDeathCaller = 0, g_diagKiller = -1;
+inline bool g_diagAnticheat = false;
 // cfg `secnokill`: a knob EXCLUSIVELY FOR ISOLATION, to align the handling of
 // death across both paths.
 // -1 = auto (swallow only under psnap, default) / 0 = always really kill /
@@ -499,9 +502,9 @@ inline std::string shaderSig(GJBaseGameLayer* l) {
              (unsigned)(h & 0xffffffffULL));
     return b;
 }
-// After how many doomed exits to give up with "nothing from this entry"
-// (cfg `secmaxdoomed`). Each one costs a replay + 10 grace lines ≈ 1,300 steps,
-// measured 344 of them in 104 seconds. That is plenty as evidence, so stop there.
+// Budget for inconclusive fixed-input exit trials (cfg `secmaxdoomed`; 0 = unlimited).
+// Once spent, air exits keep branching without these costly trials. Exits that
+// regain control still get a replay check within the same horizon and frontier cap.
 inline long long g_maxDoomed = 500;
 // Out-of-bounds ceiling (cfg `secmaxy`). 0 = auto (topmost object of the level
 // + margin).
@@ -523,8 +526,10 @@ inline bool g_died = false;     // did a death verdict come in the previous step
 inline bool& g_active = g_secSearching;
 inline int g_feed = 0;               // button state given at this tick (0/1)
 inline int g_held = 0;               // currently pressing? (for handleButton deltas)
-// Can be turned off with cfg `secjumpbuf=0` (default ON): when restoring a held
-// press, also set m_jumpBuffered. WITHOUT THIS A HELD BRANCH BECOMES A
+// Can be turned off with cfg `secjumpbuf=0` (default ON): legacy checkpoint rearm
+// sets m_jumpBuffered. Search checkpoints overwrite this with their saved input.
+// Fast snapshots preserve their saved buffers after rearm.
+// On the checkpoint path, WITHOUT THIS A HELD BRANCH BECOMES A
 // DIFFERENT THING FROM THE PLAIN REPLAY — history and measurements are in the
 // note on secArmHold in phase1.cpp. It is made switchable for A/B testing.
 inline bool g_jumpBuf = true;
@@ -538,6 +543,334 @@ inline bool g_jumpBuf = true;
 // -- the spine died on that tick. With the node's own value the spine lives on.
 inline bool g_jbKeep = true;
 inline int8_t g_headJb[2] = {-1, -1};   // m_jumpBuffered of p1 / p2 in the plain flight, -1 = none
+
+using InputStates = std::array<solver::InputContinuation<PlayerObject>, 2>;
+// Taken with the section head, before checkpoint qualification can change its buffers.
+inline InputStates g_ckptInputs;
+static_assert(offsetof(PlayerObject, m_jumpBuffered) == 0x985);
+static_assert(offsetof(PlayerObject, m_stateRingJump) == 0x986);
+static_assert(offsetof(PlayerObject, m_stateJumpBuffered) == 0x989);
+static_assert(offsetof(PlayerObject, m_holdingButtons) == 0xbb8);
+// Native wave updateJump reads these; releaseButton/stopDashing mutate the latter pair.
+static_assert(offsetof(PlayerObject, m_speedMultiplier) == 0x7b8);
+static_assert(offsetof(PlayerObject, m_playerSpeed) == 0x9f4);
+static_assert(offsetof(PlayerObject, m_justPlacedStreak) == 0x5a0);
+static_assert(offsetof(PlayerObject, m_lastLandTime) == 0xa10);
+// GJBaseGameLayer::update consumes this pending speed before updating the player.
+static_assert(offsetof(GJBaseGameLayer, m_gameState) + offsetof(GJGameState, m_timeModRelated) == 0x4e8);
+static_assert(offsetof(GJBaseGameLayer, m_gameState) + offsetof(GJGameState, m_timeModRelated2) == 0x4ec);
+
+inline solver::SectionDiagnosticStep* g_diagStep = nullptr;
+inline GJBaseGameLayer* g_diagLayer = nullptr;
+inline bool g_diagDuringStep = false;
+
+// Native 2.2081 checkCollisions (0x2137f0) reads these counts/flags before each batch.
+static_assert(offsetof(GJBaseGameLayer, m_nonEffectObjectsSizes) == 0x3658);
+static_assert(offsetof(GJBaseGameLayer, m_nonEffectObjectsFlags) == 0x3688);
+static_assert(offsetof(GJBaseGameLayer, m_calcNonEffectObjectsSize) == 0x35f8);
+static_assert(offsetof(GameObject, m_innerSectionIndex) == 0x274);
+static_assert(offsetof(GameObject, m_isGroupDisabled) == 0x28e);
+static_assert(offsetof(GameObject, m_isDisabled) == 0x3d2);
+
+// Observe exactly the native x/y +/- 1 query window; never sort or refresh geometry.
+inline void diagnosticCollisionEnvironment(GJBaseGameLayer* l, solver::SectionDiagnosticState& out) {
+    out.collisionEnvironmentObserved = true;
+    PlayerObject* players[] = {l->m_player1, l->m_player2};
+    for (size_t i = 0; i < 2; ++i) {
+        auto* p = players[i];
+        if (!p) continue;
+        // The native broad phase reads the drawing node, including mirror transitions.
+        const auto at = p->getPosition();
+        const int cx = (int)(std::clamp(at.x, 0.f, 10000000.f) * l->m_sectionXFactor);
+        const int cy = (int)(std::clamp(at.y, 0.f, 10000000.f) * l->m_sectionYFactor);
+        const int lastX = std::min(cx + 1, (int)l->m_nonEffectObjects.size() - 1);
+        for (int x = std::max(0, cx - 1); x <= lastX; ++x) {
+            const auto* column = l->m_nonEffectObjects[(size_t)x];
+            if (!column) continue;
+            const int lastY = std::min(cy + 1, (int)column->size() - 1);
+            for (int y = std::max(0, cy - 1); y <= lastY; ++y) {
+                int active = 0;
+                bool known = false, sortKnown = false, needsSort = false;
+                if ((size_t)x < l->m_nonEffectObjectsSizes.size()) {
+                    const auto* counts = l->m_nonEffectObjectsSizes[(size_t)x];
+                    if (counts && (size_t)y < counts->size()) {
+                        known = true; active = (*counts)[(size_t)y];
+                    }
+                }
+                if ((size_t)x < l->m_nonEffectObjectsFlags.size()) {
+                    const auto* flags = l->m_nonEffectObjectsFlags[(size_t)x];
+                    if (flags && (size_t)y < flags->size()) {
+                        sortKnown = true; needsSort = (*flags)[(size_t)y];
+                    }
+                }
+                auto row = solver::sectionDiagnosticCollisionList((*column)[(size_t)y], active);
+                row.player = (int)i + 1; row.x = x; row.y = y;
+                row.countKnown = known; row.sortKnown = sortKnown; row.needsSort = needsSort;
+                out.collisionLists.push_back(std::move(row));
+            }
+        }
+        auto flat = solver::sectionDiagnosticCollisionList(&l->m_calcNonEffectObjects,
+                                                           l->m_calcNonEffectObjectsSize);
+        flat.player = (int)i + 1; flat.countKnown = true;
+        out.collisionLists.push_back(std::move(flat));
+    }
+}
+
+// Record the actual prefix handed to collisionCheckObjects, after native bucket sorting.
+inline void diagnosticCollisionBatch(PlayerObject* p, const gd::vector<GameObject*>* objects, int count) {
+    if (!g_diagStep || !g_diagLayer || !g_diagDuringStep) return;
+    if (g_diagStep->collisionBatches.size() == solver::kSectionDiagnosticBatchLimit) {
+        ++g_diagStep->collisionBatchesDropped; return;
+    }
+    auto batch = solver::sectionDiagnosticCollisionList(objects, count);
+    batch.x = batch.y = -2; // Actual call; its owning bucket is not inferred from object positions.
+    batch.player = p == g_diagLayer->m_player1 ? 1 : p == g_diagLayer->m_player2 ? 2 : -1;
+    batch.countKnown = true;
+    g_diagStep->collisionBatches.push_back(std::move(batch));
+}
+
+// Capture the entry of an actual solid resolution without invoking a collision getter.
+inline size_t diagnosticCollisionContact(PlayerObject* p, GameObject* o, float dt, bool skip) {
+    if (!g_diagStep || !g_diagLayer || !g_diagDuringStep) return solver::kSectionDiagnosticContactLimit;
+    if (g_diagStep->collisionContacts.size() == solver::kSectionDiagnosticContactLimit) {
+        ++g_diagStep->collisionContactsDropped; return solver::kSectionDiagnosticContactLimit;
+    }
+    solver::SectionDiagnosticCollisionContact v;
+    v.player = p == g_diagLayer->m_player1 ? 1 : p == g_diagLayer->m_player2 ? 2 : -1;
+    v.dt = dt; v.skip = skip;
+    v.x = p->getPositionX(); v.y = p->getPositionY(); v.vy = p->m_yVelocity;
+    // collidedWithObjectInternal reads GameObject's history, not PlayerObject::m_position.
+    v.lastX = p->m_lastPosition.x; v.lastY = p->m_lastPosition.y;
+    v.onSlope = p->m_isOnSlope; v.wasOnSlope = p->m_wasOnSlope;
+    v.slopeCorrection = p->unk_584;
+    if (o) {
+        v.uid = o->m_uniqueID; v.type = (int)o->m_objectType;
+        v.flags = (unsigned)o->m_isGroupDisabled | ((unsigned)o->m_isDisabled << 1);
+        const auto r = o->m_objectRect;
+        v.rect = {r.origin.x, r.origin.y, r.size.width, r.size.height};
+        v.rectDirty = o->m_isObjectRectDirty;
+    }
+    const size_t index = g_diagStep->collisionContacts.size();
+    g_diagStep->collisionContacts.push_back(v);
+    return index;
+}
+
+// Pair the original call's result with its own entry, including nested solid calls.
+inline void finishDiagnosticCollisionContact(size_t index, PlayerObject* p, bool result) {
+    if (!g_diagStep || index >= g_diagStep->collisionContacts.size()) return;
+    auto& v = g_diagStep->collisionContacts[index];
+    v.result = result; v.finished = true;
+    v.afterX = p->getPositionX(); v.afterY = p->getPositionY(); v.afterVy = p->m_yVelocity;
+}
+
+// Read contacts and cached rectangles without invoking cache-refreshing collision getters.
+inline solver::SectionDiagnosticState diagnosticStageState(GJBaseGameLayer* l, bool physicalPosition,
+                                                          bool collisionEnvironment = false) {
+    solver::SectionDiagnosticState out;
+    if (!l) return out;
+    if (collisionEnvironment) diagnosticCollisionEnvironment(l, out);
+    out.deathCall = g_died; out.dual = l->m_gameState.m_isDualMode;
+    out.held = g_held; out.feed = g_feed;
+    out.extraDelta = l->m_extraDelta;
+    out.pendingSpeed = l->m_gameState.m_timeModRelated;
+    out.pendingSpeedNoEffects = l->m_gameState.m_timeModRelated2;
+    out.moves = l->m_gameState.m_moveEffectInstances.size();
+    out.rotations = l->m_gameState.m_rotateEffectInstances.size();
+    out.activated = l->m_gameState.m_activatedObjectIDs.size();
+    out.dynamicMoves = l->m_gameState.m_dynamicMoveActions.size();
+    out.dynamicRotations = l->m_gameState.m_dynamicRotateActions.size();
+    if (auto* em = l->m_effectManager) {
+        out.triggeredIDCount = em->m_unkMap498.size();
+        for (const auto& [object, player] : em->m_unkMap498)
+            out.triggeredIDHash += solver::sectionDiagnosticEntryHash(
+                ((uint64_t)(uint32_t)object << 32) | (uint32_t)player);
+        out.disabledGroupCount = em->m_unkMap460.size();
+        for (int group : em->m_unkMap460) {
+            out.disabledGroupHash += solver::sectionDiagnosticEntryHash((uint32_t)group);
+            if (out.disabledGroups.size() < 8) out.disabledGroups.push_back(group);
+        }
+        out.motionCount = em->m_unkVector560.size();
+        out.completedMoveCount = em->m_unkMap578.size();
+        out.followingCount = em->m_unkMap4c8.size();
+        for (const auto& c : em->m_unkVector560) {
+            solver::SectionDiagnosticMotion v;
+            v.uid = c.m_groupCommandUniqueID; v.type = c.m_commandType;
+            v.group = c.m_targetGroupID; v.center = c.m_centerGroupID;
+            v.trigger = c.m_triggerUniqueID; v.control = c.m_controlID;
+            const bool flags[] = {c.m_finished, c.m_disabled, c.m_finishRelated,
+                                  c.m_lockToPlayerX, c.m_lockToPlayerY,
+                                  c.m_lockToCameraX, c.m_lockToCameraY,
+                                  c.m_lockedInX, c.m_lockedInY, c.m_alreadyUpdated, c.m_doUpdate};
+            for (size_t i = 0; i < std::size(flags); ++i) v.flags |= (uint32_t)flags[i] << i;
+            v.values = {c.m_duration, c.m_deltaTime, c.m_currentXOffset, c.m_currentYOffset,
+                        c.m_deltaX, c.m_deltaY, c.m_oldDeltaX, c.m_oldDeltaY,
+                        c.m_lockedCurrentXOffset, c.m_lockedCurrentYOffset,
+                        c.m_currentRotateOrTransformValue, c.m_currentRotateOrTransformDelta,
+                        c.m_followXMod, c.m_followYMod, c.m_followYDelay, c.m_followYSpeed,
+                        c.m_followYMaxSpeed, c.m_deltaTimeInFloat};
+            for (int key : c.m_remapKeys) {
+                v.remapHash ^= (uint32_t)key; v.remapHash *= 1099511628211ull;
+            }
+            out.motionHash ^= solver::sectionDiagnosticMotionHash(v);
+            out.motionHash *= 1099511628211ull;
+            if (out.motionCommands.size() < 8) out.motionCommands.push_back(v);
+        }
+        for (const auto& [group, offset] : em->m_unkMap578) {
+            uint64_t x = 0, y = 0;
+            std::memcpy(&x, &offset.first, sizeof(x));
+            std::memcpy(&y, &offset.second, sizeof(y));
+            out.completedMoveHash += solver::sectionDiagnosticEntryHash((uint32_t)group)
+                ^ solver::sectionDiagnosticEntryHash(x) ^ (solver::sectionDiagnosticEntryHash(y) << 1);
+        }
+        for (int key : em->m_unkMap4c8)
+            out.followingHash += solver::sectionDiagnosticEntryHash((uint32_t)key);
+    }
+    for (const auto& entry : l->m_gameState.m_activatedObjectIDs) {
+        for (int v : {entry.first.first, entry.first.second, entry.second}) {
+            out.activatedHash ^= (uint32_t)v;
+            out.activatedHash *= 1099511628211ull;
+        }
+    }
+    if (g_died) {
+        out.caller = g_diagDeathCaller; out.killer = g_diagKiller;
+        out.anticheat = g_diagAnticheat;
+    }
+    out.queuedButtons = l->m_queuedButtons.size();
+    for (const auto& b : l->m_queuedButtons) {
+        if (out.buttons.size() == 8) break;
+        out.buttons.push_back({(int)b.m_button, b.m_step, b.m_isPush,
+                              b.m_isPlayer2, b.m_timestamp});
+    }
+    // Only current contact objects are needed inside a substep; no level-wide scan here.
+    auto addObject = [&](GameObject* o) {
+        if (!o) return;
+        for (const auto& v : out.objects) if (v.uid == (int)o->m_uniqueID) return;
+        solver::SectionDiagnosticObject v;
+        v.uid = (int)o->m_uniqueID; v.id = (int)o->m_objectID;
+        v.x = o->getPositionX(); v.y = o->getPositionY();
+        v.rotation = o->getRotation(); v.scaleX = o->getScaleX(); v.scaleY = o->getScaleY();
+        const auto r = o->m_objectRect;
+        v.rectX = r.origin.x; v.rectY = r.origin.y;
+        v.rectW = r.size.width; v.rectH = r.size.height;
+        v.rectDirty = o->m_isObjectRectDirty; v.disabled = o->m_isGroupDisabled;
+        v.positionX = o->m_positionX; v.positionY = o->m_positionY;
+        v.lastX = o->m_lastPosition.x; v.lastY = o->m_lastPosition.y;
+        v.moveTick = o->m_unk4C4;
+        if (auto* e = typeinfo_cast<EnhancedGameObject*>(o)) {
+            v.activated1 = e->m_activatedByPlayer1; v.activated2 = e->m_activatedByPlayer2;
+        }
+        out.objects.push_back(v);
+    };
+    PlayerObject* players[] = {l->m_player1, l->m_player2};
+    for (size_t i = 0; i < 2; ++i) {
+        auto* p = players[i];
+        if (!p) continue;
+        auto& v = out.players[i];
+        v.present = true; v.dead = p->m_isDead;
+        const auto at = physicalPosition ? psnap::physPosition(p, l) : p->getPosition();
+        v.x = at.x; v.y = at.y; v.vy = p->m_yVelocity;
+        v.previousX = p->m_position.x; v.previousY = p->m_position.y;
+        v.lastX = p->m_lastPosition.x; v.lastY = p->m_lastPosition.y;
+        v.onSlope = p->m_isOnSlope; v.wasOnSlope = p->m_wasOnSlope;
+        v.slopeCorrection = p->unk_584;
+        v.mode = modeIdx(p); v.grounded = p->m_isOnGround;
+        v.flipped = p->m_isUpsideDown; v.size = p->m_vehicleSize;
+        v.playerSpeed = p->m_playerSpeed; v.speedMultiplier = p->m_speedMultiplier;
+        v.gravity = p->m_gravity;
+        v.reverseSpeed = p->m_maybeReverseSpeed;
+        v.reverseAcceleration = p->m_maybeReverseAcceleration;
+        v.goingLeft = p->m_isGoingLeft; v.sideways = p->m_isSideways;
+        v.dashing = p->m_isDashing; v.dashX = p->m_dashX; v.dashY = p->m_dashY;
+        v.lastLandTime = p->m_lastLandTime; v.touchedPad = p->m_touchedPad;
+        v.justPlacedStreak = p->m_justPlacedStreak;
+        const auto held = p->m_holdingButtons.find(1);
+        v.holding = held != p->m_holdingButtons.end() && held->second;
+        v.jumpBuffered = p->m_jumpBuffered; v.wasJumpBuffered = p->m_wasJumpBuffered;
+        v.stateJumpBuffered = p->m_stateJumpBuffered;
+        v.stateRingJump = p->m_stateRingJump;
+        v.followCursor = p->m_followRelated;
+        v.followHeights = p->m_playerFollowFloats.size();
+        for (float height : p->m_playerFollowFloats) {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &height, sizeof(bits));
+            v.followHash ^= bits; v.followHash *= 1099511628211ull;
+        }
+        if (auto* rings = p->m_touchingRings) {
+            v.touchingRingsCount = rings->count();
+            for (unsigned j = 0; j < rings->count(); ++j) {
+                const int uid = static_cast<GameObject*>(rings->objectAtIndex(j))->m_uniqueID;
+                if (v.touchingRings.size() < 8) v.touchingRings.push_back(uid);
+                v.touchingRingsHash ^= (uint32_t)uid;
+                v.touchingRingsHash *= 1099511628211ull;
+            }
+        }
+        v.snapped = p->m_objectSnappedTo ? (int)p->m_objectSnappedTo->m_uniqueID : -1;
+        v.collided = p->m_collidedObject ? (int)p->m_collidedObject->m_uniqueID : -1;
+        v.slope = p->m_currentSlope2 ? (int)p->m_currentSlope2->m_uniqueID : -1;
+        v.spiderLow = p->m_collidedTopMinY; v.spiderHigh = p->m_collidedBottomMaxY;
+        cocos2d::CCDictionary* logs[] = {p->m_collisionLogTop, p->m_collisionLogBottom,
+                                       p->m_collisionLogLeft, p->m_collisionLogRight};
+        for (size_t j = 0; j < 4; ++j) {
+            v.collisionCounts[j] = logs[j] ? (int)logs[j]->count() : -1;
+            if (!logs[j]) continue;
+            for (const auto& entry : geode::cocos::CCDictionaryExt<intptr_t>(logs[j])) {
+                const auto key = entry.first;
+                if (v.collisionKeys[j].size() < 8) v.collisionKeys[j].push_back(key);
+                // An order-independent membership hash; dictionary iteration order is not state.
+                uint64_t h = (uint64_t)key + 0x9e3779b97f4a7c15ull;
+                h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ull;
+                h = (h ^ (h >> 27)) * 0x94d049bb133111ebull;
+                v.collisionKeyHashes[j] ^= h ^ (h >> 31);
+            }
+        }
+        addObject(p->m_objectSnappedTo); addObject(p->m_collidedObject);
+        addObject(p->m_currentSlope2);
+    }
+    return out;
+}
+
+// Hooks call this only while one selected restore or update is being observed.
+inline void diagnosticStage(const char* name, PlayerObject* player = nullptr,
+                            int argument = 0, int flags = 0, int result = -1,
+                            double dt = 0, bool physicalPosition = false) {
+    if (!g_diagStep || !g_diagLayer || !solver::sectionDiagnosticStageRoom(*g_diagStep)) return;
+    const int actor = player ? (player == g_diagLayer->m_player1 ? 1
+        : player == g_diagLayer->m_player2 ? 2 : -1) : 0;
+    const bool collisionEnvironment = std::strcmp(name, "post_restore") == 0
+        || std::strcmp(name, "step_ready") == 0 || std::strcmp(name, "checkCollisions_in") == 0
+        || std::strcmp(name, "checkCollisions_out") == 0;
+    g_diagStep->stages.push_back({name, g_diagDuringStep, actor, argument, flags, result, dt,
+                                diagnosticStageState(g_diagLayer, physicalPosition, collisionEnvironment)});
+}
+
+// Never let later checkpoint qualification or leaf verification append to this node's trace.
+struct DiagnosticScope {
+    solver::SectionDiagnosticStep* step;
+    DiagnosticScope(solver::SectionDiagnosticStep* s, GJBaseGameLayer* l) : step(nullptr) {
+        arm(s, l);
+    }
+    // Arm after any rephase replay so only this node's restoration is captured.
+    void arm(solver::SectionDiagnosticStep* s, GJBaseGameLayer* l) {
+        step = s;
+        if (s) { g_diagStep = s; g_diagLayer = l; g_diagDuringStep = false; }
+    }
+    // Mark the common comparison boundary after restore/rearm, before input consumption.
+    void beginStep() {
+        if (!step) return;
+        g_diagDuringStep = true;
+        diagnosticStage("step_ready", nullptr, 0, 0, -1, 0, true);
+    }
+    // Explicitly stop before any extra replay; destruction also covers early exits.
+    void finish() {
+        if (step && g_diagStep == step) {
+            if (g_diagDuringStep) diagnosticStage("step_out", nullptr, 0, 0, -1, 0, true);
+            g_diagStep = nullptr; g_diagLayer = nullptr; g_diagDuringStep = false;
+        }
+    }
+    ~DiagnosticScope() { finish(); }
+    DiagnosticScope(const DiagnosticScope&) = delete;
+    DiagnosticScope& operator=(const DiagnosticScope&) = delete;
+};
 
 // Dash (dash ring type 37/38) state.
 //
@@ -553,7 +886,13 @@ inline int8_t g_headJb[2] = {-1, -1};   // m_jumpBuffered of p1 / p2 in the plai
 // valid to the end. The ground object, slopes, stair snap and the last portal
 // passed each change the next tick's behaviour, so dropping them makes psnap
 // drift silently (measured 150.7px).
-struct DashState {
+struct PlayerAuxState {
+    bool present = false;
+    bool dead = false;
+    double vy = 0, accel = 0;
+    bool pad = false;
+    unsigned char oobLatch = 0;
+    solver::InputContinuation<PlayerObject> input;
     bool on = false;
     GameObject* ring = nullptr;
     double x = 0, y = 0, angle = 0, startTime = 0;
@@ -569,8 +908,8 @@ struct DashState {
     GameObject* potentialSlope = nullptr;
     GameObject* snappedTo = nullptr;
     GameObject* lastPortal = nullptr;
-    int8_t jumpBuf = -1;   // m_jumpBuffered at the capture (cfg secjbkeep), -1 = not taken
 };
+using DashState = std::array<PlayerAuxState, 2>;
 
 // 1 node = "the input sequence from the section start". Walking the parents
 // recovers the sequence. y/vy/x are used for the sort when narrowing a layer to
@@ -671,6 +1010,9 @@ inline std::vector<uint8_t> g_pad2;
 // -0.272, -0.570, ...) while the run from the head holds y=241.7341 at
 // vy=0.000.
 inline DashState g_ckptDash;
+// The section head's boost state must be captured before any qualification replay.
+inline double g_ckptAccel = 0.0;
+inline bool g_ckptPad = false;
 // cfg `secheaddash` (on by default since 2026-10; 0 = off): the section search's head takes its
 // dash from the plain flight (g_ckptDash, and g_ckptDash2 for player 2) instead of from what the
 // head's checkpoint load left, which never has one. Without it a head inside a dash put every node
@@ -706,10 +1048,9 @@ inline std::vector<SecDeadBand> g_secBands;
 
 // ---- counter observation (see the note on Node::cnt) ------------------------
 // Sum of GJEffectManager's item counters + THE NUMBER OF DISABLED OBJECTS. The
-// baseline for the delta (g_cntBase) is taken at the section start. psnap does
-// not carry this map (OPAQUE in po_members.inc), but a section where counters
-// move also has moving geometry, so it falls back to the checkpoint anyway
-// (verify-and-repair guards it).
+// baseline for the delta (g_cntBase) is taken at the section start. GD's native
+// effect snapshot carries the map; the production key still uses this sum,
+// not a full per-item or per-timer identity.
 //
 // Why disabled was added (2026-08-12, late night): the contraption at lv22
 // x=12,100 is "when the spider lands hanging on the ceiling, the touch Toggle
@@ -843,9 +1184,13 @@ inline void reset() {
     g_on = false;
     g_noKill = false;
     g_died = false;
+    g_diagDeathCaller = 0;
+    g_diagKiller = -1;
+    g_diagAnticheat = false;
     g_rungCoin = -1;
     g_feed = 0;
     g_held = 0;
+    g_ckptInputs = {};
     g_nodes.clear();
     g_dash.clear();
     g_dash2.clear();

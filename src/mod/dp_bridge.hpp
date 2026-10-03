@@ -40,6 +40,20 @@ LevelStats statsFromCsv(const std::string& csv);
 // long: call it from a worker thread, never from GD's main thread.
 int solveInProcess(const std::string& csv, const std::vector<std::string>& args);
 
+// Worker-only scope: immutable inputs are pinned until this job ends, not across attempts.
+void beginInputJob(unsigned long long session, const std::string& csv);
+void endInputJob();
+struct InputFileInfo {
+    std::string signature;
+    unsigned long long revision = 0;   // exact-byte identity, not a hash
+};
+// Pin only files that this job will not rewrite; mutable files are revalidated on every request.
+InputFileInfo inputFileInfo(const std::string& path, bool immutable);
+unsigned long long inputLevelRevision();
+struct InputJobStats { unsigned long long reads = 0, hits = 0, levelHits = 0; };
+// Snapshot reads, pinned-buffer hits and parsed-level hits, for the job's diagnostic line.
+InputJobStats inputJobStats();
+
 // One line naming the build of the solver core that is linked in. Written to result.txt at
 // session start so a run can always say which solver produced it.
 std::string coreVersion();

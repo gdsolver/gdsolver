@@ -239,10 +239,11 @@ inline const GroupTimeline& groupLayersFor(const std::vector<std::string>& paths
 // Only inside one ladder, where the arguments, the input files and the level text are the same
 // by construction, and resetInvocationState has put every other global back where the first
 // attempt found it. The argument list and the moving-geometry timeline are still compared, as a
-// guard rather than as the key. cliMain empties it when the ladder ends: it holds a copy of the
-// level, recordings included, and has no use after that.
+// guard rather than as the key. The ordinary CLI empties it when the ladder ends. An in-process
+// job can keep it for identical calls (including fixup passes), releasing it at the job's end.
 struct LadderLevelCache {
     unsigned long long ladder = 0;   // the ladder it was built in; 0 = empty
+    uint64_t job = 0;   // an in-process job may also reuse identical preparation
     std::vector<std::string> args;   // that attempt's arguments without --capmap / --gridmap
     unsigned long long groupsGen = 0;
     Level level;
@@ -2137,25 +2138,31 @@ inline int cliMainOnce(int argc, char** argv) {
     if (!setPath.empty() && loadLevelSettings(setPath) && g_fixRadiusCollision)
         std::printf("levelsettings: fixRadiusCollision=1 - circular hazards "
                     "use centre distance (branch A) in this level\n");
-    // An attempt after a ladder's first takes the level that one built (LadderLevelCache).
+    // Also reuse identical preparations between this job's fixup passes. Fixups/replay inputs
+    // are consumed after loadLevel, and every world file is immutable for the job.
     Level L;
     {
         std::vector<std::string> la;
-        if (g_ladder) la = ladderArgs(argc, argv);
-        if (g_ladder && g_ladderLevel.ladder == g_ladder
+        const uint64_t job = g_levelCsv.empty() ? 0 : g_inputFiles.job();
+        if (g_ladder || job) la = ladderArgs(argc, argv);
+        const bool scopeMatch = job ? g_ladderLevel.job == job
+                                   : g_ladder && g_ladderLevel.ladder == g_ladder;
+        if (scopeMatch
             && g_ladderLevel.groupsGen == g_groupLayersGen && g_ladderLevel.args == la) {
+            if (job) ++g_inputFiles.levelHits;
             L = g_ladderLevel.level;
             g_ladderLevel.writes.put();
             std::fputs(g_ladderLevel.printed.c_str(), stdout);
         } else {
             std::string printed;
-            if (g_ladder) g_loadPrinted = &printed;
+            if (g_ladder || job) g_loadPrinted = &printed;
             L = loadLevel(argv[1], groupsPaths.empty() ? nullptr : &gt,
                           g_touch.empty() ? nullptr : &g_touch,
                           g_autoTrig.empty() ? nullptr : &g_autoTrig);
             g_loadPrinted = nullptr;
-            if (g_ladder) {
+            if (g_ladder || job) {
                 g_ladderLevel.ladder = g_ladder;
+                g_ladderLevel.job = job;
                 g_ladderLevel.args = std::move(la);
                 g_ladderLevel.groupsGen = g_groupLayersGen;
                 g_ladderLevel.level = L;
@@ -4636,48 +4643,8 @@ inline int cliMainOnce(int argc, char** argv) {
     // (measured: ship climb rate collapsed to ~0.02 vy/tick); a single
     // extreme-|vy| slot instead discarded dive-recovery lineages.
     struct Slots { int hi = -1; int lo = -1; };
-    // Open addressing, linear probing, cleared in O(used) via `touched`.
-    // std::unordered_map was the whole serial phase once stepping went parallel
-    // (a node allocation and a pointer chase per child, ~80k children a layer).
-    // Semantics are identical -- key -> Slots, lookup and insert only, never
-    // iterated -- so `nxt` still fills in the same order and the plan is
-    // bit-identical. Key 0 doubles as "empty": keyOf is a scrambled XOR, so a
-    // real key of exactly 0 is a 2^-64 event, and if it ever happened it would
-    // merge two cells, which is what a hash collision already does.
-    struct CellMap {
-        std::vector<uint64_t> keys;
-        std::vector<Slots> vals;
-        std::vector<uint32_t> touched;
-        size_t mask = 0;
-        void ensure(size_t want) {
-            size_t n = 1024;
-            while (n < want * 4) n <<= 1;   // keep the load factor under 1/4
-            if (n <= keys.size()) return;
-            keys.assign(n, 0);
-            vals.assign(n, Slots{});
-            mask = n - 1;
-        }
-        void clear() {
-            for (uint32_t i : touched) keys[i] = 0;
-            touched.clear();
-        }
-        // same names the memory report used when this was an unordered_map
-        size_t size() const { return touched.size(); }
-        size_t bucket_count() const { return keys.size(); }
-        Slots& at(uint64_t k) {
-            size_t i = (size_t)(k * 0x9E3779B97F4A7C15ull) & mask;
-            for (;;) {
-                if (keys[i] == k) return vals[i];
-                if (keys[i] == 0) {
-                    keys[i] = k;
-                    vals[i] = Slots{};
-                    touched.push_back((uint32_t)i);
-                    return vals[i];
-                }
-                i = (i + 1) & mask;
-            }
-        }
-    };
+    // Serial and sharded dedupe share full equality and explicit occupancy.
+    using CellMap = SearchKeyMap<Slots>;
     CellMap seen;
     // ---- parallel dedupe (phase 2p) -------------------------------------
     // The serial dedupe was the measured ceiling of the whole DP (1 thread
@@ -4693,77 +4660,26 @@ inline int cliMainOnce(int argc, char** argv) {
     // per final representative, so the arena is strictly smaller and parent
     // CHAINS (the only thing read back) are unchanged.
     struct KeyRec {
-        uint64_t key;
         uint32_t aOrd;          // ordinal that allocated the key's first slot
         uint32_t bOrd;          // ordinal of the first hi/lo split (kNone: none)
         uint32_t hiIdx, loIdx;  // child index of the current hi / lo rep
         float hiVy, loVy;
         uint8_t bWasHi;
     };
-    struct ShardMap {           // CellMap's open addressing, key -> rec index
-        std::vector<uint64_t> keys;
-        std::vector<uint32_t> vals;
-        std::vector<uint32_t> touched;
+    struct ShardMap : SearchKeyMap<uint32_t> {
         std::vector<KeyRec> recs;
         uint32_t goalOrd = kNone;
-        uint16_t goalTight = 0xffff;   // route score; see the goal pick below
-        size_t mask = 0;
-        void ensure(size_t want) {
-            size_t n = 1024;
-            while (n < want * 4) n <<= 1;
-            if (n <= keys.size()) return;
-            keys.assign(n, 0);
-            vals.assign(n, kNone);
-            mask = n - 1;
-        }
+        uint16_t goalTight = 0xffff;
+        // Clear representatives together with the group's exact-key table.
         void clear() {
-            for (uint32_t i : touched) keys[i] = 0;
-            touched.clear();
+            SearchKeyMap<uint32_t>::clear();
             recs.clear();
             goalOrd = kNone;
             goalTight = 0xffff;
         }
-        // ensure() sizes for the EXPECTED keys per shard; a lopsided hash
-        // could still overfill one shard's table, and a full open-addressing
-        // table is an infinite probe loop, not a slowdown. Grow keeps the
-        // guarantee unconditional.
-        void grow() {
-            const size_t n = keys.size() ? keys.size() * 2 : 1024;
-            std::vector<uint64_t> ok;
-            ok.swap(keys);
-            std::vector<uint32_t> ov;
-            ov.swap(vals);
-            keys.assign(n, 0);
-            vals.assign(n, (uint32_t)kNone);
-            mask = n - 1;
-            touched.clear();
-            for (size_t i = 0; i < ok.size(); ++i) {
-                if (!ok[i]) continue;
-                size_t j = (size_t)(ok[i] * 0x9E3779B97F4A7C15ull) & mask;
-                while (keys[j]) j = (j + 1) & mask;
-                keys[j] = ok[i];
-                vals[j] = ov[i];
-                touched.push_back((uint32_t)j);
-            }
-        }
-        uint32_t& at(uint64_t k) {
-            if ((touched.size() + 1) * 4 > keys.size()) grow();
-            size_t i = (size_t)(k * 0x9E3779B97F4A7C15ull) & mask;
-            for (;;) {
-                if (keys[i] == k) return vals[i];
-                if (keys[i] == 0) {
-                    keys[i] = k;
-                    vals[i] = kNone;
-                    touched.push_back((uint32_t)i);
-                    return vals[i];
-                }
-                i = (i + 1) & mask;
-            }
-        }
     };
     std::vector<ShardMap> shards;
-    std::vector<uint64_t> kidKeys;  // compact copy of kids[i].key (8 B strides
-                                    // instead of pulling the whole Child in)
+    std::vector<SearchKey> kidKeys;  // worker-built canonical cell identities
     std::vector<uint8_t> kidFlag;   // 0 = not expanded, 1 = dead, 2 = alive
     // per-ordinal slot events, written race-free (one shard owns each key):
     // evKind[i] = 0 none / 1+shard; evRec[i] = record index within that shard.
@@ -4809,7 +4725,7 @@ inline int cliMainOnce(int argc, char** argv) {
     // one (empty when that state does not expand both -- see stepKid).
     struct Child {
         State s{};
-        uint64_t key = 0;         // keyOf(s), computed on the worker thread
+        SearchKey key{};          // keyOf(s), computed on the worker thread
         uint8_t dead = 0;
         uint8_t valid = 0;
         const char* why = "";     // --dbg only
@@ -5862,7 +5778,7 @@ inline int cliMainOnce(int argc, char** argv) {
             for (int a = 0; a < 2; ++a) {
                 g_refKidFate[a] = -1;
                 g_refKidWhy[a] = "";
-                g_refKidKey[a] = 0;
+                g_refKidKey[a] = {};
             }
         }
 
@@ -6003,7 +5919,7 @@ inline int cliMainOnce(int argc, char** argv) {
                 groupDx.push_back(k);
         }
 
-        auto emit = [&](State s, const State& from, uint8_t action, uint64_t k) {
+        auto emit = [&](State s, const State& from, uint8_t action, const SearchKey& k) {
             auto finish = [&](State& stored) {
                 arena.push_back(Node{from.parent | ((uint32_t)action << 31)});
                 if (checkWanted) arenaMode.push_back(s.mode);
@@ -6071,7 +5987,7 @@ inline int cliMainOnce(int argc, char** argv) {
             auto add = [](std::vector<uint64_t>& v, uint64_t q) {
                 if (std::find(v.begin(), v.end(), q) == v.end()) v.push_back(q);
             };
-            std::unordered_map<uint64_t, std::vector<uint64_t>> alive, kept;
+            std::unordered_map<SearchKey, std::vector<uint64_t>, SearchKeyHash> alive, kept;
             for (size_t i = 0; i < kids.size(); ++i)
                 if (kidFlag[i] == 2) add(alive[kidKeys[i]], qs(kids[i].s));
             for (size_t j = before; j < nxt.size(); ++j)
@@ -6375,7 +6291,7 @@ inline int cliMainOnce(int argc, char** argv) {
         // x=2,996. The frontier collapse the previous session blamed on
         // granularity was this: the winning branch was never enumerated.
         kids.assign(gidx.size() * 2, Child{});
-        kidKeys.assign(gidx.size() * 2, 0);
+        kidKeys.assign(gidx.size() * 2, SearchKey{});
         kidFlag.assign(gidx.size() * 2, 0);
         const bool dbgHere = (dbgLayers > 0 && t - t0 <= dbgLayers);
         const bool orbsEmpty = orbs.empty();
@@ -6770,8 +6686,7 @@ inline int cliMainOnce(int argc, char** argv) {
                         ++g_fireBTooEarly;
                 }
             }
-            // compact side arrays for phase 2p: the shard scans read 9 B per
-            // child instead of dragging the whole Child through the cache
+            // Side arrays let phase 2p scan keys without loading the full Child.
             kidKeys[i] = kid.key;
             kidFlag[i] = dead ? 1 : 2;
             if (dbgHere || g_refWatch) { kid.why = g_deadWhy; kid.obj = g_deadObj; }
@@ -6967,15 +6882,14 @@ inline int cliMainOnce(int argc, char** argv) {
                 sm.ensure(kids.size() / nsh + 64);
                 for (uint32_t i = 0; i < (uint32_t)kids.size(); ++i) {
                     if (kidFlag[i] != 2) continue;
-                    const uint64_t k = kidKeys[i];
-                    if ((size_t)((k * 0x9E3779B97F4A7C15ull) >> 32) % nsh != si)
-                        continue;
+                    const SearchKey& k = kidKeys[i];
+                    if ((SearchKeyHash{}(k) >> 32) % nsh != si) continue;
                     const float vy = kids[i].s.vy;
-                    uint32_t& ri = sm.at(k);
+                    uint32_t& ri = sm.at(k, kNone);
                     bool accepted = false;
                     if (ri == kNone) {
                         ri = (uint32_t)sm.recs.size();
-                        sm.recs.push_back(KeyRec{k, i, kNone, i, i, vy, vy, 0});
+                        sm.recs.push_back(KeyRec{i, kNone, i, i, vy, vy, 0});
                         evKind[i] = (uint8_t)(1 + si);
                         evRec[i] = ri;
                         accepted = true;
@@ -7419,7 +7333,7 @@ inline int cliMainOnce(int argc, char** argv) {
             // layer, and keyOf is the costly part), then (key, index) sorted: a cell's first
             // state is its lowest index.
             const size_t n = nxt.size();
-            std::vector<std::pair<uint64_t, uint32_t>> ck(n);
+            std::vector<std::pair<SearchKey, uint32_t>> ck(n);
             auto keyAt = [&](size_t i) {
                 State s = nxt[i];
                 s.held = 0;
@@ -7814,11 +7728,15 @@ inline int cliMainOnce(int argc, char** argv) {
         // still be alive (t-t0)/2 ticks past its end, i.e. the same contract
         // as the horizon cut, just with a smaller effective horizon.
         if (g_memLimitMiB > 0 && !solved && (t & 127) == 0 && t - t0 > 2) {
-            // arenaMode is empty with no subscriber, so this term is 0 and the estimate --
-            // and therefore the tick this limit fires on -- is exactly what it was.
+            // Include worker/shard key storage now that a cell holds complete fields.
+            size_t shardBytes = 0;
+            for (const auto& sh : shards)
+                shardBytes += sh.storageBytes() + sh.recs.capacity() * sizeof(KeyRec);
             const size_t est = arena.capacity() * sizeof(Node) + arenaMode.capacity()
                                + (cur.capacity() + nxt.capacity()) * sizeof(State)
-                               + seen.bucket_count() * 8 + seen.size() * 48;
+                               + seen.storageBytes() + shardBytes
+                               + kids.capacity() * sizeof(Child)
+                               + kidKeys.capacity() * sizeof(SearchKey);
             if (est > g_memLimitMiB * (size_t)1048576) {
                 solved = true;
                 goalState = pickOf(cur);
@@ -8266,7 +8184,7 @@ inline int cliMainOnce(int argc, char** argv) {
         // the tick, so a later reader (--rejoinuse) can tell the walk's deaths from its corpse
         // rows -- the walk runs on through a kill, and y/vy alone do not say where it fired.
         tr << "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,frame"
-              ",rotspent,rotchan,rotrev,dead,key\n";
+              ",rotspent,rotchan,rotrev,dead,key,key_fields\n";
         std::ofstream sn;
         if (!snapLogPath.empty()) {
             sn.open(snapLogPath);
@@ -8450,13 +8368,15 @@ inline int cliMainOnce(int argc, char** argv) {
             c.action = (uint8_t)lvl[i];
             s = c;
             modeAt[i] = s.mode;
+            const SearchKey traceKey = keyOf(s, (long long)t);
             tr << t << ',' << (double)s.xAbs << ',' << s.y << ',' << s.vy << ','
                << (int)s.mode << ',' << (int)s.grounded << ',' << (int)s.dual
                << ',' << s.y2 << ',' << s.vy2 << ',' << (int)s.flip2 << ','
                << (int)lvl[i] << ',' << (int)s.flip << ',' << (int)s.frame
                << ',' << s.rotSpent << ',' << (int)s.rotChan
                << ',' << (unsigned)s.rotRev << ',' << (rdead ? 1 : 0)
-               << ',' << (unsigned long long)keyOf(s, (long long)t) << "\n";
+               << ',' << (unsigned long long)SearchKeyHash{}(traceKey)
+               << ',' << keyText(traceKey) << "\n";
             // --rejoinuse: past the join the walk must retrace the old plan's walk -- the same
             // fields on every tick the old trace has, and no kill it did not have. The first tick
             // it does not is the join failing its own premise (repair.hpp refuses the join).
@@ -8811,7 +8731,7 @@ inline int cliMain(int argc, char** argv) {
     struct EndLadder {
         ~EndLadder() {
             g_ladder = 0;
-            g_ladderLevel = LadderLevelCache{};
+            if (!g_inputFiles.job()) g_ladderLevel = LadderLevelCache{};
             g_ladderBestT.store(-1);
             g_ladderStop.store(false);
         }

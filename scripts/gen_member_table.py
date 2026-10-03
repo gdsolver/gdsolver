@@ -44,12 +44,12 @@ SCALAR_TYPES = {
 # as enum class.
 ENUM_RE = re.compile(r"^(?:enum\s+)?(?:class\s+)?[A-Z]\w*(?:Type|Mode|State|Key)$")
 
-FIELD_RE = re.compile(r"^\s{4}([A-Za-z_][\w:<>,\s\*&]*?)\s+(m_\w+)\s*;\s*$")
+FIELD_RE = re.compile(r"^\s{4}([A-Za-z_][\w:<>,\s\*&]*?)\s+([A-Za-z_]\w*)\s*;\s*$")
 # A member that exists on some platforms only sits one level deeper, inside a block such as
 # `    android, ios {` ... `    }`. Those are emitted between #if / #endif (platform_guard).
 BLOCK_RE = re.compile(r"^\s{4}((?:win|android|android32|android64|ios|mac|imac|m1)"
                       r"(?:\s*,\s*(?:win|android|android32|android64|ios|mac|imac|m1))*)\s*\{\s*$")
-BLOCK_FIELD_RE = re.compile(r"^\s{8}([A-Za-z_][\w:<>,\s\*&]*?)\s+(m_\w+)\s*;\s*(//.*)?$")
+BLOCK_FIELD_RE = re.compile(r"^\s{8}([A-Za-z_][\w:<>,\s\*&]*?)\s+([A-Za-z_]\w*)\s*;\s*(//.*)?$")
 GEODE_MACRO = {"win": "GEODE_IS_WINDOWS", "android": "GEODE_IS_ANDROID",
                "android32": "GEODE_IS_ANDROID32", "android64": "GEODE_IS_ANDROID64",
                "ios": "GEODE_IS_IOS", "mac": "GEODE_IS_MACOS", "imac": "GEODE_IS_MACOS",

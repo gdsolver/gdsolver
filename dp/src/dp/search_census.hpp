@@ -1,5 +1,6 @@
 #pragma once
 #include "dp/step.hpp"
+#include "dp/search_key.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -66,7 +67,7 @@ struct TwinStats {
     long long byMode[9] = {};
     int printed = 0;
     void violation(long long t, const State& p, int fa, int fb, const State& a, const State& b,
-                   uint64_t ka, uint64_t kb) {
+                   const SearchKey& ka, const SearchKey& kb) {
         ++violations;
         if (printed >= 20) return;
         ++printed;
@@ -74,8 +75,8 @@ struct TwinStats {
                     "| released fate=%d key=%016llx vy=%.6f y=%.4f trig=%llx | pressed fate=%d "
                     "key=%016llx vy=%.6f y=%.4f trig=%llx\n",
                     t, (int)p.mode, (double)p.y, (double)p.vy, (double)p.xAbs, (int)p.grounded,
-                    (int)p.flip, fa, (unsigned long long)ka, (double)a.vy, (double)a.y,
-                    (unsigned long long)a.trig.word(0), fb, (unsigned long long)kb, (double)b.vy,
+                    (int)p.flip, fa, (unsigned long long)SearchKeyHash{}(ka), (double)a.vy, (double)a.y,
+                    (unsigned long long)a.trig.word(0), fb, (unsigned long long)SearchKeyHash{}(kb), (double)b.vy,
                     (double)b.y, (unsigned long long)b.trig.word(0));
     }
     // The skip count only under --searchcensus: --twinskip is meant to leave the output as it
@@ -104,10 +105,13 @@ inline const CensusField kCensusFields[] = {
          if (!s.dual) return;
          s.y2 = s.vy2 = 0.f; s.flip2 = 0; s.mode2 = s.mode; s.mini2 = s.mini;
          s.onSlope2 = 0; s.rideLanded2 = 0; s.slopeT2 = 0; s.boost2 = 0;
+         s.ringHold2 = 0; s.pressSpent2 = 0;
      }, false},
     {"held", [](State& s) { s.held = 0; }, false},
     {"grounded", [](State& s) { s.grounded = 0; }, false},
-    {"press", [](State& s) { s.ringHold = 0; s.pressSpent = 0; }, true},
+    {"press", [](State& s) {
+         s.ringHold = 0; s.pressSpent = 0; s.ringHold2 = 0; s.pressSpent2 = 0;
+     }, true},
     {"band", [](State& s) { s.bandFloor = 0.f; s.bandBranch = 0; }, true},
     {"hoverdash", [](State& s) { s.rHover = 0; s.dashing = 0; }, true},
     {"action", [](State& s) { s.action = 0; }, true},
@@ -125,6 +129,27 @@ inline const CensusField kCensusFields[] = {
 constexpr int kCensusN = (int)(sizeof(kCensusFields) / sizeof(kCensusFields[0]));
 
 struct SearchCensus {
+    // Census cells retain the exact outer group as well as the exact inner key.
+    struct Cell {
+        SearchKey key;
+        uint32_t dx;
+        uint64_t trig;
+        uint8_t frame, rev;
+        // Do not fold two speed/trigger groups merely because their hashes agree.
+        bool operator==(const Cell& b) const {
+            return key == b.key && dx == b.dx && trig == b.trig
+                   && frame == b.frame && rev == b.rev;
+        }
+    };
+    struct CellHash {
+        // Hash only locates a cell; Cell::operator== supplies its identity.
+        size_t operator()(const Cell& c) const {
+            uint64_t h = SearchKeyHash{}(c.key);
+            h = mix(h, c.dx); h = mix(h, c.trig);
+            h = mix(h, c.frame); h = mix(h, c.rev);
+            return (size_t)h;
+        }
+    };
     // every layer
     long long layers = 0, kids = 0, died = 0, preCap = 0, postCap = 0;
     long long capLayers = 0, quietCapLayers = 0, quietCapDropped = 0, capDropped = 0;
@@ -179,30 +204,36 @@ struct SearchCensus {
         preCap += (long long)pre.size();
         if (!sample) return;
         ++sampled;
-        std::unordered_set<uint64_t> full, cor, w[kCensusN];
-        std::unordered_set<uint64_t> mf[9], mx[9], mv[9], mc[9];
-        std::vector<std::unordered_set<uint64_t>> mw(9 * kCensusN);
+        using Cells = std::unordered_set<Cell, CellHash>;
+        Cells full, cor, w[kCensusN];
+        Cells mf[9], mx[9], mv[9], mc[9];
+        std::vector<Cells> mw(9 * kCensusN);
         full.reserve(pre.size() * 2);
         cor.reserve(pre.size() * 2);
         for (auto& s : w) s.reserve(pre.size() * 2);
         for (const State& s : pre) {
-            const uint64_t g = groupOf(s, curDx) * 0xD6E8FEB86659FD93ull;
+            const float dx = s.dx > 0.f ? s.dx : curDx;
+            uint32_t di;
+            std::memcpy(&di, &dx, sizeof(di));
+            auto cell = [&](const State& state) {
+                return Cell{keyOf(state, t), di, s.trig.word(0), s.frame, s.rev};
+            };
             const int m = s.dual ? 8 : (s.mode < 8 ? s.mode : 0);
-            const uint64_t kf = keyOf(s, t) ^ g;
+            const Cell kf = cell(s);
             full.insert(kf);
             mf[m].insert(kf);
             State c = s;
             for (int f = 0; f < kCensusN; ++f) {
                 State d = s;
                 kCensusFields[f].canon(d);
-                const uint64_t kd = keyOf(d, t) ^ g;
+                const Cell kd = cell(d);
                 w[f].insert(kd);
                 mw[(size_t)(m * kCensusN + f)].insert(kd);
                 if (f == 0) mx[m].insert(kd);
                 if (f == 1) mv[m].insert(kd);
                 if (kCensusFields[f].core) kCensusFields[f].canon(c);
             }
-            const uint64_t kc = keyOf(c, t) ^ g;
+            const Cell kc = cell(c);
             cor.insert(kc);
             mc[m].insert(kc);
         }
@@ -222,7 +253,7 @@ struct SearchCensus {
     // One parent's two children (cli.hpp stepKid slots 2i / 2i+1). a/b: 0 not expanded,
     // 1 dead, 2 alive (kidFlag).
     void siblings(const State& parent, int fa, int fb, const State& ca, const State& cb,
-                  uint64_t ka, uint64_t kb, long long t) {
+                  const SearchKey& ka, const SearchKey& kb, long long t) {
         const int m = parent.dual ? 8 : (parent.mode < 8 ? parent.mode : 0);
         const int g = parent.grounded ? 1 : 0;
         if (!fa || !fb) {
@@ -244,6 +275,8 @@ struct SearchCensus {
             State x = ca, y = cb;
             x.ringHold = y.ringHold = 0;
             x.pressSpent = y.pressSpent = 0;
+            x.ringHold2 = y.ringHold2 = 0;
+            x.pressSpent2 = y.pressSpent2 = 0;
             if (keyOf(x, t) == keyOf(y, t)) c = 3;
             else {
                 x.held = y.held = 0;

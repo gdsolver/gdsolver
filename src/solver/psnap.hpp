@@ -149,6 +149,13 @@ struct Mem { const char* name; size_t off; size_t size; };
 // board, real physical quantities such as `double m_yVelocityBeforeSlope` were
 // dropped too (all 49 doubles), the whitelist shrank to 756/3,144 bytes and the
 // search's solutions stopped reproducing.
+// Native slope resolution writes +0x680; collision reads it when m_wasOnSlope is set.
+// save/loadPlayerCheckpoint (2.2081 0x3a1710/0x3a21b0) carries this double as well.
+#ifdef GEODE_IS_WINDOWS
+static_assert(offsetof(PlayerObject, unk_584) == 0x680);
+#endif
+static_assert(std::is_same_v<decltype(PlayerObject::unk_584), double>);
+
 inline const std::vector<Mem>& scalars() {
     static std::vector<Mem> tbl = [] {
         std::vector<Mem> m;
@@ -455,11 +462,9 @@ inline void restoreWorld(GJBaseGameLayer* l,
     for (auto* o : set) {
         ObjXf xf;
         std::memcpy(&xf, s, sizeof(xf)); s += sizeof(xf);
-        // Public API first, scalar copy after. GameObject::setPosition sets the
-        // dirty flag, so it has to go through the API, but as a side effect it
-        // also rewrites ledgers such as m_positionX. Overwrite with the copied
-        // values so that "the value at capture time" remains rather than "the
-        // result of going through the API".
+        // Public API first, scalar copy after. In 2.2081 setPosition changes the
+        // drawing node and its children, not the physics ledger or rect flags.
+        // Rotation/scale setters also affect caches; put their saved values back.
         o->setPosition({xf.x, xf.y});
         o->setRotationX(xf.rotX);
         o->setRotationY(xf.rotY);
@@ -565,10 +570,18 @@ inline size_t layerBytes() {
 // symptom left in the beam-era records belongs to this family (with restore,
 // 1 activation in 48,900 attempts; without, 400 in 8,400 attempts).
 struct Touch {
+    solver::PlayerFollowState<PlayerObject> follow;
+    // Only the local collision columns, not every object in the section horizon.
+    std::vector<solver::CollisionObjectState<GameObject>> collisionObjects;
+    // pushButton walks this array in first-contact order; retain entries across branch clears.
+    std::vector<geode::Ref<cocos2d::CCObject>> touchingRings;
     gd::unordered_set<int> touchedRings;
     gd::unordered_set<int> ringRelatedSet;
     gd::map<int, bool> jumpPadRelated;
     gd::unordered_map<int, GameObject*> potentialSlopeMap;
+    // postCollision reads these entries, not just the scalar last-collision IDs.
+    // Retain values while another branch clears the player's original dictionaries.
+    std::vector<std::pair<intptr_t, geode::Ref<cocos2d::CCObject>>> collisionLogs[4];
     // References to "what am I touching right now". Pointer-typed, so not in
     // the whitelist. Objects are NOT re-created during a section, so carrying
     // the pointers does not leave them stale (if there were a path that
@@ -577,6 +590,7 @@ struct Touch {
     GameObject* collidedObject = nullptr;
     // Player 2's, when the snapshot had one (see partner below).
     std::shared_ptr<Touch> second;
+    decltype(std::declval<GJBaseGameLayer>().m_queuedButtons) queuedButtons;
 };
 
 // cfg `secsnapobj=1`: also carry the two pointers above
@@ -596,20 +610,99 @@ inline PlayerObject* partner(PlayerObject* p, GJBaseGameLayer* l) {
                                                                             : nullptr;
 }
 
+// Defined below with the mirror-transition position handling.
+inline cocos2d::CCPoint physPosition(PlayerObject* p, GJBaseGameLayer* l);
+
+// Layout of the collision reader and its once-per-tick move guard in GD 2.2081.
+#ifdef GEODE_IS_WINDOWS
+static_assert(offsetof(GJBaseGameLayer, m_nonEffectObjects) == 0x35b0);
+static_assert(offsetof(GJBaseGameLayer, m_calcNonEffectObjects) == 0x35e0);
+static_assert(offsetof(GJBaseGameLayer, m_sectionXFactor) == 0x36a0);
+static_assert(offsetof(GameObject, m_objectRect) == 0x358);
+static_assert(offsetof(GameObject, m_unk4C4) == 0x4dc);
+static_assert(offsetof(GameObject, m_scaleX) == 0x488);
+// processPlayerFollowActions (0x22ded0), save/loadPlayerCheckpoint (0x3a1710/0x3a21b0).
+static_assert(offsetof(PlayerObject, m_followRelated) == 0xabc);
+static_assert(offsetof(PlayerObject, m_playerFollowFloats) == 0xac0);
+#endif
+
+inline long long g_collisionCaptures = 0, g_collisionObjects = 0;
+inline size_t g_collisionMax = 0;
+
+// Capture the collision reader's local columns for both players, without calculating rects.
+inline void captureCollisionEnvironment(GJBaseGameLayer* l, Touch& out) {
+    out.collisionObjects.clear();
+    if (!l) return;
+    std::vector<GameObject*> objects;
+    for (auto* p : {l->m_player1, l->m_player2}) {
+        if (!p) continue;
+        const double x = std::clamp((double)physPosition(p, l).x, 0.0, 10000000.0);
+        const int column = (int)(x * l->m_sectionXFactor);
+        solver::appendCollisionColumns(l->m_nonEffectObjects, column, objects);
+    }
+    // checkCollisions also scans this unpartitioned list (2.2081 +0x35e0).
+    const int n = std::min((int)l->m_calcNonEffectObjects.size(), l->m_calcNonEffectObjectsSize);
+    for (int i = 0; i < n; ++i)
+        if (auto* o = l->m_calcNonEffectObjects[(size_t)i]) objects.push_back(o);
+    solver::uniqueCollisionObjects(objects);
+    out.collisionObjects.reserve(objects.size());
+    for (auto* o : objects) out.collisionObjects.push_back(solver::captureCollisionObject(o));
+    ++g_collisionCaptures;
+    g_collisionObjects += (long long)objects.size();
+    g_collisionMax = std::max(g_collisionMax, objects.size());
+}
+
+// Restore object ledgers/geometry while preserving the live bucket owners and indices.
+inline void restoreCollisionEnvironment(GJBaseGameLayer* l, const Touch& in) {
+    if (!l) return;
+    for (const auto& state : in.collisionObjects)
+        solver::restoreCollisionObject(state, [l](GameObject* o) { l->updateObjectSection(o); });
+}
+
+// Capture the typed contact containers without copying their owning pointers.
 inline void captureTouchOne(PlayerObject* p, Touch& out) {
+    solver::capturePlayerFollow(p, out.follow);
+    out.touchingRings.clear();
+    if (auto* rings = p->m_touchingRings) {
+        out.touchingRings.reserve(rings->count());
+        for (unsigned i = 0; i < rings->count(); ++i)
+            out.touchingRings.emplace_back(rings->objectAtIndex(i));
+    }
     out.touchedRings = p->m_touchedRings;
     out.ringRelatedSet = p->m_ringRelatedSet;
     out.jumpPadRelated = p->m_jumpPadRelated;
     out.potentialSlopeMap = p->m_potentialSlopeMap;
     out.objectSnappedTo = p->m_objectSnappedTo;
     out.collidedObject = p->m_collidedObject;
+    cocos2d::CCDictionary* logs[] = {p->m_collisionLogTop, p->m_collisionLogBottom,
+                                    p->m_collisionLogLeft, p->m_collisionLogRight};
+    for (size_t i = 0; i < 4; ++i) {
+        out.collisionLogs[i].clear();
+        if (!logs[i]) continue;
+        for (auto [key, value] : geode::cocos::CCDictionaryExt<intptr_t>(logs[i]))
+            out.collisionLogs[i].emplace_back(key, value);
+    }
 }
 
+// Restore entries into the player's existing dictionaries, including empty snapshots.
 inline void restoreTouchOne(PlayerObject* p, const Touch& in) {
+    solver::restorePlayerFollow(p, in.follow);
+    if (auto* rings = p->m_touchingRings) {
+        rings->removeAllObjects();
+        for (const auto& value : in.touchingRings) rings->addObject(value.data());
+    }
     p->m_touchedRings = in.touchedRings;
     p->m_ringRelatedSet = in.ringRelatedSet;
     p->m_jumpPadRelated = in.jumpPadRelated;
     p->m_potentialSlopeMap = in.potentialSlopeMap;
+    cocos2d::CCDictionary* logs[] = {p->m_collisionLogTop, p->m_collisionLogBottom,
+                                    p->m_collisionLogLeft, p->m_collisionLogRight};
+    for (size_t i = 0; i < 4; ++i) {
+        if (!logs[i]) continue;
+        logs[i]->removeAllObjects();
+        for (const auto& [key, value] : in.collisionLogs[i])
+            logs[i]->setObject(value.data(), key);
+    }
     if (g_snapCollideObj) {
         p->m_objectSnappedTo = in.objectSnappedTo;
         p->m_collidedObject = in.collidedObject;
@@ -618,6 +711,8 @@ inline void restoreTouchOne(PlayerObject* p, const Touch& in) {
 
 inline void captureTouch(PlayerObject* p, Touch& out, GJBaseGameLayer* l = nullptr) {
     if (!p) return;
+    if (l) out.queuedButtons = l->m_queuedButtons;
+    captureCollisionEnvironment(l, out);
     captureTouchOne(p, out);
     out.second.reset();
     if (auto* p2 = partner(p, l)) {
@@ -628,6 +723,7 @@ inline void captureTouch(PlayerObject* p, Touch& out, GJBaseGameLayer* l = nullp
 
 inline void restoreTouch(PlayerObject* p, const Touch& in, GJBaseGameLayer* l = nullptr) {
     if (!p) return;
+    if (l) l->m_queuedButtons = in.queuedButtons;
     restoreTouchOne(p, in);
     if (auto* p2 = partner(p, l); p2 && in.second) restoreTouchOne(p2, *in.second);
 }
@@ -906,16 +1002,24 @@ inline bool g_snapEMActive = false;
 struct EMSnap {
     gd::vector<PulseEffectAction> pulses;
     std::shared_ptr<EffectManagerState> full;   // cfg secsnapem only
+    decltype(std::declval<GJEffectManager>().m_unkMap460) disabledGroups;
 };
+using EMState = EMSnap;
+inline size_t g_emCommandsMax = 0, g_emCompletedMax = 0;
 
+// Use GD's native state inventory, with group membership kept for pre-restore toggles.
 inline void captureEM(GJBaseGameLayer* l, EMSnap& out) {
     auto* em = l ? l->m_effectManager : nullptr;
     if (!em) {
         out.pulses.clear();
         out.full.reset();
+        out.disabledGroups.clear();
         return;
     }
     out.pulses = em->m_pulseEffectVector;
+    out.disabledGroups = em->m_unkMap460;
+    g_emCommandsMax = std::max(g_emCommandsMax, em->m_unkVector560.size());
+    g_emCompletedMax = std::max(g_emCompletedMax, em->m_unkMap578.size());
     if (g_snapEMActive) {
         out.full = std::make_shared<EffectManagerState>();   // fresh: saveToState may append
         em->saveToState(*out.full);
@@ -924,11 +1028,26 @@ inline void captureEM(GJBaseGameLayer* l, EMSnap& out) {
     }
 }
 
+// Toggle actual members before restoring their saved geometry and counters.
+inline void restoreGroups(GJBaseGameLayer* l, const EMSnap& in) {
+    if (!l || !l->m_effectManager || !g_snapEMActive) return;
+    const auto& live = l->m_effectManager->m_unkMap460;
+    std::vector<std::pair<int, bool>> changes;
+    for (int group : live)
+        if (in.disabledGroups.find(group) == in.disabledGroups.end())
+            changes.emplace_back(group, true);
+    for (int group : in.disabledGroups)
+        if (live.find(group) == live.end()) changes.emplace_back(group, false);
+    std::sort(changes.begin(), changes.end());
+    for (const auto& [group, enabled] : changes) l->toggleGroup(group, enabled);
+}
+
 // A node is restored once per branch and again by the cross-check, so the state is loaded from a copy
 // (whether loadFromState takes the containers out of what it is given has not been looked at).
 inline void restoreEM(GJBaseGameLayer* l, const EMSnap& in) {
     auto* em = l ? l->m_effectManager : nullptr;
     if (!em) return;
+    restoreGroups(l, in);
     if (g_snapEMActive && in.full) {
         EffectManagerState copy = *in.full;
         em->loadFromState(copy);

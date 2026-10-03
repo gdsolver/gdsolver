@@ -35,6 +35,8 @@ inline bool g_dualSeen = false;
 // In dual mode both bodies can die at the same time; latch so one run's death
 // is not booked twice
 inline bool g_deathBooked = false;
+inline UnbookedP2Death g_unbookedP2Death;
+inline int g_deathMissLogs = 0;   // bounded before/after diagnostics for unbooked kill calls
 // Coins (ID142=secret/1329=user). Pickup detection is our own: a coordinate
 // collision with the player centre is tested every tick and the pickup tick is
 // recorded. Does not depend on GD's coin state at all

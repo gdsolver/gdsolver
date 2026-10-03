@@ -32,6 +32,32 @@
 
 namespace dpbridge {
 
+// Only the solver worker owns this scope; the game's main thread uses its ordinary file reader.
+void beginInputJob(unsigned long long session, const std::string& csv) {
+    dp::g_inputFiles.begin(session, csv);
+}
+
+// Release pins before another replay can rewrite the recording files.
+void endInputJob() {
+    dp::g_loadPrinted = nullptr;   // a failed load may have unwound its output buffer
+    dp::g_ladderLevel = dp::LadderLevelCache{};
+    dp::g_inputFiles.end();
+}
+
+// Both the signature and the core's group parser read this same owned buffer.
+InputFileInfo inputFileInfo(const std::string& path, bool immutable) {
+    const auto data = dp::g_inputFiles.get(path, immutable);
+    return {dp::inputSignature(data), data->revision};
+}
+
+// Level identities are also based on bytes and are scoped to this cold lineage.
+unsigned long long inputLevelRevision() { return dp::g_inputFiles.levelRevision; }
+
+// Counts make repeated preparation savings observable without a full profiler.
+InputJobStats inputJobStats() {
+    return {dp::g_inputFiles.reads, dp::g_inputFiles.hits, dp::g_inputFiles.levelHits};
+}
+
 LevelStats statsFromCsv(const std::string& csv) {
     std::istringstream in(csv);
     dp::Level L = dp::loadLevelFrom(in);

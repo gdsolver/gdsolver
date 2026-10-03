@@ -156,10 +156,10 @@ inline double gdEase(int kind, double rate, double u) {
         //
         // ExpIn: GD subtracts 0.001 and therefore stops at 0.999 -- one tenth
         // of a percent SHORT of the offset it was given, forever. The model
-        // reached 1.0, i.e. it overshot. cocos has no u==0 guard either (it
-        // returns -0.0000234 there), so the guard goes too: match the binary,
+        // reached 1.0, i.e. it overshot. GD 2.2081 getEasedValue (0x68b70)
+        // explicitly returns zero at u==0 before evaluating the exponential,
         // not the tidier curve.
-        case 11: return std::pow(2.0, 10.0 * (u - 1.0)) - 0.001;
+        case 11: return u == 0.0 ? 0.0 : std::pow(2.0, 10.0 * (u - 1.0)) - 0.001;
         // ExpOut: GD special-cases t==1 to land exactly. Without it the curve
         // stops at 1 - 2^-10 = 0.9990234, 0.0977% short. Six moves in lv22 use
         // this, the largest 51 px, so the model was parking them ~0.05 px low.
@@ -2270,5 +2270,3 @@ struct Dynamics {
 };
 
 }  // namespace dp
-
-

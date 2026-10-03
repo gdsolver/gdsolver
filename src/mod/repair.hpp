@@ -38,6 +38,9 @@
 //   * lookahead DOUBLING. This loop runs the inverse -- the whole level, shortened to
 //     kHorizonShort under stall -- which covers the same ground from the other end.
 #include "mod/session.hpp"
+#include "solver/repair_progress.hpp"
+#include "solver/failed_plan.hpp"
+#include "solver/attempt_end.hpp"
 
 namespace p1 {
 
@@ -255,9 +258,8 @@ inline void slopeTrace(GJBaseGameLayer* l, long long t) {
     writeResult(b);
 }
 
-// Called at the end of every physics tick while an in-process solve session is open. Kept off
-// the dump's `noTrace` switch on purpose: this is not a diagnostic, it is what the next
-// iteration re-anchors on.
+// Called at the post-input, pre-physics command boundary, labelled S(input tick + 1).
+// Kept off `noTrace`: this is the state the next repair iteration re-anchors on.
 inline void record(GJBaseGameLayer* l, long long t) {
     if (!l || !l->m_player1 || t < 0) return;
     if (t > 400000) return;    // a runaway attempt must not eat memory instead of ending
@@ -753,7 +755,7 @@ struct CkObs {
     bool compared = false, same = false;
 };
 inline CkObs g_ckObs;
-inline size_t g_ckObsSkipped = 0;   // checkpoints passed unflown after the first death
+inline size_t g_ckObsSkipped = 0;   // checkpoints passed without a flight
 // Worker thread only: the recorder is running on a checkpoint death, not on the loop's own. Keeps
 // the loop's per-iteration side effects (the kill-only veto credit) out of it.
 inline bool g_ckInner = false;
@@ -780,6 +782,7 @@ inline int g_followSolved = 0;            // regressions followed on a solved br
 inline long long g_followPeak = -1;
 inline int g_followForced = 0;            // ...and on the forced (portal) route -- see the grace
 inline long long g_lastDeath = -1;
+inline bool g_lastDeathNoCollision = false;   // timeouts and deferred resets are not p1 collisions
 inline float g_lastDeathX = 0.f;      // ...and where (the void-attempt repeat scoring)
 // cfg coinroute: the attempt was ENDED at a coin GD had not credited (hooks_gamelayer.cpp), not
 // killed by the level. Set just before that destroyPlayer, consumed by onDeath. Such a death
@@ -1059,6 +1062,7 @@ constexpr long long kAutoCreep = 30;
 inline float g_bestDeathX = 0.f;         // where the deepest death was
 inline long long g_autoWall = -1;        // the deepest death the counts below began at
 inline int g_autoWallRounds = 0;         // rounds since then (the dpsecstall signal)
+inline solver::RepairProgress g_autoProgress;
 inline long long g_autoHead = -1;        // earliest real fixup recorded for a death at the wall
 inline int g_autoNoRec = 0;              // deaths at the wall in a row the recorder wrote nothing for
 inline int g_autoRecNow = 0;             // real records in the recorder run in progress
@@ -1163,16 +1167,17 @@ inline void autoRungDone(long long headTick, long long steps, bool onSnap, bool 
     g_autoLastFound = found;
     g_autoLastCapBound = capBound;
     g_autoRoundWork = 0.0;
-    // The rent was spent on this rung. If the wall still holds, a further try has to be earned
-    // again -- by rounds or by work -- rather than following at once on the old balance.
+    // A successful splice earns a new handoff through repairs. A failed entry is retried directly,
+    // without replaying the unchanged deepest plan or charging another ordinary repair round.
     g_autoWallWork = 0.0;
     g_autoWallRounds = 0;
+    if (found) g_autoProgress.reset();
 }
 
 // A rung whose prefix did not reach its head (see g_secRungPrefixFails): counted once per attempt,
 // and after kSecRungPrefixTries the rung is given up the way a search that found nothing is -- the
 // cfg the handoff overwrote goes back, the deepest plan it installed stays the loop's plan, and the
-// loop runs again. The reset that follows drops practice mode and checkpoints (g_forceCleanStart).
+// next frame tries an earlier head. Its reset drops practice mode and checkpoints (g_forceCleanStart).
 // `died` is the tick the prefix ended at. True when this call gave the rung up.
 inline bool secRungPrefixFailed(long long died, float x, const char* how) {
     if (!g_secRung || !secsolve::g_on || g_ckpt) return false;
@@ -1186,7 +1191,9 @@ inline bool secRungPrefixFailed(long long died, float x, const char* how) {
     writeResult(b);
     if (g_secRungPrefixFails < kSecRungPrefixTries) return false;
     const int head = g_cfg.checkpointAt;
+    const bool retryAuto = g_secRungAuto;
     g_secRung = false;
+    g_secRungAuto = false;
     if (g_secState) {   // cfg dpsecstate: the size is the rung's, not the next one's
         secsolve::g_forceP1Size = -1;
         secsolve::g_keepP1Size = -1;
@@ -1207,13 +1214,16 @@ inline bool secRungPrefixFailed(long long died, float x, const char* how) {
     g_headHeld = 0;
     g_practiceOn = false;
     g_stop = false;                 // the loop may spawn solves again
-    g_paused = false;
+    g_paused = retryAuto;           // hold the failed world until poll chooses the next head
+    g_secRetryPending = retryAuto;
     g_forceCleanStart = true;       // drop practice mode and checkpoints at the next reset
     g_hudPhase = "secrung: abandoned - the prefix does not reach the head";
     snprintf(b, sizeof(b), "secrung: abandoned - the prefix did not reach the head t=%d in %d tries; "
-             "the loop carries on from the deepest plan", head, kSecRungPrefixTries);
+             "%s", head, kSecRungPrefixTries,
+             retryAuto ? "an earlier window will be tried at the frame boundary"
+                       : "the loop carries on from the deepest plan");
     writeResult(b);
-    secRenderRelease();
+    if (!retryAuto) secRenderRelease();
     return true;
 }
 
@@ -2190,10 +2200,10 @@ inline void addWorldArgs(std::vector<std::string>& a) {
 // same fileSig the call's `input sig` line carries), so identical contents are kept once
 // and any copy can be checked against the call that read it. Returns the copy's name
 // relative to DATA_DIR, or "" when there is nothing to copy.
-inline std::string snapFile(const std::string& path) {
+inline std::string snapFile(const std::string& path, const std::string& knownSig = "") {
     std::error_code ec;
     if (path.empty() || !std::filesystem::exists(path, ec)) return "";
-    std::string sig = fileSig(path);
+    std::string sig = knownSig.empty() ? fileSig(path) : knownSig;
     for (char& c : sig) if (c == '/') c = '_';
     const std::filesystem::path src(path);
     const std::string name = "snaps/" + src.stem().string() + "_" + sig + src.extension().string();
@@ -2218,6 +2228,46 @@ inline bool isFileArg(const std::string& s) {
     for (const char* f : kFileArgs)
         if (s == f) return true;
     return false;
+}
+
+// The job writes replay plans and fixups; all other listed inputs are published between jobs.
+inline bool immutableInput(const std::string& flag) {
+    return isFileArg(flag) && flag != "--fixups" && flag != "--replay";
+}
+
+inline solver::FailedPlans g_failedPlans;
+inline solver::PlanContext g_candidateContext;
+inline solver::PlanEdges g_candidateEdges;
+inline bool g_repeatRejected = false;
+
+// Record the complete click sequence, including the verified prefix and an empty plan.
+inline solver::PlanEdges planEdges(const std::vector<InputCmd>& plan) {
+    solver::PlanEdges edges;
+    for (const auto& c : plan) edges.emplace_back(c.step, c.down ? 1 : 0);
+    return edges;
+}
+
+// Include live settings not held in Config as well as the caller's complete argv.
+inline std::string planConfig() {
+    return effcfg::modCfg() + " maxplayy=" + num(g_maxPlayYLive)
+           + " coinmargin=" + num(g_coinMarginNow);
+}
+
+// A rejoin trace chooses a route; it is not physics. All model/world files and settings are.
+inline solver::PlanContext planContext(const std::vector<std::string>& args) {
+    solver::PlanContext c;
+    c.level = dpbridge::inputLevelRevision();
+    c.fp = (unsigned)_mm_getcsr() & ~0x3fu;   // control bits, not arithmetic status flags
+    c.config = planConfig();
+    c.args = args;   // includes runtime vetoes, seed payloads and every search policy
+    c.valid = c.level != 0;
+    for (size_t i = 0; i + 1 < args.size(); ++i)
+        if (isFileArg(args[i]) && args[i] != "--replay" && args[i] != "--rejoinwatch") {
+            const auto f = dpbridge::inputFileInfo(args[i + 1], immutableInput(args[i]));
+            c.files.emplace_back(args[i] + "=" + args[i + 1], f.revision);
+            if (!f.revision) c.valid = false;
+        }
+    return c;
 }
 
 // WHICH WORLD THE CALL JUST PLANNED IN. Written after a solve, once per call,
@@ -2370,7 +2420,8 @@ inline void logSolverArgs(const std::vector<std::string>& a) {
     std::string sig = "dpsolve: input sig";
     for (size_t i = 0; i + 1 < a.size(); ++i)
         if (isFileArg(a[i]))
-            sig += " " + a[i].substr(2) + "=" + fileSig(a[i + 1]);
+            sig += " " + a[i].substr(2) + "="
+                   + dpbridge::inputFileInfo(a[i + 1], immutableInput(a[i])).signature;
     writeResult(sig);
     // ...and, under cfg dpsnapshot, the bytes themselves (snapFile), for the same files. The
     // static ones cost one copy per level: a copy is named by its contents and kept once.
@@ -2378,7 +2429,8 @@ inline void logSolverArgs(const std::vector<std::string>& a) {
         std::string snap = "dpsolve: input snap";
         for (size_t i = 0; i + 1 < a.size(); ++i)
             if (isFileArg(a[i])) {
-                const std::string n = snapFile(a[i + 1]);
+                const auto info = dpbridge::inputFileInfo(a[i + 1], immutableInput(a[i]));
+                const std::string n = snapFile(a[i + 1], info.signature);
                 snap += " " + a[i].substr(2) + "=" + (n.empty() ? "-" : n);
             }
         writeResult(snap);
@@ -4199,13 +4251,9 @@ struct AutoWindow {
 // the game itself, so a stretch it cannot cross from an entry is not one the model will plan
 // across from there: it is the loop's last line, and it keeps going back. Linearly past 800
 // ticks, since a window's search grows with its length.
-constexpr long long kAutoFirstBack = 200;
-constexpr long long kAutoDoubleUpTo = 800;   // doubling up to here, then this much more per try
+// Keep the window progression in the game-independent repair policy for boundary tests.
 inline long long autoBack(int level) {
-    long long back = kAutoFirstBack;
-    for (int i = 0; i < level; ++i)
-        back = back < kAutoDoubleUpTo ? back * 2 : back + kAutoDoubleUpTo;
-    return back;
+    return solver::RepairBacktrack::back(level);
 }
 inline bool autoWindow(AutoWindow& w, int level) {
     const long long wall = rungWall();
@@ -4290,6 +4338,13 @@ inline int autoLevel() {
     if (!sameWall) return 0;
     if (autoCapRetry()) return g_autoTries - 1;
     return (g_autoLastT0 >= 0 && g_autoLastT0 <= 1) ? -1 : g_autoTries;
+}
+
+// Only an already-started sequence at this wall may outlive the repair budget.
+inline bool autoCanContinue() {
+    const bool sameWall = g_autoTriedWall >= 0 && rungWall() >= g_autoTriedWall
+                          && rungWall() < g_autoTriedWall + kAutoCreep;
+    return sameWall && g_autoTries > 0 && autoLevel() >= 0;
 }
 inline bool autoTried() { return autoLevel() < 0; }
 
@@ -4559,6 +4614,7 @@ inline bool autoFire(const char* why) {
     g_secReqHorizon = w.horizon;
     g_secReqCap = cap;
     g_secReqRung = true;
+    g_secReqAuto = true;
     g_secReqCoin = coinRung ? g_coinWallCoin : -1;
     // cfg dpsecstate: a window under the run's size requirement keeps the size (a rung of kind 3).
     const bool keepReq = g_cfg.dpSecState && !coinRung && stateReqActive() && w.t0 >= g_reqFrom;
@@ -4811,7 +4867,8 @@ inline bool runLadder(long long dt) {
         if (at == rungs.end() || *at != pb) rungs.insert(at, pb);
     }
 
-    std::vector<InputCmd> tail;
+    std::vector<InputCmd> tail, chosenPlan;
+    size_t nPrefix = 0;
     long long chosenT = -1;
     int chosenBackoff = 0;
     bool solvedTail = false;
@@ -5253,6 +5310,27 @@ inline bool runLadder(long long dt) {
             }
         }
         if (!usable) continue;
+        // Test the FULL splice: the same tail on a different prefix is a different question.
+        std::vector<InputCmd> next;
+        for (const auto& c : g_plan) {
+            if (c.step >= t0) break;
+            next.push_back(c);
+        }
+        const size_t prefix = next.size();
+        next.insert(next.end(), cand.begin(), cand.end());
+        const auto context = planContext(a);
+        const auto edges = planEdges(next);
+        const long long failed = g_failedPlans.failedAt(context, edges);
+        if (failed >= 0) {
+            writeResult("dpsolve:   [repeat] identical full plan already died at t="
+                        + std::to_string(failed) + " under unchanged inputs - backing off");
+            g_repeatRejected = true;
+            continue;
+        }
+        chosenPlan = std::move(next);
+        nPrefix = prefix;
+        g_candidateContext = context;
+        g_candidateEdges = edges;
         tail = std::move(cand);
         chosenT = t0;
         chosenBackoff = bo;
@@ -5306,13 +5384,7 @@ inline bool runLadder(long long dt) {
     // the driver did) breaks a tail that was solved on the assumption the button is down, and
     // the fixed position it used was one tick early for every mode with input latency 1. The
     // tail emits its own release at whatever tick its mode calls for.
-    std::vector<InputCmd> next;
-    for (const InputCmd& c : g_plan) {
-        if (c.step >= chosenT) break;
-        next.push_back(c);
-    }
-    const size_t nPrefix = next.size();
-    next.insert(next.end(), tail.begin(), tail.end());
+    std::vector<InputCmd> next = std::move(chosenPlan);
     g_plan.swap(next);
     g_curBackoff = chosenBackoff;
     g_lastTailSolved = solvedTail;
@@ -5410,7 +5482,15 @@ inline void spawn(int kind, long long arg, const char* phase) {
     const int gen = g_generation.load();   // this session's generation, read on the main thread
     std::thread([kind, arg, gen]() {
         bool ok = false;
+        g_candidateContext = solver::PlanContext{};
+        g_candidateEdges.clear();
+        g_repeatRejected = false;
         try {
+            dpbridge::beginInputJob((unsigned long long)gen, g_csv);
+            struct InputJob {
+                // Even an exception must release the job's immutable-file pins.
+                ~InputJob() { dpbridge::endInputJob(); }
+            } inputJob;
             if (kind == JobFirstSolve) {
                 // A refuted checkpoint (cfg `dpcheck`) cancels this search; learn from it and
                 // solve again, as a ladder rung does. The argv is rebuilt each time: the first
@@ -5429,7 +5509,10 @@ inline void spawn(int kind, long long arg, const char* phase) {
                                        + workDpState() * (double)dpbridge::outcome().workStates;
                     logTrigWindow("head");
                     adoptCoinGates();
-                    if (dpbridge::outcome().verdict != dpbridge::OutcomeCancelled) break;
+                    if (dpbridge::outcome().verdict != dpbridge::OutcomeCancelled) {
+                        g_candidateContext = planContext(a0);
+                        break;
+                    }
                     // cfg dpcheckfirst: the flight that stopped this solve IS the first plan.
                     if (g_cfg.dpCheckFirst) {
                         CkDeath d;
@@ -5473,6 +5556,7 @@ inline void spawn(int kind, long long arg, const char* phase) {
                     loadInputsFile(g_planPath, g_plan);
                     std::error_code fe;
                     ok = std::filesystem::exists(g_planPath, fe);
+                    if (ok) g_candidateEdges = planEdges(g_plan);
                 } else {
                     ok = fromFlight;
                 }
@@ -5529,7 +5613,10 @@ inline void spawn(int kind, long long arg, const char* phase) {
                 // (see the g_lastDeathCoinMiss gate in fixupPass).
                 // The PHYSICAL death: under cfg coinmisspost a death can be ranked at a coin it
                 // passed (g_lastDeath), but what GD and the model disagree about is where it died.
-                recordFixups(g_lastDeathPhys >= 0 ? g_lastDeathPhys : g_lastDeath);
+                if (!g_lastDeathNoCollision)
+                    recordFixups(g_lastDeathPhys >= 0 ? g_lastDeathPhys : g_lastDeath);
+                else
+                    writeResult("dpsolve:   attempt end without collision evidence - no synthetic collision fixups recorded");
                 // ...and what it learns there reopens the ladder only when the death IS where the
                 // ladder climbs from. A death cfg coinmisspost ranked at a missed coin was learnt
                 // from past that coin, which says nothing new about the anchors before it -- and
@@ -5583,6 +5670,10 @@ inline void spawn(int kind, long long arg, const char* phase) {
         } catch (...) {
             ok = false;    // never let an exception cross back into the game's frame
         }
+        const auto cache = dpbridge::inputJobStats();
+        writeResult("dpsolve:   [inputcache] reads=" + std::to_string(cache.reads)
+                    + " hits=" + std::to_string(cache.hits)
+                    + " levelhits=" + std::to_string(cache.levelHits));
         g_haveNewPlan = ok;
         g_resultGeneration = gen;   // set before g_finished, same ordering convention as g_rc
         g_finished = true;
@@ -5980,8 +6071,15 @@ inline void start(GJBaseGameLayer* l) {
     g_secPin = -1;
     g_secPinWall = -1;
     g_secRung = false;
+    g_secRungAuto = false;
+    g_secRetryPending = false;
     g_autoWall = -1;
     g_autoWallRounds = 0;
+    g_autoProgress.reset();
+    g_failedPlans.clear();
+    g_candidateContext = solver::PlanContext{};
+    g_candidateEdges.clear();
+    g_repeatRejected = false;
     g_autoWallWork = 0.0;
     g_autoRoundWork = 0.0;
     g_secEpisodeWork = 0.0;
@@ -6012,6 +6110,7 @@ inline void start(GJBaseGameLayer* l) {
     g_reqFrom = -1;
     g_reqUntil = -1;
     g_lastDeath = -1;
+    g_lastDeathNoCollision = false;
     g_coinMissPending = false;
     g_lastDeathCoinMiss = false;
     g_coinMissPostPending = false;
@@ -6235,6 +6334,15 @@ inline void giveUp(const char* reason, const char* sessionWhy) {
     // over either way and nothing is being driven.
     g_paused = true;
     endSession(sessionWhy);
+}
+
+// The normal repair budget never restarts; a final backtrack only drains its existing windows.
+inline void stopIterationBudget() {
+    writeResult("dpsolve: iteration budget exhausted (" + std::to_string(g_cfg.dpMaxIters)
+                + ") - no eligible backtrack window, stopping");
+    g_stop = true;
+    g_hudPhase = "gave up: out of iterations";
+    giveUp("it ran out of repair rounds", "dpsolve_budget");
 }
 
 // The replay just died. Decide which plan the next iteration starts from, then re-solve.
@@ -6469,13 +6577,20 @@ inline void ckTick(long long t) {
 
 // A death while a job is out. Only a flight's death means anything; everything else is ignored,
 // as it always was.
-inline void ckOnDeath(long long dt, float deathX) {
+inline void ckOnDeath(long long dt, float deathX, bool noCollision = false) {
     if (!g_cfg.dpCheck || !g_ckFlying) return;
     g_ckFlying = false;
     g_paused = true;
     char b[256];
     if (dpbridge::checkCall() != g_ckCall) {
         writeResult("dpsolve:   [check] died on a checkpoint whose call has returned - ignored");
+        return;
+    }
+    if (noCollision) {
+        ++g_ckObsSkipped;
+        writeResult("dpsolve:   [check] attempt end without collision evidence - checkpoint skipped, not a collision refutation");
+        if (!dpbridge::passCheckpoint(g_ckCall, g_ckIndex))
+            writeResult("dpsolve:   [check] a skipped checkpoint was refused by the search");
         return;
     }
     bool deaf = false;
@@ -7028,7 +7143,10 @@ inline void fileCoinMissEarly(long long dt) {
     }
 }
 
-inline void onDeath(long long dt, float deathX) {
+inline void onDeath(long long dt, float deathX,
+                    solver::AttemptEndKind kind = solver::AttemptEndKind::Collision) {
+    const auto endPolicy = solver::attemptEndPolicy(kind);
+    const bool noCollision = !endPolicy.learnCollision;
     // Consumed first, whichever way this returns, so a coin miss cannot leak into a later death.
     const bool coinMissPost = g_coinMissPostPending;
     g_coinMissPostPending = false;
@@ -7058,7 +7176,7 @@ inline void onDeath(long long dt, float deathX) {
     // still. The one that can happen is a checkpoint flight's (cfg `dpcheck`), and ckOnDeath
     // decides what that one means.
     if (g_running.load()) {
-        ckOnDeath(dt, deathX);
+        ckOnDeath(dt, deathX, noCollision);
         return;
     }
     // The plan that cleared a slice, dying on the level itself: the slice decides whether the
@@ -7160,7 +7278,7 @@ inline void onDeath(long long dt, float deathX) {
             deathX = offX;
         }
     }
-    bool wasWedged = false;
+    bool wasWedged = !endPolicy.creditProgress;
     // ...and a WEDGED run is credited where it stopped moving, for the same reason. The stall
     // guard (hooks_gamelayer) ends an attempt whose player has not moved for 30,000 ticks, so
     // the death: line arrives with a tick inflated by the whole idle stretch -- and the loop
@@ -7190,7 +7308,9 @@ inline void onDeath(long long dt, float deathX) {
             while (k > 1) {
                 const AnchorRow* rk = anchors::row(k - 1);
                 if (!rk || std::fabs(rk->x - rd->x) > 0.5f
-                    || std::fabs(rk->y - rd->y) > 0.5f)
+                    || std::fabs(rk->y - rd->y) > 0.5f
+                    || rk->dual != rd->dual
+                    || (rd->dual && std::fabs(rk->y2 - rd->y2) > 0.5f))
                     break;
                 --k;
             }
@@ -7207,11 +7327,8 @@ inline void onDeath(long long dt, float deathX) {
         }
         anchors::g_src = savedSrc;
     }
-    // An attempt that had to be forced over (the moving zombie: alive, advancing nowhere
-    // meaningful, never completing -- the overlong guard ends it at 40k ticks) is
-    // wedge-class for every purpose: never ranks, counts toward the veto, re-arms the
-    // portal hint. No legitimate attempt exceeds ~22k ticks on these levels.
-    if (dt > 30000) wasWedged = true;
+    // Only a guard-forced end is wedge-class; a reset-confirmed p2 failure may credit progress.
+    // Long custom levels can also have genuine deaths beyond 30k ticks.
     // The HUD's iteration block is fed by the external driver through hud.txt. There is no
     // driver here, so the loop fills the same fields itself -- otherwise the panel's Solve mode
     // sits on "iter 0 starting" for the whole run
@@ -7231,6 +7348,12 @@ inline void onDeath(long long dt, float deathX) {
     // Taken here rather than inside logFingerprint because that one returns early
     // when fingerprinting is off, and this is not a diagnostic.
     g_flownPlan = g_plan;
+    // Timeout, wedge and coin cuts are not proof that these input edges collide.
+    if (!noCollision && !wasWedged && !voidAttempt && !coinMiss && !postScored
+        && g_candidateContext.config == planConfig()
+        && g_candidateEdges == planEdges(g_flownPlan))
+        g_failedPlans.remember(g_candidateContext, g_candidateEdges, physDt);
+    g_candidateContext.valid = false;
     logFingerprint(dt, deathX);
     // cfg dprejoinwatch: keep the model's trace of the plan that just died -- the
     // newer of the first solve's and the last tail's -- before the next search overwrites it.
@@ -7345,14 +7468,9 @@ inline void onDeath(long long dt, float deathX) {
             writeResult(mb);
         }
     }
-    if (g_iter > g_cfg.dpMaxIters) {
-        writeResult("dpsolve: iteration budget exhausted (" + std::to_string(g_cfg.dpMaxIters)
-                    + ") - stopping");
-        g_stop = true;
-        g_hudPhase = "gave up: out of iterations";
-        giveUp("it ran out of repair rounds", "dpsolve_budget");
-        return;
-    }
+    // Rank this last verification before deciding whether its existing backtrack has more heads.
+    // In particular, a splice that reached a new wall must not open another sequence over budget.
+    const bool outOfIterations = g_iter > g_cfg.dpMaxIters;
     // cfg coinoverdepth: this attempt has every coin the deepest plan had and took, as GD credited
     // it, a coin that plan never had (the one coinmisspost ranked it at). Progress whatever the
     // tick: the deepest plan's rank is a tick on its own route and this death one on another.
@@ -7382,7 +7500,8 @@ inline void onDeath(long long dt, float deathX) {
     // cfg dptopstop: the same stop, reached by the search sitting at its largest capacity without
     // getting deeper. Only going deeper takes the ladder back down (the first branch below), so a
     // round that is about to do that is let through.
-    if (g_cfg.dpTopStop > 0 && g_capTier == (int)(sizeof(kCapTiers) / sizeof(kCapTiers[0]))
+    if (!outOfIterations && g_cfg.dpTopStop > 0
+        && g_capTier == (int)(sizeof(kCapTiers) / sizeof(kCapTiers[0]))
         && !deeper && g_iter - g_topTierIter >= g_cfg.dpTopStop) {
         // HEURISTIC-STALLED, NOT UNSOLVABLE: this is an empirical cut of the search, not a proof
         // that the level has no solution from here, so it says so in its own words -- a verdict
@@ -7608,6 +7727,7 @@ inline void onDeath(long long dt, float deathX) {
         }
     }
     g_lastDeath = dt;
+    g_lastDeathNoCollision = noCollision;
     g_lastDeathX = deathX;
     // Only a ranked death differs; every other keeps whatever dt became above (the off-board and
     // wedge credits move it too, and the recorder has always read the moved one).
@@ -7654,6 +7774,12 @@ inline void onDeath(long long dt, float deathX) {
             g_coinWallPlan.clear();
         }
     }
+    if (outOfIterations) {
+        if (autoCanContinue()
+            && autoFire("finishing the existing backtrack after the repair budget")) return;
+        stopIterationBudget();
+        return;
+    }
     // cfg dpsecauto: point fixes are not getting the deepest wall across -- either the recorder
     // cannot express what is wrong there (it wrote nothing, death after death), or it can and the
     // loop is still not moving. Either way the wall goes to a section solve instead of another
@@ -7666,11 +7792,18 @@ inline void onDeath(long long dt, float deathX) {
         // The round that FOUND the wall is not rent paid at it -- it got there.
         if (!autoSync()) g_autoWallWork += roundWork;
         ++g_autoWallRounds;   // a round that did not move the wall (autoSync restarts the count)
+        // Keep this streak across autoSync's small cumulative wall shifts. Point fixes that
+        // advance a few ticks each round must not postpone the section search indefinitely.
+        g_autoProgress.observe(rungWall(), (!wasWedged && !voidAttempt && !postScored)
+                                           ? dt : -1);
         char why[128] = "";
         if (g_cfg.dpSecNoRec > 0 && g_autoNoRec >= g_cfg.dpSecNoRec)
             snprintf(why, sizeof(why), "the recorder wrote nothing for %d deaths", g_autoNoRec);
         else if (g_cfg.dpSecStall > 0 && g_autoWallRounds >= g_cfg.dpSecStall)
             snprintf(why, sizeof(why), "%d rounds", g_autoWallRounds);
+        else if (g_cfg.dpSecRent && g_autoProgress.shouldSearch())
+            snprintf(why, sizeof(why), "%d consecutive rounds advancing less than %lld ticks",
+                     g_autoProgress.rounds, solver::RepairProgress::kMinAdvance);
         else if (g_cfg.dpSecRent && g_autoWallWork >= autoRungEstimate())
             snprintf(why, sizeof(why), "%.1f s-equiv of work spent (a rung is ~%.1f, %d measured)",
                      g_autoWallWork / 1e6, autoRungEstimate() / 1e6, g_autoRungN);
@@ -8101,6 +8234,28 @@ inline void poll() {
     // Waits for an idle boundary -- a solver worker cannot be cancelled (spawn() detaches),
     // so the handoff never runs while one is out.
     if (g_secReqPending && (!g_started || g_sessionOver)) g_secReqPending = false;
+    if (g_secRetryPending && (!g_started || g_sessionOver || !g_cfg.dpSolve || g_dpShowSolution))
+        g_secRetryPending = false;
+    // A failed section has no new plan to verify. Queue its next earlier head directly, while
+    // retaining the render hold until the next handoff has reset the search's dirty world.
+    // The coroutine has finished and released its checkpoints before poll reaches this block.
+    if (g_secRetryPending && !g_running.load() && !g_deepActive) {
+        g_secRetryPending = false;
+        g_stallResetPending = false;  // this decision performs the clean reset itself
+        if (!g_secReqPending
+            && !(autoCanContinue()
+                 && autoFire("the previous section failed - trying an earlier entry"))) {
+            writeResult(g_iter >= g_cfg.dpMaxIters
+                            ? "secrung: no earlier window remains and the repair budget is spent"
+                            : "secrung: no earlier window remains - returning to ordinary repairs");
+            g_paused = false;
+            if (auto* pl = PlayLayer::get()) pl->resetLevel();
+            secRenderRelease();
+            // At the budget there is no reason to fly the same failed deepest plan once more.
+            if (g_iter >= g_cfg.dpMaxIters) stopIterationBudget();
+            return;
+        }
+    }
     // Stop the loop from starting anything new, FIRST, and take over once the solver thread in
     // flight has finished. Waiting for an idle thread without this never fires: one frame of a
     // fast loop installs a plan, replays the whole attempt, books the death and spawns the next
@@ -8142,7 +8297,9 @@ inline void poll() {
         // A RUNG puts all of this back when the search is done (secsolve's end in
         // hooks_gamelayer), so what it overwrites is written down first.
         g_secRung = g_secReqRung;
+        g_secRungAuto = g_secReqAuto;
         g_secReqRung = false;
+        g_secReqAuto = false;
         // The wall this rung is being fired at: the deepest death the loop has reached.
         // The pin the resume installs has to clear it (see g_secPinWall).
         g_secPinWall = coinRung ? g_coinWall : g_bestDeath;
@@ -8296,6 +8453,9 @@ inline void poll() {
     if (!g_haveNewPlan) {
         if (hadFlight) g_cfg.inputs = g_plan;   // never leave a flight installed as the plan
         g_paused = false;      // never leave the game frozen because the solve failed
+        // A repeated, game-refuted answer needs another strategy, not another identical flight.
+        if (g_repeatRejected && g_cfg.dpSecAuto && !g_autoPinOut && !g_autoRecordThenRung
+            && autoFire("the ladder exhausted after rejecting game-refuted repeats")) return;
         // cfg dpsecauto: the ladder stopped at a pin that held (runLadder) -- the section solve
         // is the next rung. If none can be queued, the pin goes as it always did.
         if (g_autoPinOut) {
@@ -8330,6 +8490,7 @@ inline void poll() {
     std::sort(g_plan.begin(), g_plan.end(),
               [](const InputCmd& a, const InputCmd& c) { return a.step < c.step; });
     g_cfg.inputs = g_plan;
+    if (g_candidateContext.valid) g_candidateEdges = planEdges(g_plan);
     if (g_cfg.dpCheck && g_cfg.dpCheckObs) ckObsCompare(sec);
     g_paused = false;
     // The screen stays off here. These replays are the loop TESTING a candidate, not showing a

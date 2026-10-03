@@ -498,7 +498,7 @@ inline void resetInvocationState() {
     for (int i = 0; i < 2; ++i) {
         g_refKidFate[i] = -1;
         g_refKidWhy[i] = "";
-        g_refKidKey[i] = 0;
+        g_refKidKey[i] = {};
         g_refKidState[i] = State{};
     }
 }

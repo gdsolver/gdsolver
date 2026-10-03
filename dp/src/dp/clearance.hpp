@@ -1,5 +1,6 @@
 #pragma once
 #include "dp/step.hpp"
+#include "dp/search_key.hpp"
 
 // ---------------------------------------------------------------------------
 // CLEARANCE PROBE -- instrumentation only, off unless --clearprobe.
@@ -192,7 +193,7 @@ inline bool roomierRoute(uint16_t cand, uint16_t held) { return cand < held; }
 
 // One live child, as the probe sees it.
 struct ClearSample {
-    uint64_t key;
+    SearchKey key;
     float vy;
     float solid;
     float haz;

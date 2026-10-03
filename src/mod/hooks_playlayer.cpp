@@ -74,6 +74,8 @@ class $modify(PlayLayer) {
 #endif
     }
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        // A new layer can reuse the outgoing layer's address; its object cache cannot.
+        grouptrace::reset();
         // A session is configured here for the level the play menu's Start was pressed for, in
         // the mode it chose. Level selection is the game's own UI as is (custom levels included).
         // A session in progress (g_started && !g_sessionOver) (including autorun.cfg
@@ -145,8 +147,9 @@ class $modify(PlayLayer) {
         return PlayLayer::init(level, useReplay, dontCreateObjects);
     }
 
-    void onQuit() {
-        // Exiting from the pause menu = session aborted. endSession alone is not enough:
+    // Release session state before either the quit path or a scene exit tears the layer down.
+    void cleanupSessionOnExit() {
+        // Leaving the layer = session aborted. endSession alone is not enough:
         // if bookkeeping leftovers remain, hooks that do not check !g_sessionOver keep
         // running during subsequent normal play and break behaviour. Full reset on exit
         if (g_started) {
@@ -164,7 +167,19 @@ class $modify(PlayLayer) {
         // ours still on screen would follow the player into the menu -- Geode draws them off the
         // director, not the scene -- with nothing left to explain what it refers to.
         notify::clear();
+    }
+
+    // Preserve the explicit quit path's cleanup and then let GD leave the level.
+    void onQuit() {
+        cleanupSessionOnExit();
         PlayLayer::onQuit();
+    }
+
+    // Returning to the editor bypasses onQuit; do not keep pointers into the departing scene.
+    void onExit() override {
+        if (this == PlayLayer::get()) cleanupSessionOnExit();
+        if (grouptrace::owns(this)) grouptrace::reset();
+        PlayLayer::onExit();
     }
 
     void resetLevel() {
@@ -178,6 +193,22 @@ class $modify(PlayLayer) {
         // retry logging on every restore, turning a restore that should take 2ms into tens
         // of ms and mixing up the recordings too.
         if (secsolve::g_active) { PlayLayer::resetLevel(); rngFixAfterReset(this); restoreProgress(); return; }
+        // GD can restart after p2 dies while its dual flag is already off (t=7479 on a custom
+        // level). Confirm the failed flight here, BEFORE reset erases its anchors and geometry.
+        const auto missed = solver::g_unbookedP2Death.takeForReset(
+            g_started && !g_sessionOver && g_cfg.dpSolve && !g_dpShowSolution
+                && !g_cfg.noDeath && !secsolve::g_on && !dpsolve::g_stop
+                && !dpsolve::g_running.load() && !dpsolve::g_deepActive,
+            solver::g_deathBooked);
+        if (missed.tick >= 0) {
+            writeResult("attempt_end: GD restarted after an unbooked non-dual p2 death at t="
+                        + std::to_string(missed.tick) + " - handing the failed flight to repairs");
+            // The reset proves failure, not that p1 collided: do not learn a phantom p1 kill.
+            bookAttemptEnd({missed.x, missed.y}, solver::AttemptEndKind::ConfirmedP2Reset,
+                           "unbooked_p2_reset", missed.tick);
+        }
+        // A newly installed plan also fulfils a stall's deferred reset request.
+        g_stallResetPending = false;
         hookdepth::Guard hg(hookdepth::RESET);
         stallwatch::Mark sm(stallwatch::RESET);
         // Early heap-corruption check (cfg `heapcheck=N`). Fired at attempt boundaries so
@@ -363,7 +394,8 @@ class $modify(PlayLayer) {
         else if (!ckptRestore) cpflight::afterHeadReset(this);   // the carry's node prediction, checked
         // The objects' on/off as the reset left them, before the first update (see
         // grouptrace::snapshotInit for why this phase and not the recording's first row).
-        if (!ckptRestore && !cpStart && grouptrace::g_on) grouptrace::snapshotInit();
+        if (!ckptRestore && !cpStart && grouptrace::g_on && grouptrace::owns(this))
+            grouptrace::snapshotInit();
         // resetLevel bumps the LEVEL's attempt counter inline (no call to hook), so put the
         // record back here -- see restoreProgress.
         restoreProgress();
@@ -446,16 +478,7 @@ class $modify(PlayLayer) {
     // reader grabs the current attempt or the previous one. rows=0 means "_last was not
     // updated"
     void rollGroupTrace() {
-        if (!grouptrace::g_on) return;
-        // cfg cpflightprobe: the recordings of the probe and its control stay in grouptrace.txt, where
-        // the control's end compares them; grouptrace_last.txt stays the loop's.
-        if (cpflight::g_probeFlying || cpflight::g_controlFlying) return;
-        // g_tick, not the recording's last row: see roll's `endTick`
-        auto r = grouptrace::roll(g_tick);
-        writeResult("gt_last: attempt=" + std::to_string(g_attempt)
-            + " rows=" + std::to_string(r.rows)
-            + " depth=" + std::to_string(r.depth)
-            + " end=" + std::to_string(g_tick));
+        ::rollGroupTrace();
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
@@ -499,14 +522,16 @@ class $modify(PlayLayer) {
         // The spike names no culprit, so it is counted (g_anticheatCalls, on the
         // session-end `anticheat:` line) and not written. Nothing else changes:
         // the call still goes wherever it went before.
-        const bool anticheat = object && object == m_anticheatSpike;
+        // Native 2.2081 compares object UIDs, not pointer identity (RVA 0x3b39d0).
+        const bool anticheat = object && m_anticheatSpike
+            && object->m_uniqueID == m_anticheatSpike->m_uniqueID;
         if (anticheat) ++solver::g_anticheatCalls;
         if ((g_cfg.hitboxTrace || g_cfg.dpSolve) && g_started && !g_sessionOver
             && player && !anticheat) {
-            char kb[240];
+            char kb[320];
             snprintf(kb, sizeof(kb),
                 "killer: t=%lld who=%s py=%.3f pvy=%.3f px=%.3f obj=%s uid=%d "
-                "id=%d type=%d ox=%.3f oy=%.3f",
+                "id=%d type=%d ox=%.3f oy=%.3f stateTick=%lld phase=%s",
                 (long long)g_tick,
                 player == m_player1 ? "p1" : player == m_player2 ? "p2" : "?",
                 player->getPositionY(), (double)player->m_yVelocity,
@@ -515,7 +540,9 @@ class $modify(PlayLayer) {
                 object ? (int)object->m_objectID : -1,
                 object ? (int)object->m_objectType : -1,
                 object ? object->getPositionX() : 0.f,
-                object ? object->getPositionY() : 0.f);
+                object ? object->getPositionY() : 0.f,
+                solver::attemptStateTick(g_tick),
+                solver::g_commandStateTick >= 0 ? "command" : "physical");
             writeResult(kb);
             // cfg killersite=1: WHERE IN GD THE CALL CAME FROM. `killer:` above
             // names the object, and GD passes null for every rule that is not a
@@ -587,7 +614,7 @@ class $modify(PlayLayer) {
             // is a tick short of the death -- so this is the only place the mark's y and the
             // object that put it there can both be had.
             if (player == m_player1)
-                itermap::latchKiller((long long)g_tick, player->getPositionY(),
+                itermap::latchKiller(solver::attemptStateTick(g_tick), player->getPositionY(),
                                      object ? (int)object->m_objectID : -1,
                                      object ? (int)object->m_uniqueID : -1);
         }
@@ -614,10 +641,16 @@ class $modify(PlayLayer) {
         // apart from t=3,078. So those paths do for the spike what GD does, and nothing more
         // (cfg anticheatpass, on). Not a death either way.
         if (anticheat && g_cfg.antiCheatPass && (secsolve::g_noKill || g_cfg.noDeath)) {
-            if (!(m_player1 && m_player1->m_isLocked) && !m_playerDied) m_damageVerified = true;
+            NoRecordGuard nr(this);
+            PlayLayer::destroyPlayer(player, object);
             return;
         }
         if (secsolve::g_noKill) {
+            if (g_cfg.secDriftWhere && !secsolve::g_died) {
+                secsolve::g_diagDeathCaller = player == m_player1 ? 1 : player == m_player2 ? 2 : 0;
+                secsolve::g_diagKiller = object ? (int)object->m_uniqueID : -1;
+                secsolve::g_diagAnticheat = anticheat;
+            }
             if (player == m_player1 || player == m_player2) secsolve::g_died = true;
             return;
         }
@@ -640,6 +673,11 @@ class $modify(PlayLayer) {
         // population "destroyPlayer was called", not "the player died" -- the
         // defect the killer: line had until 3576515, left behind in the counter.
         bool wasDead = player->m_isDead;
+        const int caller = player == m_player1 ? 1 : player == m_player2 ? 2 : 0;
+        const solver::RunDeathState before{
+            m_player1 && m_player1->m_isDead, m_player2 && m_player2->m_isDead,
+            m_gameState.m_isDualMode};
+        const auto flightPos = m_player1 ? m_player1->getPosition() : player->getPosition();
         // Direct evidence of what killed the player (only while measuring gatetrace).
         // The line is BUILT here, before the original call, because px/py move inside
         // it -- and WRITTEN after it, only for a call that actually put the player in
@@ -685,6 +723,13 @@ class $modify(PlayLayer) {
             NoRecordGuard nr(this);
             PlayLayer::destroyPlayer(player, object);
         }
+        const solver::RunDeathState after{
+            m_player1 && m_player1->m_isDead, m_player2 && m_player2->m_isDead,
+            m_gameState.m_isDualMode};
+        if (g_started && !g_sessionOver && g_cfg.dpSolve && !g_dpShowSolution
+            && !anticheat && !solver::g_deathBooked)
+            solver::g_unbookedP2Death.observe(before, after, caller, solver::attemptStateTick(g_tick),
+                                             flightPos.x, flightPos.y);
         // ...and now the call has said whether it killed anybody.
         if (gateLine && player->m_isDead) writeResult(kb);
         if (siteArmed && !wasDead && player->m_isDead) writeResult(siteBuf);
@@ -697,13 +742,11 @@ class $modify(PlayLayer) {
         // In dual mode a p2 death also ends the run (restricting to p1, sections where only
         // p2 dies never get booked and the run spins idle). The position used is p1's: all
         // recordings are p1-based, and the two dual bodies share the same x (y is mirrored)
-        bool isP1 = (player == m_player1);
-        bool isP2Dual = (player == m_player2 && m_gameState.m_isDualMode);
+        const bool isP1 = caller == 1;
+        const bool isP2Dual = caller == 2 && before.dual;
         // Exclude anti-cheat pseudo-calls: record only on an actual transition into the
         // dead state
-        if (!wasDead && player->m_isDead && (isP1 || isP2Dual)
-            && !solver::g_deathBooked) {
-            solver::g_deathBooked = true;
+        if (solver::deathEndsAttempt(before, after, caller) && !solver::g_deathBooked) {
             auto pos = (isP1 || !m_player1) ? player->getPosition()
                                             : m_player1->getPosition();
             if (isP2Dual) {
@@ -713,38 +756,18 @@ class $modify(PlayLayer) {
                         + std::to_string((long long)g_tick)
                         + " x=" + std::to_string((int)pos.x) + ")");
             }
-            ev("destroyPlayer", pos.x, pos.y);
-            // Corridor clearance sample collection (cfg clearance=1). Accumulate the
-            // "positions that survived" and "distances stopped by a surface" this run showed
-            clearance::observe(solver::g_log, g_tick);
-            if (g_started) {
-                ++g_finishedAttempts;
-                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - g_attemptStart).count();
-                double speed = ms > 0 ? (g_tick / 240.0) / (ms / 1000.0) : 0;
-                // Finalise the recordings BEFORE `death:`: the reader learns the end of the
-                // run from this line and reads dump.csv / grouptrace_last.txt right after
-                rollGroupTrace();
-                flushAll();
-                cpflight::noteEnd(g_tick);   // the flight's work, by kind (cpflight summary)
-                writeResult("death: attempt=" + std::to_string(g_attempt)
-                    + " tick=" + std::to_string(g_tick)
-                    + " x=" + std::to_string(pos.x)
-                    + " wallMs=" + std::to_string(ms)
-                    + " speedX=" + std::to_string(speed));
-                if (g_serveMode) g_serveWait = true;  // stop at the start of the next attempt
-                // A rung's prefix that died before the head it was replaying to (session.hpp
-                // g_secRungPrefixFails). Given up after a second such attempt, and then this death
-                // is the loop's again (onDeath below).
-                if (g_secRung && secsolve::g_on && !g_ckpt && g_cfg.checkpointAt >= 0
-                    && g_tick < g_cfg.checkpointAt)
-                    dpsolve::secRungPrefixFailed(g_tick, pos.x, "died");
-                // Stage C: the in-process loop treats this death as its next question -- where
-                // is the model wrong, and what does GD say the state really was just before.
-                // It freezes the level and re-solves the tail; the repaired plan is installed
-                // at the next frame boundary (dpsolve::poll)
-                if (g_cfg.dpSolve) dpsolve::onDeath(g_tick, pos.x);
-            }
+            bookAttemptEnd(pos, g_stallResetPending ? solver::AttemptEndKind::Forced
+                                                   : solver::AttemptEndKind::Collision, "stall");
+        } else if (g_started && !g_sessionOver && g_cfg.dpSolve && !anticheat
+                   && (caller == 1 || caller == 2) && !solver::g_deathBooked
+                   && solver::g_deathMissLogs < 8) {
+            ++solver::g_deathMissLogs;
+            char db[224];
+            snprintf(db, sizeof(db), "killcheck: t=%lld caller=p%d no alive-to-dead transition "
+                     "p1=%d->%d p2=%d->%d dual=%d->%d; not booked",
+                     (long long)g_tick, caller, before.p1, after.p1,
+                     before.p2, after.p2, before.dual, after.dual);
+            writeResult(db);
         }
     }
 
@@ -999,7 +1022,7 @@ class $modify(PlayLayer) {
                     (double)(goal - cx), (double)cx, (double)goal,
                     this->getCurrentPercent(), (double)g_clearMargin);
                 writeResult(fb);
-                dpsolve::onDeath(g_tick, cx);
+                dpsolve::onDeath(solver::attemptStateTick(g_tick), cx);
                 return;
             }
             // cfg `coinroute`: a clear that left a coin behind is not the answer that was asked
@@ -1017,7 +1040,7 @@ class $modify(PlayLayer) {
                                 + std::to_string(solver::g_coins.size())
                                 + " coins - not an all-coins solution");
                     // cfg coinmisspost: filed at the missed coin instead of at the finish.
-                    long long dT = g_tick;
+                    long long dT = solver::attemptStateTick(g_tick);
                     float dX = cx;
                     dpsolve::fileCoinMissPost(dT, dX);
                     dpsolve::onDeath(dT, dX);

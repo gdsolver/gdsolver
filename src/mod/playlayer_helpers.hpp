@@ -1,6 +1,7 @@
 #pragma once
 // Helpers for the PlayLayer hook (visibility-crash log, checkpoint notes).
 #include "mod/render_trace.hpp"
+#include "solver/attempt_end.hpp"
 
 using namespace p1;
 
@@ -74,6 +75,66 @@ struct NoRecordGuard {
     NoRecordGuard(const NoRecordGuard&) = delete;
     NoRecordGuard& operator=(const NoRecordGuard&) = delete;
 };
+
+// Publish the recording before the outcome line lets readers consume this attempt.
+inline void rollGroupTrace(long long endTick = -1) {
+    if (!grouptrace::g_on) return;
+    if (cpflight::g_probeFlying || cpflight::g_controlFlying) return;
+    const long long tick = endTick >= 0 ? endTick : g_tick;
+    auto r = grouptrace::roll(tick);
+    writeResult("gt_last: attempt=" + std::to_string(g_attempt)
+        + " rows=" + std::to_string(r.rows)
+        + " depth=" + std::to_string(r.depth)
+        + " end=" + std::to_string(tick));
+}
+
+// Commit the attempt once, before any reset, whether GD killed a body or a guard forced it over.
+inline void bookAttemptEnd(const cocos2d::CCPoint& pos,
+                           solver::AttemptEndKind kind = solver::AttemptEndKind::Collision,
+                           const char* reason = "death",
+                           long long endTick = -1) {
+    if (solver::g_deathBooked) return;
+    solver::g_deathBooked = true;
+    solver::g_unbookedP2Death = {};
+    // Explicit endTick is already a state label (including a deferred p2 verdict).
+    const long long tick = endTick >= 0 ? endTick : solver::attemptStateTick(g_tick);
+    ev("destroyPlayer", pos.x, pos.y);
+    clearance::observe(solver::g_log, tick);
+    if (!g_started) return;
+    ++g_finishedAttempts;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - g_attemptStart).count();
+    const double speed = ms > 0 ? (tick / 240.0) / (ms / 1000.0) : 0;
+    rollGroupTrace(tick);
+    flushAll();
+    cpflight::noteEnd(g_tick);
+    writeResult("death: attempt=" + std::to_string(g_attempt)
+        + " tick=" + std::to_string(tick) + " x=" + std::to_string(pos.x)
+        + " counter=" + std::to_string(g_tick) + " phase=state"
+        + " wallMs=" + std::to_string(ms) + " speedX=" + std::to_string(speed)
+        + (kind == solver::AttemptEndKind::Forced ? " forced=1 reason=" + std::string(reason)
+           : kind == solver::AttemptEndKind::ConfirmedP2Reset
+               ? " resetConfirmed=1 collisionEvidence=0 reason=" + std::string(reason) : ""));
+    if (g_serveMode) g_serveWait = true;
+    if (g_secRung && secsolve::g_on && !g_ckpt && g_cfg.checkpointAt >= 0
+        && tick < g_cfg.checkpointAt)
+        dpsolve::secRungPrefixFailed(tick, pos.x,
+            kind == solver::AttemptEndKind::Collision ? "died" : reason);
+    if (g_cfg.dpSolve) dpsolve::onDeath(tick, pos.x, kind);
+}
+
+// A kill call can be refused by GD; a forced end must still reach the repair loop before reset.
+inline void forceAttemptEnd(PlayLayer* layer, const char* reason) {
+    if (!layer || layer != PlayLayer::get() || !layer->m_player1
+        || secsolve::g_active || secsolve::g_noKill || g_cfg.noDeath) return;
+    g_stallResetPending = true;   // classify a synchronous death callback as forced too
+    layer->destroyPlayer(layer->m_player1, layer->m_player1);
+    if (!solver::g_deathBooked && g_started && !g_sessionOver) {
+        writeResult("attempt_end: GD did not book the forced kill; handing "
+                    + std::string(reason) + " to the repair loop before reset");
+        bookAttemptEnd(layer->m_player1->getPosition(), solver::AttemptEndKind::Forced, reason);
+    }
+}
 
 // ---- Attempt boundaries / end conditions ----
 // Common output for observing automatic checkpoint placement (cfg `ckpttrace=1`). Always prints

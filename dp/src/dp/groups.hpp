@@ -1,5 +1,6 @@
 #pragma once
 #include "dp/stairs.hpp"
+#include "dp/input_files.hpp"
 
 namespace dp {
 
@@ -22,22 +23,6 @@ namespace dp {
 // recording wins wherever it reaches (its last tick). Beyond that the bootstrap
 // fills in, and beyond THAT every object holds its last known rect.
 using GroupTimeline = std::unordered_map<int, std::vector<DynSample>>;
-
-// A file's bytes, read in one go. The in-process caches (here, triggers.hpp and cli.hpp) reuse a
-// parse only when the file holds the same bytes as the one it came from, and read the file on every
-// call to find out; read a character at a time (istreambuf_iterator) that read alone was most of a
-// call's preparation on a custom level's 85 MB recording. False when the file cannot be opened.
-inline bool readFileBytes(const std::string& path, std::string& out) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
-    in.seekg(0, std::ios::end);
-    const std::streamoff n = in.tellg();
-    if (n < 0) return false;
-    in.seekg(0, std::ios::beg);
-    out.resize((size_t)n);
-    if (n > 0 && !in.read(&out[0], n)) return false;
-    return true;
-}
 
 // The uid the level loader gives an object's hazard twin (DynSample::env; the base is in
 // object.hpp, where the kill counter reads it).
