@@ -227,8 +227,6 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // taking a bit: gated on the difference, so every key where the two
            // agree -- all of them until a grounded impulse happens under a held
            // button -- stays bit-identical to before.
-           // pressSpent2 is left out for the same reason ringHold2 is: the second
-           // body's ring bookkeeping has never been in this key.
            ^ ((s.pressSpent != s.ringHold)
                   ? ((uint64_t)s.pressSpent * 0x9E3779B97F4A7C15ull) : 0)
            // In a dual, the second half is part of the state: two states that
@@ -527,10 +525,17 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
                || s.mode == 7)
                   ? ((uint64_t)s.held << 1) : 0)
            ^ s.grounded;
-    if (s.dual && s.mode2 == 4) {
-        const bool held2 = (g_twoPlayer && g_p2Held ? p2Action : s.held != 0)
-                           && !(g_waveHoldDead && s.holdDead2);
-        if (held2 != (s.held != 0)) k ^= 0x589965CC75374CC3ull;
+    if (s.dual) {
+        const unsigned press2 = (s.pressSpent2 != s.pressSpent)
+                               | ((s.ringHold2 != s.ringHold) << 1)
+                               | ((s.holdDead2 != s.holdDead) << 2)
+                               | ((g_dualJumpBuf && s.jumpBuf2) << 3);
+        k ^= (uint64_t)press2 * 0xD1342543DE82EF95ull;
+        if (s.mode2 == 4) {
+            const bool held2 = (g_twoPlayer && g_p2Held ? p2Action : s.held != 0)
+                               && !(g_waveHoldDead && s.holdDead2);
+            if (held2 != (s.held != 0)) k ^= 0x589965CC75374CC3ull;
+        }
     }
     // Which gravity portals this state has spent (State::portalLatch). Unlike
     // `trig` this is not partitioned into the group -- a spent portal moves no

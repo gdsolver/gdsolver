@@ -16299,9 +16299,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     c.flip2 = bornUnlinked ? c.flip : (uint8_t)(c.flip ? 0 : 1);
                     c.grounded2 = 0;
                     c.ringHold2 = 0;
-                    // Same "no press behind it" as ringHold2. GD's fresh p2 does inherit
-                    // +0x986 from a press already held at the split (--dualbornpress below).
-                    c.pressSpent2 = 0;
                     c.onSlope2 = 0;
                     c.slopeM2 = 0.f;
                     c.snapObj2 = nullptr;
@@ -16318,13 +16315,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         c.rotStep2 = c.rotStep;
                         c.rotNeg2 = c.rotNeg;
                     }
-                    c.holdDead2 = 0;
-                    // --dualbornpress (speed.hpp): ...except that GD's copyAttributes hands the new body
-                    // player 1's +0x985 / +0x986, so a press player 1 has spent is spent here too
-                    c.pressSpent2 = c.pressSpent;
-                    c.holdDead2 = c.holdDead;
-                
-                    c.jumpBuf2 = c.jumpBuf;   // --dualjumpbuf: +0x985 is copied the same way
+                    const bool inheritPress = !g_twoPlayer || ctrlOff2At(K.t);
+                    c.pressSpent2 = inheritPress ? c.pressSpent : 0;
+                    c.holdDead2 = inheritPress ? c.holdDead : 0;
+                    c.jumpBuf2 = inheritPress ? c.jumpBuf : 0;
                     // --dualflipclock: born upside down relative to the first body, in its own
                     // mode -- both clocks start here. Custom level D t=7,023: GD's new p2 rides the floor
                     // ramp p1 is on, upside down, for the next ticks (the flip grace's seat).

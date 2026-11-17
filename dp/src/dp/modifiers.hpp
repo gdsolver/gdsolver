@@ -887,7 +887,8 @@ inline double gravModOf(double x, uint8_t touch) {
     }
     if (touch && touch <= g_gravTouchBoxes.size()) {
         const GravTouchBox& b = g_gravTouchBoxes[touch - 1];
-        if (last < b.cx - b.hw) m = b.mod;
+        const double begin = b.cx - b.hw;
+        if (last < begin || (b.uid == -1 && last == begin)) m = b.mod;
     }
     return m;
 }

@@ -3406,9 +3406,10 @@ inline int cliMainOnce(int argc, char** argv) {
     // give another -- a touched trigger before the anchor set it -- stands as an entry of its own at the anchor's
     // x, which the state starts on. After the gravspawn entries, which the crossing value includes.
     if (g_gravTouch && !std::isnan(g_startGmod) && init.frame == 0) {
-        const double cross = gravModOf(crossXOf(x0, g_tpBack ? init.tpBack : 0), 0);
+        const double crossX = crossXOf(x0, g_tpBack ? init.tpBack : 0);
+        const double cross = gravModOf(crossX, 0);
         if (std::fabs(g_startGmod - cross) > 1e-6) {
-            g_gravTouchBoxes.push_back({x0, -1e9, 0.0, 0.0, g_startGmod, -1});
+            g_gravTouchBoxes.push_back({crossX, -1e9, 0.0, 0.0, g_startGmod, -1});
             init.gravTouch = (uint8_t)g_gravTouchBoxes.size();
             std::printf("gravtouch: the anchor at x=%.1f starts at gravity x%.3f (the crossing triggers give x%.3f)\n",
                         x0, g_startGmod, cross);
@@ -8133,7 +8134,8 @@ inline int cliMainOnce(int argc, char** argv) {
             double rowVy = (double)s.vy;
             int rowFlip = (int)s.flip;
             if ((s.mode == 1 || s.mode == 3) && !s.dual && !s.jumpBuf
-                && !s.pressSpent && !s.ctrlT && (!s.holdDead || !s.action)) {
+                && !s.pressSpent && !s.ctrlT && (!s.holdDead || !s.action)
+                && !(g_stopJump && s.pcRel)) {
                 int nextIn = curIn;
                 for (size_t j = fxIdx; j < fx.size() && fx[j].first <= t + 1; ++j)
                     nextIn = fx[j].second;

@@ -745,7 +745,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, i
                     c.pressSpent2 = sb.pressSpent;
                     c.holdDead2 = sb.holdDead;
                     c.hitG2 = p2HitG;
-                    if (g_dualJumpBuf) c.jumpBuf2 = (uint8_t)(input ? 1 : 0);
+                    if (g_dualJumpBuf) c.jumpBuf2 = (uint8_t)(p2in != 0);
                 }
             } else {
                 c.flip = (uint8_t)!f1;
