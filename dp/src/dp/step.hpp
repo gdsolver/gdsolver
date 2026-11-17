@@ -2555,7 +2555,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     if ((unsigned)s.frame < 4)
         ++g_frameRevReach[g_threadSlot & (kThreadSlots - 1)].n[s.frame][s.rev ? 1 : 0];
     State c = s;
-    c.rotPrev = 1e9f;   // --waveportalsize (speed.hpp): set again only by this tick's size portal
+    c.waveResized = 0;   // --waveportalsize (speed.hpp): set again only by this tick's size portal
     c.tpSkip = 0;   // one tick of life: set again only by this tick's teleport
     // --tptrigforce: no push this step when the last one ended with a trigger teleport (bit 2; modifiers.hpp)
     struct ForceMuteScope {
@@ -15604,7 +15604,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const double kk = s.mini ? kWaveRotKMini : kWaveRotK;
             const double tgt = kRadToDeg * std::atan(s.mini ? 2.0 : 1.0) * (s.vy > 0.f ? -1.0 : 1.0);
             pRotHere = ((double)s.rot - kk * tgt) / (1.0 - kk);
-            if (g_wavePortalSize && s.rotPrev < 1e8f) pRotHere = (double)s.rot;   // --waveportalsize (speed.hpp)
+            if (g_wavePortalSize && s.waveResized) pRotHere = (double)s.rot;   // --waveportalsize (speed.hpp)
         }
         // --slopedbg: make "passed the x window but rejected by the OBB" visible.
         // Without this it cannot be told apart from "never entered the window"
@@ -16296,6 +16296,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // now (this pass's earlier portals included), and with no
                     // press behind it -- it has not been anywhere yet.
                     c.mode2 = c.mode;
+                    c.waveResized2 = 0;
                     c.mini2 = c.mini;
                     if (g_dualSlide) c.slideT2 = c.slideT;   // --dualslide: born with p1's arm
                     c.ceilT2 = 0;
@@ -16901,7 +16902,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 }
                 const uint8_t miniBeforeThis = c.mini;
                 c.mini = wantMini;
-                if (g_wavePortalSize && c.mode == 4 && miniBeforeThis != wantMini) c.rotPrev = c.rot;   // --waveportalsize (speed.hpp)
+                if (g_wavePortalSize && c.mode == 4 && miniBeforeThis != wantMini) c.waveResized = 1;   // --waveportalsize (speed.hpp)
                 // --sizeseat: a flipped cube seated under a solid that grows to the normal size is
                 // seated under it at the new size on THIS tick; the support test above would only
                 // do it on the next one. A custom level, mini cube hanging under a block (face
@@ -21403,6 +21404,7 @@ inline void swapHalves(State& s) {
     std::swap(s.seatT, s.seatT2);
     std::swap(s.mode, s.mode2);
     std::swap(s.mini, s.mini2);
+    std::swap(s.waveResized, s.waveResized2);
     // ...and WHICH RAMP each half is riding. slopeUid0/slopeUidNow were left behind, so the
     // second body's step read the FIRST body's ramp uid -- which decides the seam hand-over
     // clamp (rTopIsSeam ... sp->uid != s.slopeUid0) and whether a re-acquisition counts as the

@@ -705,9 +705,8 @@ struct State {
     // The WAVE and the CUBE maintain it; every other mode leaves it at 0 and
     // keeps the old bound-only test, which is the conservative direction.
     float rot = 0.f;
-    // --waveportalsize: set (to the wave's rotation) by a size portal the wave met on the tick that produced this state, 1e9 otherwise.
-    // Not an accumulator: every step overwrites it, so an anchor needs no seed.
-    float rotPrev = 1e9f;
+    // --waveportalsize: whether either wave changed size on the preceding tick, per body.
+    uint16_t waveResized = 0, waveResized2 = 0;
     // Sign of the cube's spin. GD keeps it in m_rotationSpeed and NEGATES IT ON
     // EVERY GRAVITY FLIP -- measured on lv22's seeded clear: the only two sign
     // changes in 4,000 ticks are at t=732 (flip 1->0) and t=1,308 (flip 0->1),

@@ -537,6 +537,12 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
             if (held2 != (s.held != 0)) k ^= 0x589965CC75374CC3ull;
         }
     }
+    if (g_wavePortalRot && g_wavePortalSize) {
+        if (s.waveResized && s.mode == 4 && s.vy != 0.f && (s.mini || !g_wavePortalRotMini))
+            k ^= 0x3F84D5B5B5470917ull;
+        if (s.dual && s.waveResized2 && s.mode2 == 4 && s.vy2 != 0.f && (s.mini2 || !g_wavePortalRotMini))
+            k ^= 0x9216D5D98979FB1Bull;
+    }
     // Which gravity portals this state has spent (State::portalLatch). Unlike
     // `trig` this is not partitioned into the group -- a spent portal moves no
     // geometry, so both states want the same windows -- and the separation has

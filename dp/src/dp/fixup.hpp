@@ -556,6 +556,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, i
     if (p2BornNow && own2 && input2 == 1) c.action2 = 3;   // --p2born: still holding nothing
     c.y2 = cb.y2;            c.vy2 = cb.vy2;
     c.mode2 = cb.mode2;      c.mini2 = cb.mini2;
+    c.waveResized2 = cb.waveResized2;
     c.ceilT2 = cb.ceilT2;    c.ceilM42 = cb.ceilM42;
     c.slopeM2 = cb.slopeM2;  c.snapDist2 = cb.snapDist2;
     c.grounded2 = cb.grounded2; c.flip2 = cb.flip2;
@@ -788,7 +789,10 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, i
         c.pressSpent = cb.pressSpent2;
         if (g_dualJumpBuf) c.jumpBuf = cb.jumpBuf2;   // --dualjumpbuf: +0x985 too
         // --dualendrot (constants.hpp): ...but a wave takes the second body's angle, as it eased this tick
-        if (cb.mode2 == 4) c.rot = cb.rot2;
+        if (cb.mode2 == 4) {
+            c.rot = cb.rot2;
+            c.waveResized = cb.waveResized2;
+        }
         c.dual = 0;
         c.onSlope = 0;
         c.slopeM = 0.f;
