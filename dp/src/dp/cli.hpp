@@ -7287,24 +7287,22 @@ inline int cliMainOnce(int argc, char** argv) {
             double rowVy = (double)s.vy;
             int rowFlip = (int)s.flip;
             if ((s.mode == 1 || s.mode == 3) && !s.dual && !s.jumpBuf
-                && !s.pressSpent) {
+                && !s.pressSpent && !s.ctrlT && (!s.holdDead || !s.action)) {
                 int nextIn = curIn;
                 for (size_t j = fxIdx; j < fx.size() && fx[j].first <= t + 1; ++j)
                     nextIn = fx[j].second;
                 if (!g_ctrlWin.empty() && ctrlInputOffAt(t + 1, curIn != 0)) nextIn = 0;
-                const float ringDx = (s.dx > 0.f) ? s.dx : K.dxF;
-                const Obj* ring = nextIn
-                    ? flyEarlyRing(s, K, (double)ringDx * timeWarpAt((double)s.xAbs)
-                                             * (s.rev ? -1.0 : 1.0))
-                    : nullptr;
+                const Obj* ring = nextIn ? flyEarlyRing(s, K) : nullptr;
                 if (ring) {
                     State d = s;
                     const bool hs = g_histStatOn;   // a look ahead for the row, not a fire
                     g_histStatOn = false;
-                    applyFlyEarlyRing(d, ring, ringDx);
+                    const bool took = tryApplyFlyRing(d, ring, K);
                     g_histStatOn = hs;
-                    rowVy = (double)d.vy;
-                    rowFlip = (int)d.flip;
+                    if (took) {
+                        rowVy = (double)d.vy;
+                        rowFlip = (int)d.flip;
+                    }
                 }
             }
             const double vyGd = (g_dashVySet ? g_dashVy : rowVy)

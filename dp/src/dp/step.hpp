@@ -1596,7 +1596,9 @@ inline void notePressRingFired(State& c, int uid) {
 // (a custom level t=2,741: GD fires yellow 447, entered a tick before gravity 443; both read as earlier).
 // The flight threshold read on the body's own side (playerIsFallingBugged's first branch): --fixgravthr,
 // --fixgravdual (constants.hpp).
-inline bool fixedGravThr(bool dual) { return g_fixGravityBug && (g_fixGravDual || !dual); }
+inline bool fixedFlightGravThr(const State& s) {
+    return (s.frame & 1) != 0 || (g_fixGravityBug && (g_fixGravDual || !s.dual));
+}
 inline bool flyRingContact(const Obj* ob, double px, double py, double ph, double pRot = 0.0) {
     // --ringrotbox (speed.hpp): a rotated ring against the player's rotated box, all four axes
     // --ringrectgate (speed.hpp): ...once the rect test has passed. collisionCheckObjects asks the oriented
@@ -1821,8 +1823,7 @@ inline void updateTouchRings(State& c, const State& s, const StepCtx& K, double 
 }
 // `foot` (--earlyring, speed.hpp): the pick for a press on foot, which leaves the teleport orb to its
 // contact path.
-inline const Obj* flyEarlyRing(const State& s, const StepCtx& K, double stepDx, bool foot = false) {
-    (void)stepDx;
+inline const Obj* flyEarlyRing(const State& s, const StepCtx& K, bool foot = false) {
     const Obj* pick = nullptr;
     int pickRank = 4;
     for (const Obj* ob : *K.orbs) {
@@ -2098,6 +2099,12 @@ inline bool applyFlySpiderRing(State& c, const Obj* ob, const StepCtx& K) {
     c.pressSpent = 1;
     c.action = 1;
     c.jumpBuf = 0;
+    return true;
+}
+
+inline bool tryApplyFlyRing(State& c, const Obj* ob, const StepCtx& K) {
+    if (ob->type == 43) return applyFlySpiderRing(c, ob, K);
+    applyFlyEarlyRing(c, ob, c.dx > 0.f ? c.dx : K.dxF);
     return true;
 }
 
@@ -2513,6 +2520,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     if (waveNow && ctrlOffNowAt(K.t, t_followHalf2 != 0, K.x)) input = 0;
     // --ctrltouch: ...and a touched Options trigger's, from the tick after the touch (State::ctrlT)
     if (s.ctrlT) input = 0;
+    const bool ringPress = input && (!s.holdDead || !s.action);
     // The ring a ship or UFO takes fired at the end of the previous tick (speed.hpp, the fly
     // rings), so this tick runs from the state it left.
     // --dualflyring: ...in a dual as well. pushButton runs per player and each body walks its own
@@ -2522,16 +2530,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // p2 at -11.18; the model, gated out here, fired it through the late loop on 1,299 and left GD
     // there (y 234.04 against 234.30 at 1,299). A ring that turns the body's gravity reports it to
     // the partner under --dualorbflip, as the late loop does.
-    if (!g_flyRingNested && (s.mode == 1 || s.mode == 3) && input
+    if (!g_flyRingNested && (s.mode == 1 || s.mode == 3) && ringPress
         && !s.jumpBuf && !s.pressSpent && K.orbs) {
-        const float ringDx = (s.dx > 0.f) ? s.dx : K.dxF;
-        const double stepDx = (double)ringDx * timeWarpAt((double)s.xAbs) * (s.rev ? -1.0 : 1.0);
-        if (const Obj* ring = flyEarlyRing(s, K, stepDx)) {
+        if (const Obj* ring = flyEarlyRing(s, K)) {
             State s2 = s;
-            // --flyspiderring: a spider orb with no surface to go to stays with the late loop
-            const bool took = (ring->type == 43) ? applyFlySpiderRing(s2, ring, K)
-                                                 : (applyFlyEarlyRing(s2, ring, ringDx), true);
-            if (took) {
+            if (tryApplyFlyRing(s2, ring, K)) {
                 g_flyRingNested = 1;
                 State r = stepOne(s2, input, K, dead, linkFlip);
                 g_flyRingNested = 0;
@@ -2551,9 +2554,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // --earlyring (speed.hpp): the ring a fresh press on foot goes to, out of the previous tick's
     // m_touchedRings. The foot branch reads it as ringTookPress; the late loop fires it.
     const Obj* earlyRingTook = nullptr;
-    if (input && !s.jumpBuf && !s.pressSpent && K.orbs
+    if (ringPress && !s.jumpBuf && !s.pressSpent && K.orbs
         && (s.mode == 0 || s.mode == 2 || s.mode == 5 || s.mode == 6 || s.mode == 7))
-        earlyRingTook = flyEarlyRing(s, K, 0.0, true);
+        earlyRingTook = flyEarlyRing(s, K, true);
     bool spawnRingJumpNow = false;   // --spawnringjump: set where a spawn ring takes the press
     int spawnRingUid = -1;           // ...and which ring that was (--spawnringon)
     // --ballstake: the ball's stake as it stood before a ring re-staked it this tick, which is what
@@ -5025,7 +5028,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // test and writes nothing to +0xa1c; a fresh press taps from pushButton instead
             if (!(input && !s.action)) a1cNoFall = true;
             c.spiderJumpT = 0;   // GD's +0x820 (State::spiderJumpT)
-            c.pressSpent = 1;   // --spiderspend (constants.hpp)
             if (g_touchCensus) g_tcBranch |= 1;
             // ...and the block-pin has to let go. `pinnedOnBlock` was armed
             // above for a player standing on a solid, and `releasePin` puts y
@@ -7226,9 +7228,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // 0.0193 = 0.225 x kSwingG, same shape as ship/UFO).
             if (!pinnedOnBlock
                 && (s.flip || (double)s.y > (floorY + pHalf) + 0.5)) {
-                const bool thrFlipRest = fixedGravThr(s.dual) ? false   // --fixgravthr, --fixgravdual
-                                       : s.dual ? true
-                                                : (s.flip != 0);
+                const bool thrFlipRest = !fixedFlightGravThr(s) && (s.dual || s.flip);
                 const double vpRest = qVy(
                     isSwing ? -(gMod != 1.0 ? swingGm(false, gMod) : kSwingG)
                     : isUfo ? gdapprox::UfoModel::stepVy(
@@ -7454,9 +7454,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // branch -- taken for a sideways, platformer or swing body or with +0x561 set -- compares
             // against 2g on the body's own side and reads no +0xa99. A dual ship the right way up on a
             // fixGravityBug level: GD's button-up steps are -0.069 at vy +0.35 (weak), the model's -0.103.
-            const bool thrFlip = fixedGravThr(s.dual) ? false
-                               : s.dual ? true
-                                        : (s.flip != 0);
+            const bool thrFlip = !fixedFlightGravThr(s) && (s.dual || s.flip);
             // FORCE BOX (id 2069): applies to the ship/UFO under the same
             // convention (start-of-tick position, world->player via gsign).
             // Measurements at the declaration of kFF2069 (a ship passing through
@@ -8604,7 +8602,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // every tick, 0x38cb26 -> 0x38cb2f, which comes to the same). Then the collision pass's raises.
     {
         if (!a1cNoFall && a1cNow) {
-            const bool fixedArm = g_fixGravityBug != 0 || s.frame != 0 || s.mode == 7;
+            const bool fixedArm = g_fixGravityBug || (s.frame & 1) != 0 || s.mode == 7;
             if (a1cFallingBugged(a1cVyUpd, a1cUpUpd, s.dual != 0, fixedArm,
                                  gdapprox::accelSwitchVyForSpeed(speedMulForDx(useDx))))
                 a1cNow = false;
@@ -18228,12 +18226,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // at the top of every tick in every mode, which is also what GD's own
         // ringJump reads (the 0x989 mirror of m_jumpBuffered).
         //
-        // Its one impurity is harmless here: it is also cleared when a ring
-        // fires or the ball's tap spends the press, so the next tick could read
-        // as an edge while the button is merely still down -- but `ringHold` is
-        // set in both of those cases and is only cleared by a release, so the
-        // gate below is shut anyway.
-        //
         // `jumpBuf` IS NOT m_jumpBuffered. It agrees on press and release, and
         // that is all this gate needs, but GD clears 0x985 from a longer list:
         // releaseButton / releaseAllButtons / disablePlayerControls (the Player
@@ -18246,8 +18238,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                               || c.mode == 4 || c.mode == 7);
         // On foot the contact path also runs on the tick of a release -- GD takes the release in
         // the buttons phase, after the collision pass (speed.hpp, the ring buffer)
-        const bool ringGate = ringFly ? (input && !s.jumpBuf)
-                                      : (input != 0 || s.jumpBuf);
+        const bool ringGate = ringFly ? (ringPress && !s.jumpBuf)
+                                      : (ringPress || (s.jumpBuf && !s.holdDead));
         if (!input) {
             c.ringHold = 0;      // released: the next press may ring again
             c.pressSpent = 0;    // ...and GD's releaseButton clears +0x986 with it
@@ -20303,11 +20295,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             }
         }
     }
-    // The BALL's tap spends the press too: GD's ball arm of updateJump ends with
-    // `flipGravity, vy *= 0.6, m_jumpBuffered = 0`. Cleared once here rather than
-    // at each of the four tap sites, which is the same thing -- ballFlippedThisTick
-    // is exactly "the ball tapped on this tick".
-    if (ballFlippedThisTick) c.jumpBuf = 0;
+    if (ballFlippedThisTick || spiderWarpedThisTick) c.jumpBuf = 0;
     g_ballTapped = ballFlippedThisTick;   // --repelland (fixup.hpp stepBoth)
     // --repela0c: GD's +0xa0c (State::hitG). propellPlayer clears it; hitGround sets it on every
     // grounded tick, and a tap needs the ground, so a tapping body held it at the repel; the tap

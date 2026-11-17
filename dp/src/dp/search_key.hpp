@@ -326,6 +326,9 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // ...and the same for a DASH, which is held in exactly the same way
            ^ ((uint64_t)s.dashing << 54)
            ^ ((uint64_t)((s.rHover || s.dashing) ? s.action : 0) << 55)
+           ^ ((s.dual && s.rHover2)
+                  ? (((uint64_t)s.rHover2 << 1) | (s.mode2 == 5 && s.action))
+                        * 0x8CB92BA72F3D8DD7ull : 0)
            // --dualdash: ...and the second body's dash, which its own step now keeps (0 off)
            ^ ((s.dual && s.dashing2)
                   ? (0x5B2E7A1D93C4F086ull ^ ((uint64_t)s.action << 31)) : 0)
