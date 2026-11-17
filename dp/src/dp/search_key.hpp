@@ -1,4 +1,5 @@
 #pragma once
+#include <bit>
 #include "dp/thread_pool.hpp"
 
 namespace dp {
@@ -212,6 +213,7 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
     // (--keyxq / --keyxqfly; both 4.0 unless given, which is this expression exactly)
     const bool flyX = (s.mode == 1 || s.mode == 3 || s.mode == 4 || s.mode == 7);
     const int32_t xq = (int32_t)std::lround(s.xAbs * (flyX ? g_keyXqFly : g_keyXq));
+    const bool p2Action = s.action2 == 1 || (s.action2 == 2 && s.action);
     uint64_t k = ((uint64_t)(uint32_t)yq << 32) ^ ((uint64_t)(uint32_t)xq << 18)
            ^ ((uint32_t)vq << 6)
            ^ ((uint64_t)s.mini << 5)
@@ -326,20 +328,23 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // ...and the same for a DASH, which is held in exactly the same way
            ^ ((uint64_t)s.dashing << 54)
            ^ ((uint64_t)((s.rHover || s.dashing) ? s.action : 0) << 55)
+           ^ ((s.dashing && s.dashSlope != 0.f)
+                  ? (uint64_t)std::bit_cast<uint32_t>(s.dashSlope) * 0xA0761D6478BD642Full : 0)
            ^ ((s.dual && s.rHover2)
-                  ? (((uint64_t)s.rHover2 << 1)
-                      | (s.mode2 == 5 && (s.action2 == 1 || (s.action2 == 2 && s.action))))
+                  ? (((uint64_t)s.rHover2 << 1) | (s.mode2 == 5 && p2Action))
                         * 0x8CB92BA72F3D8DD7ull : 0)
            // --dualdash: ...and the second body's dash, which its own step now keeps (0 off)
            ^ ((s.dual && s.dashing2)
-                  ? (0x5B2E7A1D93C4F086ull ^ ((uint64_t)s.action << 31)) : 0)
+                  ? (0x5B2E7A1D93C4F086ull ^ ((uint64_t)p2Action << 31)) : 0)
+           ^ ((s.dual && s.dashing2 && s.dashSlope2 != 0.f)
+                  ? (uint64_t)std::bit_cast<uint32_t>(s.dashSlope2) * 0xE7037ED1A0B428DBull : 0)
            // --p2born: ...and a second body born holding nothing whose plan level has not yet shown a release
            ^ ((g_p2Born && s.dual && s.action2 == 3) ? 0x6E3B95C1A7D204F8ull : 0)
            // --dualinlat: ...and in a dual whose second body takes the button a tick after the first
            // (ship or UFO against anything else), the two buttons it has just seen are part of the state
            ^ ((g_dualInLat && s.dual && (s.mode2 == 1 || s.mode2 == 3) && !(s.mode == 1 || s.mode == 3))
                   ? (0x3C79AC492BA7B653ull ^ ((uint64_t)s.action << 29)
-                     ^ ((uint64_t)(s.action2 >= 2 ? (s.action2 == 3 ? 0 : s.action) : s.action2) << 30))
+                     ^ ((uint64_t)p2Action << 30))
                   : 0)
            // --revcarry: ...and the correction a reverse ring still owes (State::revOff), in 0.25 px buckets: two states alike
            // in everything else run to different x. 0 for every state that never met such a ring, so those keys stay as they were.
@@ -522,6 +527,11 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
                || s.mode == 7)
                   ? ((uint64_t)s.held << 1) : 0)
            ^ s.grounded;
+    if (s.dual && s.mode2 == 4) {
+        const bool held2 = (g_twoPlayer && g_p2Held ? p2Action : s.held != 0)
+                           && !(g_waveHoldDead && s.holdDead2);
+        if (held2 != (s.held != 0)) k ^= 0x589965CC75374CC3ull;
+    }
     // Which gravity portals this state has spent (State::portalLatch). Unlike
     // `trig` this is not partitioned into the group -- a spent portal moves no
     // geometry, so both states want the same windows -- and the separation has
