@@ -140,6 +140,8 @@ inline int g_uiGlitchMode = UI_GLITCH_OFF;
 // ...and whether a Solve may hand a wall to the section solver (cfg dpsecauto). On by default; a
 // choice about how to solve, like the two above, set in Options.
 inline bool g_uiSecSolve = true;
+// ...and, for a Replay, whether it advances in fixed 1/60 s steps (replaystep.hpp): the menu's Options. Off by default; cfg `replaystep` overrides it.
+inline bool g_uiReplayStep = false;
 // ...and the search a Solve's calls are answered by (cfg dpsearch): the layer DP, or one of the two
 // experimental searches. Chosen in the menu's Options with the glitch-avoid switch; like it, a
 // choice about how to solve, filed where Solve always files it. Numbered for the saved value
@@ -172,6 +174,13 @@ inline const void* g_uiArmedLevel = nullptr;
 
 // F8: temporarily toggle between fast mode and realtime (spectating hotkey)
 inline bool g_realtimeOverride = false;
+// The dt cfg `vtime` pins right now (0 = none). Given (> 0): that, as it always was. Not given (< 0): the fast loop's dt
+// while the fast loop is what is running (hooks_gamelayer.cpp), so a replay and the F8 view keep the screen's dt.
+inline float vtimeNow() {
+    if (g_vtime > 0.f) return g_vtime;
+    if (g_vtime < 0.f && g_cfg.fastdt > 0.f && !g_realtimeOverride) return g_cfg.fastdt;
+    return 0.f;
+}
 // Trigger the F8 equivalent mechanically (cfg `watchat=<tick>`). Hotkeys only work in the
 // foreground window, so headless reproduction/diagnosis walks the same path through this
 inline long long g_watchAtTick = 0;

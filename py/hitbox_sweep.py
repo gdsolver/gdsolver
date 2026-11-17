@@ -51,6 +51,7 @@ sys.path.insert(0, str(_PY.parent / "mcp"))
 
 from gdmcp.worker import Worker
 from gdtas import plan as P
+from gdtas.paths import DEFAULT_WORKER
 
 
 def parse_range(s: str) -> list[float]:
@@ -243,7 +244,7 @@ def main(argv=None) -> int:
                        help="the y step from tick-1 to tick, signed")
         s.add_argument("--stop-off", type=int, default=0,
                        help="how many ticks to run on from there (0 = that tick only)")
-        s.add_argument("--worker", type=int, default=99)
+        s.add_argument("--worker", type=int, default=DEFAULT_WORKER)
         s.add_argument("--cfg", action="append", metavar="KEY=VALUE",
                        help="extra autorun.cfg lines for the session "
                             "(repeatable). `--cfg gatetrace=-2,-1` arms the "

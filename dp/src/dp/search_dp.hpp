@@ -828,6 +828,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
     auto& prevAlive = work.prevAlive;
     auto& curDxF = e.in.curDxF;
     auto& ppMark = e.in.ppMark;
+    if (g_stateCross) stateCrossPrepare();   // --statecross (search_key.hpp)
     // --ladderprefix: only inside a ladder, and not where the loop talks to the outside or
     // prints per layer (the checkpoint channel, the reference watch, the census, the band file).
     const bool lpOn = g_lpc.active && !checkWanted && !g_refWatch && g_searchCensus == 0
@@ -940,6 +941,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             }
         }
 
+        if (g_phaseProf) g_ppSubLast = std::chrono::steady_clock::now();   // ppSubMark's start for this layer's setup
         // Resolve autonomous fires from the frontier's leading edge. `cur`
         // holds states AT tick t-1, so the first layer whose lead x reaches
         // the trigger's x means the crossing happened at t-1 and the move
@@ -949,6 +951,8 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // replaces was measured at 1,707 ticks (see AutoTrig).
         // The autonomous triggers the frontier's leader has crossed (model.hpp fireAutoTriggers).
         model.fireAutoTriggers(cur, t);
+        if (g_stateCross) stateCrossSyncFire();   // the leader's dates, before any group overrides them
+        ppSubMark(0);
 
         // ---- speed groups -------------------------------------------------
         // The frontier is no longer a single x. A state that took a speed
@@ -994,8 +998,9 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 return GroupKey::operator==(o) && xc == o.xc;
             }
         };
-        std::vector<uint64_t> curSig(g_groupFire ? cur.size() : 0);
-        for (size_t i = 0; i < curSig.size(); ++i) curSig[i] = groupFireSig(cur[i], t);
+        std::vector<uint64_t> curSig((g_groupFire || g_stateCross) ? cur.size() : 0);
+        for (size_t i = 0; i < curSig.size(); ++i)
+            curSig[i] = groupFireSig(cur[i], t) ^ (g_stateCross ? xcSig(cur[i], t) : 0);   // --statecross: what the members dated themselves
         auto sigOf = [&](size_t i) -> uint64_t { return curSig.empty() ? 0 : curSig[i]; };
         // --groupxsplit: the members of each group in x order, a new part wherever the gap to the
         // previous member is wider than the threshold. Part 0 is the lowest x.
@@ -1135,7 +1140,9 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             }
         };
         const bool qfHere = (g_qfoldLo >= 0 && t >= g_qfoldLo && t <= g_qfoldHi);
+        ppSubMark(1);
         for (const auto& gkey : groupDx) {
+        if (g_phaseProf) g_ppSubLast = std::chrono::steady_clock::now();   // this group's setup starts here (not at the end of the previous group's step)
         const float gdx = gkey.dx;
         const TouchMask gtrig = gkey.trig;
         const int gframe = (int)gkey.frame;
@@ -1155,6 +1162,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // LATEST firing tick so the group is shown a door that is still
         // opening: the smallest offset is the one that has ridden least.
         float gLockOff = 1e30f;
+        size_t gRep = (size_t)-1;   // --statecross: a member, whose records are the group's
         for (size_t ci = 0; ci < cur.size(); ++ci) {
             const State& s = cur[ci];
             // Asked for every state of every group, every layer: the model's test compares the
@@ -1162,6 +1170,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // part, which this search holds per state, only after it.
             if (!model.inGroup(gkey, s, curDxF) || sigOf(ci) != gkey.fsig || xcOf(ci) != gkey.xc)
                 continue;
+            if (gRep == (size_t)-1) gRep = ci;
             // x read straight off the State, not through model.progress, here and in the three other
             // per-state loops of a layer (gidx's frame/rev, the cap's x range, the layer's leader):
             // through it, lv22's search took 3% longer (measured on 8eb7b5dc against e5eec93a).
@@ -1219,6 +1228,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         const float dxUsed = (float)sdx;
         const double wLo = grev ? (gLo + sdx) : gLo;
         const double wHi = grev ? gHi : (gHi + sdx);
+        ppSubMark(1);
         // Gameplay rotation triggers this group's advance reaches (model.hpp fireRotTriggers).
         model.fireRotTriggers(gframe, grev, gLo, gHi, wLo, wHi, t);
         // The model builds this group's tick (model.hpp prepareGroup): the moving geometry placed
@@ -1228,12 +1238,17 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // placement and its step; the leader's come back when the group is done.
         AutoOwnGuard autoOwn;
         g_autoOwnT0 = t0;   // --autoownpre (dynamics.hpp); the same value from every thread
-        if (gframe == 0 && !grev) autoOwnApply(autoOwn, gHi, (double)gdx, t);
+        if (gframe == 0 && !grev) {
+            if (g_stateCross && gRep != (size_t)-1) autoOwnApplyCross(autoOwn, gHi, (double)gdx, t, cur[gRep]);
+            else autoOwnApply(autoOwn, gHi, (double)gdx, t);
+        }
+        ppSubMark(2);
         GroupEnv env;
         double pLo = wLo, pHi = wHi;
         p2Widen(pLo, pHi, gD2Lo, gD2Hi);   // --p2xoff
         model.prepare(env, gframe, gtrig, gFire, gFireB, gLockOff + (float)sdx, x, xPrev, dxUsed,
                       pLo, pHi, t);
+        ppSubMark(3);
         const std::vector<const Obj*>& near = env.near;
         const std::vector<const Obj*>& ports = env.ports;
         const std::vector<const Obj*>& pads = env.pads;
@@ -1262,6 +1277,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                             ? curXc[i] == gkey.xc
                             : gkey.xc == 0)))
                 gidx.push_back(i);
+        if (g_phaseProf) { ++g_ppGroups; g_ppParents += (long long)gidx.size(); }
         // Airborne cube input is normally moot, so only one child is expanded --
         // but NOT next to an orb, where a press in mid-air is the whole point.
         // Leaving this unconditional silently threw away every orb activation
@@ -1388,7 +1404,9 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             const int input = (int)(i & 1);
             // May the button change on this tick (model.hpp edgeLocked)?
             const bool edgeLocked = model.edgeLocked(s, gridNow, K.t);
-            if (edgeLocked && input != (int)s.action) return;
+            const int forcedIn = mustPressAt((long long)K.t);   // --mustpress: the tick's button is given
+            if (forcedIn >= 0 && input != forcedIn) return;
+            if (forcedIn < 0 && edgeLocked && input != (int)s.action) return;
             // ...and NOT next to a toggle block it has not fired (nearPressBox), which the
             // button fires: SubZero 4003's uid 4001 is passed by an airborne cube, so with
             // the pressed child pruned no state ever entered it (2026-09-24).
@@ -1396,7 +1414,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // landing is a different jump from one pressed on the landing tick.
             // ...and not when the input rule has just forbidden the release: then the held child
             // is the only one left.
-            if (input == 1 && s.mode == 0 && !s.grounded && orbsEmpty
+            if (input == 1 && forcedIn < 0 && s.mode == 0 && !s.grounded && orbsEmpty
                 && !s.dashing && !(s.dual && s.dashing2)   // --dualdash
                 && !nearPressBox(s) && !nearCtrlHoldBox((double)s.xAbs)
                 && !(g_airPress && (!g_airPressNear || landingNear(s)))
@@ -1408,7 +1426,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 return;
             // --twinskip: decided after the step pass, from the released sibling (slot i-1):
             // copied in when that one stayed in the air, stepped for real otherwise.
-            if (input == 1 && mayTwin && twinOn && pressMoot(s)) {
+            if (input == 1 && forcedIn < 0 && mayTwin && twinOn && pressMoot(s)) {
                 if (!g_twinAudit) {
                     kidFlag[i] = 3;
                     return;
@@ -1435,6 +1453,8 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // note in keyOf describes.
             // (model.hpp noteInput: the action, --minpulse's edge age, --latgap's lock.)
             model.noteInput(s, kid.s, input);
+            // --statecross: the late crossings of autonomous triggers this step made (search_key.hpp)
+            if (g_stateCross && !dead) stateCrossNote(kid.s, s, t);
             // ---- --coins: collect, then kill whoever left one behind (rules.afterStep) ----
             model.fireGates(kid.s, s.action, input, K, gframe, t, dead);
             rules.afterStep(s, kid, input, K, gframe, t, dead);
@@ -1504,13 +1524,24 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             kidFlag[i] = dead ? 1 : 2;
             if (dbgHere || g_refWatch) { kid.why = g_deadWhy; kid.obj = g_deadObj; }
         };
-        auto stepKid = [&](size_t i) { stepKidAt(i, true); };
+        auto stepKid = [&](size_t i) {
+            if (!g_phaseProf) { stepKidAt(i, true); return; }
+            const auto k0 = std::chrono::steady_clock::now();   // --phaseprof: the work inside the step, per child
+            stepKidAt(i, true);
+            g_ppKidNs.fetch_add((long long)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - k0).count(),
+                                std::memory_order_relaxed);
+        };
         // --dbg stays serial: it prints per child, in order, and the reason
         // globals are per thread.
+        const auto pf0 = g_phaseProf ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         if (pool && !dbgHere && kids.size() >= kParallelMin)
             pool->parallelFor(kids.size(), stepKid);
-        else
+        else {
             for (size_t i = 0; i < kids.size(); ++i) stepKid(i);
+            if (g_phaseProf) ++g_ppSerialGroups;
+        }
+        if (g_phaseProf)
+            g_ppStepNs += (long long)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - pf0).count();
         // --twinskip: fill each skipped pressed slot with its released sibling, which is what
         // stepping it would have produced in everything the dedupe and the counts read.
         // --twinaudit: both were stepped; check that claim instead.

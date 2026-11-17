@@ -53,10 +53,24 @@ inline int envTwinUid(int uid) { return kEnvTwinUidBase + uid; }
 // snapshot -- it is taken right after the game's reset, before anything the run did -- so the
 // first one that has it is enough. Empty when none does.
 inline std::unordered_map<int, uint8_t> g_groupInit;
+// --bootauto (ON since 2026-10-24; --no-bootauto is the off arm): a recording the loop left out of the layers because it was made on another clock than the live record (the mod's groupsretime)
+// still has the whole level's moving geometry in it, and an object that only an x-crossing trigger moves is placed from it at the model's OWN crossing
+// tick (the autonomous re-timing), whatever clock the recording was made on. --groupsauto <file> names such a recording (weakest first, the later wins);
+// the layers loader parses it with the others and keeps it apart (groupLayersFor), and the level loader reads it for an autonomously moved object that the
+// layered record holds at rest (level_loader.hpp).
+// Why another clock does not matter for these objects: the rows are read at the tick the MODEL's own x crosses the trigger (the autonomous re-timing: shift =
+// the model's fire tick - the recording's first change), never at the recording's tick. Measured on a long custom level's run (its second iteration): the recording's
+// x=24,645 crossing is at t=19,186, the plan's at 17,671 (the two routes took different speed-portal lanes before it); the saw's rows are read 1,516 ticks
+// earlier and the model kills it at t=18,235, the tick GD did. One example, and it does not cover a speed change BETWEEN two triggers of one object: that is
+// one shift for the object, as for every recording the model re-times (here both runs crossed x=24,645..24,855 at the same speed, 108 and 107 ticks).
+// Cold rule: the recording is this same run's own no-death pass (startBootstrapRecord), not a previous run's.
+inline bool g_bootAuto = true;
+inline std::vector<std::string> g_groupAutoPaths;
+inline std::vector<const std::unordered_map<int, std::vector<DynSample>>*> g_groupAutoTL;
 
 // sscanf's %d and %f, one field at a time, on a recording held in memory. The reader was
 // getline + sscanf("%d,%d,%f,%f,%f,%f,%d,%f,%d"), and on a custom level's 1.5M-row recording that
-// was over two seconds of every call that found a recording changed (MOAI, measured 2026-09-30).
+// was over two seconds of every call that found a recording changed (a custom level, measured 2026-09-30).
 // These read the same text the same way: blanks before a number are skipped, the comma after it
 // must follow directly, and the first field that does not convert ends the line with the count so
 // far -- so a line cut off mid-write still loads or is skipped exactly as before.

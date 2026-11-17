@@ -1,6 +1,6 @@
 """Run ONE in-process solve (cfg dpsolve=1) on a worker and dump its result.txt.
 
-    python py/solve_probe.py --level 22 --worker 95 --iters 20
+    python py/solve_probe.py --level 22 --worker 99 --iters 20
 
 Investigation tool: it answers "how far does this level get, and does the loop stall
 because the model cannot plan past a point (PARTIAL tails) or because the game refuses

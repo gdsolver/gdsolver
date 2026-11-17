@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include "dp/frames.hpp"
 #include <climits>
 #include <cstring>
@@ -303,13 +304,21 @@ inline double camScaleAt(double x, double dx, long long t) {
     return cur;
 }
 
+// --reclag0 (ON since 2026-10-24; --no-reclag0 is the off arm): a recorded object's first row can be the move's own first tick. The count in recordLag starts at n = 1
+// and so cannot return 0 for an ease whose value at u = 0 already clears the recorder's 0.05 px: ExponentialInOut (10) is
+// 0.5 * 2^-10 there, 0.732 px of a 1,500 px move. A custom level, a plate group moved by a Move of -1,500 over 480 ticks
+// with that ease: the first row, t=17,564, is 0.732 px from the base, and the rows after it (0.799 at 17,567, 0.871 at
+// 17,570) are the curve at k = 3, 6 from that tick -- so the move began on that row and the lag is 0. The count said 1, the
+// object was re-timed one tick back (shift 1) and was read where it had been a tick before: 4.5 px behind the game at
+// t=17,750, where the mini ship the model flew over its edge died on a block that was no longer there.
+inline bool g_recLag0 = true;
 inline int recordLag(double dx, double dy, double durTicks, int ease,
                      double erate) {
     // Nothing moves -- a toggle-only group. A boolean flip has no threshold to
     // climb, so its first row IS its first tick and there is no lag to remove.
     if (durTicks <= 0.0 || (std::fabs(dx) < 0.5 && std::fabs(dy) < 0.5))
         return 0;
-    for (int n = 1; n <= 240; ++n) {
+    for (int n = g_recLag0 ? 0 : 1; n <= 240; ++n) {
         const double e = gdEase(ease, erate, (double)n / durTicks);
         if (std::fabs(dx * e) >= 0.05 || std::fabs(dy * e) >= 0.05) return n;
     }
@@ -377,9 +386,20 @@ inline int rotRecordLag(double totalDeg, double durTicks, int ease, double erate
 // session went to diagnosing it). Deriving the fire tick from the solve's own
 // x removes the dependence on what the recording happened to do; the recording
 // only contributes the SHAPE of the motion, re-timed to this run's crossing.
+// Always on (was --lockmod): a Move locked to the player's x moves its group by the player's step TIMES the Move's m_moveModX (prepareMoveActions,
+// modifiers.hpp's --locknodx note: 'the player's delta times the move's mod'). The model took the multiplier as 1. A custom level's thorns ride a duration-15 s lock with a mod of
+// -0.07 (a parallax): GD's recorded x runs -7.0% of the player's step (ratio -0.0699 / -0.0701 over two 200-tick windows, 1.3 and 1.6 px a tick), the model's +100% put them 16 px
+// further from the recording every ten ticks. Dumps without the movemodx column read 1.0, so they are untouched.
+// Always on (was --multilock): an object that several x-crossing Moves lock to the player's x takes ALL of them, each from its own crossing for its own window
+// (the loader kept the first and counted the rest as 'two locks on one object: unmodelled'). GD adds the player's step once per open lock, so while two windows overlap the
+// object runs at twice the player's speed (a custom level's platform: 2.466 a tick for 23 ticks) and the second lock goes on following after the first one closed.
+template <class A> inline double lockMod(const A& a) { return a.lockModX; }
 struct AutoTrig {
     int uid = 0;              // reporting only
     double cx = 0;            // player x that fires it
+    double cy = 0;            // --autotrigframe: its y, for the travel coordinate of a turned channel (g_autoTrigFrame)
+    bool chanStatic = false;   // --chanmove: a Toggle --chantog would have dropped (used when the rotation queue is refused)
+    int chan = 0;             // --chanmove: the trigger channel a Move sits on; it fires only while State::rotChan is that channel (0 = the crossing alone)
     std::vector<TrigCtl> ctl;
     // Resolved TRUE effect tick: the last tick the object is still at rest is
     // fireT-1, and gdEase((t-fireT)/dur) is its position from fireT on.
@@ -395,6 +415,8 @@ struct AutoTrig {
     // Where the player was on the last tick this trigger's lock was still open.
     // Trails px while the window runs so the object can hold that x afterwards.
     double lockLastX = 0;
+    // --lockmod (triggers.hpp): the lock's Move m_moveModX, the multiplier on the player's step (1 unless the level sets one)
+    double lockModX = 1.0;
     // Ticks between the crossing and the move actually starting.
     // MOVE (901) = 1. Measured 2026-08-09 over the lv19 and lv20 bootstrap runs
     // (nodeath=1 grouptrace=1, so the dump and the recording share one
@@ -442,6 +464,25 @@ struct AutoTrig {
     uint8_t offInit = 0;
 };
 inline std::vector<AutoTrig> g_autoTrig;
+// --autotrigframe (ON since 2026-10-24; --no-autotrigframe is the off arm; works through --chanmove's channelled Moves, so it does nothing without it): a channelled trigger is crossed along
+// the TRAVEL AXIS OF ITS CHANNEL, not along world x. GD keeps the position-triggered objects of a gameplay-rotation channel in a list of their
+// own, sorted along that channel's direction (LevelTools::sortChannelOrderObjects, 0x32d6b0: by x for direction 0, by y for 1, by -y for 2, by -x
+// for 3, the comparators at 0x324c80 / 0x324dc0 / 0x324e60 / 0x324d20), and GJBaseGameLayer::checkSpawnObjects (0x21a8f0) walks the list of the
+// ACTIVE channel with a cursor: the head fires when the player's x has reached its x -- or, when the player is sideways (the flag at +0x9c3),
+// its y has reached the object's y -- and the walk stops at the first one that has not been reached. Nothing else is asked: no distance across
+// the lane. --chanmove already restricted a channelled Move to the states that have its channel up, but compared the state's travel
+// coordinate (State::xAbs, which in a turned frame is world y or -x) with the trigger's WORLD x. Measured on a custom level (the cold's
+// iteration 5, channel 1 = gameplay frame 3 from t=13,399): the Move uid15790 at (21345, 4815) moves group 277 by +120 px in x over 840
+// ticks. The ship crosses y=4815 at t=15,341 and the group's first recorded motion is t=15,343; the model took the trigger for one still ahead
+// (the anchor's 5,214 against 21,345), left the block at its base 21,765 and clamped the ship on it at t=15,726, where GD flew on (the block 55
+// px further on) and died at t=15,946. With the flag the trigger is read at (u, v) = toFrame(frame, cx, cy) in the frame of the state that has the
+// channel up, in the search, in the replay, and behind the anchor (the anchor's channel is --start's rotChan; the x track's rows of that frame
+// are read from the dump's world x, y and gframe, g_xTrackW). Frame 0 is the old comparison. Not converted: the head-of-list blocking (a
+// trigger that is not reached holds back the later ones of its channel -- the model's scan only skips), --witnessauto's rollout, boxarm's offInit crossing,
+// and a trigger of channel 0 (GD walks only the active channel's list, so while a turned channel is up the channel-0 list is not read at all).
+inline bool g_autoTrigFrame = true;
+// --xtrack's other columns, parallel to g_xTrack: the dump's world x, world y and gframe at each row (empty when the file has no y or gframe column).
+inline std::vector<std::array<double, 3>> g_xTrackW;
 // --autostop (on by default since 2026-10-06; --no-autostop is the off arm): an x-crossing Stop
 // halts the Moves in its target group where the player crosses it. The model read a Stop only
 // inside a touch chain (g_touchStops), so an autonomous one reached nothing and its Moves ran to
@@ -786,6 +827,13 @@ inline std::array<int, kTouchBits> g_recOwnEntry = [] {
 // stays off from 13,189; the dying attempt 33 had entered box 4 (uid13410) at 13,954, which switches the slab
 // on at 13,959, and the ship GD carries on it from 14,096 fell through in the model.
 inline bool g_touchOnRec = true;
+// Always on (was --touchonrecentry): ...and the state's side of that comparison is the tick the anchor was told it entered the box (--touchentered, g_touchRecEntry),
+// where the box was opened at the anchor. fireB of such a box is the first motion its chain showed in the recording (cli.hpp, the anchor's touch scan keeps it so as not to date the motion earlier),
+// which is a different quantity from an entry: a box both attempts entered on tick 1 read as entered on tick 36 against 1, the split fell on tick 1, and an object the recording holds on from tick 1369
+// (a slab an unfollowed Spawn chain switches back on) was resolved from the one switch the state knew, off. A custom level, a mini cube falling through slab uid 577 at t=2,316 that GD lands on.
+// The entry counts whether or not the anchor opened the box (its mask bit): a toggle ring both attempts pressed at t=12,403 has no bit at the anchor, read as "not entered" against the recording's
+// entry, and the split resolved a hazard the recording has off since 12,448 as on (a UFO/cube dying on it at 12,511 where GD lives to 12,824). A box entered after the anchor has no entry
+// here and compares by its own fireB, as before.
 // How many formula-driven placements --formularec served from the recording, and how many it left
 // on the formula (a box the state and the attempt disagree on). Tallied on the replay (single
 // thread) for the print; relaxed atomics so a threaded search may count too.
@@ -875,6 +923,23 @@ inline bool g_recEndHeldRot = true;
 // --areaunrec (default on): an object the recording shows only at its base, which nothing else moves, is armed
 // when the action's pose at the track's last tick is that base (cli.hpp, the arming loop).
 inline bool g_areaUnrec = true;
+inline std::vector<std::pair<int, double>> g_xTrack;
+// The camera track (--camtrack <file>, or camL / camW columns on --xtrack): rows "tick,x,camL,camW" of ONE attempt -- the player's x, the left edge of the view in object
+// space and the width it shows (window width / zoom). An Area action centred on the screen (special -3 .. -11) reads it (areaCentreX). The screen's offset from the player
+// is looked up by the player's X, not by the tick: camera triggers and zoom fire on x, and a plan that reaches an x at another tick sees the same camera there.
+// Empty when neither is given. g_camRows: the player's x (running maximum), camL - x, camW.
+inline std::vector<std::array<double, 4>> g_camRows;
+inline bool g_camFromFile = false;   // --camtrack was given: the xtrack's columns do not replace it
+inline std::vector<std::array<double, 4>> g_camXtrackRaw;   // the rows as read: x, camL, camW (tick order)
+// ...made into g_camRows: x as a running maximum (so a lookup by x is a binary search) and the offsets from the player.
+inline void buildCamRows() {
+    g_camRows.clear();
+    double xm = -1e18;
+    for (const auto& r : g_camXtrackRaw) {
+        xm = std::max(xm, r[0]);
+        g_camRows.push_back({xm, r[1] - r[0], r[2]});
+    }
+}
 inline constexpr double kAreaArmTol = 1.0;
 struct AreaAct {
     int uid = -1, id = 0, target = 0, special = 0, dirType = 0, eInType = 0, eInBuf = -3;
@@ -883,7 +948,38 @@ struct AreaAct {
     // a move that is not xy (its distance along ccpForAngle(angle - 90)), an Area Scale's (3008) factors and an Area
     // Rotate's (3007) angle
     double moveDist = 0, angle = 0, scaleX = 1, scaleY = 1, rot = 0;
+    // --areascreen: a centre that is a point of the screen (special -3 .. -11) rather than a player; fx is the point's share of the visible width (0, .5, 1)
+    bool screen = false;
+    double fx = 0.5;
 };
+// Always on (was --areascreen): an Area action whose centre is a point of the SCREEN (processAreaEffects 0x2283e0, special -3 .. -11: the
+// camera position + the window size / zoom times a fraction; -3 the middle) is placed from a camera track (--camtrack, or the xtrack's camL / camW columns): the screen's
+// offset from the player where the track first reached the player's x.
+// Measured on a custom level (screen-centred Area Moves, special -3, len 276, inbound), the centre taken as the camera's left edge in object space plus half the visible
+// width: 837 of 1132 recorded objects reproduce their rows to 1 px (603 with the centre taken as the player), the three solid blocks a spider lands on to 0.25 px (the
+// model had them at their last row, 210 px down, and the spider fell through). A camera that is held where a track ends is NOT the camera ahead -- with the track
+// stopping at the anchor, the same level's plans died in their own re-simulation ("crush") and three custom levels stopped clearing -- so the mod writes the whole of the
+// deepest attempt.
+// Always on (was --areastart): the recording's first row (t=1) is the position before any action ran, whatever x the action sits at (a trigger at x <= 0 is crossed at the
+// start, and xRefAt(0) < cx then read the base row as already acted on and left the object unarmed).
+// --areaadd (default off): an Area Move acts on an object a closed form also moves. The arming test above asks the area formula alone to reproduce
+// the recording, which an object with autonomous Moves never passes, so the area's displacement was left out and the model's hazard stood where
+// the Moves alone put it. Measured on a custom level (hazard uid 86481, Area Move uid 86187: group 2780, y -30, ease SineInOut, len 300, off 33,
+// two-sided): GD's hazard sat -4.5 / -14.9 / -24.3 / -29.9 px from the model's at t = 8,400 / 8,440 / 8,480 / 8,540, which the formula given the
+// recorded player's x reproduces to 0.01 px. With the flag a closed-form object (no touch control, no lock) with Area Move actions only is placed
+// at its closed-form position plus the actions' displacement for the group's x, provided the rows up to the anchor are no worse for it (the
+// loader checks them against the recorded run's own x). A shape's angle / distance variation does not count against an action that moves by
+// x / y (xy), nor its x / y variation against one that moves by angle and distance: GD reads only the pair the mode names.
+inline bool g_areaAdd = true;
+// The centre an action reads when the player is at px: the player's x, or for a screen centre that x plus the camera's offset from the player where the track first
+// reached px (held at its last row past it).
+inline double areaCentreX(const AreaAct& a, double px, int /*tick*/) {
+    if (!a.screen || g_camRows.empty()) return px;
+    size_t k = (size_t)(std::lower_bound(g_camRows.begin(), g_camRows.end(), px,
+                                         [](const std::array<double, 4>& r, double b) { return r[0] < b; }) - g_camRows.begin());
+    if (k >= g_camRows.size()) k = g_camRows.size() - 1;
+    return px + g_camRows[k][1] + a.fx * g_camRows[k][2];
+}
 inline std::vector<AreaAct> g_areas;
 // getEasedAreaValue: -1 the value itself, -2 the curve, a buffer index the 101-point table of the curve (linear
 // between; unknown (-3) is taken as a table for a curve, the value for none). GameToolbox::getEasedValue's curves are
@@ -948,7 +1044,7 @@ struct AreaPose {
     bool sized = false;
 };
 inline AreaPose areaPoseOf(const std::vector<int>& acts, double bx, double by, double ha, double hb, double r0,
-                           double px) {
+                           double px, int tick) {
     AreaPose p;
     p.cx = bx;
     p.cy = by;
@@ -957,9 +1053,10 @@ inline AreaPose areaPoseOf(const std::vector<int>& acts, double bx, double by, d
         const AreaAct& a = g_areas[(size_t)k];
         if (a.id == 3007 || a.id == 3008) p.sized = true;
         if (px < a.cx) continue;   // not crossed yet
+        const double cpx = areaCentreX(a, px, tick);   // --areascreen
         double dx = 0.0, dy = 0.0, fx = 1.0, fy = 1.0, r = 0.0;
-        if (areaDisp(a, bx, px, dx, dy)) { p.cx += dx; p.cy += dy; }
-        if (areaScaleRot(a, bx, px, fx, fy, r)) { sx *= fx; sy *= fy; dr += r; }
+        if (areaDisp(a, bx, cpx, dx, dy)) { p.cx += dx; p.cy += dy; }
+        if (areaScaleRot(a, bx, cpx, fx, fy, r)) { sx *= fx; sy *= fy; dr += r; }
     }
     p.rot = r0 + dr;
     if (p.sized) {
@@ -1089,7 +1186,7 @@ inline bool g_closedPastAll = true;
 // distance by the speed the static portals give at x0, which a level whose portals sit in groups
 // (routed to dyn, never in L.speeds) or off the path the player took gets wrong by hundreds of
 // ticks, and no list of portals says which ones GD actually went through.
-inline std::vector<std::pair<int, double>> g_xTrack;
+// (g_xTrack and g_camRows are declared before AreaAct, above.)
 // GD's x at tick t on the track's attempt (--recendtail): the track's own row, linear between rows, and past
 // either end straight on by the end's last step. 0 without a track.
 inline double xRefAt(int t) {
@@ -1202,6 +1299,10 @@ inline bool slamBoxRecorded(const std::array<int, kTouchBits>& rec, int b, int F
 // --dyndbg <uid>: dump one moving object's placement inputs at load (see the
 // print near the fireT resolution).
 inline int g_dynDbg = -1;
+// --geodump <file> <t0> <t1> <stride>: every moving object's position as the model computes it (t,uid,cx,cy,hw,hh,on), for the ticks t0..t1 every
+// `stride`: print only, to set the model's geometry against a recording (measurement). Off unless asked.
+inline std::FILE* g_geoDumpF = nullptr;
+inline long long g_geoT0 = 0, g_geoT1 = -1, g_geoStride = 1;
 // The search's thread pool, lent to the per-object loops of Dynamics::seek and
 // Dynamics::applyTriggers: runs task(k) for every k in [0,n) and returns when
 // all have run. Set by the search for exactly as long as its pool exists, on
@@ -1371,6 +1472,12 @@ inline bool g_shiftStat = false;
 // placing every one of them on every tick was ~45% of a heavy search. Nothing is approximated: an object is left
 // alone only where placing it again would write the bytes it already holds (see Dynamics::incBuild).
 inline bool g_incPlace = true;
+// --incanchor (on since 2026-10-21; --no-incanchor is the off arm): the objects an autonomous trigger moves by a closed form (the bulk of a heavy level's
+// "placed on every tick" set) are placed only on the ticks something about them can change: their own rows,
+// the rows re-timed to the trigger's fire tick, the window of each of their Moves, and the ticks after a date
+// they read (a trigger's or a Stop's fireT) changed. Between those a placement writes the bytes it already holds.
+// --incplacecheck compares the result with the plain placement tick by tick.
+inline bool g_incAnchor = true;
 // --incplacecheck (off): every incremental placement is also made the plain way from the same starting
 // state, and the two are compared byte for byte (objects, prevCy, on). The plain result is the one kept.
 inline bool g_incCheck = false;
@@ -1381,10 +1488,19 @@ struct IncStats {
     long long seekFull = 0, seekInc = 0, procInc = 0, objsInc = 0;
     long long atLists = 0, atFull = 0, atListObjs = 0;
     long long checked = 0, mismatch = 0;
+    long long pTicks = 0, pPlaced = 0, pWakes = 0, pWokeObjs = 0, pSlots = 0;   // --incanchor
     long long builds = 0, buildFail = 0;
     double buildMs = 0;
 };
 inline IncStats g_incStats;
+// --phaseprof: the census of the objects placed on every tick (Dynamics::censusAlways)
+struct CenStats {
+    long long ticks = 0, n = 0;
+    long long zone[3][2] = {};            // [near, ahead, behind][unchanged, moved]
+    long long never[2] = {}, behindCatch[2] = {};
+    long long idleFired = 0, idleUnfired = 0;
+};
+inline CenStats g_cen;
 // What Dynamics keeps for the incremental placement. A copy of a Dynamics (the gameplay frames) starts clean.
 struct IncState {
     uint64_t gen = ~0ull;      // g_dynPlaceGen the index was built under
@@ -1414,6 +1530,27 @@ struct IncState {
     int dNext = INT_MAX;                             // the next tick (after the last wake) a dEv switch takes effect
     bool dKnown = false;                             // dFire / dNext describe a wake that has happened
     std::vector<uint32_t> procD;                     // scratch: proc + dList
+    // --incanchor: the closed-form anchored objects ("P" slots), in ascending object order. Per slot: the object, its
+    // trigger, the ticks of its own rows (early edge, the span of its changes), the span of its changes on the recording's
+    // clock, the Moves it reads (CSR) and the interval `d` the current dates put its changes in.
+    struct PSlot {
+        uint32_t obj = 0;
+        int anchor = -1;               // g_autoTrig index of the object's controller
+        bool rows = false;             // the rows are re-timed to the controller's fire tick (trigRecFire >= 0 and > 1 row)
+        int rowT1 = 0, rowTL = 0;      // first change / last row on the recording's clock
+        int e0 = 0, e1 = -1;           // the first row's ticks (seek and the cursor read them)
+        int u0 = 0, u1 = -1;           // the span of the object's own rows, on the clock of the tick
+        int d0 = 0, d1 = -1;           // the span the dates put its changes in (recomputed when a date changes)
+        int force = INT_MIN;           // placed through this tick whatever the spans say
+        uint32_t p0 = 0, p1 = 0;       // its Moves: pPartTrig / pPartDur [p0, p1)
+    };
+    std::vector<PSlot> pSlot;
+    std::vector<int> pPartTrig;
+    std::vector<int> pPartDur;                       // ceil(dur) + 3, capped
+    std::vector<std::vector<uint32_t>> pDep;         // per g_autoTrig entry: the slots reading its date (controller, Moves, Stops)
+    std::vector<int> pFire;                          // each entry's fireT as the objects were last placed under it
+    bool pKnown = false;                             // pFire / d describe a placement of every slot
+    std::vector<uint32_t> pWoke;                     // scratch
     IncState() = default;
     IncState(const IncState&) {}
     IncState& operator=(const IncState&) { IncState fresh; *this = std::move(fresh); return *this; }
@@ -1522,14 +1659,29 @@ struct Dynamics {
     // ...and its unturned half sizes and angle at the base (for an Area Scale / Rotate)
     std::vector<double> areaBaseHa, areaBaseHb, areaBaseRot;
     std::vector<uint8_t> areaArmed;
+    // --areaadd: objects whose closed form takes the Area Move actions of areaOf on top
+    std::vector<uint8_t> areaAdd;
+    // The displacement of areaOf[i]'s actions for the group's x on an object standing at x `bx` without area offset.
+    bool areaAddDisp(size_t i, double bx, double& dx, double& dy) const {
+        dx = dy = 0.0;
+        if (i >= areaAdd.size() || !areaAdd[i]) return false;
+        for (const int k : areaOf[i]) {
+            const AreaAct& a = g_areas[(size_t)k];
+            if (areaPxPrev < a.cx) continue;   // not crossed yet
+            double ax = 0.0, ay = 0.0;
+            if (areaDisp(a, bx, areaCentreX(a, areaPxPrev, areaTickPrev), ax, ay)) { dx += ax; dy += ay; }
+        }
+        return true;
+    }
     double areaPxPrev = 0.0;
+    int areaTickPrev = 0;   // ...and its tick (the camera of a screen-centred action is read there)
     // An armed object's place for this group: its base plus every crossed action's displacement, and with a scale or
     // rotate its box's half sizes and angle (written only then).
     template <class T, class H, class R>
     bool areaPlace(size_t i, T& cx, T& cy, H* hw = nullptr, H* hh = nullptr, R* rotv = nullptr) const {
         if (i >= areaArmed.size() || !areaArmed[i]) return false;
         const AreaPose p = areaPoseOf(areaOf[i], areaBaseX[i], areaBaseY[i], areaBaseHa[i], areaBaseHb[i],
-                                      areaBaseRot[i], areaPxPrev);
+                                      areaBaseRot[i], areaPxPrev, areaTickPrev);
         cx = (T)p.cx;
         cy = (T)p.cy;
         if (p.sized) {
@@ -1808,6 +1960,9 @@ struct Dynamics {
     // (the split refuses them otherwise), so their own autoParts IS that
     // translation; this marks them so the recording arm can add it.
     std::vector<uint8_t> rotSplit;
+    // --bootauto: 1 for an object whose rows came from the left-out recording (on that recording's clock, not this run's); it travels with the level, so a cached level keeps it
+    std::vector<uint8_t> bootRows;
+    bool fromBootRows(size_t i) const { return i < bootRows.size() && bootRows[i]; }
     // The TOUCH chains kept per box (trig = the box's State::trig bit), where
     // trigDx/trigDy above are their sum. The sum is enough for a door -- one
     // box, one move -- and undecidable for the switch band, where YELLOW boxes
@@ -1820,6 +1975,28 @@ struct Dynamics {
     // opened it -- NOT necessarily the object's anchor. See TrigCtl::lockTicks.
     std::vector<double> autoLock;
     std::vector<int> autoLockTrig;
+    // --multilock: the object's other locks (the --multilock note above): {autonomous trigger index, window in ticks, mover uid,
+    // start x -- the anchor's x for a lock the anchor is past (the recorded displacement sits in the first lock), NaN: the trigger's own fireX}
+    std::vector<std::vector<std::array<double, 4>>> autoLockExtra;
+    void addExtraLocks(size_t i, int t, double px, TouchMask mask, const uint16_t* fireB, double& cx) const {
+        if (i >= autoLockExtra.size()) return;
+        for (const std::array<double, 4>& L : autoLockExtra[i]) {
+            const int k = (int)L[0];
+            if (k < 0 || (size_t)k >= g_autoTrig.size() || autoFireT(k, mask, fireB) < 0) continue;
+            AutoTrig& A = g_autoTrig[(size_t)k];
+            const int lockT0 = A.fireT - A.delay;
+            int lockEnd = lockT0 + (int)L[1];
+            if (g_autoStop) lockEnd = std::min(lockEnd, autoStopT(k));
+            lockEnd = std::min(lockEnd, touchStopTick(mask, fireB, (int)L[2] != 0 ? (int)L[2] : A.uid));
+            const double from = std::isnan(L[3]) ? A.fireX : L[3];
+            if (t >= lockT0 && t <= lockEnd) {
+                A.lockLastX = px;
+                cx += (px - from) * lockMod(A);
+            } else if (t > lockEnd) {
+                cx += (A.lockLastX - from) * lockMod(A);
+            }
+        }
+    }
     // --lockstop: the Move that locks the object (its ctl entry's mover, else the entry's own
     // uid), the one a touch chain's Stop has to name. Filled at the first placement under the flag.
     std::vector<int> lockMover;
@@ -1880,6 +2057,7 @@ struct Dynamics {
             && !(i < tailOnBox.size() && tailOnBox[i])
             // --areamove: placed from the group's x
             && !(i < areaArmed.size() && areaArmed[i])
+            && !(i < areaAdd.size() && areaAdd[i])   // --areaadd: the same, on top of a closed form
             // --tapdisarm: the on/off reads autoDisarmed, which asks the group's boxes
             && !(i < disarmDep.size() && disarmDep[i])
             // --boxarm: a Move of it fires only where the group's boxes switched it back on
@@ -1976,8 +2154,23 @@ struct Dynamics {
     // box (State::lockOff). Applied only on the formula path: a recording of a
     // locked object already contains the recorded run's own lock, so adding
     // this to it would count the ride twice.
+    // --advfollow: per object, the x of the Advanced Follow trigger that carries it (-1e30: none). Filled by the level loader.
+    std::vector<double> advFollowX;
+    bool anyAdvFollow = false;
+    // After the tick's placement: an object an Advanced Follow carries stands at the player's x of the tick before once that x
+    // has crossed the trigger (areaPxPrev, set by prepareGroup just before applyTriggers; the same crossing test as an Area action).
+    void placeAdvFollow() {
+        if (!anyAdvFollow) return;
+        for (size_t i = 0; i < objs.size() && i < advFollowX.size(); ++i)
+            if (advFollowX[i] > -1e29 && areaPxPrev >= advFollowX[i]) objs[i].cx = (float)areaPxPrev;
+    }
     void applyTriggers(TouchMask mask, int fireHi, const uint16_t* fireB,
                        float lockOff, int t, double px = 0.0) {
+        applyTriggersBase(mask, fireHi, fireB, lockOff, t, px);
+        placeAdvFollow();
+    }
+    void applyTriggersBase(TouchMask mask, int fireHi, const uint16_t* fireB,
+                           float lockOff, int t, double px = 0.0) {
         if (!g_incCheck || !g_incPlace || !inc.valid || inc.gen != g_dynPlaceGen || byBucketN != objs.size()) {
             applyTriggersImpl(mask, fireHi, fireB, lockOff, t, px, true);
             return;
@@ -2044,8 +2237,10 @@ struct Dynamics {
         const std::vector<uint32_t>* idxs = nullptr;
         if (lists && quiet && g_incPlace && inc.valid && inc.gen == g_dynPlaceGen && byBucketN == objs.size())
             idxs = samePure ? &inc.nonPure : incAtFirstList(t);
-        else if (!samePure && inc.valid && inc.gen == g_dynPlaceGen)
+        else if (!samePure && inc.valid && inc.gen == g_dynPlaceGen) {
             incNotedPlaced(t);   // every object is walked: the d-class ones are placed too
+            incPSyncAll();       // ...and so are the anchored ones
+        }
         if (idxs) { ++g_incStats.atLists; g_incStats.atListObjs += (long long)idxs->size(); }
         else ++g_incStats.atFull;
         auto place = [&](size_t b, size_t e, bool lockPass) {
@@ -2381,6 +2576,8 @@ struct Dynamics {
             const DynSample& s0 = sm[0];
             double cx = s0.cx, cy = s0.cy, hw = s0.hw, hh = s0.hh;
             uint8_t onv = s0.on;
+            uint8_t onPrevV = 1;   // --onlag
+            uint8_t onNewV = 0;
             float rotv = s0.rot;   // GD's own getRotation (see turnedBox)
             // --recendresid: the placement the parts tail left from the last row (tailCx, tailCy), and what its
             // parts took of the recording's own last step (tailLastDx, tailLastDy)
@@ -2979,10 +3176,11 @@ struct Dynamics {
                         cx = s0.cx;
                         if (t >= lockT0 && t <= lockEnd) {
                             A.lockLastX = px;
-                            cx += px - A.fireX;
+                            cx += (px - A.fireX) * lockMod(A);
                         } else if (t > lockEnd) {
-                            cx += A.lockLastX - A.fireX;
+                            cx += (A.lockLastX - A.fireX) * lockMod(A);
                         }
+                        addExtraLocks(i, t, px, mask, fireB, cx);   // --multilock
                         if (g_dynDbg == objs[i].uid && (t % 40 == 0))
                             std::printf("lockxdbg t=%d uid=%d lockT0=%d lockEnd=%d fireX=%.3f "
                                         "px=%.3f cx=%.3f\n", t, objs[i].uid, lockT0, lockEnd,
@@ -3027,10 +3225,11 @@ struct Dynamics {
                         lockEnd = std::min(lockEnd, touchStopTick(mask, fireB, i < lockMover.size() ? lockMover[i] : A.uid));
                         if (t >= lockT0 && t <= lockEnd) {
                             A.lockLastX = px;
-                            cx += px - A.fireX;
+                            cx += (px - A.fireX) * lockMod(A);
                         } else if (t > lockEnd) {
-                            cx += A.lockLastX - A.fireX;
+                            cx += (A.lockLastX - A.fireX) * lockMod(A);
                         }
+                        addExtraLocks(i, t, px, mask, fireB, cx);   // --multilock
                     }
                     if (trigRecFire[i] >= 0 && sm.size() > 1) {
                         const int shift = (anchor >= 0) ? (anchor - recAnchor) : 0;
@@ -3250,6 +3449,10 @@ struct Dynamics {
                         rotv = (float)arot;
                         recEndAxis(i, arot);
                     }
+                } else if (!m && i < areaAdd.size() && areaAdd[i] && !(trigRecFire[i] >= 0 && !autoClosed[i])) {
+                    // --areaadd: the closed form's place plus the actions' displacement (a recording holds its own)
+                    double adx = 0.0, ady = 0.0;
+                    if (areaAddDisp(i, cx, adx, ady)) { cx += adx; cy += ady; }
                 }
             }
             objs[i].cx = cx; objs[i].cy = cy; objs[i].hw = hw; objs[i].hh = hh;
@@ -3340,7 +3543,8 @@ struct Dynamics {
                 for (const OnEvent& e : tailOnEv[i]) {
                     if (e.box < 0 || e.box >= kTouchBits) continue;
                     const int rec = g_recOwnEntry[(size_t)e.box];
-                    const int st = (mask & touchBit(e.box)) ? (int)fireB[e.box] : -1;
+                    int st = (mask & touchBit(e.box)) ? (int)fireB[e.box] : -1;
+                    if (g_touchRecEntry[(size_t)e.box] > 0) st = g_touchRecEntry[(size_t)e.box];   // --touchonrecentry
                     if (st == rec) continue;
                     int a = std::numeric_limits<int>::max();
                     if (st >= 0) a = std::min(a, st);
@@ -3406,10 +3610,25 @@ struct Dynamics {
             if (i < offBox.size() && fireB)
                 for (const uint8_t b : offBox[i])
                     if ((mask & touchBit((int)b)) && (int)fireB[b] <= t) { onv = 0; break; }
+            // --onlag: a hazard (bucket NEAR, not a solid) that the recording switches ON takes effect the tick after the
+            // row, as the portal / speed read above does, and on the tick after that the sweep leaves out the previous
+            // tick's end position (Obj::onPrev). Whatever produced `onv` above, the recording's row dates the edge.
+            if (onv && bucket[i] == NEAR && objs[i].type != 0
+                && cur[i] > 0 && cur[i] < sm.size() && sm[cur[i]].on && !sm[cur[i] - 1].on) {
+                if (sm[cur[i]].t == t) onNewV = 1;
+                else if (sm[cur[i]].t == t - 1) onPrevV = 0;
+            }
+            // --zerosaw: a hazard whose rect is empty at this tick (scale 0) hurts nothing
+            if (onv && bucket[i] == NEAR && objs[i].type != 0 && objs[i].hw <= 0.f && objs[i].hh <= 0.f)
+                onv = 0;
+            objs[i].onPrev = onPrevV;   // --onlag
+            objs[i].onNew = onNewV;
             on[i] = onv;
             objs[i].recOn = onv;   // --holdtap (object.hpp)
             if (objs[i].pendBox >= 0)   // --pressfresh (Obj::pendOff)
                 objs[i].pendOff = !onv && !(mask & touchBit(objs[i].pendBox));
+            if (g_geoDumpF && t >= g_geoT0 && t <= g_geoT1 && (t - g_geoT0) % g_geoStride == 0)
+                std::fprintf(g_geoDumpF, "%d,%d,%.3f,%.3f,%.2f,%.2f,%d\n", t, objs[i].uid, cx, cy, hw, hh, (int)onv);
             if (g_dynDbg == objs[i].uid)
                 std::printf("dyntrig t=%d uid=%d fired=%d m=%08x cx=%.3f "
                             "cy=%.3f hw=%.1f hh=%.1f on=%d\n",
@@ -3613,8 +3832,28 @@ struct Dynamics {
                     if (step1 && i < prevCy.size())
                         objs[i].dcy = (double)objs[i].cy - (double)prevCy[i];
                 }
+            {   // --facecarry: this tick's change of the half-height, as dcy is this tick's change of the centre
+                const double hhBefore = (double)objs[i].hh;
+                objs[i].dhh = step1 ? ((double)hhNow - hhBefore)
+                                    : (c > 0 && sm[c].t == t && sm[c - 1].t == t - 1)
+                                          ? ((double)sm[c].hh - (double)sm[c - 1].hh)
+                                          : 0.0;
+            }
             objs[i].hw = hwNow; objs[i].hh = hhNow;
+            objs[i].onPrev = 1;
+            objs[i].onNew = 0;
             on[i] = recOnAt(sm, c, t);   // --offafter
+            if (on[i] && bucket[i] == NEAR && objs[i].type != 0 && objs[i].hw <= 0.f && objs[i].hh <= 0.f)
+                on[i] = 0;   // --zerosaw
+            // --onlag: a row that switches the object ON takes effect the tick after it, as the OFF row does
+            // (--offafter): the game's collision list is rebuilt after the toggle, so the object is not there on the
+            // row's own tick, and on the tick after it the sweep starts at its sub-steps, not at the previous
+            // tick's end position. A custom level t=16,381: a saw toggled on 22.8 px from a mini wave that GD
+            // lets through at that tick and, 1.95 px later, tests only from the end position.
+            if (bucket[i] == NEAR && objs[i].type != 0 && s.on && c > 0 && !sm[c - 1].on) {
+                if (s.t == t) objs[i].onNew = 1;
+                else if (s.t == t - 1) objs[i].onPrev = 0;
+            }
             objs[i].recOn = s.on;   // --holdtap (object.hpp)
             objs[i].pendOff = 0;   // --pressfresh: applyTriggers decides it per group
             turnedBox(objs[i], bucket[i], rotNow,
@@ -3665,7 +3904,7 @@ struct Dynamics {
     uint32_t incSig() const {
         return (g_recInterpSlow ? 1u : 0u) | (g_recInterpSize ? 2u : 0u) | (4u)
                | (g_moverExtendVel ? 8u : 0u) | (16u) | (g_offAfter ? 32u : 0u)
-               | (g_dynObbRot ? 64u : 0u) | ((uint32_t)objs.size() << 8);
+               | (g_dynObbRot ? 64u : 0u) | (g_incAnchor ? 128u : 0u) | ((uint32_t)objs.size() << 8);
     }
     // The same conditions applyTriggers calls `quiet`, plus the parallel loop's: no print flag, no object named
     // uid -1 (--dyndbg's default).
@@ -3673,7 +3912,139 @@ struct Dynamics {
         return g_incPlace && g_dynDbg == -1 && g_shiftDbgUid < 0 && !g_shiftStat
                && !(g_rotCompute && !g_rotSpec.empty()) && !anyUidM1;
     }
-    void incInvalidate() { inc.settled = false; inc.lastFull = false; inc.dKnown = false; inc.atT = INT_MIN; }
+    void incInvalidate() { inc.settled = false; inc.lastFull = false; inc.dKnown = false; inc.atT = INT_MIN; inc.pKnown = false; }
+    // ---- --incanchor: the closed-form anchored objects ----
+    // An object an autonomous trigger moves by a closed form (applyTriggers' superposition branch, or its collapsed
+    // one) is written from: the position of its first row plus each Move's eased offset at (t - the Move's fireT);
+    // size, angle and on/off from its rows (re-timed to the controller's fire tick once it has fired) and from the
+    // cursor seek keeps on the tick's own clock. Every one of those is constant outside a span the dates and the rows
+    // give, so outside it a placement writes the bytes the object holds. The spans are padded: a move starts to show
+    // a tick after its date, ends a tick after its last step, and dcy / prevCy settle one tick after that.
+    static int incDurPad(double d) { return (int)std::min(std::ceil(std::max(d, 0.0)), 1.0e7) + 3; }
+    bool incAnchorClass(size_t i, bool atNoop) const {
+        if (atNoop || !isPure(i)) return false;
+        if (i >= autoAnchor.size() || autoAnchor[i] < 0 || (size_t)autoAnchor[i] >= g_autoTrig.size()) return false;
+        if (i >= samples.size() || samples[i].empty() || i >= trigRecFire.size() || i >= autoClosed.size()
+            || i >= autoDur.size() || i >= autoParts.size())
+            return false;
+        if (i >= recLag.size() && i >= autoLag.size()) return false;
+        if (i < obbLatchT.size() && obbLatchT[i] >= 0) return false;
+        if (i < rotTail.size() && !rotTail[i].empty()) return false;
+        if (i < offBox.size() && !offBox[i].empty()) return false;
+        if (i < tailOnEv.size() && !tailOnEv[i].empty()) return false;
+        if (i < rotSplit.size() && rotSplit[i]) return false;
+        if (i < rigTail.size() && !rigTail[i].x.empty()) return false;
+        if (i < extOk.size() && extOk[i]) return false;
+        if (i < recOk.size() && recOk[i]) return false;
+        if (objs[i].pendBox >= 0) return false;
+        if (trigRecFire[i] >= 0 && !autoClosed[i]) return false;   // the recording-driven branch
+        for (const AutoPart& p : autoParts[i])
+            if (p.trig < 0 || (size_t)p.trig >= g_autoTrig.size()) return false;
+        return true;
+    }
+    void incAddSlot(size_t i) {
+        IncState::PSlot s;
+        s.obj = (uint32_t)i;
+        s.anchor = autoAnchor[i];
+        const auto& sm = samples[i];
+        s.rows = trigRecFire[i] >= 0 && sm.size() > 1;
+        s.rowT1 = sm.size() > 1 ? sm[1].t : sm[0].t;
+        s.rowTL = sm.back().t;
+        s.e0 = sm[0].t - 1;
+        s.e1 = sm[0].t + 2;
+        if (sm.size() > 1) { s.u0 = sm[1].t - 2; s.u1 = sm.back().t + 3; }
+        s.p0 = (uint32_t)inc.pPartTrig.size();
+        if (autoParts[i].empty()) {
+            inc.pPartTrig.push_back(s.anchor);
+            inc.pPartDur.push_back(incDurPad(autoDur[i]));
+        } else {
+            for (const AutoPart& p : autoParts[i]) {
+                inc.pPartTrig.push_back(p.trig);
+                inc.pPartDur.push_back(incDurPad(p.dur));
+            }
+        }
+        s.p1 = (uint32_t)inc.pPartTrig.size();
+        if (inc.pDep.size() != g_autoTrig.size()) inc.pDep.assign(g_autoTrig.size(), {});
+        std::vector<int> deps{s.anchor};
+        for (uint32_t q = s.p0; q < s.p1; ++q) {
+            const int b = inc.pPartTrig[q];
+            deps.push_back(b);
+            if (g_autoStop && (size_t)b < g_autoStopBy.size())
+                for (const int st : g_autoStopBy[(size_t)b]) deps.push_back(st);
+        }
+        std::sort(deps.begin(), deps.end());
+        deps.erase(std::unique(deps.begin(), deps.end()), deps.end());
+        for (const int b : deps)
+            if (b >= 0 && (size_t)b < inc.pDep.size()) inc.pDep[(size_t)b].push_back((uint32_t)inc.pSlot.size());
+        inc.pSlot.push_back(s);
+    }
+    // the span the current dates put the slot's changes in
+    void incPRecompute(IncState::PSlot& s) const {
+        int lo = INT_MAX, hi = INT_MIN;
+        const int F = g_autoTrig[(size_t)s.anchor].fireT;
+        if (F >= 0) {
+            lo = F - 2;
+            hi = F + 3;
+            if (s.rows) {
+                const size_t o = s.obj;
+                int recAnchor = trigRecFire[o] - (o < autoLag.size() ? autoLag[o] : recLag[o]);
+                if (o < anchorUnrec.size() && anchorUnrec[o]) recAnchor = F;
+                else if (o < recAnchorX.size() && recAnchorX[o] >= 0) recAnchor = recAnchorX[o];
+                const int shift = F - recAnchor;
+                lo = std::min(lo, s.rowT1 + shift - 2);
+                hi = std::max(hi, s.rowTL + shift + 3);
+            }
+        }
+        for (uint32_t q = s.p0; q < s.p1; ++q) {
+            const int f = g_autoTrig[(size_t)inc.pPartTrig[q]].fireT;
+            if (f < 0) continue;
+            lo = std::min(lo, f - 2);
+            hi = std::max(hi, f + inc.pPartDur[q]);
+        }
+        s.d0 = lo;
+        s.d1 = hi;
+    }
+    // every object has just been placed under the current dates
+    void incPSyncAll() {
+        if (inc.pSlot.empty()) return;
+        inc.pFire.resize(g_autoTrig.size());
+        for (size_t b = 0; b < g_autoTrig.size(); ++b) inc.pFire[b] = g_autoTrig[b].fireT;
+        for (IncState::PSlot& s : inc.pSlot) { incPRecompute(s); s.force = INT_MIN; }
+        inc.pKnown = true;
+    }
+    // the slots that read a date which is not the one the objects were last placed under: placed now and on the next tick.
+    // Their objects, ascending, are left in inc.pWoke. Returns how many.
+    size_t incPWake(int t) {
+        inc.pWoke.clear();
+        if (inc.pSlot.empty()) return 0;
+        ++g_incStats.pWakes;
+        if (!inc.pKnown || inc.pFire.size() != g_autoTrig.size() || inc.pDep.size() != g_autoTrig.size()) {
+            incPSyncAll();   // (sizes the dates)
+            for (IncState::PSlot& s : inc.pSlot) { s.force = t + 1; inc.pWoke.push_back(s.obj); }
+            g_incStats.pWokeObjs += (long long)inc.pWoke.size();
+            return inc.pWoke.size();
+        }
+        std::vector<uint32_t> slots;
+        for (size_t b = 0; b < g_autoTrig.size(); ++b) {
+            if (g_autoTrig[b].fireT == inc.pFire[b]) continue;
+            inc.pFire[b] = g_autoTrig[b].fireT;
+            for (const uint32_t q : inc.pDep[b]) slots.push_back(q);
+        }
+        if (slots.empty()) return 0;
+        std::sort(slots.begin(), slots.end());
+        slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+        for (const uint32_t q : slots) {
+            IncState::PSlot& s = inc.pSlot[q];
+            incPRecompute(s);
+            s.force = t + 1;
+            inc.pWoke.push_back(s.obj);
+        }
+        g_incStats.pWokeObjs += (long long)inc.pWoke.size();
+        return inc.pWoke.size();
+    }
+    static bool incPActive(const IncState::PSlot& s, int t) {
+        return s.force >= t || (t >= s.e0 && t <= s.e1) || (t >= s.u0 && t <= s.u1) || (t >= s.d0 && t <= s.d1);
+    }
     static constexpr int kIncBuildAfter = 32;   // one-tick advances before the index is built (it takes ~3 ms at 8,400 objects)
     void incBuild() {
         ++g_incStats.builds;
@@ -3717,6 +4088,10 @@ struct Dynamics {
             }
             bool alwaysI = (!atNoop && !isC) || (i < obbLatchT.size() && obbLatchT[i] >= 0);
             const size_t evBegin = ev.size();
+            if (alwaysI && g_incAnchor && incAnchorClass(i, atNoop)) {
+                incAddSlot(i);
+                continue;
+            }
             if (!alwaysI) {
                 const size_t m = sm.size();
                 for (size_t k = 0; k < m && !alwaysI; ++k) {
@@ -3788,12 +4163,84 @@ struct Dynamics {
             for (const auto& e : ev) inc.evObj.push_back(e.second);
         }
         inc.valid = true;
-        g_incStats.buildMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tb0).count();
+        if (g_phaseProf) {   // what the placed-every-tick objects are made of (measurement)
+            size_t nonPure = 0, rec = 0, noRec = 0, closed = 0, p0 = 0, p1 = 0, p2 = 0, tails = 0, ext = 0, rt = 0, off = 0,
+                   latch = 0, tailOn = 0, split = 0, nrow1 = 0, simple = 0;
+            for (const uint32_t u : inc.always) {
+                if (!isPure(u)) { ++nonPure; continue; }
+                const bool hasRec = u < trigRecFire.size() && trigRecFire[u] >= 0 && u < samples.size() && samples[u].size() > 1;
+                (hasRec ? rec : noRec)++;
+                const bool cl = u < autoClosed.size() && autoClosed[u];
+                closed += cl;
+                const size_t np = u < autoParts.size() ? autoParts[u].size() : 0;
+                (np == 0 ? p0 : np == 1 ? p1 : p2)++;
+                const bool rtl = u < rotTail.size() && !rotTail[u].empty();
+                const bool ofb = u < offBox.size() && !offBox[u].empty();
+                const bool lat = u < obbLatchT.size() && obbLatchT[u] >= 0;
+                const bool ton = u < tailOnEv.size() && !tailOnEv[u].empty();
+                const bool spl = u < rotSplit.size() && rotSplit[u];
+                const bool ex = (u < extOk.size() && extOk[u]) || (u < recOk.size() && recOk[u]);
+                rt += rtl; off += ofb; latch += lat; tailOn += ton; split += spl; ext += ex;
+                tails += (u < rigTail.size() && !rigTail[u].x.empty());
+                if (u < samples.size() && samples[u].size() <= 1) ++nrow1;
+                if (hasRec && !cl && !rtl && !ofb && !lat && !ton && !spl && !(u < rigTail.size() && !rigTail[u].x.empty())) ++simple;
+            }
+            std::printf("incbuild: always=%zu: non-pure %zu | pure: with recording %zu (simple %zu), without %zu; closed %zu; autoParts 0/1/2+ = %zu/%zu/%zu; "
+                        "rotTail %zu offBox %zu latch %zu tailOn %zu split %zu rigTail %zu ext %zu 1-row %zu\n",
+                        inc.always.size(), nonPure, rec, simple, noRec, closed, p0, p1, p2, rt, off, latch, tailOn, split, tails, ext, nrow1);
+        }
+        g_incStats.buildMs +=std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tb0).count();
         if (g_phaseProf)
             std::printf("incbuild: %zu objects: %zu non-pure, %zu in applyTriggers' first walk, %zu placed on every tick, "
                         "%zu d-class (%zu switches on %zu triggers), %zu row events\n",
                         n, inc.nonPure.size(), inc.atList.size(), inc.always.size(), inc.dList.size(), inc.dEv.size(),
                         inc.dTrigs.size(), inc.evObj.size());
+    }
+    // --phaseprof: what the objects placed on every tick (inc.always) are doing, per tick of the call. Measurement only.
+    // `near` is the object's box inside the group's window (+-60); `ahead` is farther on, `behind` is left of it.
+    // "never" = behind, and nothing it can still do brings it back: pure (no lock / formula / touch), its recording's
+    // rightmost row and the sum of its Moves' positive dx put its box left of the window.
+    std::vector<float> cenCx, cenCy, cenMaxX;
+    std::vector<uint8_t> cenOn, cenCatch;
+    int cenT = INT_MIN;
+    void censusAlways(int t, double wLo, double wHi) {
+        if (!inc.valid || cenT == t) return;
+        const bool shadowOk = cenT == t - 1 && cenCx.size() == objs.size();
+        if (cenCx.size() != objs.size()) {
+            cenCx.assign(objs.size(), 0.f); cenCy.assign(objs.size(), 0.f); cenOn.assign(objs.size(), 0);
+            cenMaxX.assign(objs.size(), 0.f); cenCatch.assign(objs.size(), 0);
+            for (size_t i = 0; i < objs.size(); ++i) {
+                float mx = objs[i].cx;
+                if (i < samples.size()) for (const DynSample& s : samples[i]) mx = std::max(mx, s.cx);
+                bool catches = !isPure(i) || (i < rotTail.size() && !rotTail[i].empty());
+                if (i < autoParts.size())
+                    for (const AutoPart& p : autoParts[i]) {
+                        mx += std::max(0.f, p.dx);
+                        if (p.mover != 0 || p.tmode != 0) catches = true;
+                    }
+                cenMaxX[i] = mx;
+                cenCatch[i] = catches ? 1 : 0;
+            }
+        }
+        cenT = t;
+        CenStats& c = g_cen;
+        for (const uint32_t u : inc.always) {
+            const Obj& o = objs[u];
+            const bool moved = shadowOk && (o.cx != cenCx[u] || o.cy != cenCy[u] || on[u] != cenOn[u]);
+            const int zone = (o.cx + o.hw >= wLo - 60 && o.cx - o.hw <= wHi + 60) ? 0 : (o.cx - o.hw > wHi + 60) ? 1 : 2;
+            if (shadowOk) {
+                ++c.n; ++c.zone[zone][moved ? 1 : 0];
+                if (zone == 2 && !cenCatch[u] && (double)cenMaxX[u] + o.hw + 60 < wLo - 60) ++c.never[moved ? 1 : 0];
+                if (zone == 2 && cenCatch[u]) ++c.behindCatch[moved ? 1 : 0];
+                if (!moved) {
+                    const int aa = u < autoAnchor.size() ? autoAnchor[u] : -1;
+                    if (aa >= 0 && (size_t)aa < g_autoTrig.size() && g_autoTrig[(size_t)aa].fireT >= 0) ++c.idleFired;
+                    else ++c.idleUnfired;
+                }
+            }
+            cenCx[u] = o.cx; cenCy[u] = o.cy; cenOn[u] = on[u];
+        }
+        if (shadowOk) ++c.ticks;
     }
     // dFire / dNext / atT as of a placement of every d-class object at tick t (a full walk, or a wake)
     void incNotedPlaced(int t) {
@@ -3815,17 +4262,27 @@ struct Dynamics {
     // fireT has changed or a switch of theirs takes effect now); otherwise every object that is not a no-op.
     const std::vector<uint32_t>* incAtFirstList(int t) {
         const bool incTick = inc.procT == t && (inc.atT == t || inc.atT == t - 1) && inc.dKnown;
-        if (!incTick) { incNotedPlaced(t); return &inc.atList; }
+        if (!incTick) { incNotedPlaced(t); incPSyncAll(); return &inc.atList; }
         inc.atT = t;
-        if (inc.dList.empty()) return &inc.proc;
-        bool wake = t >= inc.dNext;
-        for (size_t q = 0; !wake && q < inc.dTrigs.size(); ++q)
-            wake = g_autoTrig[(size_t)inc.dTrigs[q]].fireT != inc.dFire[q];
-        if (!wake) return &inc.proc;
-        incNotedPlaced(t);
+        // --incanchor: a later group of the tick reads other dates than the group the seek placed for
+        const size_t pw = incPWake(t);
+        bool wake = false;
+        if (!inc.dList.empty()) {
+            wake = t >= inc.dNext;
+            for (size_t q = 0; !wake && q < inc.dTrigs.size(); ++q)
+                wake = g_autoTrig[(size_t)inc.dTrigs[q]].fireT != inc.dFire[q];
+        }
+        if (!wake && pw == 0) return &inc.proc;
+        if (wake) incNotedPlaced(t);
+        std::vector<uint32_t> extra;
+        if (wake && pw > 0)
+            std::set_union(inc.dList.begin(), inc.dList.end(), inc.pWoke.begin(), inc.pWoke.end(), std::back_inserter(extra));
+        else if (wake)
+            extra = inc.dList;
+        else
+            extra = inc.pWoke;
         inc.procD.clear();
-        std::set_union(inc.proc.begin(), inc.proc.end(), inc.dList.begin(), inc.dList.end(),
-                       std::back_inserter(inc.procD));
+        std::set_union(inc.proc.begin(), inc.proc.end(), extra.begin(), extra.end(), std::back_inserter(inc.procD));
         return &inc.procD;
     }
     void seekFull(int t, bool back, bool step1, bool par) {
@@ -3838,10 +4295,27 @@ struct Dynamics {
     void incProcList(int t) {
         std::vector<uint32_t>& p = inc.proc;
         p.clear();
-        if (t < inc.evT0 || t > inc.evT1 || inc.evStart.empty()) { p = inc.always; return; }
-        const uint32_t* a = inc.evObj.data() + inc.evStart[(size_t)(t - inc.evT0)];
-        const uint32_t* ae = inc.evObj.data() + inc.evStart[(size_t)(t - inc.evT0) + 1];
-        std::merge(inc.always.begin(), inc.always.end(), a, ae, std::back_inserter(p));
+        if (t < inc.evT0 || t > inc.evT1 || inc.evStart.empty()) {
+            p = inc.always;
+        } else {
+            const uint32_t* a = inc.evObj.data() + inc.evStart[(size_t)(t - inc.evT0)];
+            const uint32_t* ae = inc.evObj.data() + inc.evStart[(size_t)(t - inc.evT0) + 1];
+            std::merge(inc.always.begin(), inc.always.end(), a, ae, std::back_inserter(p));
+        }
+        if (inc.pSlot.empty()) return;
+        // --incanchor: the anchored objects whose changes this tick can reach (and the ones whose dates just changed)
+        incPWake(t);
+        std::vector<uint32_t>& sel = inc.procD;
+        sel.clear();
+        for (const IncState::PSlot& s : inc.pSlot)
+            if (incPActive(s, t)) sel.push_back(s.obj);
+        ++g_incStats.pTicks;
+        g_incStats.pPlaced += (long long)sel.size();
+        g_incStats.pSlots += (long long)inc.pSlot.size();
+        std::vector<uint32_t> merged;
+        merged.reserve(p.size() + sel.size());
+        std::merge(p.begin(), p.end(), sel.begin(), sel.end(), std::back_inserter(merged));
+        p.swap(merged);
     }
     void seekInc(int t, bool par) {
         incProcList(t);
@@ -4043,7 +4517,7 @@ struct Dynamics {
         // [2026-08-18] **Do not throw away the real box built from w0/h0 at
         // load.** This used to drop oriented to 0 on every seek and rebuild it
         // by inverting the bounding box, and since the inversion does not work
-        // near 45 degrees (|cos2θ| < 0.1), grouped portals alone were **firing
+        // near 45 degrees (|cos2ﾎｸ| < 0.1), grouped portals alone were **firing
         // on the bounding box**. Measured on lv21 uid24194 (id111 UFO portal,
         // rot=43, w0/h0 = 34x86, bound 167x172): GD switches at t=18,087
         // (x=23,929), but the model did so at the bound's left edge at t=18,075

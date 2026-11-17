@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -388,12 +389,14 @@ struct Frame {
     signed char flip = 0, mini = 0, dual = 0, og = 0;
     signed char gframe = 0;                 // rotated gameplay: 0 +x, 1 -y, 2 -x, 3 +y
     bool valid = false;
+    bool model = false;                     // the model's plan (a row of the DP's walk), not GD's own state
 };
 
 struct Track {
     std::vector<Frame> f;                   // indexed by tick
     long long first = -1, last = -1;        // the first and last valid tick
     long long serial = -2;                  // which attempt (anchors::g_deepestSerial) it is
+    long long modelFrom = -1;               // the first tick that is the model's plan (-1: the whole path is GD's)
     void finish() {
         first = last = -1;
         for (size_t i = 0; i < f.size(); ++i)
@@ -403,6 +406,103 @@ struct Track {
     const Frame* at(long long t) const { return has(t) ? &f[(size_t)t] : nullptr; }
 };
 
+// ------------------------------------------------------------------ the model's plan
+
+// The DP's walk of a plan, `<out>.trace.csv` (dp/src/dp/cli.hpp, "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,
+// frame,rotspent,rotchan,rotrev,dead,key"): what the model believes the plan does from its anchor on. It is not GD's state --
+// the model may be wrong -- and the panel shows it as the model's: the frames are marked `model`. The columns are found by
+// name, so a column added at the end does not move them. The walk runs on through its own kill (`dead` = 1 on the tick it
+// fires); the rows after it are corpses, and are left out. A last line the solver is still writing is left out too.
+inline Track parseModelTrace(std::string_view text) {
+    Track tr;
+    const size_t nl = text.rfind('\n');
+    if (nl == std::string_view::npos) return tr;
+    text = text.substr(0, nl + 1);
+    int cT = -1, cX = -1, cY = -1, cVy = -1, cMode = -1, cGr = -1, cDual = -1, cY2 = -1, cFlip = -1, cFrame = -1, cDead = -1;
+    bool head = true, dead = false;
+    Cells cs;
+    forEachLine(text, [&](std::string_view line) {
+        if (line.empty() || dead) return;
+        cs.split(line);
+        if (head) {
+            head = false;
+            for (int i = 0; i < cs.n; ++i) {
+                const std::string_view h = cs.c[i];
+                if (h == "tick") cT = i; else if (h == "x") cX = i; else if (h == "y") cY = i;
+                else if (h == "vy") cVy = i; else if (h == "mode") cMode = i; else if (h == "grounded") cGr = i;
+                else if (h == "dual") cDual = i; else if (h == "y2") cY2 = i; else if (h == "flip") cFlip = i;
+                else if (h == "frame") cFrame = i; else if (h == "dead") cDead = i;
+            }
+            return;
+        }
+        const int need = std::max({cT, cX, cY, cVy, cMode, cGr, cDual, cY2, cFlip, cFrame, cDead});
+        if (cT < 0 || cX < 0 || cY < 0 || cs.n <= need) return;
+        const long long t = inum(cs.c[cT], -1);
+        if (t < 0 || t > 4000000) return;
+        if ((size_t)t >= tr.f.size()) tr.f.resize((size_t)t + 1);
+        Frame& f = tr.f[(size_t)t];
+        f.x = num(cs.c[cX]); f.y = num(cs.c[cY]);
+        f.vy = cVy >= 0 ? num(cs.c[cVy]) : 0.f;
+        f.x2 = f.x;                                  // the second body runs beside the first (a two-player level's does not)
+        f.y2 = cY2 >= 0 ? num(cs.c[cY2]) : 0.f;
+        f.mode = cMode >= 0 ? (signed char)inum(cs.c[cMode]) : (signed char)0;
+        f.dual = cDual >= 0 ? (signed char)(inum(cs.c[cDual]) != 0) : (signed char)0;
+        f.flip = cFlip >= 0 ? (signed char)(inum(cs.c[cFlip]) != 0) : (signed char)0;
+        f.og = cGr >= 0 ? (signed char)(inum(cs.c[cGr]) != 0) : (signed char)0;
+        f.gframe = cFrame >= 0 ? (signed char)(inum(cs.c[cFrame]) & 3) : (signed char)0;
+        f.valid = true;
+        f.model = true;
+        if (cDead >= 0 && inum(cs.c[cDead]) != 0) dead = true;
+    });
+    tr.finish();
+    tr.modelFrom = tr.first;
+    return tr;
+}
+
+// One plan of the ring, kept compact (a plan is a few thousand ticks long and starts a long way into the level): the model's
+// frames from tick t0 on. The panel draws several at once, the deepest as the one it follows (see drawGhosts).
+struct Ghost {
+    long long t0 = 0;
+    std::vector<Frame> f;
+    long long first() const { return t0; }
+    long long last() const { return t0 + (long long)f.size() - 1; }
+    const Frame* at(long long t) const {
+        if (t < t0 || t > last()) return nullptr;
+        const Frame& r = f[(size_t)(t - t0)];
+        return r.valid ? &r : nullptr;
+    }
+    float endX() const { return f.empty() ? 0.f : f.back().x; }
+};
+inline std::shared_ptr<const Ghost> ghostOf(const Track& model) {
+    auto g = std::make_shared<Ghost>();
+    if (model.first < 0) return g;
+    g->t0 = model.first;
+    g->f.assign(model.f.begin() + model.first, model.f.begin() + model.last + 1);
+    return g;
+}
+
+// GD's own path up to where the plan's walk begins (its anchor), then the model's plan: the path as planned. `gd` may be
+// null or stop short of the anchor (the frames between are then missing, and the path breaks there).
+inline Track spliceGhost(const Track* gd, const Ghost& g) {
+    Track out;
+    if (g.f.empty()) {
+        if (gd) out = *gd;
+        return out;
+    }
+    out.f.resize((size_t)g.last() + 1);
+    if (gd) {
+        const size_t n = std::min(gd->f.size(), (size_t)g.first());
+        for (size_t i = 0; i < n; ++i) out.f[i] = gd->f[i];
+    }
+    for (long long i = g.first(); i <= g.last(); ++i) out.f[(size_t)i] = g.f[(size_t)(i - g.first())];
+    out.modelFrom = g.first();
+    out.finish();
+    return out;
+}
+inline Track spliceModel(const Track* gd, const Track& model) {
+    if (model.first < 0) return spliceGhost(gd, Ghost{});
+    return spliceGhost(gd, *ghostOf(model));
+}
 // The stretch of the path that plays: its last `span` ticks, ending at the frontier (the whole path when span <= 0).
 inline void stretchOf(const Track& tr, long long span, long long& a, long long& z) {
     z = tr.last;
@@ -597,6 +697,7 @@ inline Color other(float a = 1.f) { return hex(0x777788, a); }
 inline Color gd(float a = 1.f) { return hex(0xffffff, a); }
 inline Color mark(float a = 1.f) { return hex(0xffa63d, a); }
 inline Color killMark(float a = 1.f) { return hex(0xff5b4b, a); }
+inline Color model(float a = 1.f) { return hex(0x5ab4ff, a); }       // the model's plan, as against GD's own path
 }  // namespace pal
 
 inline bool isPortalType(int t) {
@@ -727,7 +828,8 @@ inline void drawSilhouette(Scene& s, const Frame& f, float px, float py, float h
         ox = px + (rx * ax.f[0] + ry * ax.l[0]) * h;
         oy = py + (rx * ax.f[1] + ry * ax.l[1]) * h;
     };
-    const float fillA = bold ? 0.35f : 0.25f;
+    // col.a is how strongly the whole figure is drawn (1 for the path's own player, less for a ghost's)
+    const float fillA = (bold ? 0.35f : 0.25f) * col.a;
     const float lw = bold ? 0.85f : 0.65f;
     auto poly = [&](std::initializer_list<float> pts, bool border) {
         float v[24];
@@ -738,7 +840,7 @@ inline void drawSilhouette(Scene& s, const Frame& f, float px, float py, float h
             P(lx, ly, v[2 * n], v[2 * n + 1]);
             ++n;
         }
-        s.poly(v, n, withAlpha(col, fillA), border ? lw : 0.f, withAlpha(col, 1.f));
+        s.poly(v, n, withAlpha(col, fillA), border ? lw : 0.f, col);
     };
     auto line = [&](float x0, float y0, float x1, float y1, float w) {
         float a[2], b[2];
@@ -810,7 +912,7 @@ inline void drawPlayer(Scene& s, const View& v, const Frame& f, const Frame* pre
     const float h = std::max(half, 7.f * v.scale);
     // the hitbox the physics reads, thin
     {
-        const Color c = withAlpha(col, 0.7f);
+        const Color c = withAlpha(col, 0.7f * col.a);
         const float t = 0.25f;
         s.seg(px - half, py - half, px + half, py - half, t, c); s.seg(px + half, py - half, px + half, py + half, t, c);
         s.seg(px + half, py + half, px - half, py + half, t, c); s.seg(px - half, py + half, px - half, py - half, t, c);
@@ -833,7 +935,7 @@ inline void drawPlayer(Scene& s, const View& v, const Frame& f, const Frame* pre
     s.seg(px, py, px + ax.l[0] * f.vy * 2.5f * v.scale, py + ax.l[1] * f.vy * 2.5f * v.scale, 0.3f, col);
     if (f.dual && f.gframe == 0) {                // the partner (for an unrotated run only)
         const float qx = v.X(f.x2 != 0.f ? f.x2 : f.x), qy = v.Y(f.y2);
-        const Color c = withAlpha(col, 0.5f);
+        const Color c = withAlpha(col, 0.5f * col.a);
         const float t = 0.25f;
         s.seg(qx - half, qy - half, qx + half, qy - half, t, c); s.seg(qx + half, qy - half, qx + half, qy + half, t, c);
         s.seg(qx + half, qy + half, qx - half, qy + half, t, c); s.seg(qx - half, qy + half, qx - half, qy - half, t, c);
@@ -842,20 +944,51 @@ inline void drawPlayer(Scene& s, const View& v, const Frame& f, const Frame* pre
 
 // The path around tick t: a faint stretch behind, a bright one just behind, and a dim stretch ahead.
 inline void drawPath(Scene& s, const View& v, const Track& tr, long long t) {
-    auto stroke = [&](long long from, long long to, int step, Color c, float hw) {
+    auto stroke = [&](long long from, long long to, int step, Color c, Color mc, float hw) {
         if (from < tr.first) from = tr.first;
         if (to > tr.last) to = tr.last;
         const Frame* a = nullptr;
         for (long long i = from; i <= to; i += step) {
             const Frame* b = tr.at(i);
             if (!b) { a = nullptr; continue; }
-            if (a) s.seg(v.X(a->x), v.Y(a->y), v.X(b->x), v.Y(b->y), hw, c);
+            if (a) s.seg(v.X(a->x), v.Y(a->y), v.X(b->x), v.Y(b->y), hw, b->model ? mc : c);
             a = b;
         }
     };
-    stroke(t - 1500, t - 120, 4, pal::gd(0.22f), 0.25f);
-    stroke(t - 120, t, 1, pal::gd(0.8f), 0.4f);
-    stroke(t, t + 600, 3, hex(0x6fd08c, 0.35f), 0.25f);
+    stroke(t - 1500, t - 120, 4, pal::gd(0.22f), pal::model(0.22f), 0.25f);
+    stroke(t - 120, t, 1, pal::gd(0.8f), pal::model(0.8f), 0.4f);
+    stroke(t, t + 600, 3, hex(0x6fd08c, 0.35f), pal::model(0.35f), 0.25f);
+}
+
+// The ring of plans, beside the one the picture follows. Each is its own walk of the plan the solver found at some anchor,
+// and they share the game's clock: at tick t a ghost is where its plan has the player at tick t (before its anchor it is
+// on GD's path, which the path already draws, so it is not drawn there). A ghost is a faint line over its whole walk, a
+// figure of the player where the plan has it now (the shape of its mode, as the path's own player is drawn), and a cross where the walk ends (the model's death, or the end of its
+// look-ahead). The newest is the brightest: `i` is its place in the ring, 0 the newest.
+inline void drawGhosts(Scene& s, const View& v, const std::vector<std::shared_ptr<const Ghost>>& ring, const Ghost* focus,
+                       long long t) {
+    const size_t n = ring.size();
+    for (size_t i = 0; i < n; ++i) {
+        const Ghost* g = ring[i].get();
+        if (!g || g == focus || g->f.empty()) continue;
+        const float age = n > 1 ? (float)i / (float)(n - 1) : 0.f;
+        const float a = 0.55f - 0.35f * age;
+        const long long from = g->first(), to = g->last();
+        const int step = (to - from) > 2400 ? 6 : 3;
+        const Frame* prev = nullptr;
+        for (long long k = from; k <= to; k += step) {
+            const Frame* b = g->at(k);
+            if (!b) { prev = nullptr; continue; }
+            if (prev) s.seg(v.X(prev->x), v.Y(prev->y), v.X(b->x), v.Y(b->y), 0.22f, pal::model(a));
+            prev = b;
+        }
+        const Frame& e = g->f.back();
+        const float ex = v.X(e.x), ey = v.Y(e.y), c = 1.6f * v.scale + 0.8f;
+        s.seg(ex - c, ey - c, ex + c, ey + c, 0.25f, pal::model(a + 0.2f));
+        s.seg(ex - c, ey + c, ex + c, ey - c, 0.25f, pal::model(a + 0.2f));
+        // where the plan has the player now: its figure, the shape of its mode, as faint as the line (the deepest's is the path's own player)
+        if (const Frame* at = g->at(t)) drawPlayer(s, v, *at, g->at(t - 1), g->at(t + 1), pal::model(std::min(1.f, a + 0.15f)), false);
+    }
 }
 
 // ------------------------------------------------------------------ one whole frame
@@ -868,6 +1001,10 @@ struct FrameIn {
     bool moversOfThisAttempt = false;             // the recording is the one the path's attempt made
     const Track* track = nullptr;
     const std::vector<Mark>* marks = nullptr;
+    // the ring of the model's plans, newest first, drawn beside the path (null: none); `focus` is the one the path was built
+    // from (the deepest), which is drawn as the path and followed by the camera, not as a ghost
+    const std::vector<std::shared_ptr<const Ghost>>* ghosts = nullptr;
+    const Ghost* focus = nullptr;
     long long t = 0;                              // the tick on screen
     long long a = 0, z = 0;                       // the stretch the bar spans
     float W = 0.f, H = 0.f;                       // the panel's size
@@ -930,6 +1067,9 @@ inline std::string buildFrame(Scene& S, const FrameIn& in, Camera& cam) {
 
     // GD's path and, ringed as it passes, the points where the model was wrong
     drawPath(S, v, tr, in.t);
+    if (in.ghosts) drawGhosts(S, v, *in.ghosts, in.focus, in.t);
+    if (const Frame* an = tr.modelFrom >= 0 ? tr.at(tr.modelFrom) : nullptr)       // where the plan begins: the anchor
+        S.circle(v.X(an->x), v.Y(an->y), 5.f * scale + 1.f, Color{}, 0.5f, pal::model(0.7f));
     int inStretch = 0;
     if (in.marks)
         for (const Mark& k : *in.marks) {
@@ -939,7 +1079,7 @@ inline std::string buildFrame(Scene& S, const FrameIn& in, Camera& cam) {
             const float a01 = d >= 0 ? 0.9f : 0.9f * (1.f + (float)d / 120.f);
             S.circle(v.X(k.x), v.Y(k.y), 14.f * scale + 2.f, Color{}, 0.5f, k.kill ? pal::killMark(a01) : pal::mark(a01));
         }
-    drawPlayer(S, v, *f, tr.at(in.t - 1), tr.at(in.t + 1), pal::gd(), true);
+    drawPlayer(S, v, *f, tr.at(in.t - 1), tr.at(in.t + 1), f->model ? pal::model() : pal::gd(), true);
 
     // the bar along the bottom: where in the stretch, and where the corrections are
     {
@@ -948,6 +1088,8 @@ inline std::string buildFrame(Scene& S, const FrameIn& in, Camera& cam) {
         S.rect(bx0, by0, bx1, by1, Color{1.f, 1.f, 1.f, 0.12f});
         const float px = bx0 + (bx1 - bx0) * (float)(in.t - in.a) / span;
         S.rect(bx0, by0, std::max(bx0 + 0.5f, px), by1, Color{0.43f, 0.82f, 0.55f, 0.55f});
+        if (tr.modelFrom > in.a && tr.modelFrom <= in.z)           // the planned part of the stretch
+            S.rect(bx0 + (bx1 - bx0) * (float)(tr.modelFrom - in.a) / span, by0, bx1, by1, pal::model(0.3f));
         if (in.marks)
             for (const Mark& k : *in.marks) {
                 if (k.t < in.a || k.t > in.z) continue;
@@ -959,8 +1101,9 @@ inline std::string buildFrame(Scene& S, const FrameIn& in, Camera& cam) {
     // the moving parts: this attempt's own recording, another attempt's (then they are only close), or none
     const char* mv = !in.movers ? "as loaded" : (in.moversOfThisAttempt ? "recorded" : "another attempt's");
     char b[200];
-    std::snprintf(b, sizeof(b), "GD path  t %lld/%lld  x %.0f  %d correction%s  moving parts: %s", in.t, in.z,
-                  (double)f->x, inStretch, inStretch == 1 ? "" : "s", mv);
+    std::snprintf(b, sizeof(b), "%s  t %lld/%lld  x %.0f  %d correction%s  moving parts: %s",
+                  f->model ? "planned path (the model)" : "GD path", in.t, in.z, (double)f->x, inStretch,
+                  inStretch == 1 ? "" : "s", mv);
     return b;
 }
 

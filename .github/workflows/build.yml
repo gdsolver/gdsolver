@@ -53,13 +53,38 @@ jobs:
       - name: Install Ninja
         run: python -m pip install ninja
 
+      # The Codegen is built from the bindings' own source (the prebuilt one the bindings' CMake downloads is a rolling release that has moved on to
+      # a newer bindings layout than the one pinned here), which takes about half a minute on a desk; the built Codegen.exe is cached under a key that names the
+      # bindings commit, the OS and the compiler, and the script restores it only when its codegen.id says the same. The commit is looked up here
+      # because the key has to be known before the script clones anything. Not yet exercised on GitHub (that needs a push): the first release run after
+      # this change is the check, and the script's log says "Codegen restored from the cache" or "Codegen built from the bindings source".
+      - name: Look up the bindings commit
+        id: bindings
+        shell: pwsh
+        env:
+          REPO: ${{ vars.GDSOLVER_BINDINGS_REPO }}
+          REF: ${{ vars.GDSOLVER_BINDINGS_REF }}
+        run: |
+          if ($env:REF -match '^[0-9a-f]{40}$') { $sha = $env:REF }
+          else {
+            $sha = (git ls-remote $env:REPO "refs/heads/$env:REF" "refs/tags/$env:REF" "refs/tags/$env:REF^{}" | Select-Object -Last 1) -replace '\s.*$', ''
+          }
+          if (-not $sha) { throw "the bindings fork has no ref $env:REF" }
+          "commit=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Restore the Codegen
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/codegen-cache
+          key: codegen-${{ runner.os }}-clang-${{ steps.bindings.outputs.commit }}-v1
+
       - name: Build the package
         id: build
         shell: pwsh
         env:
           GDSOLVER_BINDINGS_REPO: ${{ vars.GDSOLVER_BINDINGS_REPO }}
           GDSOLVER_BINDINGS_REF: ${{ vars.GDSOLVER_BINDINGS_REF }}
-        run: ./scripts/ci-build-2209.ps1 -Work "$env:RUNNER_TEMP/ci-work" -Out "$env:GITHUB_WORKSPACE/output"
+        run: ./scripts/ci-build-2209.ps1 -Work "$env:RUNNER_TEMP/ci-work" -Out "$env:GITHUB_WORKSPACE/output" -CodegenCache "$env:RUNNER_TEMP/codegen-cache"
 
       - name: Upload the package
         uses: actions/upload-artifact@v7

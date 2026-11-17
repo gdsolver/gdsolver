@@ -73,10 +73,10 @@ enum : uint32_t {
     // only shows -- a counter label, a message, a colour -- does not set it (Findings::attemptShown).
     kAttemptDependent = 1u << 6,
     kPlatformer = 1u << 7,
-    // Two-player mode (header kA10): the second player has a button of its own, and the bot presses
-    // only the first player's (handleButton with isPlayer1). dp has no such mode -- it gives both
-    // dual bodies the press, and links their gravity where flipGravity (0x212b00) does not in
-    // two-player mode -- so the second body is planned with presses the game never gives it.
+    // Two-player mode (header kA10): the second player has a button of its own. dp plans it as bit 1 of
+    // the input mask, each body searched against the other's plan (docs/TWO_PLAYER.md); a level where one
+    // player's press switches the other's world is not solved yet. The play menu takes this bit out of the red note and shows a
+    // yellow one instead (hooks_playmenu.cpp, LevelFacts::twoPlayer).
     kTwoPlayer = 1u << 8,
     // A Follow Player Y (1814) with a delay (key 91) -- it follows the player's y that long ago,
     // from a ring of past heights a state cannot carry -- or one set off by touch or by a spawn
@@ -323,8 +323,8 @@ inline double speedDx(int id) {
 // holds its slot until x = its x + duration x 240 x the level's fastest per-tick advance, and one
 // that finds none is NOT modelled. From the string the answer may come out too eager, never too
 // shy: the fastest advance here also counts the start speed (the loader's does not), a missing
-// duration never ends, and a 1814 whose group holds nothing the model collides with, which the
-// loader drops without taking a slot, takes one here.
+// duration never ends. A 1814 whose group holds nothing the model collides with, which the loader
+// drops without taking a slot, is left out by the caller (scan: groupsWithBody).
 struct FollowRun {
     double x;
     double dur;   // seconds
@@ -600,6 +600,22 @@ inline std::vector<char> spawnChainReach(std::string_view all) {
     return reach;
 }
 
+// The groups (key 57; a follow trigger's key 51 names one) that hold an object with a body. A trigger
+// does not count, nor does a No Touch copy (key 121) or an ID the game builds as decoration. An object of
+// an ID the table does not know counts, as everywhere in this file. One pass over the level: ask it
+// once and look the groups up, not once per group.
+inline std::unordered_set<int> groupsWithBody(std::string_view all) {
+    std::unordered_set<int> has;
+    forEachObject(all, [&](std::string_view obj) {
+        const int id = toInt(field(obj, "1"));
+        if (isOn(field(obj, "121")) || objtypes::isDecoration(id)
+            || (objtypes::isTrigger(id) && id != 200 && id != 201 && id != 202 && id != 203 && id != 1334))   // a speed portal has a body
+            return;
+        forEachListed(field(obj, "57"), [&](int g) { has.insert(g); });
+    });
+    return has;
+}
+
 inline Findings scan(std::string_view all, bool platformer) {
     Findings r;
     if (platformer) r.unmodelled |= kPlatformer;
@@ -610,6 +626,10 @@ inline Findings scan(std::string_view all, bool platformer) {
     std::vector<GravPortal> gravity;
     bool reversal = false;
     std::vector<FollowRun> follows;
+    // the runs dp would give a slot, with their target group: a run whose group holds no body is
+    // dropped by the loader without taking one, so followSlotsShort is asked of those that do
+    std::vector<std::pair<int, FollowRun>> followCand;
+    std::vector<int> unrunFollowGroups;   // target groups of the follow triggers dp does not run
     bool attempts = false;
     // spawned teleport / gravity triggers (by object index), asked of spawnChainReach after the pass;
     // a gravity trigger for player 2, which counts only where there is a second player
@@ -673,14 +693,18 @@ inline Findings scan(std::string_view all, bool platformer) {
             case 1814:
                 if (toInt(field(obj, "51")) <= 0) break;
                 if (isOn(field(obj, "91")) || isOn(field(obj, "11")) || isOn(field(obj, "62"))) {
-                    r.unmodelled |= kFollowNotRun;
+                    // not modelled -- but that only matters if its group holds something with a body: dp loads a
+                    // group of decoration alone as "nothing the model collides with" whatever the trigger. Asked
+                    // after the pass (groupsWithBody).
+                    unrunFollowGroups.push_back(toInt(field(obj, "51")));
                 } else {
                     const auto speed = field(obj, "90");
                     const auto dur = field(obj, "10");
                     if (speed.empty() || toNum(speed) > 0.0)
-                        follows.push_back({toNum(field(obj, "2")),
-                                           dur.empty() ? std::numeric_limits<double>::infinity()
-                                                       : toNum(dur)});
+                        followCand.push_back({toInt(field(obj, "51")),
+                                              {toNum(field(obj, "2")),
+                                               dur.empty() ? std::numeric_limits<double>::infinity()
+                                                           : toNum(dur)}});
                 }
                 break;
             case 2066:
@@ -713,7 +737,21 @@ inline Findings scan(std::string_view all, bool platformer) {
     // a trigger for player 2 moves nobody the solver plans without a second player
     if (gravP2 && (dualPortal || (r.unmodelled & kTwoPlayer))) r.unmodelled |= kGravityTrigger;
     if (gravityPortalsRefused(std::move(gravity), reversal)) r.unmodelled |= kGravityPortals;
-    if (followSlotsShort(std::move(follows), dxMax)) r.unmodelled |= kFollowSlots;
+    // [2026-10-23] Every run used to take a slot, whatever its group held ("a 1814 whose group holds
+    // nothing the model collides with ... takes one here"), so a custom level whose eight runs all
+    // target decoration or nothing, two of them 999 s long, came out as "more than two at once" while
+    // the loader drops all eight. The same body test as kFollowNotRun, from one pass over the level.
+    if (!followCand.empty() || !unrunFollowGroups.empty()) {
+        const std::unordered_set<int> bodyGroups = groupsWithBody(all);
+        for (const auto& c : followCand)
+            if (bodyGroups.count(c.first)) follows.push_back(c.second);
+        if (followSlotsShort(std::move(follows), dxMax)) r.unmodelled |= kFollowSlots;
+        for (const int g : unrunFollowGroups)
+            if (bodyGroups.count(g)) {
+                r.unmodelled |= kFollowNotRun;
+                break;
+            }
+    }
     if (portals.empty()) return r;
     // The exits: every object in a portal's target group (key 57, '.'-separated).
     struct Exits { int n = 0; double x = 0.0; };

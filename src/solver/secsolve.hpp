@@ -508,7 +508,7 @@ inline long long g_boundSkips = 0;
 // game's re-bucketing inside a search. GJBaseGameLayer::addToSection (0x226500) turns the position
 // into a cell index and grows the grid to it: a NaN made the index negative and the grow threw
 // "vector too long" (updateObjectSection 0x227f50 -> addToSection -> 0x252df7 -> the vector's
-// grow; MOAI's ladder window at t=9,628, depth 66, every run). Counted, and the first one kept
+// grow; a custom level's ladder window at t=9,628, depth 66, every run). Counted, and the first one kept
 // (uid, id, position) for the search to report and give up on: its world is no longer the game's.
 // A position this far out counts too: the cell index is an int (x or y times 0.01), and no level's
 // object comes near it.

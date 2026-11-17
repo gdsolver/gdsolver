@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gdtas.paths import LAB_RIGS, LEVELDP_EXE, REPO, RIGS, WORKERS_ROOT  # noqa: E402
+from gdtas.paths import DEFAULT_WORKER, LAB_RIGS, LEVELDP_EXE, REPO, RIGS, WORKERS_ROOT  # noqa: E402
 
 PY = sys.executable
 SCRATCH = Path(__file__).resolve().parent.parent / "data" / "tmp_calib"
@@ -72,7 +72,7 @@ def label_of(u: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("rig")
-    ap.add_argument("--worker", type=int, default=99)
+    ap.add_argument("--worker", type=int, default=DEFAULT_WORKER)
     ap.add_argument("--exe", default=str(LEVELDP_EXE))
     ap.add_argument("--skip-build", action="store_true")
     ap.add_argument("--skip-gd", action="store_true",

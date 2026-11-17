@@ -1,6 +1,6 @@
 """Set the window resolution index of a worker's GD.
 
-    python py/set_worker_resolution.py --worker-id 97 --index 21
+    python py/set_worker_resolution.py --worker-id 101 --index 21
 
 Why it is needed: wall_shot.py photographs the worker's window. A fresh worker
 save has no resolution key, so GD comes up at about 426x320, where there is no

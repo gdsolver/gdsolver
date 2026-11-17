@@ -1,0 +1,27 @@
+[
+ {
+  "what": "p2grav",
+  "portals": [
+   [
+    "flip",
+    1500,
+    "floor lane"
+   ],
+   [
+    "norm",
+    2400,
+    "floor lane"
+   ],
+   [
+    "flip",
+    3300,
+    "ceiling lane"
+   ],
+   [
+    "norm",
+    4200,
+    "ceiling lane"
+   ]
+  ]
+ }
+]

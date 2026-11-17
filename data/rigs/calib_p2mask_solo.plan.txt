@@ -1,0 +1,10 @@
+input=120,1
+input=132,0
+input=480,2
+input=492,0
+input=840,3
+input=852,0
+input=1200,2
+input=1212,0
+input=1560,1
+input=1572,0

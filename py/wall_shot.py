@@ -1,7 +1,7 @@
 """Replay a plan at 1x, freeze it at the wall, and photograph it.
 
     python py/wall_shot.py --level 20 --plan data/solution_lv20_dp.txt.best \\
-        --pause-at-x 12000 --worker-id 97
+        --pause-at-x 12000 --worker-id 101
 
 The numbers only say WHERE a run dies. WHAT it dies on -- which obstacle, which
 lane, the shape of what is around it -- only the picture says. A solve runs with
@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import gdsave, plan, results, window
-from gdtas.paths import DATA, WORKERS_ROOT, worker_dir, worker_manifest
+from gdtas.paths import DATA, PERSON_WORKER, WORKERS_ROOT, worker_dir, worker_manifest
 from gdtas.worker import run_session, stop_worker_processes
 
 
@@ -33,7 +33,7 @@ def main(argv=None) -> int:
     ap.add_argument("--level", required=True, type=int)
     ap.add_argument("--plan", required=True)
     ap.add_argument("--pause-at-x", required=True, type=float)
-    ap.add_argument("--worker-id", type=int, default=97)
+    ap.add_argument("--worker-id", type=int, default=PERSON_WORKER)
     ap.add_argument("--out", default="")
     ap.add_argument("--timeout-minutes", type=float, default=8.0)
     ap.add_argument("--resolution-index", type=int, default=None,

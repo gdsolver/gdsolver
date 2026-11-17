@@ -1,0 +1,15 @@
+[
+ {
+  "what": "p2death",
+  "spikes": [
+   [
+    1800,
+    "floor lane"
+   ],
+   [
+    4200,
+    "ceiling lane"
+   ]
+  ]
+ }
+]

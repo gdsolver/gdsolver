@@ -3,7 +3,9 @@
 // search is working. (The pure half -- the readers, the clipping, the silhouettes -- is replay_panel_geom.hpp.)
 //
 // WHAT IS PLAYED. Not the model's guess: the rows `anchors::g_deepest` holds, which the player wrote as each tick of
-// the attempt ended, so any place the model was wrong and GD's state was taken instead is already in them. The level
+// the attempt ended, so any place the model was wrong and GD's state was taken instead is already in them. The one part that is the
+// model's is the end of the path: the plan the solver's latest search found, joined on from its anchor and drawn in its own colour
+// (with the last few plans as ghosts beside it, each a figure of its player's mode). The level
 // is `dpsolve::g_csv` (the table the session opened, not the sliced copy the scene may hold), the moving geometry is the run's
 // own recording (`dp_groups.txt`, the deepest replay's), and the points where a fixup says the model parted from GD
 // are marked on the bar and ringed as the path passes them.
@@ -18,6 +20,7 @@
 // copy of the rows once per change and does its file reading and parsing on one background thread per input. Off, or
 // outside a solve, a frame costs a few tests.
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <memory>
 
@@ -34,9 +37,14 @@ namespace pg = panelgeom;
 // first took 0x51D70/71, and its label lookup returned the progress bar: a CCLabelBMFont cast on another node.)
 constexpr int PANEL_TAG = 0x51D80;
 constexpr int LABEL_TAG = 0x51D81;
+constexpr int TOUCH_TAG = 0x51D82;
 
-// What the panel plays, and whether: cfg `replaypanel` is the start (0 off, 1 the whole verified path -- the default --,
-// 2 its last stretch) and the key (Tab) goes round full -> recent -> off -> full. -1 = follow cfg.
+// What the panel plays, and whether: cfg `replaypanel` is the start (0 off, 1 the whole verified path -- the default --, 2 its last
+// stretch; 3 was the model's plan as a mode of its own and now means 1) and the key (Tab) goes round full -> recent -> off -> full.
+// -1 = follow cfg. The model's plan is not a mode: whenever the solver has found one, the path played is GD's own up to the anchor of
+// the solver's latest search and, from there, the walk the model made of the plan (`dp_tail.txt.trace.csv`) -- what the model believes
+// the plan does, drawn in its own colour -- joined to the verified path as its last part. It may differ from what GD will do; it is a
+// view of the planning, and nothing the solver reads.
 enum Mode { Full = 0, Recent = 1, Off = 2 };
 inline int g_modePref = -1;
 inline int mode() {
@@ -44,7 +52,9 @@ inline int mode() {
     return g_cfg.replayPanel == 0 ? Off : g_cfg.replayPanel == 2 ? Recent : Full;
 }
 inline bool wanted() { return mode() != Off; }
-inline const char* modeName() { return mode() == Full ? "full" : mode() == Recent ? "recent" : "off"; }
+inline const char* modeName() {
+    return mode() == Full ? "full" : mode() == Recent ? "recent" : "off";
+}
 
 // ------------------------------------------------------------------ reading a file the solver may be writing
 
@@ -102,13 +112,38 @@ struct MoversJob {
     double ms = 0.0;
 };
 
+struct PlanJob {
+    std::shared_ptr<const pg::Ghost> model;
+    long long size = -1, mtime = 0;
+    long long gen = -1;                          // State::planGen when the job was started
+    double ms = 0.0;
+};
+
 struct State {
     // the level
     std::string levelSig;                        // dpsolve::g_csvSig of the table in `level` ("" = none read)
     std::shared_ptr<const pg::Level> level;
     std::future<LevelJob> levelJob;
-    // GD's path
+    // GD's path (the deepest verified attempt), and the path shown: that with the model's plan joined on from the anchor
+    std::shared_ptr<const pg::Track> gdTrack;
     std::shared_ptr<const pg::Track> track;
+    // The model's plans: a ring of the last cfg `replaypanelplans` of them (newest first), each a walk the solver's search made
+    // of the plan it found; the deepest is the one in use (`planShown`: the path is built from it and the camera follows it, the
+    // rest are drawn beside it as ghosts). A change of the one in use waits for the clock to start over, so a viewer is not taken
+    // off a replay half way. `planStub` is a walk of a few ticks (a search doomed from its anchor), kept for when there is nothing
+    // else. The file's stamp lets it be read again only when it changed, and `planStale` is the stamp it had when the solve (or
+    // the level) began: a file that old is the last level's, and is never read.
+    std::vector<std::shared_ptr<const pg::Ghost>> ring;
+    std::shared_ptr<const pg::Ghost> planStub, planShown;
+    const pg::Ghost* lastPlan = nullptr;         // the plan the shown path was built with (compared, never read)
+    std::future<PlanJob> planJob;
+    long long planGen = 0;                       // bumped by resetPath(): a job started before it read the last level's file
+    long long planSize = -1;
+    long long planMtime = 0;
+    long long planStaleSize = -2, planStaleMtime = 0;
+    long long plansRead = 0;
+    bool planSaid = false;                       // the first plan that was long enough to keep has been logged
+    std::chrono::steady_clock::time_point planPolled = std::chrono::steady_clock::now();
     long long trackSerial = -2;
     size_t trackSrcRows = 0;
     long long staleSerial = -3;                  // the solver's rows when the last level / solve ended: not the new one's
@@ -143,20 +178,42 @@ struct State {
     std::chrono::steady_clock::time_point lastFrame = std::chrono::steady_clock::now();
     bool drawn = false;                          // something has been emitted since the panel was last emptied
     bool held = false;                           // the picture is held because the game is busy
+    // The frame census of the last kStatEverySec seconds the panel was on screen: the gaps between frames, and how many
+    // were drawn / held. Logged now and then, so a run's log says how the panel kept up without waiting for the solve to
+    // end (a worker's session ends without the panel being emptied).
+    std::chrono::steady_clock::time_point statSince = std::chrono::steady_clock::now();
+    long long statFrames = 0, statHeld = 0, statOver40 = 0;   // ...and the frames over 40 ms (what the old threshold held)
+    double statGapSum = 0.0, statGapMax = 0.0;
     // what the keys do to it while the screen is dark
     bool paused = false;                         // F2: the clock stands still
     int speedIdx = -1;                           // the pace, a notch of WATCH_SPEEDS (-1 = from cfg when first wanted)
     bool owning = false;                         // on screen with a path to play: the transport keys are the panel's
     std::string lastText;                        // the status line that goes with the held picture
+    // the mouse: where the panel stood on the last frame it was drawn (a press is tested against it), and a drag in progress
+    cocos2d::CCRect box;
+    bool boxValid = false;
+    bool dragging = false;
+    bool dragWasPaused = false;                  // F2's stop, put back when the drag ends (a drag stops the clock under the finger)
+    long long dragEvents = 0;                    // presses taken since the panel was last emptied (the log says the first few)
 };
 inline State g_s;
 
 // A frame that comes this long after the one before it is a frame of a game that is busy (the fast loop's batches, a section
 // search's slices, a recording pass: 50 ms to seconds a frame on a heavy level, against 16.7 ms when it is only waiting for the
 // search). The panel is an animation, and an animation drawn on frames like those jerks; it is held where it was instead.
-constexpr double kBusyMs = 40.0;
+//
+// How long that is follows the frame budget (cfg framebudgetms): a batch is cut at the budget, so a frame of a game that
+// is flying lasts the budget plus what the frame costs; only a frame well past that is the game being busy with something
+// else. The panel used to hold at 40 ms: with a 100 ms budget that was every frame of a flight, and with a section search
+// running (it hands the frame back every 50 ms, cfg secslicems, so its frames come at 54 ms) every frame of the search.
+// With the budget at 30 ms a flight's frames come at 30-45 ms, and 80 ms leaves the search's slices a margin: the panel
+// keeps moving through both, at 20-30 frames a second.
+inline double busyMs() { return std::max(80.0, 2.0 * g_cfg.frameBudgetMs); }
+inline std::string planPath() { return std::string(DATA_DIR) + "/dp_tail.txt.trace.csv"; }
+constexpr double kStatEverySec = 30.0;           // the frame census is logged this often while the panel is on screen
 
-// The stretch played: the whole verified path (mode full) or its last `replaypanelspan` ticks, ending at the frontier (recent).
+// The stretch played: the whole path (mode full) or its last `replaypanelspan` ticks, ending at the frontier (recent). The path is
+// GD's verified one with the model's plan joined to it when there is one, so the frontier is the end of the plan.
 inline void stretch(const pg::Track& tr, long long& a, long long& b) {
     pg::stretchOf(tr, mode() == Recent ? g_cfg.replayPanelSpan : 0, a, b);
 }
@@ -191,29 +248,69 @@ inline std::shared_ptr<const pg::Track> copyTrack(const std::vector<AnchorRow>& 
     return tr;
 }
 
-// Show this path from now on (the clock starts at the start of its stretch the first time).
-inline void adoptTrack(std::shared_ptr<const pg::Track> tr, size_t srcRows, const char* what) {
-    g_s.track = std::move(tr);
-    g_s.trackSerial = g_s.track->serial;
-    g_s.trackSrcRows = srcRows;
-    g_s.fixupsSeen = (size_t)-1;
-    char b[160];
-    snprintf(b, sizeof(b), "path of the %s (attempt %lld): ticks %lld..%lld", what, g_s.trackSerial, g_s.track->first,
-             g_s.track->last);
-    say(b);
-    if (!g_s.clockOn) {
+// The path that is shown: GD's own with, when the solver has found a plan, the model's plan joined on from the anchor of the
+// latest search (GD's frames after the anchor are left out). Called when either changes (and when the mode does); a change of
+// what is shown starts the clock over at the start of its stretch, the first time it is on at all included.
+inline void rebuildShown(bool restart) {
+    std::shared_ptr<const pg::Track> next = g_s.gdTrack;
+    const pg::Ghost* plan = (g_s.planShown && !g_s.planShown->f.empty()) ? g_s.planShown.get() : nullptr;
+    if (plan) {
+        auto sp = std::make_shared<pg::Track>(pg::spliceGhost(g_s.gdTrack.get(), *plan));
+        sp->serial = g_s.gdTrack ? g_s.gdTrack->serial : -2;
+        next = sp;
+    }
+    const bool changed = next != g_s.track;
+    g_s.track = next;
+    if (!g_s.track) return;
+    if (changed) g_s.fixupsSeen = (size_t)-1;
+    // A path of GD's that grows (the deepest attempt changes at every death) does not take the viewer back to the start of
+    // the stretch; a change of what the picture is does: the mode, a new plan, the first path of a solve.
+    const bool planChanged = plan != g_s.lastPlan;
+    g_s.lastPlan = plan;
+    if (!g_s.clockOn || restart || planChanged) {
         long long a, z;
         stretch(*g_s.track, a, z);
         g_s.clock = pg::Clock{(double)a, 0.0};
         g_s.clockOn = true;
+        g_s.cam.on = false;
         g_s.last = std::chrono::steady_clock::now();
     }
+}
+// Show this path from now on (the clock starts at the start of its stretch the first time).
+inline void adoptTrack(std::shared_ptr<const pg::Track> tr, size_t srcRows, const char* what) {
+    g_s.gdTrack = std::move(tr);
+    g_s.trackSerial = g_s.gdTrack->serial;
+    g_s.trackSrcRows = srcRows;
+    char b[160];
+    snprintf(b, sizeof(b), "path of the %s (attempt %lld): ticks %lld..%lld", what, g_s.trackSerial, g_s.gdTrack->first,
+             g_s.gdTrack->last);
+    say(b);
+    rebuildShown(false);
 }
 
 // What belongs to the path and the recording (not the level): drop it, and refuse the rows the solver still holds --
 // they are the last level's until its next attempt replaces them.
 inline void resetPath() {
+    g_s.gdTrack.reset();
     g_s.track.reset();
+    g_s.ring.clear();
+    g_s.planStub.reset();
+    g_s.planShown.reset();
+    g_s.planSize = -1;
+    g_s.planMtime = 0;
+    g_s.plansRead = 0;
+    g_s.planSaid = false;
+    ++g_s.planGen;                               // a read still running is the last level's (or solve's): pollPlan drops it
+    // the plan file as it stands now is the last level's (or solve's): it is not read until a search writes it again
+    {
+        long long sz = 0, mt = 0;
+        std::error_code ec;
+        const auto fs = std::filesystem::file_size(planPath(), ec);
+        const auto ft = std::filesystem::last_write_time(planPath(), ec);
+        if (!ec) { sz = (long long)fs; mt = (long long)ft.time_since_epoch().count(); g_s.planStaleSize = sz; g_s.planStaleMtime = mt; }
+        else g_s.planStaleSize = -2;
+    }
+    g_s.lastPlan = nullptr;
     g_s.trackSerial = -2;
     g_s.trackSrcRows = 0;
     g_s.staleSerial = anchors::g_deepestSerial;
@@ -242,6 +339,9 @@ inline void retire() {
     g_s.held = false;
     g_s.paused = false;
     g_s.owning = false;
+    g_s.boxValid = false;
+    g_s.dragging = false;
+    g_s.dragEvents = 0;
     g_s.lastText.clear();
     if (had) {
         char b[160];
@@ -298,7 +398,108 @@ inline bool ready(const std::future<LevelJob>& f) {
 inline bool ready(const std::future<MoversJob>& f) {
     return f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
 }
+inline bool ready(const std::future<PlanJob>& f) {
+    return f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+}
 
+// ------------------------------------------------------------------ the model's plans
+
+// The walk the solver's latest search made of its plan. The solver writes it next to the plan (`<out>.trace.csv`), once per
+// call; it is read again when its size or time changed, on a background thread, polled once a second. Nothing here writes.
+// Each walk read goes into the ring (the last cfg `replaypanelplans` of them), the deepest is the one the path is built from
+// and the camera follows, and the rest are drawn beside it.
+constexpr long long kPlanMinTicks = 120;      // a walk shorter than this is a stub: a search that is doomed from its anchor writes one
+
+inline bool planStampOf(long long& size, long long& mtime) {
+    std::error_code ec;
+    const std::string path = planPath();
+    const auto sz = std::filesystem::file_size(path, ec);
+    if (ec) return false;
+    const auto mt = std::filesystem::last_write_time(path, ec);
+    if (ec) return false;
+    size = (long long)sz;
+    mtime = (long long)mt.time_since_epoch().count();
+    return true;
+}
+
+inline void startPlanJob(long long size, long long mtime) {
+    const std::string path = planPath();
+    const long long gen = g_s.planGen;
+    g_s.planJob = std::async(std::launch::async, [path, size, mtime, gen]() {
+        const auto t0 = std::chrono::steady_clock::now();
+        PlanJob j;
+        j.size = size;
+        j.mtime = mtime;
+        j.gen = gen;
+        const std::string text = readShared(path, (size_t)256 << 20);
+        const pg::Track tr = pg::parseModelTrace(text);
+        if (tr.first >= 0) j.model = pg::ghostOf(tr);
+        j.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        return j;
+    });
+}
+
+// The deepest of the ring: the walk that gets furthest in x (the newest of equals), or the stub when the ring is empty.
+inline std::shared_ptr<const pg::Ghost> deepestPlan() {
+    std::shared_ptr<const pg::Ghost> best;
+    for (const auto& g : g_s.ring)
+        if (g && !g->f.empty() && (!best || g->endX() > best->endX())) best = g;
+    return best ? best : g_s.planStub;
+}
+
+// The deepest plan becomes the one in use when the clock starts over (or at once when none is in use yet): a viewer is not
+// taken off a replay half way by a new plan coming in, whose ghost is drawn the moment it is read all the same.
+inline void applyPlan() {
+    const auto best = deepestPlan();
+    if (!best || best == g_s.planShown) return;
+    g_s.planShown = best;
+    if (wanted()) rebuildShown(false);           // (the path is built when the panel comes on, if it is off now)
+}
+
+inline void pushPlan(const std::shared_ptr<const pg::Ghost>& g) {
+    ++g_s.plansRead;
+    if (g->last() - g->first() < kPlanMinTicks) {
+        if (g_s.ring.empty()) g_s.planStub = g;
+        return;
+    }
+    // the same walk again (a search that was asked twice with the same anchor and found the same plan) is not a new plan
+    if (!g_s.ring.empty()) {
+        const pg::Ghost& h = *g_s.ring.front();
+        if (h.first() == g->first() && h.last() == g->last() && h.endX() == g->endX() && h.f.back().y == g->f.back().y) return;
+    }
+    g_s.ring.insert(g_s.ring.begin(), g);
+    const size_t cap = (size_t)std::max<long long>(1, g_cfg.replayPanelPlans);
+    if (g_s.ring.size() > cap) g_s.ring.resize(cap);
+    g_s.planStub.reset();
+    if (!g_s.planSaid) {
+        g_s.planSaid = true;
+        char b[200];
+        snprintf(b, sizeof(b), "plan of the model: ticks %lld..%lld (from the anchor); the last %zu are drawn together, the deepest followed",
+                 g->first(), g->last(), cap);
+        say(b);
+    }
+}
+
+inline void pollPlan() {
+    if (ready(g_s.planJob)) {
+        PlanJob j = g_s.planJob.get();
+        if (j.gen != g_s.planGen) return;        // read before the path was reset: the last level's plan, never shown
+        g_s.planSize = j.size;
+        g_s.planMtime = j.mtime;
+        if (j.model) {
+            pushPlan(j.model);
+            if (!g_s.planShown) applyPlan();
+        }
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (g_s.planJob.valid() || std::chrono::duration<double>(now - g_s.planPolled).count() < 1.0) return;
+    g_s.planPolled = now;
+    long long size = 0, mtime = 0;
+    if (!planStampOf(size, mtime)) return;
+    if (size == g_s.planSize && mtime == g_s.planMtime) return;
+    if (size == g_s.planStaleSize && mtime == g_s.planStaleMtime) return;   // the file the last level (or solve) left
+    startPlanJob(size, mtime);
+}
 // The level in `level` is the one the solver holds now.
 inline bool levelCurrent() { return g_s.level && g_s.levelSig == dpsolve::g_csvSig; }
 
@@ -420,7 +621,10 @@ inline void advanceClock(const pg::Track& tr) {
     initSpeed();
     long long a, z;
     stretch(tr, a, z);
-    if (g_s.clock.advance(dt, (double)WATCH_SPEEDS[g_s.speedIdx], a, z)) g_s.cam.on = false;   // started over: the camera snaps
+    if (g_s.clock.advance(dt, (double)WATCH_SPEEDS[g_s.speedIdx], a, z)) {
+        g_s.cam.on = false;                     // started over: the camera snaps
+        applyPlan();                            // ...and a newer plan, if the solver found one, is the one that plays now
+    }
 }
 
 // ------------------------------------------------------------------ the keys, while the screen is dark
@@ -457,6 +661,144 @@ inline void keySpeed(int dir) {
     snprintf(b, sizeof(b), "pace %gx", (double)WATCH_SPEEDS[g_s.speedIdx]);
     say(b);
 }
+
+// ------------------------------------------------------------------ the mouse
+//
+// The panel's own clock can be put anywhere in the stretch with a click or a drag on its bar: the playhead goes to where the
+// pointer is, the picture follows it, and the replay goes on from there (or stays stopped, if F2 had stopped it). It is the
+// panel's clock and nothing else: the level behind a solve is the loop's own verification replay, and a press never reaches it --
+// a press is claimed only while the panel is on screen with a path to play, only on the bar and the strip of picture just above it,
+// and every other click is left to whatever would have had it (see PanelTouch). Nothing the solver reads is written.
+//
+// The bar is drawn along the bottom edge of the panel, 3 units thick (replay_panel_geom.hpp, buildFrame): thin enough that a press
+// has to be forgiven, so the strip that takes one is the bottom quarter of the panel, the whole width of it.
+constexpr float kBarBandFrac = 0.25f;
+constexpr float kBarInset = 3.f;                // the bar's own margin at either end (buildFrame)
+
+inline bool onBar(float x, float y) {
+    if (!g_s.boxValid || !g_s.owning) return false;
+    const cocos2d::CCRect& b = g_s.box;
+    const float slack = 4.f;
+    return x >= b.getMinX() - slack && x <= b.getMaxX() + slack && y >= b.getMinY() - slack
+        && y <= b.getMinY() + b.size.height * kBarBandFrac;
+}
+
+// Where along the stretch a pointer x is, 0..1 (clamped: a drag may leave the panel sideways and keeps its end).
+inline float barFrac(float x) {
+    const float x0 = g_s.box.getMinX() + kBarInset, x1 = g_s.box.getMaxX() - kBarInset;
+    const float f = x1 > x0 ? (x - x0) / (x1 - x0) : 0.f;
+    return std::max(0.f, std::min(1.f, f));
+}
+
+// The tick at fraction f of the stretch, and the clock put there. The camera snaps (a jump is not an ease).
+inline long long seekToFrac(float f) {
+    if (!g_s.track) return -1;
+    long long a, z;
+    stretch(*g_s.track, a, z);
+    g_s.clock.hold = 0.0;
+    g_s.clock.tick = (double)a + (double)f * (double)(z - a);
+    clampTick();
+    g_s.cam.on = false;
+    return (long long)std::floor(g_s.clock.tick);
+}
+
+// A press: taken only on the bar. The clock stops under the finger and the playhead goes to it at once; the answer says whether
+// the press was claimed (false leaves it to the game).
+inline bool pressAt(float x, float y) {
+    if (!onBar(x, y) || !g_s.track) return false;
+    g_s.dragging = true;
+    g_s.dragWasPaused = g_s.paused;
+    g_s.paused = true;
+    const long long t = seekToFrac(barFrac(x));
+    if (++g_s.dragEvents <= 5) {
+        char b[96];
+        snprintf(b, sizeof(b), "mouse: press on the bar at %.0f%% -> tick %lld", (double)(barFrac(x) * 100.f), t);
+        say(b);
+    }
+    return true;
+}
+inline void dragTo(float x) {
+    if (g_s.dragging) seekToFrac(barFrac(x));
+}
+// The finger is up (or was never down): the clock goes on from where it was put, unless F2 had stopped it.
+inline void letGo(float x, bool cancelled) {
+    if (!g_s.dragging) return;
+    long long t = (long long)std::floor(g_s.clock.tick);
+    if (!cancelled) t = seekToFrac(barFrac(x));
+    g_s.dragging = false;
+    g_s.paused = g_s.dragWasPaused;
+    g_s.last = std::chrono::steady_clock::now();           // the held time is not played catching up
+    if (g_s.dragEvents <= 5) {
+        char b[96];
+        snprintf(b, sizeof(b), "mouse: %s at tick %lld (%s)", cancelled ? "cancelled" : "released", t,
+                 g_s.paused ? "stopped" : "playing");
+        say(b);
+    }
+}
+
+// cfg `panelmouse`: the test hook's presses, one entry at a time, counted from the first frame the panel can take one. A click is a press and
+// a release; a drag moves over 8 frames and releases at its end. Every call is a frame of the panel.
+inline void autoMouse() {
+    const auto& v = itermap::g_panelMouseAuto;
+    static size_t idx = 0;
+    static int dragFrame = -1;
+    static bool armed = false;
+    static std::chrono::steady_clock::time_point t0;
+    if (v.empty() || !g_s.boxValid || !g_s.owning) {
+        armed = false;
+        return;
+    }
+    if (!armed) { armed = true; idx = 0; dragFrame = -1; t0 = std::chrono::steady_clock::now(); }
+    if (idx * 3 >= v.size()) return;
+    const double s = v[idx * 3], f0 = v[idx * 3 + 1], f1 = v[idx * 3 + 2];
+    const float w = g_s.box.size.width - 2.f * kBarInset;
+    auto X = [&](double f) { return g_s.box.getMinX() + kBarInset + (float)f * w; };
+    const float y = g_s.box.getMinY() + 2.f;
+    if (dragFrame < 0) {
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < s) return;
+        if (!pressAt(X(f0), y)) { ++idx; return; }
+        if (f1 < 0.0) { letGo(X(f0), false); ++idx; return; }
+        dragFrame = 0;
+        return;
+    }
+    ++dragFrame;
+    const double f = f0 + (f1 - f0) * std::min(1.0, dragFrame / 8.0);
+    dragTo(X(f));
+    if (dragFrame >= 8) { letGo(X(f1), false); dragFrame = -1; ++idx; }
+}
+
+// The touch target. A targeted delegate far below anything the game uses (itermap's seek bar sits at -0x7000 for the same reason:
+// -500 lost to the end-level screen), which swallows a press ONLY when it lands on the bar; returning false from ccTouchBegan
+// leaves the touch to whatever would have had it, so a click anywhere else changes nothing about the game's input.
+class PanelTouch : public cocos2d::CCLayer {
+public:
+    static PanelTouch* create() {
+        auto* r = new PanelTouch();
+        if (r && r->init()) { r->autorelease(); return r; }
+        CC_SAFE_DELETE(r);
+        return nullptr;
+    }
+    bool init() {
+        if (!CCLayer::init()) return false;
+        this->setTouchEnabled(true);
+        return true;
+    }
+    void registerWithTouchDispatcher() override {
+        cocos2d::CCDirector::sharedDirector()->getTouchDispatcher()->addTargetedDelegate(this, -0x7001, true);
+    }
+    bool ccTouchBegan(cocos2d::CCTouch* t, cocos2d::CCEvent*) override {
+        if (!t) return false;
+        const cocos2d::CCPoint p = t->getLocation();
+        return pressAt(p.x, p.y);
+    }
+    void ccTouchMoved(cocos2d::CCTouch* t, cocos2d::CCEvent*) override {
+        if (t) dragTo(t->getLocation().x);
+    }
+    void ccTouchEnded(cocos2d::CCTouch* t, cocos2d::CCEvent*) override {
+        letGo(t ? t->getLocation().x : g_s.box.getMinX(), t == nullptr);
+    }
+    void ccTouchCancelled(cocos2d::CCTouch*, cocos2d::CCEvent*) override { letGo(0.f, true); }
+};
 
 // ------------------------------------------------------------------ one frame
 
@@ -544,8 +886,12 @@ inline void update(cocos2d::CCNode* parent, bool show, std::initializer_list<int
         if (changed) retire();
         g_s.levelId = g_cfg.levelId;
     }
+    // The model's plans are read whenever a solve runs, the panel on screen or not: the level bar shows how far the deepest gets
+    if (solving) pollPlan();
     if (!solving || !show || !wanted() || renderingOn()) {
         g_s.owning = false;
+        g_s.boxValid = false;
+        if (g_s.dragging) letGo(0.f, true);                       // the panel went away under the finger
         if (g_s.visible) { hide(parent); g_s.visible = false; }     // off costs this test, not two tree lookups
         return;
     }
@@ -559,8 +905,25 @@ inline void update(cocos2d::CCNode* parent, bool show, std::initializer_list<int
     // not jump when the frames come back. The first frame of a solve is drawn whatever the gap, and so is any frame on a scene
     // that has none of the panel's nodes yet: the scene is replaced when the level is (and the slice swaps it), and a held frame
     // there would leave nothing on screen for as long as the game stays busy.
-    if (gapMs > kBusyMs && g_s.drawn && parent->getChildByTag(PANEL_TAG) && parent->getChildByTag(LABEL_TAG)) {
+    ++g_s.statFrames;
+    g_s.statGapSum += gapMs;
+    g_s.statGapMax = std::max(g_s.statGapMax, gapMs);
+    if (gapMs > 40.0) ++g_s.statOver40;
+    if (std::chrono::duration<double>(tNow - g_s.statSince).count() >= kStatEverySec) {
+        char b[260];
+        snprintf(b, sizeof(b), "last %.0f s: %lld frames, %lld held while the game was busy (gap > %.0f ms), "
+                 "%lld of them over 40 ms, mean gap %.1f ms, longest %.0f ms (budget %.0f ms); plans read %lld, %zu in the ring",
+                 std::chrono::duration<double>(tNow - g_s.statSince).count(), g_s.statFrames, g_s.statHeld, busyMs(),
+                 g_s.statOver40, g_s.statFrames > 0 ? g_s.statGapSum / (double)g_s.statFrames : 0.0, g_s.statGapMax, g_cfg.frameBudgetMs,
+                 g_s.plansRead, g_s.ring.size());
+        say(b);
+        g_s.statSince = tNow;
+        g_s.statFrames = g_s.statHeld = g_s.statOver40 = 0;
+        g_s.statGapSum = g_s.statGapMax = 0.0;
+    }
+    if (gapMs > busyMs() && g_s.drawn && parent->getChildByTag(PANEL_TAG) && parent->getChildByTag(LABEL_TAG)) {
         ++g_s.runSkipped;
+        ++g_s.statHeld;
         g_s.last = tNow;
         if (!g_s.held) {
             g_s.held = true;
@@ -582,6 +945,17 @@ inline void update(cocos2d::CCNode* parent, bool show, std::initializer_list<int
     lbl->setVisible(true);
 
     const CCRect box = panelBox(parent, textTags);
+    g_s.box = box;
+    g_s.boxValid = true;
+    // The touch target for the bar, attached to the scene the panel is drawn into and only when absent (a per-frame add would
+    // register the delegate again each time); the scene is replaced with the level, and it comes back with the next frame.
+    if (!parent->getChildByTag(TOUCH_TAG)) {
+        if (auto* tl = PanelTouch::create()) {
+            tl->setTag(TOUCH_TAG);
+            tl->setID("replay-panel-touch"_spr);
+            parent->addChild(tl, (1 << 20) + 4);
+        }
+    }
     static pg::Scene S;                          // the buffers are kept from frame to frame
     std::string text;
     const pg::Track* tr = g_s.track.get();
@@ -592,6 +966,7 @@ inline void update(cocos2d::CCNode* parent, bool show, std::initializer_list<int
                                : "replay panel: waiting for a verified path";
     } else {
         advanceClock(*tr);
+        tr = g_s.track.get();                    // (a newer plan may have replaced the path when the clock started over)
         clampTick();
         pg::FrameIn in;
         in.level = g_s.level.get();
@@ -600,6 +975,10 @@ inline void update(cocos2d::CCNode* parent, bool show, std::initializer_list<int
         in.moversOfThisAttempt = g_s.movers && g_s.moversSerial == tr->serial;
         in.track = tr;
         in.marks = &g_s.marks;
+        if (!g_s.ring.empty()) {                                  // the ring of plans beside the path, the deepest being the path
+            in.ghosts = &g_s.ring;
+            in.focus = g_s.planShown.get();
+        }
         stretch(*tr, in.a, in.z);
         in.t = std::max(in.a, std::min(in.z, (long long)std::floor(g_s.clock.tick)));
         in.W = box.size.width;
@@ -611,6 +990,7 @@ inline void update(cocos2d::CCNode* parent, bool show, std::initializer_list<int
                  g_s.paused ? " [paused]" : "");
         text += st;
     }
+    autoMouse();                                 // cfg panelmouse (a test hook; nothing without it)
     emit(n, S, box.origin.x, box.origin.y);
     g_s.drawn = true;
     g_s.lastText = text;
@@ -632,10 +1012,22 @@ inline void update(cocos2d::CCNode* parent, bool show, std::initializer_list<int
     }
 }
 
-// Tab: the whole verified path -> its last stretch -> off -> the whole path.
+// Tab: the whole path -> its last stretch -> off -> the whole path.
 inline void toggle() {
-    g_modePref = (mode() + 1) % 3;
+    static const int order[] = {Full, Recent, Off};
+    int i = 0;
+    while (i < 2 && order[i] != mode()) ++i;
+    g_modePref = order[(i + 1) % 3];
+    if (wanted()) rebuildShown(true);   // the picture starts over
     say(modeName());
+}
+
+// How far in x the model's deepest plan gets, or -1 when there is none (or it ends in a turned gameplay frame, where x is not
+// the way along the level): the level bar draws the part of it past the verified point in the plan's colour.
+inline double unconfirmedX() {
+    const auto g = deepestPlan();
+    if (!g || g->f.empty() || g->f.back().gframe != 0) return -1.0;
+    return (double)g->endX();
 }
 
 }  // namespace replaypanel

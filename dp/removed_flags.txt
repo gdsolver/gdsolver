@@ -767,3 +767,109 @@
 --no-rejoinprobe 622336f3 8c646ef5 off arm of a switch folded into the default
 --no-dyngplatch 471e7413 8c8c0344 off arm of a switch folded into the default
 --dyngplatch 471e7413 8c8c0344 on spelling of a switch folded into the default, a no-op by then
+--no-advfollow 222360b9 e974687b off arm of a switch folded into the default
+--advfollow 222360b9 e974687b on spelling of a switch folded into the default, a no-op by then
+--no-anchorrot 222360b9 5338202c off arm of a switch folded into the default
+--anchorrot 222360b9 5338202c on spelling of a switch folded into the default, a no-op by then
+--no-areascreen 222360b9 186953d7 off arm of a switch folded into the default
+--areascreen 222360b9 186953d7 on spelling of a switch folded into the default, a no-op by then
+--no-areastart 222360b9 186953d7 off arm of a switch folded into the default
+--areastart 222360b9 186953d7 on spelling of a switch folded into the default, a no-op by then
+--no-autopartsmove 222360b9 b56aed3e off arm of a switch folded into the default
+--autopartsmove 222360b9 b56aed3e on spelling of a switch folded into the default, a no-op by then
+--no-balldashsprite 222360b9 e974687b off arm of a switch folded into the default
+--balldashsprite 222360b9 e974687b on spelling of a switch folded into the default, a no-op by then
+--no-boxmoves 222360b9 50022110 off arm of a switch folded into the default
+--boxmoves 222360b9 50022110 on spelling of a switch folded into the default, a no-op by then
+--no-ceilcrush 222360b9 30c92098 off arm of a switch folded into the default
+--ceilcrush 222360b9 30c92098 on spelling of a switch folded into the default, a no-op by then
+--no-ceilfarfree 222360b9 8ed7062a off arm of a switch folded into the default
+--ceilfarfree 222360b9 8ed7062a on spelling of a switch folded into the default, a no-op by then
+--no-ceilseatland 222360b9 fc93bf08 off arm of a switch folded into the default
+--ceilseatland 222360b9 fc93bf08 on spelling of a switch folded into the default, a no-op by then
+--no-chantog 222360b9 4168a2c0 off arm of a switch folded into the default
+--chantog 222360b9 4168a2c0 on spelling of a switch folded into the default, a no-op by then
+--no-dashface 222360b9 5b22d774 off arm of a switch folded into the default
+--dashface 222360b9 5b22d774 on spelling of a switch folded into the default, a no-op by then
+--no-exitfaceland 222360b9 5915090b off arm of a switch folded into the default
+--exitfaceland 222360b9 5915090b on spelling of a switch folded into the default, a no-op by then
+--no-facecarry 222360b9 12ab1a9e off arm of a switch folded into the default
+--facecarry 222360b9 12ab1a9e on spelling of a switch folded into the default, a no-op by then
+--no-flipgracehead 222360b9 8ed7062a off arm of a switch folded into the default
+--flipgracehead 222360b9 8ed7062a on spelling of a switch folded into the default, a no-op by then
+--no-flyportalland 222360b9 27a054c1 off arm of a switch folded into the default
+--flyportalland 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
+--no-landjumpbonus 222360b9 dbcd40b3 off arm of a switch folded into the default
+--landjumpbonus 222360b9 dbcd40b3 on spelling of a switch folded into the default, a no-op by then
+--no-landjumpshrink 222360b9 c95fffcf off arm of a switch folded into the default
+--landjumpshrink 222360b9 c95fffcf on spelling of a switch folded into the default, a no-op by then
+--no-landtaprot 222360b9 a9bb001c off arm of a switch folded into the default
+--landtaprot 222360b9 a9bb001c on spelling of a switch folded into the default, a no-op by then
+--no-lockmod 222360b9 96d4f46e off arm of a switch folded into the default
+--lockmod 222360b9 96d4f46e on spelling of a switch folded into the default, a no-op by then
+--no-multilock 222360b9 40c09b99 off arm of a switch folded into the default
+--multilock 222360b9 40c09b99 on spelling of a switch folded into the default, a no-op by then
+--no-onlag 222360b9 fc93bf08 off arm of a switch folded into the default
+--onlag 222360b9 fc93bf08 on spelling of a switch folded into the default, a no-op by then
+--no-padinv 222360b9 06876a08 off arm of a switch folded into the default
+--padinv 222360b9 06876a08 on spelling of a switch folded into the default, a no-op by then
+--no-padorientlive 222360b9 06876a08 off arm of a switch folded into the default
+--padorientlive 222360b9 06876a08 on spelling of a switch folded into the default, a no-op by then
+--no-portprevhalf 222360b9 472c27ff off arm of a switch folded into the default
+--portprevhalf 222360b9 472c27ff on spelling of a switch folded into the default, a no-op by then
+--no-portprevhalforient 222360b9 06876a08 off arm of a switch folded into the default
+--portprevhalforient 222360b9 06876a08 on spelling of a switch folded into the default, a no-op by then
+--no-portseen6 222360b9 27a054c1 off arm of a switch folded into the default
+--portseen6 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
+--no-revcarry 222360b9 647630cc off arm of a switch folded into the default
+--revcarry 222360b9 647630cc on spelling of a switch folded into the default, a no-op by then
+--no-revxhi 222360b9 a2f03b8c off arm of a switch folded into the default
+--revxhi 222360b9 a2f03b8c on spelling of a switch folded into the default, a no-op by then
+--no-ringhalfstep 222360b9 8ed7062a off arm of a switch folded into the default
+--ringhalfstep 222360b9 8ed7062a on spelling of a switch folded into the default, a no-op by then
+--no-robotleavehover 222360b9 27a054c1 off arm of a switch folded into the default
+--robotleavehover 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
+--no-shrinksnap 222360b9 c95fffcf off arm of a switch folded into the default
+--shrinksnap 222360b9 c95fffcf on spelling of a switch folded into the default, a no-op by then
+--no-slideminibox 222360b9 27a054c1 off arm of a switch folded into the default
+--slideminibox 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
+--no-slideseat 222360b9 3014a088 off arm of a switch folded into the default
+--slideseat 222360b9 3014a088 on spelling of a switch folded into the default, a no-op by then
+--no-slidetopdir 222360b9 436d4140 off arm of a switch folded into the default
+--slidetopdir 222360b9 436d4140 on spelling of a switch folded into the default, a no-op by then
+--no-slopelag 222360b9 32b495ae off arm of a switch folded into the default
+--slopelag 222360b9 32b495ae on spelling of a switch folded into the default, a no-op by then
+--no-slopewarp 222360b9 17d6e352 off arm of a switch folded into the default
+--slopewarp 222360b9 17d6e352 on spelling of a switch folded into the default, a no-op by then
+--no-spdseenall 222360b9 e974687b off arm of a switch folded into the default
+--spdseenall 222360b9 e974687b on spelling of a switch folded into the default, a no-op by then
+--no-spiderbufjump 222360b9 2938d465 off arm of a switch folded into the default
+--spiderbufjump 222360b9 2938d465 on spelling of a switch folded into the default, a no-op by then
+--no-stickonce 222360b9 d5034040 off arm of a switch folded into the default
+--stickonce 222360b9 d5034040 on spelling of a switch folded into the default, a no-op by then
+--no-tap2 222360b9 44e1fef0 off arm of a switch folded into the default
+--tap2 222360b9 44e1fef0 on spelling of a switch folded into the default, a no-op by then
+--no-tapfeed 222360b9 f44d13a2 off arm of a switch folded into the default
+--tapfeed 222360b9 f44d13a2 on spelling of a switch folded into the default, a no-op by then
+--no-touchonrecentry 222360b9 b84aa187 off arm of a switch folded into the default
+--touchonrecentry 222360b9 b84aa187 on spelling of a switch folded into the default, a no-op by then
+--no-tpgravhalf 222360b9 5b22d774 off arm of a switch folded into the default
+--tpgravhalf 222360b9 5b22d774 on spelling of a switch folded into the default, a no-op by then
+--no-ufoheldflap 222360b9 5b22d774 off arm of a switch folded into the default
+--ufoheldflap 222360b9 5b22d774 on spelling of a switch folded into the default, a no-op by then
+--no-wavecorner 222360b9 fc93bf08 off arm of a switch folded into the default
+--wavecorner 222360b9 fc93bf08 on spelling of a switch folded into the default, a no-op by then
+--no-wavegrace 222360b9 0f7282cb off arm of a switch folded into the default
+--wavegrace 222360b9 0f7282cb on spelling of a switch folded into the default, a no-op by then
+--no-waveminiramp 222360b9 4ae0ddb8 off arm of a switch folded into the default
+--waveminiramp 222360b9 4ae0ddb8 on spelling of a switch folded into the default, a no-op by then
+--no-waveslideramprot 222360b9 27a054c1 off arm of a switch folded into the default
+--waveslideramprot 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
+--no-wavesolidend 222360b9 27a054c1 off arm of a switch folded into the default
+--wavesolidend 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
+--no-waveunder 222360b9 fc93bf08 off arm of a switch folded into the default
+--waveunder 222360b9 fc93bf08 on spelling of a switch folded into the default, a no-op by then
+--no-waveunderflip 222360b9 27a054c1 off arm of a switch folded into the default
+--waveunderflip 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
+--no-zerosaw 222360b9 fc93bf08 off arm of a switch folded into the default
+--zerosaw 222360b9 fc93bf08 on spelling of a switch folded into the default, a no-op by then

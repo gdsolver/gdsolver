@@ -185,11 +185,11 @@ inline bool bandTrackKindAt(long long t, BandKind& kind, double& fl, double& ce,
 // 630..930 (GD: 840..1140), rode its ceiling at y=915, and was called SOLVED, while GD sank onto
 // a spike at y=862. The anchor at t=18,000 carried GD's band and agreed with GD to the tick, so
 // the replay instruments never saw it. What "seen" means is bandTrackSawBand (below); an anchor
-// whose --startband the recording does not hold at t0 starts with the bit (cli.hpp). Off: the
-// bit is never set.
+// whose --startband the recording does not hold at t0 starts with the bit (cli.hpp). On by default
+// (2026-10-18; --no-bandowntrack is the off arm, where the bit is never set).
 constexpr uint8_t kBandOwn = 16;
 constexpr int kBandOwnNear = 3;   // GD's band changes on the portal's own tick
-inline bool g_bandOwnTrack = false;
+inline bool g_bandOwnTrack = true;
 inline bool bandTrackAt(long long t, double& fl, double& ce) {
     return bandTrackRowAt(t + 1, fl, ce);
 }

@@ -179,6 +179,8 @@ To watch a replay with the map already on:
 python py/watch_plan_replay.py --level 22 --itermap
 ```
 
+It leaves every other game running; add `--kill-others` to stop them first when nothing else is going.
+
 ## The file
 
 `key=value` lines, in the style of the plan files.

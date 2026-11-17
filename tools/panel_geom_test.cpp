@@ -115,6 +115,103 @@ static void testParsing() {
     CHECK(cut.cover == 120);
 }
 
+// The model's plan (the DP's walk, `<out>.trace.csv`): columns by name, the rows after the walk's own kill left out, a last
+// line that is not finished left out, and the splice onto GD's own path.
+static const char* kTrace =
+    "tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,frame,rotspent,rotchan,rotrev,dead,key\n"
+    "100,500.5,105,0,0,1,0,0,0,0,0,0,0,7,0,0,0,11\n"
+    "101,502.0,105,0,0,1,0,0,0,0,0,0,0,7,0,0,0,12\n"
+    "102,503.5,112.5,5.5,1,0,1,300,-5.5,0,0,1,2,7,0,0,0,13\n"
+    "103,505.0,119,6,1,0,1,290,-6,0,0,1,2,7,0,0,1,14\n"      // the walk's own kill: the last row that counts
+    "104,506.5,125,6,1,0,1,280,-6,0,0,1,2,7,0,0,1,15\n"      // a corpse row: left out
+    "105,508.0,1";                                           // a line the solver is still writing: left out
+
+static void testModelTrace() {
+    const Track m = parseModelTrace(kTrace);
+    CHECK(m.first == 100 && m.last == 103);
+    CHECK(m.modelFrom == 100);
+    CHECK(m.at(99) == nullptr && m.at(104) == nullptr);
+    const Frame* a = m.at(100);
+    CHECK(a && a->model && a->valid);
+    NEAR(a->x, 500.5, 1e-4); NEAR(a->y, 105.0, 1e-4);
+    CHECK(a->mode == 0 && a->og == 1 && a->dual == 0 && a->flip == 0);
+    const Frame* c = m.at(102);
+    CHECK(c && c->mode == 1 && c->dual == 1 && c->flip == 1 && c->og == 0 && c->gframe == 2);
+    NEAR(c->y2, 300.0, 1e-4); NEAR(c->vy, 5.5, 1e-4); NEAR(c->x2, 503.5, 1e-4);
+    CHECK(parseModelTrace("").first == -1);                         // nothing
+    CHECK(parseModelTrace("tick,x,y\n100,1,2").first == -1);        // no finished row (the last line is still being written)
+    CHECK(parseModelTrace("tick,x\n100,1\n").first == -1);          // no y column: nothing to draw
+    // columns found by name: a column in front moves nothing
+    const Track m2 = parseModelTrace("a,tick,vy,x,y,mode,grounded,dual,y2,flip,frame,dead\n9,7,1.5,20,30,4,0,0,0,0,0,0\n");
+    CHECK(m2.first == 7 && m2.at(7) && m2.at(7)->mode == 4);
+    NEAR(m2.at(7)->x, 20.0, 1e-4); NEAR(m2.at(7)->y, 30.0, 1e-4);
+
+    // the splice: GD's own frames up to the anchor, the model's from there on
+    Track gd;
+    gd.f.resize(150);
+    for (size_t i = 0; i < gd.f.size(); ++i) { gd.f[i].x = (float)i; gd.f[i].y = 50.f; gd.f[i].valid = true; }
+    gd.finish();
+    const Track s = spliceModel(&gd, m);
+    CHECK(s.first == 0 && s.last == 103);                            // the model's last row ends it, GD's later ones are not used
+    CHECK(s.modelFrom == 100);
+    CHECK(s.at(99) && !s.at(99)->model);
+    NEAR(s.at(99)->x, 99.0, 1e-4);
+    CHECK(s.at(100) && s.at(100)->model);
+    NEAR(s.at(100)->x, 500.5, 1e-4);
+    CHECK(s.at(104) == nullptr);
+    const Track s0 = spliceModel(nullptr, m);                        // no path of GD's: only the plan
+    CHECK(s0.first == 100 && s0.last == 103 && s0.modelFrom == 100);
+    const Track none = spliceModel(&gd, Track{});                    // no plan: GD's path as it is
+    CHECK(none.first == 0 && none.last == 149 && none.modelFrom == -1);
+
+    // drawn: the plan's part of the path and the player take the model's colour, the status line says so
+    Level L = parseObjrects(kObjrects, nullptr);
+    Camera cam;
+    Scene S;
+    FrameIn in;
+    in.level = &L; in.track = &s; in.W = 320.f; in.H = 180.f;
+    in.a = s.first; in.z = s.last;
+    in.t = 101;
+    const std::string planned = buildFrame(S, in, cam);
+    CHECK(planned.find("planned path") == 0);
+    in.t = 50;
+    Camera cam2;
+    const std::string gdPath = buildFrame(S, in, cam2);
+    CHECK(gdPath.find("GD path") == 0);
+
+    // the ring: a plan is kept compact (frames from its first tick), and the ones that are not the focus are drawn beside it
+    const auto g = ghostOf(m);
+    CHECK(g->first() == 100 && g->last() == 103 && g->f.size() == 4);
+    CHECK(g->at(99) == nullptr && g->at(104) == nullptr && g->at(102) && g->at(102)->mode == 1);
+    NEAR(g->endX(), 505.0, 1e-4);
+    const Track s2 = spliceGhost(&gd, *g);
+    CHECK(s2.first == s.first && s2.last == s.last && s2.modelFrom == s.modelFrom);
+    CHECK(ghostOf(Track{})->f.empty());
+    Track m3 = parseModelTrace("tick,x,y,vy,mode,grounded,dual,y2,vy2,flip2,act,flip,frame,rotspent,rotchan,rotrev,dead,key\n"
+                               "100,500,105,0,0,1,0,0,0,0,0,0,0,7,0,0,0,1\n101,501,106,0,0,1,0,0,0,0,0,0,0,7,0,0,0,1\n"
+                               "102,502,107,0,0,1,0,0,0,0,0,0,0,7,0,0,0,1\n");
+    std::vector<std::shared_ptr<const Ghost>> ring{ghostOf(m3), g};
+    View vw;
+    vw.cx = 500.f; vw.cy = 110.f; vw.scale = 1.f; vw.px = 160.f; vw.py = 90.f;
+    Scene gs;
+    gs.reset(Box{0.f, 0.f, 320.f, 180.f});
+    drawGhosts(gs, vw, ring, g.get(), 101);                          // g is the focus: only m3 is drawn
+    const size_t one = gs.prims.size();
+    CHECK(one > 0);
+    Scene gs2;
+    gs2.reset(Box{0.f, 0.f, 320.f, 180.f});
+    drawGhosts(gs2, vw, ring, nullptr, 101);                         // no focus: both
+    CHECK(gs2.prims.size() > one);
+    Scene gs3;
+    gs3.reset(Box{0.f, 0.f, 320.f, 180.f});
+    drawGhosts(gs3, vw, ring, nullptr, 5000);                        // a tick neither plan reaches: the lines and the crosses stay
+    CHECK(gs3.prims.size() > 0 && gs3.prims.size() < gs2.prims.size());
+    // a ghost's player is a figure of its mode (the path's own player's shape), drawn as faintly as its line: nothing of it is brighter than the line
+    for (const Prim& pr : gs2.prims) CHECK(pr.line.a <= 0.76f && pr.fill.a <= 0.76f);
+    in.ghosts = &ring; in.focus = g.get(); in.t = 101;
+    Camera cam3;
+    CHECK(buildFrame(S, in, cam3).find("planned path") == 0);        // and a whole frame with a ring still builds
+}
 static void testRotation() {
     float q[8];
     rotRectCorners(375.f, 135.f, 26.f, 25.5f, -30.f, q);   // GD's own corners for this spike (the obb row above)
@@ -470,6 +567,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && !std::strcmp(argv[1], "--render")) return renderSvg(argc, argv);
     testParsing();
     testRotation();
+    testModelTrace();
     testClock();
     testClip();
     testDraw();

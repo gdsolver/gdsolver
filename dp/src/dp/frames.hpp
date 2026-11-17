@@ -1231,8 +1231,87 @@ struct UnlinkTrig {
     int8_t v;    // 1 unlinks, -1 links again
 };
 inline std::vector<UnlinkTrig> g_unlinkTrigs;   // sorted by cx at load
-// Whether the pair is unlinked during a tick that starts at (u, v) in `frame`.
-inline bool dualUnlinkedAt(int frame, double u, double v) {
+// The level is in two-player mode (levelsettings `twoPlayer=1`, the mod writes it only then): the second body is a
+// player of its own with a button of its own (a plan's input bit 1), and no gravity portal either one crosses flips
+// the other -- the link a dual portal makes does not exist. 0 on every level without the key.
+inline int g_twoPlayer = 0;
+// --dualbornlinked (default on since 2026-10-23; --no-dualbornlinked is the off arm): a dual portal of a two-player level gives the new body the INVERSE gravity and the negated vy of the first, as the game does
+// unless the layer's +0x860 is up (an Options trigger's Unlink Dual Gravity, g_unlinkTrigs). The model took every two-player level for unlinked at birth (the second body born with the
+// first's own gravity and vy). Birth only: after it a two-player level stays unlinked (a gravity portal of one body flips the other body only on a level without twoPlayer=1; the game's
+// own dump of a two-player level shows lone flips of the second body, t=150 and t=9,217 on the 59 KB lab level, with the pair in the same mode).
+inline bool g_dualBornLinked = true;
+// Solving ONE body of a two-player level against the other's plan. `--ghostlevels <file>` (lines `tick,level`) names the button the OTHER body
+// (the second slot of the State) takes at each tick -- the effect level, as a `--replay` of its plan writes in the `act`/`act2` column -- and makes
+// that body a ghost: it is stepped with its plan (its speed portals still count) but its death ends nothing. The search then branches the first
+// slot's button only. `--swapbodies` puts the level's SECOND player into the first slot (and the first into the second) before the call begins, so
+// that every rule of the search, which reads the first slot, serves the other player; `--bodybit N` writes the plan's levels as bit N-1 of the mask
+// (`input=<press>,<level << (N-1)>`), 2 for the second player. All three are off (0 / empty / 1) and change nothing without a two-player level.
+inline bool g_ghostOn = false;
+inline long long g_ghostBase = 0;
+inline std::vector<uint8_t> g_ghostLvl;
+inline bool g_swapBodies = false;
+inline int g_bodyBit = 1;
+inline int g_startAct2 = -1;   // --startact2 <0|1>: the second player's button as the anchor's tick left it (-1 = not said)
+// Set by a SEARCH call on a two-player level that has both bodies (cli.hpp, before the search): the call searched the first body against a ghost that holds
+// nothing, and cliMain then searches the second against the first's plan (cliMain's second pass) and writes the two as one mask plan.
+inline bool g_twoBodyCall = false;
+// --pinrows <file> (lines `tick,x,y`): the ticks where GD holds PLAYER 1 on a spot the physics does not give it -- a Teleport trigger (3022) that a Spawn
+// loop fires again every tick, onto a target a Move trigger is carrying, with the controls off: x stays where the teleport put it, y follows the target, and
+// vy reads 0 (measured on a custom two-player level, t=3..168: x 644.5 throughout, y 2085 -> 2055, the button of either player doing nothing). The model
+// fires a teleport trigger once, at the crossing, so from the next tick it lets the body fall and run on. With the rows the caller recorded (the pinned ticks
+// of GD's own attempt: x did not move), the first player's body is put at the recorded (x, y) at the end of each such tick, vy 0, off the ground.
+// Player 1 only: in a two-player level's swapped pass that is the second slot. Empty (every call that was not given the file) changes nothing.
+struct PinRow {
+    long long t;
+    float x, y;
+};
+inline std::vector<PinRow> g_pinRows;   // sorted by t
+inline const PinRow* pinRowAt(long long t) {
+    if (g_pinRows.empty()) return nullptr;
+    size_t lo = 0, hi = g_pinRows.size();
+    while (lo < hi) {
+        const size_t m = (lo + hi) / 2;
+        if (g_pinRows[m].t < t) lo = m + 1;
+        else hi = m;
+    }
+    return (lo < g_pinRows.size() && g_pinRows[lo].t == t) ? &g_pinRows[lo] : nullptr;
+}
+inline int ghostLevelAt(long long t) {
+    const long long i = t - g_ghostBase;
+    return (i >= 0 && i < (long long)g_ghostLvl.size()) ? (int)g_ghostLvl[(size_t)i] : 0;
+}
+// --p2taps (default OFF): in a two-player level a Tap trigger (1595) is fired by the SECOND player's press edge and armed by the first
+// player's x (cli.hpp itemGates). The second player's button by tick for a walk of a plan (--replay: the plan's bit 1, set before the walk);
+// the search's own passes read the ghost's levels (ghostLevelAt) instead.
+inline bool g_p2Taps = false;
+// --p2tappress (default OFF, two-player levels, the per-body wrapper): a Tap trigger (1595) of a two-player level that player 1's plan arms
+// (its x passes the Tap's) gets a press of the SECOND player's a few ticks later, forced into the second body's pass -- the one thing a search that
+// holds the other body on nothing cannot ask for. The model does not know what the Tap opens (its chain is not in the level data), so the press is
+// made blind, once, and the game's own recording of that attempt (the moving geometry the loop keeps) shows the door open to every later call.
+// `--mustpress t0:t1,...` (set by the wrapper for its second pass, or by hand): the searched body's button is 1 on ticks t0..t1 and 0 on t1+1,
+// whatever the search would have chosen.
+inline bool g_p2TapPress = false;
+inline std::vector<std::pair<long long, int>> g_mustPress;   // (tick, level), sorted by tick
+inline int mustPressAt(long long t) {
+    if (g_mustPress.empty()) return -1;
+    size_t lo = 0, hi = g_mustPress.size();
+    while (lo < hi) {
+        const size_t m = (lo + hi) / 2;
+        if (g_mustPress[m].first < t) lo = m + 1;
+        else hi = m;
+    }
+    return (lo < g_mustPress.size() && g_mustPress[lo].first == t) ? g_mustPress[lo].second : -1;
+}
+inline std::vector<uint8_t> g_p2ReplayLvl;
+inline long long g_p2ReplayBase = 0;
+inline int secondLevelAt(long long t) {
+    if (g_ghostOn) return ghostLevelAt(t);
+    const long long i = t - g_p2ReplayBase;
+    return (i >= 0 && i < (long long)g_p2ReplayLvl.size()) ? (int)g_p2ReplayLvl[(size_t)i] : 0;
+}
+// Whether the pair is unlinked during a tick that starts at (u, v) in `frame`: a gravity portal of one body flips the other
+// (step 5's partner call) only while it is not. A two-player level is unlinked throughout, with or without --dualbornlinked.
+inline bool unlinkTrigAt(int frame, double u, double v) {
     if (g_unlinkTrigs.empty()) return false;
     double X = u, Y = v;
     if (frame & 3) fromFrame(frame, u, v, X, Y);
@@ -1242,6 +1321,16 @@ inline bool dualUnlinkedAt(int frame, double u, double v) {
         st = t.v;
     }
     return st == 1;
+}
+inline bool dualUnlinkedAt(int frame, double u, double v) {
+    if (g_twoPlayer) return true;
+    return unlinkTrigAt(frame, u, v);
+}
+// Whether the body a dual portal gives birth to takes the first body's own gravity and vy (unlinked) rather than the inverse and the negation. --dualbornlinked reads it from the
+// Options triggers alone, also on a two-player level; otherwise a two-player level is unlinked at birth as it always was.
+inline bool dualBornUnlinkedAt(int frame, double u, double v) {
+    if (g_twoPlayer && !g_dualBornLinked) return true;
+    return unlinkTrigAt(frame, u, v);
 }
 // The travel coordinate of a world point in this frame (what `cx` becomes).
 inline double frameU(int f, double X, double Y) {

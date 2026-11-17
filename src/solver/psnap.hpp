@@ -936,7 +936,7 @@ inline int actSeenCount(uint8_t bit) {
 // checkpoint keeps it (GJEffectManager::saveToState 0x263e80 / loadFromState 0x2644a0, into an
 // EffectManagerState), not only its pulse queue. The group commands in progress live there -- among
 // them the ones a Keyframe Animation trigger (id 3033) runs, created by createKeyframeCommand --
-// and the snapshot carried none of them. Measured on MOAI's ladder window at t=9,628: the step just
+// and the snapshot carried none of them. Measured on a custom level's ladder window at t=9,628: the step just
 // after the player crossed a 3033 at x=13,995 (target group 736) put decoration uid 47313, a member
 // of that group, at (NaN, NaN).
 inline bool g_snapEM = true;

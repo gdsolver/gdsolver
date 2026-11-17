@@ -1,6 +1,7 @@
 // GJBaseGameLayer hook: tick control, fast loop, replay/serve, section solver, tracing.
 #include "mod/playlayer_helpers.hpp"
 #include "mod/profsample.hpp"
+#include "mod/replaystep.hpp"
 #include <Geode/modify/GameObject.hpp>   // cfg objwatch: ActWatchObject
 // For PROCESS_MEMORY_COUNTERS's named fields -- the struct is only used through
 // GetProcAddress("K32GetProcessMemoryInfo"), so nothing links psapi.
@@ -1562,7 +1563,14 @@ class $modify(GJBaseGameLayer) {
             // (watchat / watchback) set the speed themselves before asking for the reset.
             if (auto* pl = PlayLayer::get()) {
                 log::info("watch: reset level, then resume rendering");
+                // The reset's own visibility pass is what draws a level that is held still (a search holds
+                // it, and no frame reaches PlayLayer::update to run one): with skipRender it would be
+                // skipped here, before real time is back, and the screen came up black. Only a session the panel
+                // started has a screen to come back to; a worker's reset is left as it always was.
+                const bool skipWas = g_cfg.skipRender;
+                if (g_uiSession) g_cfg.skipRender = false;
                 pl->resetLevel();
+                g_cfg.skipRender = skipWas;
                 g_realtimeOverride = true;
                 return;   // this frame ends here
             }
@@ -1793,7 +1801,7 @@ class $modify(GJBaseGameLayer) {
             // Do not advance the whole scheduler (the game layer's update hangs off it too
             // and the physics would break). Advance only the action manager (actions are
             // for visual effects only)
-            if (g_fxSweep && g_cfg.skipRender && g_vtime <= 0.f) {
+            if (g_fxSweep && g_cfg.skipRender && vtimeNow() <= 0.f) {
                 // ...by the game time the last batch actually ran, once batches are cut by wall
                 // time (cfg framebudgetms); without that the sweep ran a full batch's worth per
                 // frame however few ticks the frame had. Off, it is the full batch, as before.
@@ -1879,10 +1887,11 @@ class $modify(GJBaseGameLayer) {
                 if (i > 0 && takeover::stopsBatch()) break;   // the takeover's checkpoint is in
                 // cfg vtime (hooks_vtime.cpp): one frame's worth of actions per update call, as one update a frame
                 // gives them -- the scheduler has run the action manager for the frame's first call already
-                if (i > 0 && g_vtime > 0.f)
+                if (i > 0 && vtimeNow() > 0.f)
                     if (auto* d = cocos2d::CCDirector::sharedDirector())
                         if (auto* am = d->getActionManager())
-                            static_cast<ActionManagerTick*>(am)->update(g_vtime);
+                            static_cast<ActionManagerTick*>(am)->update(
+                                g_vtScale ? vtimeNow() * d->getScheduler()->getTimeScale() : vtimeNow());
                 { stallwatch::Mark gm(stallwatch::GD_UPDATE);
                   GJBaseGameLayer::update(g_cfg.fastdt); }
                 ++g_lastBatchCalls;
@@ -1915,7 +1924,14 @@ class $modify(GJBaseGameLayer) {
             const int approach =
                 takeover::approachLoops(g_tick, m_player1 ? m_player1->getPositionX() : 0.f);
             const bool seekNow = g_started && !g_sessionOver && (itermap::seeking() || approach > 0);
-            const float stepDt = seekNow ? (1.f / 60.f) : dt;
+            float stepDt = seekNow ? (1.f / 60.f) : dt;
+            // cfg replaystep (replaystep.hpp): the scheduler pass decided how many fixed steps this frame runs.
+            const bool fixedStep = replaystep::active() && replaystep::g_calls >= 0 && !seekNow;
+            const int fixedCalls = fixedStep ? replaystep::g_calls : 0;
+            if (fixedStep) {
+                stepDt = replaystep::stepSeconds();
+                replaystep::g_calls = -1;
+            }
             if (g_started && !g_sessionOver)
                 loops = std::max(loops, std::max(itermap::seekLoops(stepDt), approach));
             // The game is STOPPED: run nothing. Normally the pause branch far above has already
@@ -1955,6 +1971,7 @@ class $modify(GJBaseGameLayer) {
                 }
                 g_endzoneBurn = true;
             }
+            if (fixedStep) loops = fixedCalls;   // 0 when this frame has gathered less than one step
             const bool seekCounts = itermap::seeking();
             if (seekCounts) ++itermap::g_seekFrames;
             // cfg seekblind: screen off up to the last checkpoint slot at or before the target.
@@ -1973,6 +1990,11 @@ class $modify(GJBaseGameLayer) {
                 const int ve = itermap::g_seekVisEvery;
                 itermap::g_seekVisSkip = itermap::g_seekBlindNow
                     || (seekCounts && ve > 1 && i + 1 < loops && (i % ve) != ve - 1);
+                // The scheduler gave the first step of the frame its actions; each further one gets its own, as the fast loop does.
+                if (fixedStep && i > 0)
+                    if (auto* d = cocos2d::CCDirector::sharedDirector())
+                        if (auto* am = d->getActionManager())
+                            static_cast<ActionManagerTick*>(am)->update(stepDt * d->getScheduler()->getTimeScale());
                 stallwatch::Mark gm(stallwatch::GD_UPDATE);
                 GJBaseGameLayer::update(stepDt);   // pinned while seeking; see above
                 itermap::g_seekVisSkip = false;
@@ -3426,7 +3448,7 @@ class $modify(GJBaseGameLayer) {
         const float dt = g_cfg.fastdt;
         int held = 0;
         for (const auto& in : g_cfg.inputs)
-            if (in.step <= g_ckptTick) held = in.down ? 1 : 0;
+            if (in.step <= g_ckptTick && !in.p2) held = in.down ? 1 : 0;
         secRestore(pl);
         for (int i = 0; i < 2; ++i) secStep(held, dt);   // the frozen ticks
         std::vector<float> px((size_t)nobj), py((size_t)nobj);
@@ -3690,7 +3712,7 @@ class $modify(GJBaseGameLayer) {
 
         int held = 0;
         for (const auto& in : g_cfg.inputs)
-            if (in.step <= g_ckptTick) held = in.down ? 1 : 0;
+            if (in.step <= g_ckptTick && !in.p2) held = in.down ? 1 : 0;
         secsolve::setSearching(true);
         int freeze = 0;
         std::vector<uint64_t> base, again, after;
@@ -3811,7 +3833,7 @@ class $modify(GJBaseGameLayer) {
         // The held state at the section head (the value of pattern "keep")
         int held0 = 0;
         for (const auto& in : g_cfg.inputs)
-            if (in.step <= g_ckptTick) held0 = in.down ? 1 : 0;
+            if (in.step <= g_ckptTick && !in.p2) held0 = in.down ? 1 : 0;
 
         // Input patterns. The every-tick toggle must be included. The layered BFS branches
         // both ways every tick, so psnap is unusable unless hold boundaries pass -- that is
@@ -4121,7 +4143,7 @@ class $modify(GJBaseGameLayer) {
         size_t idx = 0;
         for (long long t = 0; t <= base + (long long)seq.size(); ++t) {
             while (idx < g_cfg.inputs.size() && g_cfg.inputs[idx].step <= t) {
-                held = g_cfg.inputs[idx].down ? 1 : 0;
+                if (!g_cfg.inputs[idx].p2) held = g_cfg.inputs[idx].down ? 1 : 0;
                 ++idx;
             }
             if (t >= base && (size_t)(t - base) < seq.size())
@@ -5002,7 +5024,7 @@ class $modify(GJBaseGameLayer) {
             int held = 0;
             for (const auto& in : g_cfg.inputs) {
                 if (in.step > tHere) break;
-                held = in.down ? 1 : 0;
+                if (!in.p2) held = in.down ? 1 : 0;
             }
             return held;
         };
@@ -5025,7 +5047,7 @@ class $modify(GJBaseGameLayer) {
         };
         // An exception out of the search gives the search up, not the game. The search's coroutine
         // would hand it to std::terminate (SecTask's unhandled_exception), which ended the whole
-        // game: MOAI's window at t=9,628 (depth 1,654) threw "vector too long" at depth 66 in every
+        // game: a custom level's window at t=9,628 (depth 1,654) threw "vector too long" at depth 66 in every
         // run, with and without cfg cpflight. Caught around the layers, it ends only the search: the
         // layer being built is let go, the verdict is EXHAUSTED with stop=exception, and everything
         // after the layers -- the checkpoints and anchors released, the rung's hand-back, the level
@@ -6731,11 +6753,26 @@ class $modify(GJBaseGameLayer) {
             while (g_nextInput < g_cfg.inputs.size()
                    && g_cfg.inputs[g_nextInput].step <= g_tick) {
                 auto& in = g_cfg.inputs[g_nextInput];
-                ev("INJECT_handleButton", in.step, in.down);
+                // A plan's player 2 edge (input bit 1) is a second button of its own only in a two-player level.
+                // Elsewhere GD routes a player-2 press to player 1 (takeover.hpp noteInput), which would turn the
+                // edge into a jump of player 1 -- so there it is not pressed, and said once.
+                // The text of that line is also how the harness tells a package that has this input path from one that
+                // does not (py/gdtas/gdbase.py PLAYER2_INPUT_MARK): reword it there too, or the guard lets plans through.
+                const bool twoPlayerLevel = m_levelSettings && m_levelSettings->m_twoPlayerMode;
+                if (in.p2 && !twoPlayerLevel) {
+                    static bool said = false;
+                    if (!said) {
+                        said = true;
+                        writeResult("plan: a player 2 input (bit 1) in a level that is not two-player - not pressed");
+                    }
+                    ++g_nextInput;
+                    continue;
+                }
+                ev("INJECT_handleButton", in.step, in.down, in.p2);
                 g_injecting = true;
-                this->handleButton(in.down, 1 /*jump*/, true /*player1*/);
+                this->handleButton(in.down, 1 /*jump*/, !in.p2 /*player1*/);
                 g_injecting = false;
-                if (in.down) orbtrace::g_lastPress = g_tick;
+                if (in.down && !in.p2) orbtrace::g_lastPress = g_tick;
                 ++solver::g_injThisAttempt;
                 ++g_nextInput;
             }

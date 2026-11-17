@@ -167,6 +167,74 @@ void noCollideColumn() {
     }
 }
 
+// THE LEVEL TEXT'S PASS, KEPT FROM CALL TO CALL (CsvRows, level_loader.hpp). A call used to read the whole text into
+// rows, take each row's uid and place, drop GD's anti-cheat spike row and write the rest out again before it read a
+// row; it now reads its rows from the text a first call has made that pass over. The same level through both must be
+// the same level, and the rows a call is handed the rows the old pass would have handed it.
+void keptTextPass() {
+    // (1) The rows. getline over the text the old pass wrote (every kept row, '\n' ended) against nextCsvRow over the
+    // kept pass's text: a last row without a newline, empty rows, a '\r' before the '\n', the empty text.
+    const char* const texts[] = {"", "h", "h\n", "h\nr1", "h\nr1\n", "h\n\nr1\n\n", "h\r\nr1\r\n", "a\nb\n\nc", "\n", "\n\n"};
+    for (const char* t : texts) {
+        const std::string text = t;
+        std::vector<std::string> rows;
+        {
+            std::istringstream in(text);
+            std::string row;
+            while (std::getline(in, row)) rows.push_back(row);
+        }
+        std::string all;
+        for (const std::string& r : rows) { all += r; all.push_back('\n'); }
+        std::vector<std::string> slow;
+        {
+            std::istringstream in(all);
+            std::string row;
+            while (std::getline(in, row)) slow.push_back(row);
+        }
+        const dp::CsvRows kept = dp::buildCsvRows(text);
+        const std::string_view src = kept.noDrop ? std::string_view(text) : std::string_view(kept.filtered);
+        std::vector<std::string> fast;
+        size_t pos = 0;
+        std::string row;
+        while (dp::nextCsvRow(src, pos, row)) fast.push_back(row);
+        check(fast == slow, "the kept pass hands a call the rows the old pass wrote, edge texts included");
+    }
+    // (2) A level with the anti-cheat spike (the highest uid, id 8 at (0,105), 6x12, 30x30 unscaled), a row with too
+    // few fields for the uid pass, and solids: dropped, skipped, kept.
+    auto joined = [](const std::vector<std::string>& f) {
+        std::string s;
+        for (size_t i = 0; i < f.size(); ++i) s += (i ? "," : "") + f[i];
+        return s;
+    };
+    std::vector<std::string> spike(17, "");
+    spike[0] = "8"; spike[1] = "0"; spike[2] = "0"; spike[3] = "105"; spike[4] = "6"; spike[5] = "12";
+    spike[6] = "0"; spike[7] = "99"; spike[8] = "0"; spike[9] = "0"; spike[15] = "30"; spike[16] = "30";
+    const std::string text = std::string(kObjHeader) + "\n" + solidRow(1, 11, 100, false, "") + "1,0,50,100\n"
+                             + solidRow(1, 12, 200, false, "") + solidRow(1, 13, 300, false, "") + joined(spike) + "\n";
+    const dp::CsvRows kept = dp::buildCsvRows(text);
+    check(!kept.noDrop && kept.maxUid == 99, "the spike is the highest uid and is dropped");
+    check(kept.places.size() == 4 && kept.places[0].uid == 11 && kept.places[0].cx == 100.0
+              && kept.places[1].uid == 12 && kept.places[3].uid == 99,
+          "the places are the rows with eight fields or more, the short one left out");
+    check(kept.filtered.find(joined(spike)) == std::string::npos && kept.filtered.find("\n1,0,50,100\n") != std::string::npos,
+          "the filtered text has no spike row and keeps the short one");
+    std::istringstream in(text);
+    const dp::Level slowL = dp::loadLevelFrom(in);
+    std::istringstream none;
+    const dp::Level fastL = dp::loadLevelFrom(none, nullptr, nullptr, nullptr, &kept, &text);
+    bool same = slowL.objs.size() == fastL.objs.size();
+    for (size_t i = 0; same && i < slowL.objs.size(); ++i) {
+        const dp::Obj& a = slowL.objs[i];
+        const dp::Obj& b = fastL.objs[i];
+        same = a.uid == b.uid && a.cx == b.cx && a.cy == b.cy && a.hw == b.hw && a.hh == b.hh && a.id == b.id;
+    }
+    check(same && keeps(fastL, 11) && keeps(fastL, 13) && !keeps(fastL, 99),
+          "a level read from the kept pass is the level the old pass gave, spike gone");
+    // (3) No spike at all: the text itself is what the rows are read from.
+    const std::string plain = std::string(kObjHeader) + "\n" + solidRow(1, 11, 100, false, "");
+    check(dp::buildCsvRows(plain).noDrop, "nothing dropped: the kept pass keeps no copy of the text");
+}
+
 // AN OBJECT'S ON/OFF AS A SEQUENCE OF SWITCHES (five boundaries). A touch mask
 // cannot carry any of these -- it only ever gains bits -- so each case is one the mask form gets
 // wrong.
@@ -910,6 +978,7 @@ int main(int argc, char** argv) {
     overlayReach();
     initLines();
     noCollideColumn();
+    keptTextPass();
     onOffEvents();
     activatorRoots();
     autoSwitches();

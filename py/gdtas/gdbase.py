@@ -211,6 +211,30 @@ def mod_gd_version(mod_file: Path) -> str | None:
         return None
 
 
+# The text a package that presses player 2's button (input bit 1) carries: the mod says it in result.txt when a plan holds
+# such an input for a level that is not two-player (src/mod/hooks_gamelayer.cpp, the injection). A package without the input path has
+# no such text, and reads a mask with bit 1 as a release (the autorun cfg's `input=` line did) or refuses the plan (planfile=).
+# mod.json's version cannot tell the two apart: a development build keeps the version of the release before it.
+PLAYER2_INPUT_MARK = b"a player 2 input (bit 1)"
+
+_p2_cache: dict[tuple[str, int, int], bool] = {}
+
+
+def mod_presses_player2(mod_file: Path) -> bool:
+    """Does the package carry the second player's button path? False when it cannot be read."""
+    import zipfile
+    p = Path(mod_file)
+    try:
+        st = p.stat()
+        key = (str(p), st.st_size, st.st_mtime_ns)
+        if key not in _p2_cache:
+            with zipfile.ZipFile(p) as z:
+                _p2_cache[key] = any(PLAYER2_INPUT_MARK in z.read(n) for n in z.namelist() if n.lower().endswith(".dll"))
+        return _p2_cache[key]
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
 def same_build(base_version: str, mod_version: str) -> bool:
     """Is a base frozen as `base_version` a game that a mod packaged for `mod_version` runs on? Equal, or the base is a later
     build of the same version (the 2.209 hotfix is frozen as 2.209b and the mod stays gd.win 2.209: which of the two executables

@@ -1,7 +1,7 @@
 """Replay every stored solution headless and check that it really clears.
 
     python py/verify_solutions.py --files data/solution_lv*_dp.txt \\
-        --parallel 6 --pool 90 91 92 93 94 95
+        --parallel 3 --pool 99 100 101
 
 GD's levelComplete is called mid-level as well, so a "clear" in the session
 that solved the level is not evidence. The only thing to trust is a bare
@@ -16,13 +16,13 @@ import argparse
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import memory, plan, results
-from gdtas.paths import VERIFY_RESULT, WORKERS_ROOT
+from gdtas.paths import BUILD_MOD, DEFAULT_POOL, VERIFY_RESULT, WORKERS_ROOT
 from gdtas.worker import run_session
 
 
@@ -42,6 +42,11 @@ class Verdict:
     detail: str
     worker: int
     coins: list[str]
+    # the replay's whole log and whether the clock ended it, for a caller that keeps the evidence
+    # (cold_regress.fresh_verify); the verdict above is read from the same lines
+    lines: list[str] = field(default_factory=list)
+    timed_out: bool = False
+    stall: dict | None = None      # the launch was ended for a silent result.txt (gdtas.worker.SessionResult.stall)
 
 
 # The three lines the coin observation emits (mod side: hooks_playlayer.cpp).
@@ -52,7 +57,8 @@ COIN_PREFIXES = ("coin:", "coingd:", "coincmp:")
 
 def verify_one(worker_id: int, path: Path, level: int, timeout_s: float,
                workers_root: Path, force_coins: bool = False,
-               extra_cfg: list[str] | None = None) -> Verdict:
+               extra_cfg: list[str] | None = None,
+               mod_file: Path = BUILD_MOD) -> Verdict:
     # a coin solution claims "clear + all coins", so make it report the count too.
     # the coin gate is inside solve=1, so coins=1 does not change a bare replay.
     # --coins turns it on for EVERY file, which is how the coin observation is
@@ -70,13 +76,15 @@ def verify_one(worker_id: int, path: Path, level: int, timeout_s: float,
         "fastdt=0.0166667", "fastloops=1800", "skiprender=1",
         "solve=0", "music=mute", coins,
     ] + list(extra_cfg or []) + plan_cfg
-    r = run_session(worker_id, cfg, timeout_s=timeout_s, workers_root=workers_root)
+    r = run_session(worker_id, cfg, timeout_s=timeout_s, workers_root=workers_root,
+                    mod_file=mod_file)
     clear, detail = results.clear_verdict(r.lines)
     if r.timed_out and not clear:
         detail = f"TIMEOUT ({detail})"
     coin_lines = [ln.strip() for ln in r.lines
                   if ln.strip().startswith(COIN_PREFIXES)]
-    return Verdict(path.name, level, clear, detail or "", worker_id, coin_lines)
+    return Verdict(path.name, level, clear, detail or "", worker_id, coin_lines,
+                   list(r.lines), bool(r.timed_out), getattr(r, "stall", None))
 
 
 def main(argv=None) -> int:
@@ -89,7 +97,7 @@ def main(argv=None) -> int:
     # which workers to use. A long measurement may already be holding a few of
     # them, and sharing a data root is refused, so this has to be selectable.
     ap.add_argument("--pool", nargs="+", type=int,
-                    default=[90, 91, 92, 93, 94, 95, 96, 97])
+                    default=list(DEFAULT_POOL))
     ap.add_argument("--no-free-memory", action="store_true")
     ap.add_argument("--coins", action="store_true",
                     help="run every file with coins=1 and report the coin lines "

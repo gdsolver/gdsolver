@@ -36,8 +36,8 @@
  },
  "16": {
   "coins": "3/3",
-  "fp": "it=2 plan=1789/fa88fce5 att=4 t=9323 x=14189.429 band1=180.0,480.0 fix=1/122/4477f02f horizon=33315 backoff=96 live=- deep=-",
-  "iters": 2
+  "fp": "it=1 plan=246/cf7a4eb3 att=2 t=4057 x=5688.748 band1=90.0,90.0 fix=0/- horizon=33315 backoff=6 live=- deep=-",
+  "iters": 1
  },
  "17": {
   "coins": "3/3",
@@ -46,12 +46,12 @@
  },
  "18": {
   "coins": "3/3",
-  "fp": "it=1 plan=350/592be4bf att=2 t=6838 x=9234.747 band1=90.0,90.0 fix=0/- horizon=31091 backoff=6 live=- deep=-",
+  "fp": "it=1 plan=318/8fb85ae9 att=2 t=6838 x=9234.747 band1=90.0,90.0 fix=0/- horizon=31091 backoff=6 live=- deep=-",
   "iters": 1
  },
  "19": {
   "coins": "3/3",
-  "fp": "it=2 plan=1266/d09b645c att=6 t=20099 x=28075.758 band1=90.0,90.0 fix=1/120/405bf61f horizon=34415 backoff=24 live=1612078/827e1c74 deep=-",
+  "fp": "it=2 plan=1330/949d53b4 att=6 t=21010 x=29486.025 band1=90.0,90.0 fix=1/124/675e3d19 horizon=34415 backoff=96 live=2435299/7c0cda6b deep=-",
   "iters": 2
  },
  "2": {
@@ -61,18 +61,18 @@
  },
  "20": {
   "coins": "3/3",
-  "fp": "it=2 plan=3590/1c4bfe09 att=6 t=21973 x=32198.549 band1=150.0,450.0 fix=1/123/b116f99f horizon=37635 backoff=240 live=26825603/2402c074 deep=-",
-  "iters": 2
+  "fp": "it=3 plan=2262/b616b45f att=8 t=22445 x=33008.742 band1=90.0,390.0 fix=1/122/10bad6c2 horizon=37635 backoff=240 live=27892747/c486e8ed deep=-",
+  "iters": 3
  },
  "21": {
   "coins": "3/3",
-  "fp": "it=7 plan=1052/45bbcf08 att=16 t=20288 x=26877.375 band1=90.0,360.0 fix=6/744/34eaf453 horizon=3000 backoff=6 live=18272964/b96741a8 deep=-",
-  "iters": 7
+  "fp": "it=5 plan=832/e024966b att=13 t=16693 x=21848.875 band1=90.0,390.0 fix=3/372/3581cfd0 horizon=29445 backoff=6 live=12575499/13ea0a9a deep=-",
+  "iters": 5
  },
  "22": {
   "coins": "3/3",
-  "fp": "it=17 plan=870/e795455d att=32 t=18693 x=21986.178 band1=480.0,780.0 fix=19/2348/0366be6d horizon=3000 backoff=24 live=23318837/89c59d28 deep=-",
-  "iters": 17
+  "fp": "it=13 plan=1116/3ef44304 att=53 t=18636 x=21986.178 band1=90.0,90.0 fix=13/1601/cae2c398 horizon=3000 backoff=24 live=23300177/21328621 deep=-",
+  "iters": 13
  },
  "3": {
   "coins": "3/3",
@@ -112,7 +112,7 @@
  "_meta": {
   "arrangement": "one-session",
   "cfg": "coinroute=1 coins=1",
-  "head": "e3aaa82f6dc4a3f223fee6d9b92222aa10931646",
+  "head": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
   "levels": [
    1,
    2,
@@ -137,7 +137,7 @@
    21,
    22
   ],
-  "mod_sha256": "634803f4772f2d36384bfc594a2190b92849543d258b10df10c76a90e4951d5c",
+  "mod_sha256": "56f6c89e81f717142ed0df154e374404cf1a3f8b8b2edba5bc331acb44019502",
   "record": "none on every level",
   "resolution": 25
  }

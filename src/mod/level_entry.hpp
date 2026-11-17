@@ -14,22 +14,28 @@ using namespace p1;
 // flag, which a level built from a file never carries: it printed 0 for a kA10=1 level. -1 when the
 // string is not at hand.
 inline int levelHeaderTwoPlayer(std::string s) {
-    const size_t b = s.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return -1;
-    s = s.substr(b);
-    if (s.rfind("H4sI", 0) == 0) s = std::string(cocos2d::ZipUtils::decompressString(s, false, 0));
+    s = gdcompat::rawLevelString(std::move(s));
     if (s.empty()) return -1;
     const std::string_view all(s);
     return levelwarn::field(all.substr(0, all.find(';')), "kA10") == "1" ? 1 : 0;
 }
 
+// The level's kA42 (LevelSettingsObject::m_reverseSync), from the header the same way. PlayerObject::
+// reversePlayer books the mirror debt only with it set (GJBaseGameLayer::resetLevelVariables copies it to
+// the player). The member itself is not read: in 2.209 the bindings' offsets for it and the player's copy
+// both read 0 on a level whose header says 1 and whose reverse ring GD does carry (dx x1.02 after it).
+// -1 when the string is not at hand.
+inline int levelHeaderReverseSync(std::string s) {
+    s = gdcompat::rawLevelString(std::move(s));
+    if (s.empty()) return -1;
+    const std::string_view all(s);
+    return levelwarn::field(all.substr(0, all.find(';')), "kA42") == "1" ? 1 : 0;
+}
+
 // Whether the level's attempt-dependent triggers reach play (levelwarn::kAttemptDependent), read from
 // the stored or raw string the way the play menu's note reads it.
 inline bool levelAttemptDependent(std::string s) {
-    const size_t b = s.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return false;
-    s = s.substr(b);
-    if (s.rfind("H4sI", 0) == 0) s = std::string(cocos2d::ZipUtils::decompressString(s, false, 0));
+    s = gdcompat::rawLevelString(std::move(s));
     if (s.empty()) return false;
     const std::string_view all(s);
     const bool platformer = levelwarn::field(all.substr(0, all.find(';')), "kA22") == "1";
@@ -168,6 +174,9 @@ inline bool enterConfiguredLevel() {
     // Which level this run played, by content: the raw file for a level file, the level string
     // the game holds otherwise. A run's manifest keeps it (py/cold_manifest.py).
     if (srcKind != "file") srcBytes = std::string(level->m_levelString);
+    solver::g_levelReverseSync = levelHeaderReverseSync(srcKind == "main"
+        ? std::string(LocalLevelManager::sharedState()->getMainLevelString(g_cfg.levelId))
+        : srcBytes);
     writeResult("levelsource: id=" + std::to_string(g_cfg.levelId) + " kind=" + srcKind
                 + " sig=" + levelContentSig(srcBytes) + " bytes=" + std::to_string(srcBytes.size()));
     // cfg attemptauto: decided afresh at every entry, so a pin never outlives its level.

@@ -327,11 +327,25 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            ^ ((uint64_t)s.dashing << 54)
            ^ ((uint64_t)((s.rHover || s.dashing) ? s.action : 0) << 55)
            ^ ((s.dual && s.rHover2)
-                  ? (((uint64_t)s.rHover2 << 1) | (s.mode2 == 5 && s.action))
+                  ? (((uint64_t)s.rHover2 << 1)
+                      | (s.mode2 == 5 && (s.action2 == 1 || (s.action2 == 2 && s.action))))
                         * 0x8CB92BA72F3D8DD7ull : 0)
            // --dualdash: ...and the second body's dash, which its own step now keeps (0 off)
            ^ ((s.dual && s.dashing2)
                   ? (0x5B2E7A1D93C4F086ull ^ ((uint64_t)s.action << 31)) : 0)
+           // --p2born: ...and a second body born holding nothing whose plan level has not yet shown a release
+           ^ ((g_p2Born && s.dual && s.action2 == 3) ? 0x6E3B95C1A7D204F8ull : 0)
+           // --dualinlat: ...and in a dual whose second body takes the button a tick after the first
+           // (ship or UFO against anything else), the two buttons it has just seen are part of the state
+           ^ ((g_dualInLat && s.dual && (s.mode2 == 1 || s.mode2 == 3) && !(s.mode == 1 || s.mode == 3))
+                  ? (0x3C79AC492BA7B653ull ^ ((uint64_t)s.action << 29)
+                     ^ ((uint64_t)(s.action2 >= 2 ? (s.action2 == 3 ? 0 : s.action) : s.action2) << 30))
+                  : 0)
+           // --revcarry: ...and the correction a reverse ring still owes (State::revOff), in 0.25 px buckets: two states alike
+           // in everything else run to different x. 0 for every state that never met such a ring, so those keys stay as they were.
+           ^ (s.revOff != 0.f
+                  ? ((uint64_t)(uint32_t)(int32_t)std::lround((double)s.revOff * 4.0) * 0xA24BAED4963EE407ull)
+                  : 0)
            // --p2xoff: ...and how far the second body runs ahead of the first (State::dx2), in
            // 0.25 px buckets. Two pairs alike in everything else meet different objects with
            // their second body. 0 without the flag and in every pair that never separated, so
@@ -485,6 +499,10 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            ^ (s.items ? ((uint64_t)popCount32(s.items) * 0xD1B54A32D192ED03ull) : 0)
            // ...and the counting tap's presses, a number for the same reason.
            ^ (s.taps ? ((uint64_t)s.taps * 0x9FB21C651E98DF25ull) : 0)
+           // --tap2: the other counting taps' presses, the same (0 without the flag)
+           ^ (s.tapsX[0] ? ((uint64_t)s.tapsX[0] * 0xA24BAED4963EE407ull) : 0)
+           ^ (s.tapsX[1] ? ((uint64_t)s.tapsX[1] * 0x9FB21C651E98DF25ull * 3) : 0)
+           ^ (s.tapsX[2] ? ((uint64_t)s.tapsX[2] * 0xD1B54A32D192ED03ull * 5) : 0)
            // [r52] The frame-change bit goes in the key too (it is set only on
            // the tick after the change, so the partition granularity barely
            // moves)
@@ -583,6 +601,10 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
     if (s.tpTouch) k ^= (uint64_t)s.tpTouch * 0x94D049BB133111EBull;
     // --tpback: ...and one a teleport has left behind its farthest x, whose crossings wait for it (State::tpBack)
     if (s.tpBack) k ^= (uint64_t)s.tpBack * 0xC2B2AE3D27D4EB4Full;
+    // --stopjump: a branch whose button a Player Control trigger released presses nothing until the plan lets go
+    // (State::pcRel), and one whose last touched box will not fire again (State::pcTouch)
+    if (s.pcRel) k ^= 0x6C8E9CF570932BD5ull;
+    if (s.pcTouch) k ^= (uint64_t)s.pcTouch * 0xA24BAED4963EE407ull;
     return k;
 }
 inline uint64_t keyOf(const State& s, long long t) { return modelKeyOf(s, t) ^ coinKeyBits(s); }
@@ -675,4 +697,163 @@ inline uint64_t groupFireSig(const State& s, long long t) {
     return k;
 }
 
+// ---- --statecross: the late crossings a state dates itself (State::xcId / xcLag) ----------------------------
+// The search fires an autonomous x-crossing trigger on the frontier leader's crossing (model.hpp fireAutoTriggers); a
+// group that crosses it later used to be dated by working its present speed back from its x (dynamics.hpp
+// autoOwnApply), which is wrong whenever the speed was not the same since (a time-warp ramp, a portal after the
+// trigger): measured on a heavy call, 65 ticks late on a trigger whose movers run 3,600 ticks. Here the state notes how many
+// ticks after the leader it crossed, when it makes the crossing, in units of g_crossLagUnit. A crossing within g_crossMinLag
+// ticks of the leader's is not noted (the leader's date stands: the group would otherwise split on every tick of x-phase),
+// nor is one of a trigger that moves nothing. The leader's date is kept in g_crossFire: the search overrides AutoTrig::fireT
+// per group (autoOwnApply) while the children of that group are stepped.
+inline bool g_stateCross = true;   // (on since 2026-10-21; --no-statecross is the off arm)
+inline int g_crossMinLag = 3;     // --crossminlag: ticks late below which a crossing reads the leader's date
+inline int g_crossLagUnit = 4;     // --crosslagunit: the unit of a record (State::xcLag), and so the grain of the group split
+inline std::vector<double> g_crossCx;      // g_autoTrig[i].cx (g_autoTrig is sorted by it)
+inline std::vector<uint8_t> g_crossMoves;  // does trigger i move anything
+inline std::vector<int> g_crossFire;       // g_autoTrig[i].fireT as the leader dated it, this layer
+inline std::atomic<long long> g_crossNoted{0}, g_crossOver{0};   // --phaseprof (the step runs on the pool)
+// --crosscx (default off): triggers standing at one x are crossed on one tick, so a state's lateness is the same for all of them; a record
+// is kept per x (the first moving trigger there, its head), not per trigger. A heavy call's states lost half of their records on 16 slots
+// (513,585 of 1,143,594 on a level with several triggers at each of a dozen x in a row) and the lost ones were dated by the old reading,
+// which is not what the walk (dated by each state's own crossing) does.
+inline bool g_crossCxHeads = false;
+// --crossbehind (default off): a group whose x has not reached a trigger sees it as not fired, as autoOwnApply has it. This function left the leader's date on such a group (a trigger with no record is "crossed with the leader"),
+// so a group still behind a trigger that the leader had fired saw its movers already moving: on a heavy call the search's groups 290 px behind the leader had a hazard moved 5.4 px away that the walk (dated by each state's own
+// crossing) still had in place, and the plan they chose died on it in the walk at a 0.4 px edge.
+inline bool g_crossBehind = true;   // (on since 2026-10-22; --no-crossbehind is the off arm)
+inline std::vector<int> g_crossHead;      // the head of trigger i's x (itself when it is the head), -1 when it moves nothing
+inline std::vector<double> g_crossRun;    // per head: how long the movers of its x run from the head's date
+inline void autoRunEnsure() {
+    if (g_autoRun.size() == g_autoTrig.size()) return;
+    g_autoRun.assign(g_autoTrig.size(), 0.0);
+    for (size_t i = 0; i < g_autoTrig.size(); ++i)
+        for (const TrigCtl& c : g_autoTrig[i].ctl)
+            g_autoRun[i] = std::max(g_autoRun[i], c.durTicks + (double)c.spawnLag + c.lockTicks);
+}
+inline void stateCrossPrepare() {
+    g_crossCx.resize(g_autoTrig.size());
+    g_crossMoves.resize(g_autoTrig.size());
+    g_crossFire.assign(g_autoTrig.size(), -1);
+    for (size_t i = 0; i < g_autoTrig.size(); ++i) {
+        g_crossCx[i] = g_autoTrig[i].cx;
+        bool mv = false;
+        for (const TrigCtl& c : g_autoTrig[i].ctl)
+            if (std::fabs(c.dx) > 0.001f || std::fabs(c.dy) > 0.001f || c.lockTicks > 0.0 || c.tmode != 0 || c.orbit) {
+                mv = true;
+                break;
+            }
+        g_crossMoves[i] = mv ? 1 : 0;
+    }
+    autoRunEnsure();
+    g_crossHead.assign(g_autoTrig.size(), -1);
+    g_crossRun.assign(g_autoTrig.size(), 0.0);
+    int head = -1;
+    for (size_t i = 0; i < g_autoTrig.size(); ++i) {
+        if (!g_crossMoves[i]) continue;
+        if (!(g_crossCxHeads && head >= 0 && g_crossCx[(size_t)head] == g_crossCx[i])) head = (int)i;
+        g_crossHead[i] = head;
+        g_crossRun[(size_t)head] = std::max(g_crossRun[(size_t)head],
+                                            g_autoRun[i] + (double)std::max(0, g_autoTrig[i].delay - g_autoTrig[(size_t)head].delay));
+    }
+}
+// the leader's dates, taken once a layer after the leader has fired (before any group overrides them)
+inline void stateCrossSyncFire() {
+    for (size_t i = 0; i < g_autoTrig.size() && i < g_crossFire.size(); ++i) g_crossFire[i] = g_autoTrig[i].fireT;
+}
+// the effect tick the record in slot k of `s` dates trigger i at
+inline int xcOwn(const State& s, int k) {
+    const size_t id = (size_t)s.xcId[k] - 1;
+    return g_crossFire[id] + (int)s.xcLag[k] * g_crossLagUnit;
+}
+// is the record in slot k still needed at tick t (its movers have not finished)?
+inline bool xcLive(const State& s, int k, long long t) {
+    if (!s.xcId[k]) return false;
+    const size_t id = (size_t)s.xcId[k] - 1;
+    if (id >= g_crossRun.size() || id >= g_crossFire.size() || g_crossFire[id] < 0) return false;
+    return (double)(t - (long long)xcOwn(s, k)) <= g_crossRun[id] + 2.0;
+}
+// the signature that splits groups by what their members dated themselves (0 for a state with no live record)
+inline uint64_t xcSig(const State& s, long long t) {
+    uint64_t k = s.xcOver ? 0x9E3779B97F4A7C15ull : 0;
+    for (int j = 0; j < kCrossSlots; ++j) {
+        if (!xcLive(s, j, t)) continue;
+        uint64_t h = ((uint64_t)s.xcId[j] << 32) ^ (uint64_t)s.xcLag[j];
+        h = (h ^ (h >> 30)) * 0xBF58476D1CE4E5B9ull;
+        h = (h ^ (h >> 27)) * 0x94D049BB133111EBull;
+        k ^= h ^ (h >> 31);
+    }
+    return k;
+}
+// `s` (tick t) has just been stepped from `from` (tick t-1): note the fired triggers whose x it crossed on this step, late.
+inline void stateCrossNote(State& s, const State& from, long long t) {
+    if (g_crossCx.empty() || (int)s.frame != 0 || s.rev || (int)from.frame != 0 || from.rev) return;
+    const double x0 = (double)from.xAbs, x1 = (double)s.xAbs;
+    if (!(x1 > x0)) return;
+    size_t i = (size_t)(std::upper_bound(g_crossCx.begin(), g_crossCx.end(), x0) - g_crossCx.begin());
+    for (; i < g_crossCx.size() && g_crossCx[i] <= x1; ++i) {
+        const int fire = g_crossFire[i];
+        if (fire < 0 || !g_crossMoves[i] || g_crossHead[i] != (int)i) continue;   // not fired yet: the leader fires it on this very crossing
+        const int late = (int)t + g_autoTrig[i].delay - fire;
+        if (late < g_crossMinLag) continue;
+        const int lag = std::min(255, (late + g_crossLagUnit / 2) / g_crossLagUnit);
+        int slot = -1;
+        for (int k = 0; k < kCrossSlots && slot < 0; ++k)
+            if (s.xcId[k] == (uint16_t)(i + 1)) slot = k;
+        for (int k = 0; k < kCrossSlots && slot < 0; ++k)
+            if (!xcLive(s, k, t)) slot = k;   // free, or its movers are done
+        if (slot < 0) {                        // all still running: the one with the least left makes way, if this one has more
+            const double mine = g_crossRun[i];
+            double least = 1e300;
+            int lk = -1;
+            for (int k = 0; k < kCrossSlots; ++k) {
+                const double left = g_crossRun[(size_t)s.xcId[k] - 1] - (double)(t - (long long)xcOwn(s, k));
+                if (left < least) { least = left; lk = k; }
+            }
+            s.xcOver = 1;
+            g_crossOver.fetch_add(1, std::memory_order_relaxed);
+            if (mine > least) slot = lk; else continue;
+        }
+        s.xcId[slot] = (uint16_t)(i + 1);
+        s.xcLag[slot] = (uint8_t)lag;
+        g_crossNoted.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+// autoOwnApply for a group whose members share their records (xcSig is in the group's signature): each recorded crossing
+// is the group's own date; a trigger with no record was crossed with the leader (to within g_crossMinLag), and a state that
+// lost a record is dated by the old reading.
+inline void autoOwnApplyCross(AutoOwnGuard& G, double gx, double gdx, long long t, const State& rep) {
+    if (!(gdx > 0.0)) return;
+    autoRunEnsure();
+    for (size_t i = 0; i < g_autoTrig.size(); ++i) {
+        AutoTrig& A = g_autoTrig[i];
+        if (A.fireT < 0) continue;
+        int own = -1;
+        int e = -1;
+        const int hd = i < g_crossHead.size() ? g_crossHead[i] : -1;   // --crosscx: the record of this trigger's x
+        if (hd >= 0)
+            for (int k = 0; k < kCrossSlots; ++k)
+                if (rep.xcId[k] == (uint16_t)(hd + 1)) e = k;
+        if (e >= 0) {
+            own = A.fireT + (int)rep.xcLag[e] * g_crossLagUnit;
+        } else if (rep.xcOver && gx >= A.cx) {
+            const long long k = (long long)std::floor((gx - A.cx) / gdx);
+            own = std::min((int)(t - 1 - k) + A.delay, A.fireT + A.fireSpreadT);
+        } else if (g_crossBehind && gx < A.cx) {
+            if (g_autoOwnPre && g_autoOwnT0 >= 0 && (long long)A.fireT <= g_autoOwnT0) continue;   // --autoownpre (dynamics.hpp)
+            G.saved.push_back({i, A.fireT});
+            A.fireT = -1;   // this group has not reached it
+            continue;
+        } else {
+            continue;
+        }
+        if (own <= A.fireT) continue;
+        if ((double)(t - own) > g_autoRun[i] + 2.0) continue;
+        if (g_trigDbgT >= 0 && t == g_trigDbgT)
+            std::printf("autoown t=%lld gx=%.1f gdx=%.3f trig=%zu cx=%.1f fireT %d -> %d (%s) run=%.0f\n", t, gx, gdx, i, A.cx,
+                        A.fireT, own, e >= 0 ? "own record" : "old reading", g_autoRun[i]);
+        G.saved.push_back({i, A.fireT});
+        A.fireT = own;
+    }
+}
 }  // namespace dp

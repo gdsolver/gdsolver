@@ -149,6 +149,21 @@ struct SearchCheckpoints {
 inline SearchCheckpoints g_check;
 // --phaseprof (cli.hpp): per-phase wall time of the layer loop. Print only.
 inline bool g_phaseProf = false;
+// ...and what its `setup` bucket is made of (search_dp.hpp): [0] the autonomous triggers' crossings, [1] the group keys, [2] the rotation triggers and the group's own crossings,
+// [3] what model.prepare leaves after its own marks, and prepareGroup's: [4] dyn.seek (the moving geometry placed for the tick), [5] dyn.applyTriggers, [6] the near window (the level's
+// static objects and dyn.collect NEAR), [7] the ports/pads/orbs/slopes/speeds windows, [8] the touch boxes, coins and follow lists, [9] the ramp veto index and solidOrderInto.
+// Seconds, summed over the layers; print only, filled only under --phaseprof.
+inline double g_ppSub[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+inline long long g_ppGroups = 0, g_ppParents = 0;   // groups placed, parents stepped (each makes up to two children)
+inline std::atomic<long long> g_ppKidNs{0};           // thread-time spent stepping children (the work inside the step)
+inline long long g_ppStepNs = 0, g_ppSerialGroups = 0;   // wall time of the step blocks, and how many ran on one thread
+inline std::chrono::steady_clock::time_point g_ppSubLast;
+inline void ppSubMark(int b) {
+    if (!g_phaseProf) return;
+    const auto n = std::chrono::steady_clock::now();
+    g_ppSub[b] += std::chrono::duration<double>(n - g_ppSubLast).count();
+    g_ppSubLast = n;
+}
 
 // What the search concluded, for a caller that has no pipe to read.
 //

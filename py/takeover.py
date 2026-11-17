@@ -1,9 +1,9 @@
 """Hand the input to a person at a point of a plan, and measure the route they play.
 
-    python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --at 5200 --worker-id 93
+    python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --at 5200 --worker-id 101
     python py/takeover.py play --level 9001 --levelfile <level.lvl> --plan <plan> --at-x 4800 ...
-    python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --worker-id 93
-    python py/takeover.py check <run dir> --worker-id 93
+    python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --worker-id 101
+    python py/takeover.py check <run dir> --worker-id 101
 
 With neither --at nor --at-x the plan plays as an ordinary replay (up/down arrows: speed) and the
 takeover key (F8) hands the input over wherever it stands: the checkpoint is put there and the

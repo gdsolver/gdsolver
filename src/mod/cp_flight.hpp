@@ -115,7 +115,7 @@ inline const std::vector<CamMem>& gameStateScalars() {
 }
 
 // ...and the layer's own: its camera scalars, its clocks, and what resetLevel re-arms -- found with cfg
-// cpflightlayerdiff on MOAI, where a restore that had everything above still let the camera part from
+// cpflightlayerdiff on a custom level, where a restore that had everything above still let the camera part from
 // the flight 10 ticks later (t=4,811) and the band with it. m_resumeTimer is left at 2 by resetLevel,
 // which freezes what runs on the modified delta for two updates; the clocks (m_currentStep,
 // m_timePlayed, m_tickIndex, m_clickIndex, m_timestamp, m_songTriggerInterval, the attempt's time)
@@ -140,7 +140,7 @@ struct Camera {
     std::vector<uint8_t> gs;                    // gameStateScalars(), in order
     std::vector<uint8_t> layer;                 // layerScalars(), in order
     // GJGameState containers a restore left one element longer than the flight had them (the layer
-    // diff on MOAI: the tween actions, where the camera's zoom and offset run, 3 -> 4, and the two
+    // diff on a custom level: the tween actions, where the camera's zoom and offset run, 3 -> 4, and the two
     // event maps 50 -> 51)
     decltype(GJGameState::m_tweenActions) tweens;
     decltype(GJGameState::m_unkMapPairGJGameEventIntVectorEventTriggerInstance) events;
@@ -261,7 +261,7 @@ struct StaleNode {
 // a transform or rotate action and cleared only when an object is added to a layer, so it is whatever
 // the last attempt of the layer left -- not what the attempt that took the checkpoint had at T. With it
 // set the rect comes from the oriented box's corners in world floats, 1 ulp off the plain one (see
-// notes/rect-latch-0x2e8). Measured on MOAI: a probe from t=10,200 whose head flight was the first of
+// notes/rect-latch-0x2e8). Measured on a custom level: a probe from t=10,200 whose head flight was the first of
 // its layer to pass the Scale trigger at t~10,700 started with the latch the head flight had set there,
 // and its y parted from the head's at t=10,460.
 // An object whose class derives from EnhancedGameObject (the class types GD gives triggers, animated and
@@ -1064,7 +1064,7 @@ inline std::string tweensLine(GJBaseGameLayer* l) {
 // GD's game events a checkpoint of ours raises, which the flight it reproduces never raised: resetLevel
 // raises CheckpointRespawn (64) on the checkpoint path (0x3b97ac), and a level can listen for it -- an
 // Event trigger whose group spawns, after a delay, the Static Camera trigger that starts the camera's
-// blend tweens (21/22, updateStaticCameraPosToGroup 0x23ee40). Measured on MOAI: restored from t=4,800,
+// blend tweens (21/22, updateStaticCameraPosToGroup 0x23ee40). Measured on a custom level: restored from t=4,800,
 // the tweens restarted ten ticks later and the camera and the band parted from the flight. The events
 // are dropped while our checkpoint is taken (Checkpoint, 60) and while it is restored (64), and counted.
 inline bool g_inTake = false;
@@ -1195,7 +1195,7 @@ inline void noteEnd(long long end) {
 inline long long firstDifference(const std::vector<InputCmd>& a, const std::vector<InputCmd>& b) {
     const size_t n = std::min(a.size(), b.size());
     for (size_t i = 0; i < n; ++i)
-        if (a[i].step != b[i].step || a[i].down != b[i].down)
+        if (a[i].step != b[i].step || a[i].down != b[i].down || a[i].p2 != b[i].p2)
             return std::min<long long>(a[i].step, b[i].step);
     if (a.size() > n) return a[n].step;
     if (b.size() > n) return b[n].step;

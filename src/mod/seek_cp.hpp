@@ -79,7 +79,7 @@ inline void resetSession() {
 inline bool samePlan(const std::vector<InputCmd>& a, const std::vector<InputCmd>& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i)
-        if (a[i].step != b[i].step || a[i].down != b[i].down) return false;
+        if (a[i].step != b[i].step || a[i].down != b[i].down || a[i].p2 != b[i].p2) return false;
     return true;
 }
 

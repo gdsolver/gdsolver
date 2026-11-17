@@ -202,7 +202,9 @@ constexpr double kForceUnitUfo = 0.1305;
 // rebuilds went hunting for that 0.010 in the law, in the divisor and in the
 // rounding before anyone looked at the call sites. Make the mistake impossible
 // rather than remembering not to make it.
-struct ForceUnit { double v; };
+// `c`: PlayerObject::update (0x388d80) adds dt * 0.9 * m_force_y * c to vy in float, c a per-mode literal it loads from rodata: 0.47 for the ship, 0.58 for the
+// UFO, and 0.5875 / 0.725 (= c * 1.25) when the player is not full size. 0 = no such literal (the other modes' pushes ride their gravity, see above).
+struct ForceUnit { double v; float c = 0.f; };
 // --forceunit1x: the unit's gravity is the 1x one whatever the speed. The
 // force's own step is 0.225 x m_force for a cube (the 0.945 note at the force
 // application in step.hpp), and lv22 t=20,958..20,960 (mini cube, speed 1.1,
@@ -213,9 +215,9 @@ inline ForceUnit forceUnitFor(uint8_t mode, float /*dxF*/) {
     const double g = std::fabs(cubePhysFor(1.29825f).g);
     switch (mode) {
         case 0: return {g / kForceGDiv};                  // cube
-        case 1: return {kForceUnitShip};
+        case 1: return {kForceUnitShip, 0.47f};
         case 2: return {g * 0.6 / kForceGDiv};            // ball
-        case 3: return {kForceUnitUfo};
+        case 3: return {kForceUnitUfo, 0.58f};
         case 4: return {0.0};                             // wave: measured zero
         // The scales are spelled out rather than taken from kRobotGScale /
         // kSpiderGScale in constants.hpp: this header is below that one in the
@@ -412,8 +414,22 @@ inline void applyForceIds(const std::string& path) {
 // On by default; --no-tptrigforce is the off arm.
 inline bool g_tpTrigForce = true;
 inline thread_local bool t_forceMute = false;
+// --forceraw (ON since 2026-10-24; --no-forceraw is the off arm): the ship's and the UFO's push is added to the velocity as GD computes it, not rounded to the 0.001 grid on its own first. GD:
+// vy += (float)((float)((float)(dt * 0.9f) * F) * c) with F the box's m_force summed (float) and c = 0.47 (ship) / 0.58 (UFO), x 1.25 when mini; the model then snaps the
+// sum with the gravity (stepVy + push, qVy). Rounding the push alone first moves a sum that lies on half a grid step: a custom level's box (m_force 2) pushes
+// 0.2114999890 in GD (0.225f * 2 * 0.47f in float, just under 0.2115), the model gave q(2 * 0.1058) = 0.212, and the release (+0.103) came out +0.315 a tick where
+// GD's vy goes up by 0.314 (ten ticks of 32,603..32,615, a flipped ship) -- a pixel high 250 ticks later, into a hazard (t=32,849). The same law reads the rigs (calib_forcedrop_ship
+// f1/f2/f5/f10, GD 2.209 at 1x/3x/4x: +0.003 / +0.108 / +0.426 / +0.955 beside -0.103, one unit 0.10575 in all of them, mini f10 +1.200 beside -0.122 = 0.5875 * 0.225 * 10)
+// where the rounded product disagreed with f2 or f10 by one grid step for any single unit.
+// The formula and the literals were read from the 2.2081 executable (PlayerObject::update at 0x388d80, setYVelocity at 0x388d10); the rig measurements and the level that
+// shows the defect are the 2.209 game (the workers of the package), and the same law reproduces them, so 2.209 is taken to carry the same code here.
+inline bool g_forceRaw = true;
 inline double forceBoxAcc(double x, double y, double pHalf, ForceUnit unit, long long t = -1) {
     if (t_forceMute) return 0.0;
+    if (g_forceRaw && unit.c > 0.f) {
+        const double F = forceBoxSum(x, y, pHalf) + (g_forceCircle ? forceCircleSum(x, y, pHalf, t >= 0 ? t - 1 : -1) : 0.0);
+        return (double)((float)(0.225f * (float)F) * unit.c);
+    }
     return qVy((forceBoxSum(x, y, pHalf)
                 + (g_forceCircle ? forceCircleSum(x, y, pHalf, t >= 0 ? t - 1 : -1) : 0.0)) * unit.v);
 }
@@ -581,6 +597,17 @@ inline double timeWarpAt(double x) {
     }
     return (g_warpCap && m > 1.0) ? 1.0 : m;
 }
+// The warp in force at x as the SCHEDULER has it, --warpcap not applied: applyTimeWarp (0x2361a0) writes the value to the
+// CCScheduler's time scale whatever its size, and the action manager (the dash art's spin, --balldashsprite) runs on that
+// scaled dt, a warp above 1 included.
+inline double rawTimeWarpAt(double x) {
+    double m = 1.0;
+    for (const auto& w : g_timeWarps) {
+        if (w.cx > x) break;
+        m = w.mod;
+    }
+    return m;
+}
 // --wavewarp: the wave's line under a warp is the warped x's. Its y step was dx (x2 mini) unscaled while x took the
 // warp, so a warped wave climbed and dived at 1 / warp times GD's angle. A custom level's dual wave under a 0.4 warp
 // (x=675): GD's rows step x and y by 0.780 a tick (vy shown -7.8 = 1.3 speed, unwarped), the model's by 0.780 and 1.950.
@@ -668,6 +695,19 @@ struct TpTrig {
 // built at load and the search only reads it. An anchor after such a jump is seeded from the mod's
 // --startxhi (the farthest x of the attempt). One body in frame 0.
 inline bool g_tpBack = true;
+// --tptrigonce (ON since 2026-10-24; --no-tptrigonce is the off arm): every crossing teleport trigger carries the farthest-x entry (--tpback) of its own x, so it fires once.
+// GD's crossing queue (checkSpawnObjects 0x21a8f0) walks a channel from an index that only moves forward: a trigger it has fired is
+// not fired again whatever the player's x does afterwards. The model has no such mark; it reads a crossing as `cx > x_before` and
+// `cx <= x_after`, and a trigger that moves x back by what the tick overshot is only kept from firing again when it has a
+// farthest-x entry, which the loader gave to the triggers whose target lies more than 0.5 px behind. A trigger whose target is its own
+// position has none: the dump writes cx and the target with four decimals, the float x the teleport leaves is a hair below cx
+// (cx 18074.8008, float 18074.80078125), and the trigger fires again on every tick -- y put back to the target, x held, vy running down
+// to -15. Measured on a custom level at x=18,074.8, t=10,141: GD's row 10,141 is the target and 10,142 runs on at +1.95; the model's replay
+// of the same plan held (18074.80078, 330.5) from 10,141 to the end of the run, and every route over the spot was judged on a fall
+// that GD never makes (the deaths of x 18,123-18,185 at vy -15). The entry only takes effect on a firing that leaves x behind its
+// own position (State::tpBack is set when the target is behind the x the tick reached), so a trigger whose target lies ahead is
+// unchanged. Hangs on --tpback.
+inline bool g_tpTrigOnce = true;
 // --tpjumpnext: ...and a teleport that moves x FORWARD (a portal's exit, an orb's, a trigger's by its crossing or
 // its touch) leaves the x crossings it passed to the NEXT tick. Measured on a rig of its own (not shipped:
 // a cube at 1x jumped from about 578 to 720): gravity triggers inside the jump (690) and on its target (720) fire
@@ -833,6 +873,8 @@ inline bool g_gravTouch = true;
 struct GravTouchBox {
     double cx, cy, hw, hh, mod;
     int uid;   // -1: the anchor's seed (--startgmod), never overlapped
+    // --boxmoves: the touch boxes (g_touch indices) whose Toggle switches this trigger's group OFF; the trigger fires nothing once one of them has fired.
+    std::vector<int> offBits;
 };
 inline std::vector<GravTouchBox> g_gravTouchBoxes;   // sorted by cx at load; a seed is appended after
 inline double g_startGmod = std::nan("");   // --startgmod; NaN = not said
@@ -880,6 +922,10 @@ struct FollowY {
     double y0ref;         // the reference object's load-time y: F's start
     int refUid;
     long long tAct = -1;  // the crossing tick, once a walk has seen it (model.hpp prepareGroup)
+    // --followtouch: started by the player touching the trigger's own box (touch=1), per state. `cx` is then where the trigger becomes the
+    // slot's owner (the box's left edge less the player's reach); tcx / tcy / thw / thh are the box.
+    bool touch = false;
+    double tcx = 0.0, tcy = 0.0, thw = 15.0, thh = 15.0;
     // The group's objects the model collides with, recorded or static: (uid, load-time y). The
     // first is the reference.
     std::vector<std::pair<int, double>> objs;
@@ -1376,6 +1422,15 @@ struct DashStopBox { double cx, cy, hw, hh; };
 inline std::vector<DashStopBox> g_dashStopBoxes;
 struct CtrlTouchBox { double cx, cy, hw, hh; int uid; uint8_t on; uint8_t holdOff = 0; };
 inline std::vector<CtrlTouchBox> g_ctrlTouchBoxes;
+// --stopjump (speed.hpp): the Player Control triggers (1932, Stop Jump on, player 1 targeted or both). The
+// crossing queue's, sorted by x, and the touch-started ones' boxes (State::pcTouch is the last one fired).
+struct PcTrig { double cx; int uid; };
+struct PcTouchBox { double cx, cy, hw, hh; int uid; };
+inline std::vector<PcTrig> g_pcTrigs;
+inline std::vector<PcTouchBox> g_pcTouchBoxes;
+// --reversetrig (speed.hpp): the Reverse triggers (1917) on the crossing queue, sorted by x.
+struct RevTrig { double cx; int uid; };
+inline std::vector<RevTrig> g_revTrigs;
 // Is x over a box a held button switches off, or 30 px short of one? There the button matters in
 // the air: the search expands an airborne cube's pressed child (search_dp.hpp) and keys the button
 // (search_key.hpp keyOf), or the held way through is merged into the released one before it gets there.

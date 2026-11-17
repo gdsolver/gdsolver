@@ -14,6 +14,9 @@ constexpr int BAR_TAG = 0x51D71;
 // a section search in layers, or the flight of the installed plan in ticks (updateBars). Solve
 // sessions only, like the text.
 //
+// The level bar has a second fill behind the first, in the model's colour: how far the model's deepest plan gets, which shows past the
+// verified point as the part that is not confirmed yet (replaypanel::unconfirmedX).
+//
 // They are GD's own level bar, twice: the groove "slidergroove2.png" with "sliderBar2.png" inside
 // it, the fill's texture repeating and its rect cut to the fraction -- which is how
 // PlayLayer::setupHasCompleted builds the one at the top of the screen. Plain rectangles stand in
@@ -50,10 +53,10 @@ public:
 
     // textOnly: the second row is a caption with no groove or fill (a phase with no measurable end).
     void refresh(bool visible, double levelFrac, const char* levelText, bool searching,
-                 double searchFrac, const char* searchText, bool textOnly = false) {
+                 double searchFrac, const char* searchText, bool textOnly = false, double planFrac = -1.0) {
         setVisible(visible);
         if (!visible) return;
-        setRow(0, true, levelFrac, levelText);
+        setRow(0, true, levelFrac, levelText, planFrac);
         setRow(1, searching, searchFrac, searchText);
         if (searching && textOnly) {
             m_track[1]->setVisible(false);
@@ -68,6 +71,8 @@ private:
     cocos2d::CCLayerColor* m_fillRect[2] = {}; // ...or the plain fill
     float m_fillW[2] = {}, m_fillH[2] = {};    // the fill at 100%, in the groove's own units
     cocos2d::CCLabelBMFont* m_text[2] = {};
+    cocos2d::CCSprite* m_planSprite = nullptr;       // the level row's second fill (the model's plan), behind the first
+    cocos2d::CCLayerColor* m_planRect = nullptr;
 
     void makeRow(int r, float x, float y, cocos2d::ccColor3B color, const char* name) {
         using namespace cocos2d;
@@ -88,6 +93,16 @@ private:
             fill->setPosition({2.f, (gs.height - m_fillH[r]) / 2.f});
             fill->setTextureRect({0.f, 0.f, 0.f, m_fillH[r]});
             groove->addChild(fill, -1);
+            if (r == 0) {                                // the plan's fill: the same texture, the model's colour, one layer down
+                if (auto* pf = CCSprite::create("sliderBar2.png")) {
+                    pf->setColor({90, 180, 255});
+                    pf->setAnchorPoint({0.f, 0.f});
+                    pf->setPosition({2.f, (gs.height - m_fillH[r]) / 2.f});
+                    pf->setTextureRect({0.f, 0.f, 0.f, m_fillH[r]});
+                    groove->addChild(pf, -2);
+                    m_planSprite = pf;
+                }
+            }
             this->addChild(groove);
             m_track[r] = groove;
             m_fillSprite[r] = fill;
@@ -99,6 +114,13 @@ private:
             rect->setPosition({x, y});
             rect->setID(fmt::format("{}-fill", name));
             this->addChild(track);
+            if (r == 0) {
+                auto* prect = CCLayerColor::create({90, 180, 255, 255}, 0.f, kBarH);
+                prect->setPosition({x, y});
+                prect->setID(fmt::format("{}-plan-fill", name));
+                this->addChild(prect);
+                m_planRect = prect;
+            }
             this->addChild(rect);
             m_track[r] = track;
             m_fillRect[r] = rect;
@@ -111,15 +133,25 @@ private:
         this->addChild(m_text[r]);
     }
 
-    void setRow(int r, bool on, double frac, const char* text) {
+    void setRow(int r, bool on, double frac, const char* text, double planFrac = -1.0) {
         m_track[r]->setVisible(on);
         if (m_fillRect[r]) m_fillRect[r]->setVisible(on);
         m_text[r]->setVisible(on);
+        if (r == 0) {
+            if (m_planRect) m_planRect->setVisible(on);
+            if (m_planSprite) m_planSprite->setVisible(on);
+        }
         if (!on) return;
         const double f = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
         if (m_fillSprite[r])
             m_fillSprite[r]->setTextureRect({0.f, 0.f, (float)(f * m_fillW[r]), m_fillH[r]});
         if (m_fillRect[r]) m_fillRect[r]->setContentSize({(float)(f * kBarW), kBarH});
+        if (r == 0) {                                    // the plan's fill, from the left too: the verified one covers its first part
+            const double pf = planFrac < 0.0 ? 0.0 : (planFrac > 1.0 ? 1.0 : planFrac);
+            const double pw = pf > f ? pf : 0.0;
+            if (m_planSprite) m_planSprite->setTextureRect({0.f, 0.f, (float)(pw * m_fillW[r]), m_fillH[r]});
+            if (m_planRect) m_planRect->setContentSize({(float)(pw * kBarW), kBarH});
+        }
         m_text[r]->setString(text);
     }
 };
@@ -152,8 +184,14 @@ inline void updateBars(cocos2d::CCNode* parent, bool show, float& y) {
     if (auto* pl = PlayLayer::get()) len = pl->m_levelLength;
     const double lvl = (len > 1.f) ? (double)len : 0.0;
     const double lf = lvl > 0.0 ? (double)g_hudVerifiedX / lvl : 0.0;
-    char lt[96];
-    snprintf(lt, sizeof(lt), "level %.1f%%   iter %d", lf * 100.0, g_hudIter);
+    // the model's deepest plan, past the verified point: the part of the level that is planned and not yet confirmed
+    const double ux = replaypanel::unconfirmedX();
+    const double pfrac = (lvl > 0.0 && ux > (double)g_hudVerifiedX) ? ux / lvl : -1.0;
+    char lt[128];
+    if (pfrac >= 0.0)
+        snprintf(lt, sizeof(lt), "level %.1f%%  (plan %.1f%%)   iter %d", lf * 100.0, pfrac * 100.0, g_hudIter);
+    else
+        snprintf(lt, sizeof(lt), "level %.1f%%   iter %d", lf * 100.0, g_hudIter);
     // The second row is whatever the solve is doing now that has a measurable end: the dp
     // search (its ticks), else a recording pass of the moving geometry (x over the level), else
     // a section search in the game (its layers, 1 .. g_horizon: the loop in
@@ -203,7 +241,7 @@ inline void updateBars(cocos2d::CCNode* parent, bool show, float& y) {
                  (double)px, (double)len);
         second = true;
     }
-    bars->refresh(true, lf, lt, second, sf, st, textOnly);
+    bars->refresh(true, lf, lt, second, sf, st, textOnly, pfrac);
 }
 
 }  // namespace progressbars

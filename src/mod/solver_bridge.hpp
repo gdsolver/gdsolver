@@ -146,10 +146,28 @@ inline void onLevelReset() {
 // calls it when its own conditions hold (practice mode), so the call is made from here --
 // setting the flag alone leaves an empty node, which looks exactly like a feature that does
 // nothing (measured: lv1, flag set, node visible, no boxes).
+//
+// GD 2.209's updateDebugDraw asks a virtual (PlayLayer::shouldDebugDraw) before it draws a single
+// box: `flag && practice mode`, or `hitboxes on death && the player died`. The flag was set here, the
+// node was visible and updateDebugDraw ran every frame, and the node stayed empty outside practice
+// mode (measured on the 2.209 hotfix executable, lv1 replayed at 1x with the drawing on: the node
+// pointer, its parent and its visibility were all right, and no box was drawn; with the practice
+// flag up for the length of the call the same frame shows the player's box and every solid and
+// hazard). 2.2081 has no such question in the function and draws regardless. So the practice flag
+// is raised for the call and put back straight after it: it is read there and nowhere else, and
+// nothing runs in between.
 inline void perFrame(GJBaseGameLayer* l) {
     if (g_mode <= 0 || !l) return;
     l->m_isDebugDrawEnabled = true;
-    l->updateDebugDraw();
+    auto* pl = PlayLayer::get();
+    if (pl && static_cast<GJBaseGameLayer*>(pl) == l) {
+        const bool practice = pl->m_isPracticeMode;
+        pl->m_isPracticeMode = true;
+        l->updateDebugDraw();
+        pl->m_isPracticeMode = practice;
+    } else {
+        l->updateDebugDraw();
+    }
     if (l->m_debugDrawNode) l->m_debugDrawNode->setVisible(true);
 }
 

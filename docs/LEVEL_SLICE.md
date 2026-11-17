@@ -251,6 +251,69 @@ one of the level the session was started on.
 | `slicenoposition` | 0 | 1 = drop the decorations read as positions too: a cut that is wrong on purpose, to exercise the verification and the add-back |
 | `sliceverifyrec` | 0 | 1 = the check flights on the level record the moving geometry as every flight does (step 3) |
 | `sliceverifybreak` | 0 | n > 0 = the plan handed to the level keeps its first n inputs: a verification that fails on purpose |
+| `stagecuts` | (off) | `x1,x2,...`: solve in pieces -- see "Stages" below |
+| `stagecutcheck` | 2 | a cut that splits a group a kept trigger reads as a position: 0 = nothing, 1 = a log line, 2 = moved to the nearest x that does not (or dropped) |
+| `stagecutwindow` | 3000 | px a cut may move under `stagecutcheck=2` |
+| `stagebreak` | 0 | n > 0 = the plan handed from piece to piece keeps its first n inputs: a hand-off that parts on purpose (test) |
+
+## Stages (`stagecuts`)
+
+A development aid for long levels. The level (the slice's copy of it, when the
+slice applies; otherwise the level itself) is cut at each x -- everything past
+the cut is gone, as `py/cutlevel.py` cuts it -- and solved piece by piece in one
+game: the plan that clears a piece is flown first on the next, longer one, and
+the last piece is the copy (verified on the level, as ever) or the level itself.
+The swap and what carries are the slice's own (see "What carries across a swap");
+a piece's clear is handed on, not verified or filed.
+
+The plan one piece hands the next is a seed from the same run, so a solve this
+way is not reported as a cold solve. Every piece is solved cold; only the last
+starts from the plan in hand. Measured on a long custom level (220,116 objects, slice on,
+one game, load from other sessions): cut at x=37,300 476 s; cut at 20,000 and
+37,300 392 s; the hand-off between pieces takes about 4 s. A cut inside a cluster
+of portals can hand on a lane that dead-ends past it (a long custom level at x=45,400);
+the loop then walks back on the longer piece as after any wall. The look-ahead
+after a hand-off is the cfg's `dpstephorizon` (6500 in these runs).
+
+### Where a cut may go (`stagecutcheck`)
+
+A piece is the level with everything past the cut gone. Most of a level does not care; a trigger that
+reads a group **as a position** does (the reads listed under "Which objects are kept": a Rotate or Scale
+about a centre group, a Move to a target group, a Follow, an Area effect). Cut so that the trigger is still
+there but the group it reads is partly or wholly gone, and the piece behaves differently from the same
+stretch of the level. For one such trigger (at `x_T`, acting on `Gt`, reading `Gp`) a cut `c` is unsafe when
+`c >= x_T`, `c <` the largest x of `Gp`'s members, and `c >=` the smallest x of `Gt`'s and `Gp`'s members.
+A rotate-gameplay or options trigger (2900, 2899) makes 400 px either side unsafe: the player's x stops
+there and a cut has no meaning.
+
+At the start of the stages every cut is checked against this (`stagecutcheck`, default 2; `stagecutwindow`,
+default 3000 px): 0 = not checked, 1 = a log line, 2 = a cut that splits a reader moves to the nearest x
+that does not (or is dropped when none is within the window). `py/cutsafety.py LEVEL.lvl` is the same rule
+on a level file: the unsafe stretches and the gaps between them (`--check`, `--suggest`). It is a
+predictor from the string; the check below is the truth.
+
+On a level with rotating geometry in a part of it (12 readers, 4.3% of x unsafe) the
+cuts go in the gaps; on one with rotate-gameplay triggers throughout the unsafe share is large (another
+level: 23 of them, 44%), and a cut there can be moved a long way or dropped. The predictor reads every mover, and
+a decoration group that rotates about its own centre is no hazard to the run: of the cuts it called unsafe on one
+level, the check at the hand-off found the one tried consistent. So the predictor errs on the cautious side; the
+check is what says whether a cut held.
+
+### The check at a hand-off
+
+The clearing flight of a piece is kept (the player's x, y, vy and mode on every tick), and the first flight
+on the next piece -- the same plan -- is compared with it as it ends. Tick for tick they should be the same up
+to the cut. The log says, per hand-off:
+
+- `consistent`: the two flights match on every tick to the end of the shorter.
+- `parted at the edge of the piece`: they match until the last 150 ticks of the piece (the end of the level, the
+  camera and the bands settle there; the next piece's first flight dies a little before the clear as the
+  longer piece has objects the shorter did not), or the next flight matches and dies in those ticks.
+- `DISAGREE`: they part, or the next piece kills, earlier. Something past the cut reached back: a group read as
+  a position, a trigger the dropped part fired. The tick and x are in the line.
+
+`summary()` ends with the three counts. A DISAGREE costs rounds, never a wrong answer: the last piece is the
+level, and its clear is verified.
 
 ## What the log says
 

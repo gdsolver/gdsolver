@@ -9,6 +9,31 @@ inline bool fastModeActive() {
     return g_cfg.fastdt > 0 && !g_realtimeOverride;
 }
 
+// As a PlayLayer leaves its scene (hooks_playlayer.cpp onExit: the slice swap, the next level of a suite, the way out of a level), every sprite that follows
+// one of its objects stops its actions. A level object that is touched makes a follower (GameObject::playShineEffect: a sprite that follows the portal, ring
+// or pad and fades out under a sequence ending in a call on itself). The action manager keeps that sprite alive, the object goes with the layer, and the
+// sprite's m_followingSprite is left pointing at it: the call then runs in the next level's first action update and reads the freed object (2.2091, the
+// two-player custom MK2 and three more, 2026-10-20). Measured on MK2: a census of the objects' followers at every reset and just before the swap finds
+// none, and the sweep at onExit finds one (the shine of the first speed portal), so the sprite appears between the swap call and the layer leaving.
+// Returns the number of followers stopped.
+inline int stopFollowerActions(GJBaseGameLayer* l) {
+    if (!l || !l->m_objects) return 0;
+    int n = 0;
+    auto stop = [&n](CCSpritePlus* o) {
+        if (!o || !o->m_hasFollower || !o->m_followers) return;
+        for (auto* f : geode::cocos::CCArrayExt<cocos2d::CCObject*>(o->m_followers)) {
+            if (auto* node = typeinfo_cast<cocos2d::CCNode*>(f)) {
+                node->stopAllActions();
+                ++n;
+            }
+        }
+    };
+    for (auto* obj : geode::cocos::CCArrayExt<cocos2d::CCObject*>(l->m_objects)) stop(typeinfo_cast<GameObject*>(obj));
+    stop(l->m_player1);
+    stop(l->m_player2);
+    return n;
+}
+
 // Declared in session_hotkeys.hpp (namespace p1), where probe:: is not in scope yet
 namespace p1 {
 inline void clearManualPause() {
@@ -84,9 +109,20 @@ inline bool silent() {
 }
 
 // Where the song should be, taken from the physics clock: the substep is 1/240s and the song
-// starts with the attempt, so the tick counter is the song position. Only used for the seek
-// after the song was paused while the game ran on
-inline unsigned songPosMs() { return (unsigned)((double)g_tick * (1000.0 / 240.0)); }
+// starts with the attempt, so the tick counter is the song position -- plus the level's own song
+// offset. A level can start its song partway in (Level Settings > Song Offset, kA13, in seconds:
+// one of the levels in the 2026-10 report starts at 72 s, another at 3.3 s). The game's own start
+// and its own seeks add it; this position is only used for the seek after the song was paused
+// while the game ran on (a replay seeked from the panel or taken back from a speed above the pitch
+// ceiling, a song the seek held back), and without the offset the song came in that far behind the
+// picture. The Steam logs show it: "seeked to 59995ms (tick 14399)" is the tick alone.
+inline unsigned songOffsetMs() {
+    auto* pl = PlayLayer::get();
+    if (!pl || !pl->m_levelSettings) return 0;
+    const double s = (double)pl->m_levelSettings->m_songOffset;
+    return s > 0.0 ? (unsigned)std::llround(s * 1000.0) : 0u;
+}
+inline unsigned songPosMs() { return (unsigned)((double)g_tick * (1000.0 / 240.0)) + songOffsetMs(); }
 
 inline FMOD::ChannelGroup* musicGroup() {
     auto* fe = FMODAudioEngine::sharedEngine();
@@ -382,8 +418,8 @@ inline void sync() {
             grp->setPaused(false);
             if (g_seekChannels) unpauseChannels(grp);
             g_seekChannels = false;
-            log::info("audio: music resumed, seeked to {}ms (tick {})",
-                      songPosMs(), (long long)g_tick);
+            log::info("audio: music resumed, seeked to {}ms (tick {}, song offset {}ms)",
+                      songPosMs(), (long long)g_tick, songOffsetMs());
         } else {
             grp->setPaused(false);
             // (a seek that landed with the game stopped -- a frame-step back -- resumes here)
@@ -425,8 +461,8 @@ inline void sync() {
         fe->setMusicTimeMS(songPosMs(), false, 0);
         g_musicPaused = false;
         g_pausedForSpeed = false;
-        log::info("audio: the held song started at {}ms (tick {})",
-                  songPosMs(), (long long)g_tick);
+        log::info("audio: the held song started at {}ms (tick {}, song offset {}ms)",
+                  songPosMs(), (long long)g_tick, songOffsetMs());
     }
     // ...and a seek that landed with no song playing at all: one the level had already stopped
     // (its end, or a stop GD made at a death), which a checkpoint restore does not start again the
@@ -435,8 +471,8 @@ inline void sync() {
         if (auto* pl = PlayLayer::get()) {
             pl->startMusic();
             fe->setMusicTimeMS(songPosMs(), false, 0);
-            log::info("audio: no song after the seek - started it at {}ms (tick {})", songPosMs(),
-                      (long long)g_tick);
+            log::info("audio: no song after the seek - started it at {}ms (tick {}, song offset {}ms)", songPosMs(),
+                      (long long)g_tick, songOffsetMs());
         }
     }
     // LAST. Everything above has put the song where the game is; only now is it safe to be

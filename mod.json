@@ -6,7 +6,7 @@
 	},
 	"id": "gdsolver.solver",
 	"name": "GD Solver",
-	"version": "v0.6.1",
+	"version": "v0.7.0",
 	"developers": ["gdsolver"],
 	"description": "Automatically finds an input sequence that clears a level, with the game itself as the verifier.",
 	"tags": ["gameplay", "utility", "offline", "cheat"],

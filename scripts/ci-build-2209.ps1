@@ -22,6 +22,16 @@
 .PARAMETER Compiler       clang (what the CI job uses: Ninja + clang/clang++, Release, LTO, as geode-sdk/build-geode-mod does on Windows) or msvc
                           (Visual Studio generator; for a desk without clang on PATH).
 .PARAMETER Out            Where the .geode and provenance.json are collected (default <Work>/output).
+.PARAMETER CodegenCache   A directory that keeps the Codegen between runs (the CI job restores and saves it with actions/cache). The bindings' CMake otherwise
+                          downloads the prebuilt Codegen of a rolling release of geode-sdk/bindings, and the one published now writes `#include <Geode/mapping/...>`
+                          headers that the bindings and SDK pinned here do not have: the build stops at the first of them. So the Codegen is built from the
+                          bindings' own source (-DSKIP_BUILDING_CODEGEN=OFF; about half a minute with clang and Ninja on a desk, about three with the Visual Studio
+                          generator), which is the Codegen of that bindings commit by construction (the headers it writes were compared file by file with the earlier
+                          prebuilt's, 3057 files: no difference). With a cache, the built Codegen.exe is saved here with a
+                          codegen.id naming the bindings commit and the compiler; a later run whose id is the same puts it into the build and passes
+                          -DSKIP_BUILDING_CODEGEN=ON, which makes CMake use it as it is (it asks neither for its age nor for a download). Without one it is built every run.
+                          Not yet exercised on GitHub: that needs a push, and the first release run after this change is the check (its log says whether the
+                          Codegen was restored from the cache or built from the bindings source).
 
 .EXAMPLE
     ./scripts/ci-build-2209.ps1 -BindingsRepo https://github.com/<owner>/bindings -BindingsRef <ref>
@@ -35,7 +45,8 @@ param(
     [string]$GdVersion = '2.209',
     [int]$Comp = 22091,
     [ValidateSet('clang', 'msvc')][string]$Compiler = 'clang',
-    [string]$Out = ''
+    [string]$Out = '',
+    [string]$CodegenCache = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -112,7 +123,32 @@ if ($Compiler -eq 'clang') {
     $cfg += @('-G', 'Visual Studio 17 2022', '-A', 'x64')
     $buildArgs = @('--build', $build, '--config', 'RelWithDebInfo', '--parallel')
 }
+# The Codegen. Never the prebuilt that the bindings' CMake downloads (see -CodegenCache): built from the bindings' own source, or restored from the cache.
+$cgExe = Join-Path $build 'bindings\codegen\Codegen.exe'
+$cgId = "bindings=$bsha compiler=$Compiler"
+$cacheExe = if ($CodegenCache) { Join-Path $CodegenCache 'Codegen.exe' } else { '' }
+$cacheId = if ($CodegenCache) { Join-Path $CodegenCache 'codegen.id' } else { '' }
+$fromCache = $false
+if ($cacheExe -and (Test-Path $cacheExe)) {
+    $have = if (Test-Path $cacheId) { (Get-Content $cacheId -Raw).Trim() } else { '(no codegen.id)' }
+    if ($have -eq $cgId) {
+        New-Item -ItemType Directory -Force (Split-Path $cgExe) | Out-Null
+        Copy-Item $cacheExe $cgExe -Force
+        $fromCache = $true
+        Write-Host "Codegen restored from the cache ($cgId, sha256 $((Get-FileHash $cgExe -Algorithm SHA256).Hash.Substring(0, 12)))"
+    } else {
+        Write-Host "the Codegen cache is for '$have', this run is '$cgId': building the Codegen from the bindings source"
+    }
+}
+$cfg += ('-DSKIP_BUILDING_CODEGEN=' + $(if ($fromCache) { 'ON' } else { 'OFF' }))
 Run cmake $cfg
+if (-not (Test-Path $cgExe)) { throw "no Codegen at $cgExe after configure" }
+if ($cacheExe -and -not $fromCache) {
+    New-Item -ItemType Directory -Force $CodegenCache | Out-Null
+    Copy-Item $cgExe $cacheExe -Force
+    Set-Content $cacheId $cgId -Encoding ascii
+    Write-Host "Codegen built from the bindings source and saved to $CodegenCache"
+}
 Run cmake $buildArgs
 
 Step "collect"
@@ -127,6 +163,7 @@ $prov = [ordered]@{
     sdk_commit    = $SdkCommit
     sdk_patch_sha256 = (Get-FileHash $patch -Algorithm SHA256).Hash
     bindings      = $BindingsRepo; bindings_ref = $BindingsRef; bindings_commit = (& git -C $bnd rev-parse HEAD)
+    codegen       = $(if ($fromCache) { 'restored from the cache' } else { 'built from the bindings source' }); codegen_sha256 = (Get-FileHash $cgExe -Algorithm SHA256).Hash
     packages      = @($pkgs | ForEach-Object { [ordered]@{ name = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash (Join-Path $Out $_.Name) -Algorithm SHA256).Hash } })
 }
 $prov | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $Out 'provenance.json') -Encoding ascii

@@ -168,6 +168,17 @@ constexpr long long kResimLadderRungs[] = {6, 24, 96, 240};   // ticks before th
 // a custom level, new base 9d1f41ba: without the ladder 305 s, with it and this
 // 509-517 s (two builds), a wall at t~10,300 that cost a 102 s section solve.
 inline bool g_resimLadderPartial = false;
+// --rlbound N (default 1500 since 2026-10-21, 0 = off): every rung of the resim ladder is first tried as a probe, a search
+// with a horizon of (the rung's distance to the walk's death) + N ticks instead of the rest of the
+// level. A probe whose walk dies again no later than the plan's does is the rung's answer (the
+// full search would be 130-155 s on a level of 58,000 ticks to say the same); a probe that lives on
+// is followed by the rung's usual full search.
+inline long long g_resimLadderBound = 1500;
+// --rlspread0 (default off): a rung's search starts from ONE state (the walk's, with the crossings the plan made before it),
+// so a trigger crossed at or before the rung is crossed on one tick by every group of that search. Without the flag the
+// rung keeps the spread (fireSpreadT) the first search measured for it, and a group worked back at its present speed
+// puts its movers up to that many ticks behind the walk's -- the walk dies at the same place again, rung after rung.
+inline bool g_resimLadderSpread0 = false;
 // ...held by the cap ladder (cliMain) around an attempt whose answer the ladder may still replace:
 // such an attempt's verdict is the ladder's to read, so a PARTIAL is left as it is and a SOLVED
 // keeps only a SOLVED. Not reset per call; cliMain sets and clears it. On that level the same
@@ -285,7 +296,9 @@ inline void noteReconDeath(const char* why) {
 // is untouched and quick_regress stays byte-identical. A uid rather than a
 // blanket switch because the search evaluates many states per tick and an
 // unconditional print buries the answer.
-inline int g_hazDbgUid = -1;        // --hazdbg
+inline int g_hazDbgUid = -1;
+inline long long g_hazDbgFrom = -1, g_hazDbgTo = -1;   // --hazdbgwin FROM TO: the search-side hazdbg lines only for those ticks (print only)
+inline bool hazDbgWin(long long t) { return g_hazDbgFrom < 0 || (t >= g_hazDbgFrom && t <= g_hazDbgTo); }        // --hazdbg
 // --tplatchexact: a teleport with a latch bit is judged "already fired" by the bit alone,
 // not also by "was inside its box at the previous position" (step.hpp, portal pass).
 // Off by default.
@@ -1235,6 +1248,18 @@ inline bool g_lawCubeLaunch = true;
 // on 13,328 and GD's p2 takes uid 6679 on 13,329 (vy -6.395), where the model's p2 flew on at +10.76.
 // On by default; --no-dualjumpbuf is the off arm.
 inline bool g_dualJumpBuf = true;
+// --dualbandportal: a flipped dual cube sitting on the band's own ceiling (the invisible one, y + half = pmax) that enters a gravity portal that sets it
+// upright. GD's band clamp is a position clamp in the update, not a solid resolved in checkCollisions, so on the portal's tick the body takes no gravity
+// step: vy stays 0 and y stays on the band, and it falls from the next tick. The model had it as it has a cube on an object -- the old gravity's step,
+// halved by the portal, and the y half step of the restore -- and left it 0.049 px high with vy +0.108, for either body. Measured on calibration rigs
+// (a two-player level and a plain dual, the second body at t=1,136 and both bodies at t=4,140) and on a two-player level of the fetched set (t=150): GD
+// y=345.000 vy=0.000 then -0.216, -0.432; the model 345.049 / +0.108 / -0.108. With the flag the model follows GD to 0.0000 on all of them. The band's
+// floor above the ground layer is not covered (not measured with a portal). A body seated on an object is the case measured on levels 5, 6 and 7.
+// On by default since 2026-10-20 (the official levels' quick traces and a cold run's [fp] are the same with it on); --no-dualbandportal is the off arm.
+inline bool g_dualBandPortal = true;
+// --p2secx (default OFF): the section cell the follow-copies pass reads for a pair's SECOND body is the cell of its own x (State::dx2 from the first
+// body's), not the group's. Only a pair that has run apart is affected -- a teleport trigger took player 1 alone -- on a level with dynamicLevelHeight.
+inline bool g_p2SecX = false;
 // --sticktie0: the stick re-land's tie in the unturned frame. GD ties a rider on its landing tick to the
 // lowest-uid solid it landed on (+0x608), and the fallback (+0x600) is what the previous tick's solid pass found
 // moving down under it. When the rider has left the tied solid and only receding faces are under it, the stick

@@ -42,8 +42,12 @@ add_subdirectory(dp)
 # checked without the game. Not part of the routine build:
 #   cmake --build build-dp --config Release --target panelgeomtest
 add_executable(panelgeomtest EXCLUDE_FROM_ALL tools/panel_geom_test.cpp)
+# The plan file's writer and reader (src/mod/plan_edges.hpp): a plan written and read back gives the same edges (a tick whose button changes twice included).
+add_executable(planroundtrip EXCLUDE_FROM_ALL tools/plan_roundtrip_test.cpp)
 target_include_directories(panelgeomtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(panelgeomtest PRIVATE cxx_std_17)
+target_include_directories(planroundtrip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(planroundtrip PRIVATE cxx_std_17)
 
 if (GDSOLVER_BUILD_MOD)
     file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)

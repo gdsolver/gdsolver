@@ -29,9 +29,11 @@ data/*
 # What py/cold_regress.py compares against: the iteration count each level took
 # the last time the suite was green, and the [fp] it ended on. It is the
 # acceptance record, so it belongs with the code it judges. The coin runs have
-# their own (coinroute=1 coins=1), with each level's coin count.
+# their own (coinroute=1 coins=1), with each level's coin count. The provenance file
+# says which build, driver checkout and package the two were adopted from.
 !data/cold_baseline.json
 !data/cold_baseline_coins.json
+!data/cold_baseline_provenance.json
 !data/rigs/
 data/rigs/*
 !data/rigs/*.lvl

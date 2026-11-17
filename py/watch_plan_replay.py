@@ -1,15 +1,17 @@
 """Replay a solved (or partial) plan at 1x in a window, for a human to watch.
 
-    python py/watch_plan_replay.py --level 16 --worker-id 91
+    python py/watch_plan_replay.py --level 16 --worker-id 101
 
 The solver's own loop runs headless and in batches (fastloops), so there is
 nothing to see. Here the plan is handed to autorun.cfg as `input=` lines and run
 with solve=0, which makes it a plain replay at 1x with the artwork and the music.
 The default plan is data/solution_lv{N}_dp.txt.best.
 
-  * By default every other worker is killed: the one being watched needs the
-    foreground and its own resolution. Pass --keep-others while a solve or a
-    regression is running.
+  * Every other game is left running: a solve, a regression, another session's
+    worker and the Steam copy all go on. The watched worker has to be a free one
+    (the launch is refused while a GD runs under it). Pass --kill-others to stop
+    every GeometryDash process first, the Steam copy included, so the window has
+    the foreground and the screen to itself -- never while somebody's run is going.
   * deathfx=0: the death effect crashes a spectated run.
 """
 
@@ -22,14 +24,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import observe, plan
-from gdtas.paths import BUILD_MOD, DATA, WORKERS_ROOT
+from gdtas.paths import BUILD_MOD, DATA, PERSON_WORKER, WORKERS_ROOT
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--level", type=int, default=16)
     ap.add_argument("--plan", default="")
-    ap.add_argument("--worker-id", type=int, default=91)
+    ap.add_argument("--worker-id", type=int, default=PERSON_WORKER)
     ap.add_argument("--slowmo", type=int, default=1)
     ap.add_argument("--pause-at-x", type=float, default=0.0,
                     help="freeze the picture at this x instead of deriving one "
@@ -49,12 +51,19 @@ def main(argv=None) -> int:
                          "(otherwise F10 toggles it). Needs "
                          "data/itermap_lv{N}.txt -- build one from a run's log "
                          "with py/itermap_from_log.py")
+    ap.add_argument("--kill-others", action="store_true",
+                    help="stop EVERY GeometryDash process first -- other workers, "
+                         "other sessions' runs and the Steam copy too -- so the "
+                         "watched window has the foreground to itself. Not while "
+                         "a solve or a regression is running")
     ap.add_argument("--keep-others", action="store_true",
-                    help="do not kill the other workers (when a solve or a "
-                         "regression is running alongside)")
+                    help="what the tool does by default now; accepted so that "
+                         "older command lines keep working")
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     ap.add_argument("--mod", default=str(BUILD_MOD))
     a = ap.parse_args(argv)
+    if a.kill_others and a.keep_others:
+        ap.error("--kill-others and --keep-others contradict each other")
 
     plan_path = Path(a.plan) if a.plan else DATA / f"solution_lv{a.level}_dp.txt.best"
     if not plan_path.exists():
@@ -105,7 +114,7 @@ def main(argv=None) -> int:
           + ("  + iteration map (F10)" if extra else ""))
 
     observe.launch_visible(a.worker_id, cfg, a.resolution_index, Path(a.mod),
-                           kill_others=not a.keep_others,
+                           kill_others=a.kill_others,
                            workers_root=Path(a.workers_root),
                            extra_files=extra)
     print(f"watching lv{a.level} at {a.slowmo}x-slow. Close the window when done.")

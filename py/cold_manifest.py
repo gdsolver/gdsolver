@@ -102,7 +102,7 @@ def read_provenance(mod: Path) -> dict | None:
 
 def start(out_dir: Path, *, mod: Path, cfg: list[str], levels: list[int], arrangement: str,
           resolution: int | None, coins: bool | None, build: dict | None = None,
-          geode: dict | None = None) -> dict:
+          geode: dict | None = None, fresh_verify: bool = False) -> dict:
     """The part known before the run, written at once: the package is hashed here, before a
     build that lands mid-run could change what a later hash reads.
 
@@ -125,6 +125,10 @@ def start(out_dir: Path, *, mod: Path, cfg: list[str], levels: list[int], arrang
          "arrangement": arrangement, "resolution": resolution,
          "geode": geode,
          "levels": {str(lv): None for lv in levels}}
+    if fresh_verify:
+        # asked for: every CLEARED level was played once from the start in a new game
+        # (cold_regress.fresh_verify); the per-level evidence is fresh_verify_lv<N>.json
+        m["fresh_verify"] = True
     (out_dir / NAME).write_text(json.dumps(m, indent=1), encoding="utf-8")
     return m
 

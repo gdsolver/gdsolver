@@ -2,7 +2,7 @@
 u"""Replay a solution plan in GD as it is and collect `result.txt`, for when the
 MCP server is not available.
 
-    python py/gdprobe.py <lv> <out.txt> [--cfg k=v ...] [--worker-id 98]
+    python py/gdprobe.py <lv> <out.txt> [--cfg k=v ...] [--worker-id 100]
 
 For example:
     python py/gdprobe.py 20 C:\\tmp\\r20.txt --cfg hitboxtrace=1 hbfrom=21440 hbto=21470
@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import plan as P                                     # noqa: E402
-from gdtas.paths import DATA, WORKERS_ROOT                      # noqa: E402
+from gdtas.paths import DATA, MCP_WORKER, WORKERS_ROOT          # noqa: E402
 from gdtas.worker import Worker, WorkerError                    # noqa: E402
 
 
@@ -31,7 +31,7 @@ def main(argv=None) -> int:
     ap.add_argument("out")
     ap.add_argument("--plan", default="")
     ap.add_argument("--cfg", nargs="*", default=[])
-    ap.add_argument("--worker-id", type=int, default=98)
+    ap.add_argument("--worker-id", type=int, default=MCP_WORKER)
     ap.add_argument("--timeout", type=float, default=300.0)
     a = ap.parse_args(argv)
 

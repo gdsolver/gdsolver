@@ -20,7 +20,7 @@ import sys
 
 from . import data as D
 from . import tools
-from .worker import Worker
+from .worker import MCP_WORKER, Worker
 
 
 def _p(obj) -> None:
@@ -68,7 +68,7 @@ def main(argv=None) -> int:
     s = sub.add_parser("smoke", help="launch, run one plan, read the result, "
                                      "all in one process")
     s.add_argument("--level", type=int, default=1)
-    s.add_argument("--worker", type=int, default=98)
+    s.add_argument("--worker", type=int, default=MCP_WORKER)
     s.add_argument("--plan-file", required=True)
     s.add_argument("--timeout", type=float, default=180.0)
     s.add_argument("--back", type=int, default=24)
@@ -76,7 +76,7 @@ def main(argv=None) -> int:
 
     o = sub.add_parser("objects", help="look up the object table with hit rects")
     o.add_argument("--level", type=int, default=1)
-    o.add_argument("--worker", type=int, default=98)
+    o.add_argument("--worker", type=int, default=MCP_WORKER)
     o.add_argument("--x0", type=float, required=True)
     o.add_argument("--x1", type=float, required=True)
     o.add_argument("--limit", type=int, default=100)

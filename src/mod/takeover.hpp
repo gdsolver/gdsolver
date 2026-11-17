@@ -74,7 +74,7 @@ inline void line(const std::string& s) {
 
 inline int presses(const std::vector<InputCmd>& v) {
     int n = 0;
-    for (const InputCmd& c : v) n += c.down ? 1 : 0;
+    for (const InputCmd& c : v) n += (c.down && !c.p2) ? 1 : 0;
     return n;
 }
 

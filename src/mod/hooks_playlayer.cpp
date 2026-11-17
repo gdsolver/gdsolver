@@ -277,6 +277,17 @@ class $modify(PlayLayer) {
                     + (held ? "" : " (it was not built under the level's type)"));
     }
 
+    // The layer leaves its scene (the slice swap, the next level of a suite, the way out of a level): the sprites that follow its objects stop their
+    // actions while the objects are still there (stopFollowerActions, helpers_game.hpp). The action manager keeps such a sprite alive past the layer,
+    // and the sprite's call on itself reads the freed object (2.2091, the two-player custom MK2, 2026-10-20).
+    void onExit() {
+        if (g_stopFollowers) {
+            const int nf = stopFollowerActions(this);
+            if (nf) writeResult("followers: " + std::to_string(nf) + " sprite(s) following the level's objects stopped as the layer left its scene");
+        }
+        PlayLayer::onExit();
+    }
+
     void onQuit() {
         // Whether a driven session's level is being left, asked BEFORE the cleanup: it tears the
         // session down (g_started false, g_cfg back to its defaults), and GD's own leave-the-level
@@ -857,8 +868,11 @@ class $modify(PlayLayer) {
         // session-end `anticheat:` line) and not written. Nothing else changes:
         // the call still goes wherever it went before.
         const bool anticheat = object && object == m_anticheatSpike;
+        // cfg nodeath: 1 swallows every body's death, 2 only player 1's, 3 only player 2's (config.hpp noDeathCode)
+        const bool swallowBody = g_cfg.noDeath || (g_cfg.noDeathCode == 2 && player && player == m_player1)
+                                 || (g_cfg.noDeathCode == 3 && player && player == m_player2);
         if (anticheat) ++solver::g_anticheatCalls;
-        if ((g_cfg.hitboxTrace || g_cfg.dpSolve) && g_started && !g_sessionOver
+        if ((g_cfg.hitboxTrace || g_cfg.dpSolve || g_cfg.noDeathCode != 0) && g_started && !g_sessionOver
             && player && !anticheat) {
             char kb[240];
             snprintf(kb, sizeof(kb),
@@ -899,7 +913,7 @@ class $modify(PlayLayer) {
             // went from alive to dead -- the same transition the gatetrace
             // `killer:` line below waits for.
             if (g_cfg.killerSite && !player->m_isDead && !secsolve::g_noKill
-                && !secsolve::g_active && !g_cfg.noDeath) {
+                && !secsolve::g_active && !swallowBody) {
 #ifdef GEODE_IS_WINDOWS
                 static uintptr_t base = 0, size = 0;
                 if (!base) {
@@ -974,7 +988,7 @@ class $modify(PlayLayer) {
         // solution, nodeath=1 against nodeath=0: 18,867 spike calls against 13, and the trajectory
         // apart from t=3,078. So those paths do for the spike what GD does, and nothing more
         // (the anti-cheat pass). Not a death either way.
-        if (anticheat && (secsolve::g_noKill || g_cfg.noDeath)) {
+        if (anticheat && (secsolve::g_noKill || swallowBody)) {
             if (!(m_player1 && m_player1->m_isLocked) && !m_playerDied) m_damageVerified = true;
             return;
         }
@@ -991,7 +1005,7 @@ class $modify(PlayLayer) {
         stallwatch::Mark sm(stallwatch::DESTROY);
         // Observation-only no-death (cfg `nodeath=1`). Hitboxes stay active, so portals and
         // triggers fire normally and the recording reaches the end in a single run
-        if (g_cfg.noDeath) return;
+        if (swallowBody) return;
         // Count which player a death in a dual section came from (diagnostic).
         // COUNTED AFTER THE ORIGINAL CALL, for the same reason the killer: line
         // below is written there: `!wasDead` alone counts every destroyPlayer GD

@@ -96,7 +96,7 @@ from fidelity_diff import groups_args, model_replay, gd_cut_tick, gd_replay
 from gdmcp.data import best_attempt_rows, diff_trace
 from gdtas import inputguard
 from gdtas import runtmp
-from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
+from gdtas.paths import DATA, DEFAULT_POOL, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
 
 REF = LEVEL_DATA / "gdref"
 REF_RESOLUTION = 25   # the resolution index the colds play at (cold_regress.run_resolution)
@@ -433,7 +433,9 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
     # Every caller of start_fields anchors from read_ref, so that is all five
     # of them. The columns still do their job in a whole-run comparison, whose
     # GD side is the untrimmed dump; they are simply unreachable from here.
-    m2 = MODE_ID[r["p2mode"]] if du and r.get("p2mode") in MODE_ID else -1
+    # `cube` is mode 0 and is not a key of MODE_ID (the first body's lookup above defaults to 0), so a row whose p2mode is `cube` used to read as "not told" (-1), and the
+    # solver then gave the second body the first body's mode: a spider first body made a spider of a cube second body. A name the table does not know is the cube.
+    m2 = MODE_ID.get(r["p2mode"], 0) if du and r.get("p2mode") not in (None, "") else -1
     mn2 = -1
     if du and r.get("p2vsize") not in (None, ""):
         try:
@@ -1235,8 +1237,7 @@ def main(argv=None) -> int:
                     help="which witnesses count for --rotseed, as cfg dprotseed "
                          "(A is the loop's default); S replays the game's own "
                          "consumption loop over the recording (rotseed.seed_sim)")
-    ap.add_argument("--pool", nargs="+", type=int,
-                    default=[90, 91, 92, 93, 94, 95])
+    ap.add_argument("--pool", nargs="+", type=int, default=list(DEFAULT_POOL))
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     ap.add_argument("--timeout-minutes", type=float, default=6.0)
     a = ap.parse_args(argv)

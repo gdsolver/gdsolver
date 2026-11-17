@@ -1,6 +1,7 @@
 #pragma once
 // Per-session state reset, plan_in.txt input loader, inject=/stopat= extras.
 #include "mod/speedgate.hpp"
+#include "mod/plan_edges.hpp"
 
 namespace p1 {
 
@@ -191,13 +192,17 @@ inline void resetSessionState() {
     if (g_dump.is_open()) g_dump.close();
 }
 
-inline bool loadInputsFile(const std::string& path, std::vector<InputCmd>& out, bool keepPrelude = false) {
+// initialMask: the buttons held at the first line of the file. A solver's tail is the buttons held from each tick, starting from the state the anchor left, so
+// its first line is read against that state: a tail that begins by releasing player 2's button, which the anchor holds, is a release only if the reader knows the button
+// is down. Read against 0 the release was no edge, and the tail's later press became a press of a button still held.
+inline bool loadInputsFile(const std::string& path, std::vector<InputCmd>& out, bool keepPrelude = false, int initialMask = 0) {
     std::ifstream f(path);
     if (!f) return false;
     out.clear();
     std::vector<PreludeAttempt> blocks;   // only when the file has attempt= lines
     std::string line;
     bool first = true;
+    int prevMask = initialMask;   // the buttons held after the last line of the block: player 2's edge is written only where bit 1 changes
     while (std::getline(f, line)) {
         // PowerShell's `Set-Content -Encoding utf8` writes with a BOM. With a BOM only the first
         // line fails the "input=" test and the first input silently disappears (the log looks
@@ -210,6 +215,7 @@ inline bool loadInputsFile(const std::string& path, std::vector<InputCmd>& out, 
         }
         if (line.rfind("attempt=", 0) == 0) {
             blocks.emplace_back();
+            prevMask = 0;
             continue;
         }
         if (line.rfind("until=", 0) == 0) {
@@ -220,17 +226,16 @@ inline bool loadInputsFile(const std::string& path, std::vector<InputCmd>& out, 
         int t = 0, d = 0;
         if (sscanf(line.c_str() + 6, "%d,%d", &t, &d) == 2) {
             // The level is a bitmask of the buttons held from that tick: bit 0 is player 1's jump,
-            // and every other bit is reserved for buttons this version does not drive (a second
-            // player's jump, platformer moves). A plan that uses one is refused, not replayed with
-            // those buttons dropped.
-            if (d & ~1) {
+            // bit 1 player 2's (a two-player level's second button), and every other bit is reserved
+            // for buttons this version does not drive (platformer moves). A plan that uses one is
+            // refused, not replayed with those buttons dropped.
+            if (d & ~3) {
                 writeResult("plan: " + path + " holds buttons this version does not drive (input="
                             + std::to_string(t) + "," + std::to_string(d) + ") - not loaded");
                 out.clear();
                 return false;
             }
-            if (blocks.empty()) out.push_back({t, (d & 1) != 0});
-            else blocks.back().in.push_back({t, (d & 1) != 0});
+            pushInputMask(blocks.empty() ? out : blocks.back().in, t, d, prevMask);
         }
     }
     if (!blocks.empty()) {
@@ -248,15 +253,10 @@ inline bool loadInputsFile(const std::string& path, std::vector<InputCmd>& out, 
     return !out.empty();
 }
 
-// Write a plan back out in the same format loadInputsFile reads. Used to keep a solution the
-// mod solved and then SAW CLEAR THE LEVEL -- a plan that has not cleared is not a solution and
-// must not be filed as one (the repository already carries 72 dead lineages from the days when
-// anything got saved).
 inline bool writeInputsFile(const std::string& path, const std::vector<InputCmd>& plan) {
     std::ofstream f(path, std::ios::trunc);
     if (!f) return false;
-    for (const InputCmd& c : plan)
-        f << "input=" << c.step << "," << (c.down ? 1 : 0) << "\n";
+    writeInputLines(f, plan);
     return true;
 }
 
@@ -271,7 +271,7 @@ inline bool writeAttemptSequence(const std::string& path, const std::vector<Prel
         f << "attempt=" << ++n << "\n";
         if (!lineage.empty()) f << "# lineage=" << lineage << "\n";
         if (until >= 0) f << "until=" << until << "\n";
-        for (const InputCmd& c : in) f << "input=" << c.step << "," << (c.down ? 1 : 0) << "\n";
+        writeInputLines(f, in);
     };
     for (const PreludeAttempt& p : prelude) block(p.in, p.until);
     block(clearing, -1);

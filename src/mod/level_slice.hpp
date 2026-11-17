@@ -106,6 +106,20 @@ inline bool g_heldFlight = false;
 inline bool g_verifyRecord = false;
 inline std::vector<InputCmd> g_clearPlan;
 inline int g_reflies = 0;
+// cfg stagecuts (STAGES, below): the cuts, ascending, each short of the level's last object; the piece
+// being played (size() = the level itself, -1 = off); the pieces handed on.
+inline std::vector<double> g_stageCuts;
+inline int g_stage = -1;
+inline int g_stageHandOffs = 0;
+inline std::string g_stageBase;   // what the pieces are cut from: the level's string, or the slice's copy of it
+inline bool g_stageSliced = false;
+// The check of a hand-off (stageCompare): the clearing flight of the piece just left, and whether the first
+// flight on the next piece is still to be compared with it.
+inline std::vector<AnchorRow> g_stageRows;
+inline long long g_stageClearT = -1;
+inline double g_stageCutX = 0.0;
+inline bool g_stageWatch = false;
+inline int g_stageSame = 0, g_stageEdge = 0, g_stageApart = 0;   // hand-offs: consistent / parted at the piece's end / parted before it
 
 // Whether a flight that starts now flies without the recording: a check flight on the level itself.
 inline bool flightUnrecorded() {
@@ -160,6 +174,16 @@ inline void reset() {
     g_refFlights = 0;
     g_heldType = -1;
     g_origCoins = 0;
+    g_stageCuts.clear();
+    g_stageRows.clear();
+    g_stageClearT = -1;
+    g_stageCutX = 0.0;
+    g_stageWatch = false;
+    g_stageSame = g_stageEdge = g_stageApart = 0;
+    g_stage = -1;
+    g_stageHandOffs = 0;
+    g_stageBase.clear();
+    g_stageSliced = false;
 }
 
 // The level string the layer was built from. The main levels' strings begin with whitespace
@@ -170,8 +194,7 @@ inline std::string levelString(GJGameLevel* level) {
     const size_t b = s.find_first_not_of(" \t\r\n");
     const size_t e = s.find_last_not_of(" \t\r\n");
     s = (b == std::string::npos) ? std::string() : s.substr(b, e - b + 1);
-    if (s.rfind("H4sI", 0) == 0) s = std::string(cocos2d::ZipUtils::decompressString(s, false, 0));
-    return s;
+    return gdcompat::rawLevelString(std::move(s));
 }
 
 inline std::vector<slice::LiveObj> liveObjects(GJBaseGameLayer* l) {
@@ -445,9 +468,409 @@ inline std::string whyLine(const slice::Cut& c) {
     return s;
 }
 
+// ---- STAGES (cfg `stagecuts=<x1>,<x2>,...`) -------------------------------------------------
+//
+// A long level is solved in pieces, each on the level cut at an x (everything past it is gone, as
+// py/cutlevel.py cuts it; the cut is where the copy ends and clears), and the plan that clears one
+// piece is flown first on the next, longer one -- the last being the level itself. It is the
+// level slice's swap and carry (above): the plan, the fixups, the vetoes and the round count go
+// over with the swap, what is keyed by an object's uid is recorded again on the new layer. What
+// differs is the copy -- a prefix, whose uids may not be the level's, so nothing here relies on
+// them -- and the clear: a piece's clear is not verified or filed, it is handed on; only the
+// level's own clear is filed (g_phase is Whole there).
+//
+// Why: the cost of a round that follows the level's length (the model's table, the recordings,
+// the recorder's pass) is paid at the length of the piece, and a hand-off in one game saves the
+// restart a hand-off between two games costs. A DEVELOPMENT AID, off by default: the plan one
+// piece hands the next is a seed from the same run, so the result is not reported as a cold solve
+// (CLAUDE.md rule 1) -- every piece is solved cold, the level's last one from the plan in hand.
+// A cut inside a cluster of portals can hand on a lane that dead-ends past it (measured on
+// a long custom level at x=45,400); the loop then walks back on the longer level as after any wall.
+// The x of an object string ("1,id,2,x,3,y,..."): false when it has none.
+inline bool objectX(std::string_view o, double* x) {
+    size_t pos = 0;
+    while (pos < o.size()) {
+        const size_t c1 = o.find(',', pos);
+        if (c1 == std::string_view::npos) return false;
+        const size_t c2 = o.find(',', c1 + 1);
+        if (o.substr(pos, c1 - pos) == "2") {
+            const std::string v(o.substr(c1 + 1, (c2 == std::string_view::npos ? o.size() : c2) - c1 - 1));
+            char* end = nullptr;
+            *x = std::strtod(v.c_str(), &end);
+            return end != v.c_str();
+        }
+        if (c2 == std::string_view::npos) return false;
+        pos = c2 + 1;
+    }
+    return false;
+}
+
+// The largest object x of a level string.
+inline double stringMaxX(const std::string& raw) {
+    double best = 0.0;
+    size_t pos = raw.find(';');
+    if (pos == std::string::npos) return 0.0;
+    for (++pos; pos < raw.size();) {
+        size_t e = raw.find(';', pos);
+        if (e == std::string::npos) e = raw.size();
+        double x;
+        if (e > pos && objectX(std::string_view(raw.data() + pos, e - pos), &x)) best = std::max(best, x);
+        pos = e + 1;
+    }
+    return best;
+}
+
+// py/cutlevel.py cut_level: the header and every object whose x is not past the cut (an object with
+// no x stays); when something was dropped and the survivors stop short of the cut, a decoration
+// (id 503) at the cut puts the level's end there.
+inline std::string cutPrefix(const std::string& raw, double cutX, size_t* kept, size_t* dropped) {
+    *kept = *dropped = 0;
+    const size_t h = raw.find(';');
+    if (h == std::string::npos) return raw;
+    std::string out = raw.substr(0, h + 1);
+    double maxKept = 0.0;
+    for (size_t pos = h + 1; pos < raw.size();) {
+        size_t e = raw.find(';', pos);
+        if (e == std::string::npos) e = raw.size();
+        const std::string_view o(raw.data() + pos, e - pos);
+        pos = e + 1;
+        if (o.empty()) continue;
+        double x = 0.0;
+        const bool has = objectX(o, &x);
+        if (has && x > cutX) { ++*dropped; continue; }
+        out.append(o);
+        out += ';';
+        ++*kept;
+        if (has) maxKept = std::max(maxKept, x);
+    }
+    if (*dropped > 0 && maxKept < cutX) {
+        char m[96];
+        snprintf(m, sizeof(m), "1,503,2,%g,3,15;", cutX);
+        out += m;
+    }
+    return out;
+}
+
+inline std::vector<double> parseStageCuts(const std::string& s) {
+    std::vector<double> v;
+    for (size_t pos = 0; pos < s.size();) {
+        size_t e = s.find_first_of(",; ", pos);
+        if (e == std::string::npos) e = s.size();
+        if (e > pos) {
+            char* end = nullptr;
+            const std::string t = s.substr(pos, e - pos);
+            const double x = std::strtod(t.c_str(), &end);
+            if (end != t.c_str() && x > 0.0) v.push_back(x);
+        }
+        pos = e + 1;
+    }
+    std::sort(v.begin(), v.end());
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+    return v;
+}
+
+// ---- where a cut may go (cfg stagecutcheck) ----
+// A piece is the level with everything past the cut gone. A trigger that reads a GROUP AS A POSITION --
+// a Rotate or Scale about a centre group, a Move to a target group, a Follow, an Area effect timed off its
+// target as a whole (the reads of src/solver/slice.hpp) -- behaves differently when the group it reads is
+// partly or wholly gone and the trigger is still there. For one such reader (trigger at x_T acting on Gt,
+// reading Gp), a cut c is unsafe when c >= x_T, c < the largest x of Gp's members, and c >= the smallest x
+// of Gt's and Gp's members. A rotate-gameplay or options trigger (2900, 2899) turns the frame or is read
+// as if it did: 400 px either side of it are unsafe too. py/cutsafety.py is this rule on a level file.
+// A PREDICTOR from the string: the truth is stageCompare's line at the hand-off.
+struct StageReader {
+    double lo, hi;       // the unsafe cuts
+    std::string why;
+};
+
+inline std::vector<StageReader> stageReaders(const std::string& base) {
+    std::vector<StageReader> rows;
+    struct Reader { double x; int id, target; std::vector<int> reads; };
+    std::unordered_map<int, std::pair<double, double>> span;   // group -> smallest and largest member x
+    std::vector<Reader> readers;
+    const size_t h = base.find(';');
+    if (h == std::string::npos) return rows;
+    for (size_t pos = h + 1; pos < base.size();) {
+        size_t e = base.find(';', pos);
+        if (e == std::string::npos) e = base.size();
+        const std::string_view o(base.data() + pos, e - pos);
+        pos = e + 1;
+        if (o.empty()) continue;
+        const int id = (int)slice::numOr(slice::kvGet(o, "1"), 0);
+        const double x = slice::numOr(slice::kvGet(o, "2"), 0);
+        for (const char* key : {"57", "274"})
+            for (const int g : slice::intList(slice::kvGet(o, key))) {
+                auto it = span.find(g);
+                if (it == span.end()) span[g] = {x, x};
+                else { it->second.first = std::min(it->second.first, x); it->second.second = std::max(it->second.second, x); }
+            }
+        if (id == 2899 || id == 2900) {
+            rows.push_back({x - 400.0, x + 400.0, "rotate-gameplay/options trigger " + std::to_string(id)
+                                                    + " at x=" + std::to_string((long long)x)});
+            continue;
+        }
+        const bool area = id >= 3006 && id <= 3010;
+        if (!(id == 901 || id == 1346 || id == 1347 || id == 2067 || id == 1814 || area)) continue;
+        const int t = (int)slice::numOr(slice::kvGet(o, "51"), 0);
+        if (t <= 0) continue;
+        Reader r{x, id, t, {}};
+        const int c = (int)slice::numOr(slice::kvGet(o, "71"), 0);
+        const int tm = (int)slice::numOr(slice::kvGet(o, "395"), 0);
+        if (c > 0) r.reads.push_back(c);
+        if (tm > 0) r.reads.push_back(tm);
+        if (area || slice::numOr(slice::kvGet(o, "100"), 0) == 1 || slice::numOr(slice::kvGet(o, "397"), 0) == 1)
+            r.reads.push_back(t);
+        if (!r.reads.empty()) readers.push_back(std::move(r));
+    }
+    for (const Reader& r : readers) {
+        double gpLo = 1e18, gpHi = -1e18;
+        for (const int g : r.reads) {
+            const auto it = span.find(g);
+            if (it == span.end()) continue;
+            gpLo = std::min(gpLo, it->second.first);
+            gpHi = std::max(gpHi, it->second.second);
+        }
+        if (gpHi < gpLo) continue;
+        double lo = gpLo;
+        const auto tg = span.find(r.target);
+        if (tg != span.end()) lo = std::min(lo, tg->second.first);
+        lo = std::max(lo, r.x);
+        if (gpHi > lo)
+            rows.push_back({lo, gpHi, "trigger " + std::to_string(r.id) + " at x=" + std::to_string((long long)r.x)
+                                          + " on group " + std::to_string(r.target) + " reads group "
+                                          + std::to_string(r.reads.front())});
+    }
+    return rows;
+}
+
+// The cuts of cfg stagecuts, checked against stageReaders(base): logged (stagecutcheck=1), or moved to the
+// nearest x that splits no reader within stagecutwindow px, or dropped when there is none (=2). False when
+// no cut is left.
+inline bool checkStageCuts(const std::string& base) {
+    if (g_cfg.stageCutCheck <= 0) return true;
+    const std::vector<StageReader> rows = stageReaders(base);
+    constexpr double kMargin = 120.0;
+    std::vector<std::pair<double, double>> bad;   // merged, margin included
+    {
+        std::vector<std::pair<double, double>> v;
+        for (const auto& r : rows) v.push_back({r.lo - kMargin, r.hi + kMargin});
+        std::sort(v.begin(), v.end());
+        for (const auto& p : v) {
+            if (!bad.empty() && p.first <= bad.back().second) bad.back().second = std::max(bad.back().second, p.second);
+            else bad.push_back(p);
+        }
+    }
+    const double maxX = stringMaxX(base);
+    std::vector<double> out;
+    char b[420];
+    for (const double c : g_stageCuts) {
+        const auto in = std::find_if(bad.begin(), bad.end(), [&](const auto& p) { return c >= p.first && c < p.second; });
+        if (in == bad.end()) { out.push_back(c); continue; }
+        std::string list;
+        int n = 0;
+        for (const auto& r : rows)
+            if (c >= r.lo - kMargin && c < r.hi + kMargin && n++ < 3) list += (list.empty() ? "" : "; ") + r.why;
+        double best = -1.0;
+        for (const double cand : {in->first - 1.0, in->second})
+            if (cand > 0.0 && cand < maxX && (out.empty() || cand > out.back()) && std::fabs(cand - c) <= g_cfg.stageCutWindow
+                && (best < 0.0 || std::fabs(cand - c) < std::fabs(best - c)))
+                best = cand;
+        if (g_cfg.stageCutCheck == 1) {
+            snprintf(b, sizeof(b), "stage: cut x=%.0f splits what a kept trigger reads (unsafe x %.0f..%.0f): %s - kept "
+                     "as asked (stagecutcheck=1)", c, in->first, in->second, list.c_str());
+            out.push_back(c);
+        } else if (best > 0.0) {
+            snprintf(b, sizeof(b), "stage: cut x=%.0f splits what a kept trigger reads (unsafe x %.0f..%.0f): %s - "
+                     "moved to x=%.0f", c, in->first, in->second, list.c_str(), best);
+            out.push_back(best);
+        } else {
+            snprintf(b, sizeof(b), "stage: cut x=%.0f splits what a kept trigger reads (unsafe x %.0f..%.0f): %s - "
+                     "no safe x within %d px, the cut is dropped", c, in->first, in->second, list.c_str(), g_cfg.stageCutWindow);
+        }
+        writeResult(b);
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    g_stageCuts = out;
+    if (out.empty()) writeResult("stage: no cut is left - solving as the slice would");
+    return !out.empty();
+}
+
+inline double sessionSeconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - g_t0).count();
+}
+
+// The copy of piece `idx`: the level cut at its x, kept as stage_lv<id>_<idx>.lvl for a look.
+inline GJGameLevel* makeStageCopy(int idx, size_t* keptOut) {
+    size_t kept = 0, dropped = 0;
+    const std::string s = cutPrefix(g_stageBase, g_stageCuts[(size_t)idx], &kept, &dropped);
+    {
+        std::ofstream f(std::string(DATA_DIR) + "/stage_lv" + std::to_string(g_cfg.levelId) + "_"
+                            + std::to_string(idx) + ".lvl", std::ios::binary | std::ios::trunc);
+        f << s;
+    }
+    char b[240];
+    snprintf(b, sizeof(b), "stage: piece %d of %zu - the level cut at x=%.0f (%zu objects kept, %zu "
+             "dropped); %.1f s into the session", idx + 1, g_stageCuts.size() + 1,
+             g_stageCuts[(size_t)idx], kept, dropped, sessionSeconds());
+    writeResult(b);
+    *keptOut = kept;
+    return makeCopy(s);
+}
+
+// The pieces' cuts for a level whose objects reach `maxX`: false (and a line) when none is short of it.
+inline bool setStageCuts(double maxX) {
+    std::vector<double> cuts;
+    for (const double c : parseStageCuts(g_cfg.stageCuts))
+        if (c < maxX) cuts.push_back(c);
+    if (cuts.empty()) {
+        writeResult("stage: not used - cfg stagecuts=" + g_cfg.stageCuts + " has no cut short of the "
+                    "level's last object (x=" + std::to_string((long long)maxX) + ")");
+        return false;
+    }
+    g_stageCuts = cuts;
+    return true;
+}
+
+// The pieces are cut from `base`: the level's own string, or -- when the slice applies -- the slice's
+// copy of it (placeholders and all), so a piece is the slice of the level cut at an x and the last
+// piece is the slice's copy itself. g_raw and g_orig are set. True = the first piece is being swapped in.
+inline bool startStages(std::string base, bool sliced) {
+    if (!checkStageCuts(base)) return false;   // cfg stagecutcheck
+    g_stageBase = std::move(base);
+    g_stageSliced = sliced;
+    g_stage = 0;
+    g_stageHandOffs = 0;
+    if (sliced) g_uidCheckPending = false;   // the pieces are prefixes: the uid check is for the last one
+    std::string list;
+    for (const double c : g_stageCuts) list += (list.empty() ? "" : ",") + std::to_string((long long)c);
+    writeResult("stage: " + std::to_string(g_stageCuts.size() + 1) + " pieces, cut at x=" + list
+                + (sliced ? " and the slice's copy" : " and the level itself")
+                + " (last object x=" + std::to_string((long long)stringMaxX(g_raw)) + ")");
+    size_t kept = 0;
+    GJGameLevel* copy = makeStageCopy(0, &kept);
+    g_phase = Sliced;
+    g_hudPhase = "solving the first piece";
+    swapTo(copy, kept);
+    return true;
+}
+
+// With no slice to cut from (disabled, below the threshold, refused): the pieces are cut from the level.
+inline bool beginStagesRaw(GJBaseGameLayer* l) {
+    auto* pl = PlayLayer::get();
+    if (!pl || pl != l || !pl->m_level) return false;
+    g_t0 = std::chrono::steady_clock::now();
+    std::string raw = levelString(pl->m_level);
+    if (raw.empty()) {
+        writeResult("stage: not used - the level string could not be read");
+        return false;
+    }
+    g_raw = std::move(raw);
+    if (!setStageCuts(stringMaxX(g_raw))) {
+        g_raw.clear();
+        return false;
+    }
+    holdOrig(pl->m_level);
+    return startStages(g_raw, false);
+}
+
+inline long long partingTick(const std::vector<AnchorRow>& a, const std::vector<AnchorRow>& b,
+                             long long until, const char** field);
+
+// Ticks before a piece's clear within which a parting from the next piece is read as the edge of the piece
+// (the end of the level, the camera and the bands settle there), not as the cut: the log gives the tick either way.
+constexpr long long kStageEdgeTicks = 150;
+
+// The first flight on a piece, compared with the clearing flight of the piece before it: the same plan on the
+// same level up to the cut should give the same player tick for tick. Where it does not, something past the
+// cut reached back -- a group with members on both sides (a rotate or scale about the group's centre, a
+// member picked by the group's count), a trigger the dropped part fired, an object the cut took out of the way.
+// `end` is the tick that flight ended on; a pending check is spent by the first flight that ends.
+inline void stageCompare(long long end, bool cleared) {
+    if (!g_stageWatch) return;
+    g_stageWatch = false;
+    const long long until = std::min(end, g_stageClearT);
+    const char* field = "";
+    const long long pt = partingTick(g_stageRows, anchors::g_live, until, &field);
+    const int prev = g_stage;   // the piece being left is prev - 1 (g_stage counts from 0)
+    char b[400];
+    if (pt < 0) {
+        if (!cleared && end < g_stageClearT) {
+            // the same on every tick, then dead before the piece's clear: what only the longer piece has kills there
+            const bool edge = g_stageClearT - end <= kStageEdgeTicks;
+            if (edge) ++g_stageEdge; else ++g_stageApart;
+            snprintf(b, sizeof(b), "stage: hand-off %d at x=%.0f - %s: the next piece's first flight matches the clearing "
+                     "flight to t=%lld, then died at t=%lld, %lld ticks before the clear (t=%lld): what the longer piece has that the "
+                     "shorter did not kills there (or the plan is not the one that cleared)",
+                     prev, g_stageCutX, edge ? "parted at the edge of the piece" : "DISAGREE", until, end,
+                     g_stageClearT - end, g_stageClearT);
+        } else {
+            ++g_stageSame;
+            snprintf(b, sizeof(b), "stage: hand-off %d at x=%.0f - consistent: the next piece's first flight matches the "
+                     "clearing flight on every tick to t=%lld", prev, g_stageCutX, until);
+        }
+    } else {
+        const double px = (size_t)pt < g_stageRows.size() ? g_stageRows[(size_t)pt].x : 0.0;
+        const long long before = g_stageClearT - pt;
+        if (before <= kStageEdgeTicks) ++g_stageEdge; else ++g_stageApart;
+        snprintf(b, sizeof(b), "stage: hand-off %d at x=%.0f - %s: the next piece's first flight parts from the clearing "
+                 "flight at t=%lld x=%.1f (%s), %lld ticks before the clear (t=%lld)", prev, g_stageCutX,
+                 before <= kStageEdgeTicks ? "parted at the edge of the piece" : "DISAGREE", pt, px, field, before,
+                 g_stageClearT);
+    }
+    writeResult(b);
+}
+
+// A piece cleared: its plan goes over to the next, with what the run has learnt.
+inline bool onStageCleared(const std::vector<InputCmd>& plan, long long tick) {
+    const int done = g_stage;
+    stageCompare(tick, true);   // the flight that cleared this piece may itself be the first on it
+    g_stageRows = anchors::g_live;
+    g_stageClearT = tick;
+    g_stageCutX = g_stageCuts[(size_t)done];
+    g_stageWatch = true;
+    ++g_stage;
+    ++g_stageHandOffs;
+    g_carry = plan;
+    if (g_cfg.stageBreak > 0 && g_carry.size() > (size_t)g_cfg.stageBreak) {   // test only: a hand-off that parts on purpose
+        char kb[160];
+        snprintf(kb, sizeof(kb), "stage: cfg stagebreak - the plan handed on keeps its first %d of %zu inputs",
+                 g_cfg.stageBreak, g_carry.size());
+        writeResult(kb);
+        g_carry.resize((size_t)g_cfg.stageBreak);
+    }
+    g_carryPending = true;
+    const bool last = g_stage >= (int)g_stageCuts.size();
+    char b[300];
+    snprintf(b, sizeof(b), "stage: piece %d (cut x=%.0f) cleared at t=%lld after %d rounds, %.1f s "
+             "into the session - handing its plan (%zu inputs) to %s", done + 1,
+             g_stageCuts[(size_t)done], tick, dpsolve::g_iter, sessionSeconds(), plan.size(),
+             last ? "the level itself" : "the next piece");
+    writeResult(b);
+    if (last && g_stageSliced) {
+        // the slice's own copy, as the slice would have started on it; its clear is verified on the level
+        g_phase = Sliced;
+        g_hudPhase = "solving on the slice's copy";
+        size_t kept = 0;
+        const std::string s = copyString(&kept);
+        swapTo(makeCopy(s), kept + g_placeholders);
+    } else if (last) {
+        g_phase = Whole;
+        g_hudPhase = "solving on the level itself";
+        swapTo(g_orig, g_cut.objects);
+    } else {
+        g_phase = Sliced;
+        g_hudPhase = "solving the next piece";
+        size_t kept = 0;
+        GJGameLevel* copy = makeStageCopy(g_stage, &kept);
+        swapTo(copy, kept);
+    }
+    return true;
+}
+
 // Asked by the session's first solve. True = the level is being swapped for its slice, and the
 // solve starts there instead (dpsolve::start runs again on the new layer).
-inline bool maybeSlice(GJBaseGameLayer* l) {
+inline bool maybeSliceOnly(GJBaseGameLayer* l) {
     // On a copy this is also where it is first seen loaded: its uids are checked against the level.
     if (g_phase != Off) {
         if (g_uidCheckPending && (g_phase == Sliced || g_phase == RefFlight) && l == PlayLayer::get())
@@ -532,9 +955,21 @@ inline bool maybeSlice(GJBaseGameLayer* l) {
                       "replaced by a placeholder that takes their uids (slice.hpp)"
                     : std::string("slice: cfg sliceuids=0 - the objects left out are removed, which "
                                   "renumbers every object after them (not for fidelity)"));
+    // cfg stagecuts: the pieces are cut from this copy (STAGES, above); the last is the copy itself.
+    if (!g_cfg.stageCuts.empty() && setStageCuts(stringMaxX(g_raw)) && startStages(cutStr, true)) return true;
     g_phase = Sliced;
     swapTo(makeCopy(cutStr), kept + g_placeholders);
     return true;
+}
+
+// Asked by the session's first solve. True = the level is being swapped for its slice (or, with cfg
+// stagecuts, for its first piece), and the solve starts there instead.
+inline bool maybeSlice(GJBaseGameLayer* l) {
+    const bool first = g_phase == Off;
+    if (maybeSliceOnly(l)) return true;
+    // cfg stagecuts without a slice to cut from: the pieces are cut from the level itself.
+    if (first && g_phase == Off && !g_cfg.stageCuts.empty() && g_cfg.dpSolve) return beginStagesRaw(l);
+    return false;
 }
 
 // Asked by dpsolve::start on each new layer: the plan to fly first, if one was handed over.
@@ -568,6 +1003,8 @@ inline bool onSliceCleared(const std::vector<InputCmd>& plan, long long tick) {
         return true;
     }
     if (g_phase != Sliced || !g_orig) return false;
+    if (g_stage >= 0 && g_stage < (int)g_stageCuts.size()) return onStageCleared(plan, tick);   // cfg stagecuts
+    if (g_stage >= 0) stageCompare(tick, true);   // the last piece cleared on the first flight of the hand-off
     g_clearRows = anchors::g_live;
     g_refEnd = tick;
     g_refCleared = true;
@@ -751,6 +1188,7 @@ inline bool onRefFlightEnd(long long end, double endX, bool cleared) {
 // when the wall is the level's own); false = the loop takes this death on the level itself, as
 // any other.
 inline bool onVerifyDeath(long long dt, float deathX) {
+    if (g_stageWatch) stageCompare(dt, false);   // cfg stagecuts: the first flight after a hand-off
     if (g_phase == RefFlight) return onRefFlightEnd(dt, deathX, false);
     if (g_phase != Verifying) return false;
     // cfg sliceverifyrec: the check of a plan that cleared the copy flew without the recording of moving
@@ -788,7 +1226,7 @@ inline bool onVerifyDeath(long long dt, float deathX) {
     // the first press are logged, so a mismatch of this kind can be looked at.
     long long firstPress = -1;
     for (const auto& in : g_cfg.inputs)
-        if (in.down) { firstPress = in.step; break; }
+        if (in.down && !in.p2) { firstPress = in.step; break; }
     const long long syncTick = std::max<long long>(firstPress, 0) + kSyncTicks;
     const bool tookEarly = g_nextInputAtStart != 0;
     const bool beforeSync = pt >= 0 && pt <= syncTick;
@@ -909,6 +1347,8 @@ inline bool onVerifyDeath(long long dt, float deathX) {
 inline constexpr int kWallCheckRounds = 8;
 inline bool maybeCheckWall() {
     if (g_phase != Sliced || !g_orig) return false;
+    // a piece is a prefix, not a cut of the level: no wall of it to compare on the level
+    if (g_stage >= 0 && g_stage < (int)g_stageCuts.size()) return false;
     if (dpsolve::g_stallRuns < kWallCheckRounds) return false;
     if (dpsolve::g_best.empty() || dpsolve::g_bestDeath < 0) return false;
     if (dpsolve::g_bestDeath == g_checkedWall) return false;
@@ -962,6 +1402,7 @@ inline bool onGiveUp(const char* reason) {
         swapTo(copy, kept);
         return true;
     }
+    if (g_stage >= 0) g_stage = (int)g_stageCuts.size();   // cfg stagecuts: the pieces end here
     writeResult(std::string("slice: the solve gave up on the copy (") + reason
                 + ") - going on on the level itself from the copy's deepest plan");
     g_carry = dpsolve::g_best.empty() ? dpsolve::g_plan : dpsolve::g_best;
@@ -995,6 +1436,11 @@ inline std::string summary() {
              g_cut.objects, g_verifies, g_verifies == 1 ? "" : "s", g_wallChecks,
              g_wallChecks == 1 ? "" : "s", g_addBacks, g_addBacks == 1 ? "" : "s");
     std::string s = b;
+    if (!g_stageCuts.empty())   // cfg stagecuts
+        s += "; stages: " + std::to_string(g_stageHandOffs) + " of " + std::to_string(g_stageCuts.size())
+             + " pieces handed on, " + std::to_string(g_stage) + " reached; hand-offs consistent "
+             + std::to_string(g_stageSame) + ", parted at the piece's edge " + std::to_string(g_stageEdge)
+             + ", parted before it " + std::to_string(g_stageApart);
     if (g_refFlights > 0)   // cfg slicefirstref
         s += "; " + std::to_string(g_refFlights) + " first-attempt flight"
              + (g_refFlights == 1 ? "" : "s") + " on a fresh copy";

@@ -130,7 +130,7 @@ def obj(oid: int, x: float, y: float, rot: float = 0.0,
 
 
 def header(start_mode: str = "cube", mini: bool = False, speed: int = 0,
-           dual: bool = False) -> str:
+           dual: bool = False, two_player: bool = False) -> str:
     """The level's leading segment. THE STARTING STATE IS DECIDED HERE.
 
     kA2 = starting game mode (0 cube / 1 ship / 2 ball / 3 UFO / 4 wave /
@@ -145,7 +145,7 @@ def header(start_mode: str = "cube", mini: bool = False, speed: int = 0,
          f"_15_1_18_0_8_1"
          f",kA13,0,kA15,0,kA16,0,kA14,,kA6,1,kA7,1,kA17,0,kA18,0"
          f",kA2,{m},kA3,{1 if mini else 0},kA4,{speed}"
-         f",kA8,{1 if dual else 0},kA10,0,kA9,0,kA11,0")
+         f",kA8,{1 if dual else 0},kA10,{1 if two_player else 0},kA9,0,kA11,0")
     if KA39:
         h += ",kA39,1"
     return h
@@ -4027,7 +4027,7 @@ def build_forcecal_mode(mode: str, mini: bool = False) -> str:
 # is injected and nothing is teleported. If dvy still does not move, the field
 # is not firing for a reason that has nothing to do with the probes.
 def build_forcedrop_mode(mode: str, mini: bool = False,
-                         force: float = 1.0) -> str:
+                         force: float = 1.0, speed: int = 0, scale: float = 10.0) -> str:
     """...and `force` is the whole point of the variants.
 
     dvy = m_force * |g| / D, and D could not be pinned from the m_force=1 rigs
@@ -4038,7 +4038,7 @@ def build_forcedrop_mode(mode: str, mini: bool = False,
     also settles whether m_force is linear at all, which no lv22 value shows
     (they run 1.2..4.2 and each is one point).
     """
-    parts = [header(start_mode=mode, mini=mini)]
+    parts = [header(start_mode=mode, mini=mini, speed=speed)]
     # A gap from 300 to 700 with the floor resuming after it. The level still
     # has to be a level: the 439-char first cut (a ledge and nothing else) never
     # reached `serve: loaded` at all.
@@ -4046,7 +4046,7 @@ def build_forcedrop_mode(mode: str, mini: bool = False,
     parts += floor_run(700, 4000, y=GROUND_Y)
     # 30 px grid, scale 10 -> 300x300 centred on the run height, so the fall off
     # the ledge at x=300 enters it at x=350 and leaves at x=650.
-    parts.append(obj(FORCE_BOX, 500, GROUND_Y, scale=10.0,
+    parts.append(obj(FORCE_BOX, 500, GROUND_Y, scale=scale,
                      extra={FKEY_FORCE: f"{force:g}"}))
     # AND THE WALL, past the box. The first cut left it out and the no-input
     # attempt COMPLETED the level (tick 3112, x=4390) -- which ends the session,
@@ -7079,7 +7079,111 @@ def build_rotslide(slide1_off: bool, slide2_off: bool) -> str:
     return header(start_mode="ship", speed=4) + ";" + ";".join(objs) + ";"
 
 
-BUILDERS = {"probe": build_probe, "slopes": build_slopes,
+# ---- two-player mode (kA10=1): which button reaches which body --------------------------------------------------------------------
+# The game gives a two-player level's second player a button of its own; the plan bit for it is bit 1 (mask 2), bit 0 being the first player's.
+# These rigs ask the game, one question each (docs/TWO_PLAYER.md has what was measured and what was not):
+#   p2mask    flat floor and ceiling, nothing else. P1 alone, P2 alone, then both, at known ticks: which body jumps on which mask
+#   p2mask_solo   the same level with kA10 but no dual start (kA8=0): is the second player there at all
+#   p2hold    the same, held long: whether the second body's jump is a hold-to-repeat cube jump of its own
+#   p2grav    one gravity portal in the first body's lane, one in the second's: whether a portal flips only the body that touched it
+#   p2orb     a yellow orb in each lane at the same x: whose press fires which, and whether the other body's ring is spent
+#   p2death   a spike in the first body's lane only, later one in the second's: whether one body's death ends the attempt
+#   p2bandgrav, p2bandgrav_dual   no blocks under the ceiling band: a body seated on the band's own ceiling takes a gravity portal, in a
+#             two-player level and in a plain dual
+# Written in world coordinates; the ceiling for the second body is P2_CEIL (a dual reports pmax 360, RIDEDUAL_CEIL was 330).
+P2_CEIL = RIDEDUAL_CEIL
+YELLOW_PAD, YELLOW_ORB = 35, 36
+
+
+def _p2_run(x1: float) -> list[str]:
+    objs = floor_run(0, x1)
+    xx = GRID / 2
+    while xx <= x1:
+        objs.append(obj(BLOCK, xx, P2_CEIL + GRID / 2))
+        xx += GRID
+    return objs
+
+
+def build_p2mask(dual: bool = True) -> str:
+    objs = _p2_run(6000.0)
+    # presses (tick, mask): P1 alone, P2 alone, both, P2 alone again, none. Each is a 12-tick press.
+    for t0, mask in ((120, 1), (480, 2), (840, 3), (1200, 2), (1560, 1)):
+        PLAN.append((t0, mask))
+        PLAN.append((t0 + 12, 0))
+    UNITS.append({"what": "p2mask", "dual": int(dual), "presses": [[120, 1], [480, 2], [840, 3], [1200, 2], [1560, 1]]})
+    return header(dual=dual, two_player=True) + ";" + ";".join(objs) + ";"
+
+
+def build_p2mask_solo() -> str:
+    """kA10=1 WITHOUT kA8: is the second player there at the start at all?"""
+    return build_p2mask(dual=False)
+
+
+def build_p2hold() -> str:
+    objs = _p2_run(6000.0)
+    for t0, mask, n in ((120, 2, 240), (600, 1, 240), (1080, 3, 240)):
+        PLAN.append((t0, mask))
+        PLAN.append((t0 + n, 0))
+    UNITS.append({"what": "p2hold", "presses": [[120, 2, 240], [600, 1, 240], [1080, 3, 240]]})
+    return header(dual=True, two_player=True) + ";" + ";".join(objs) + ";"
+
+
+def build_p2grav() -> str:
+    objs = _p2_run(6000.0)
+    # first body's lane: a flip portal at head height of the floor lane; second body's lane: one near the ceiling
+    objs.append(obj(GRAV_FLIP, 1500.0, GROUND_TOP + 45.0))
+    objs.append(obj(GRAV_NORM, 2400.0, GROUND_TOP + 45.0))
+    objs.append(obj(GRAV_FLIP, 3300.0, P2_CEIL - 45.0))
+    objs.append(obj(GRAV_NORM, 4200.0, P2_CEIL - 45.0))
+    UNITS.append({"what": "p2grav", "portals": [["flip", 1500, "floor lane"], ["norm", 2400, "floor lane"], ["flip", 3300, "ceiling lane"],
+                                                  ["norm", 4200, "ceiling lane"]]})
+    return header(dual=True, two_player=True) + ";" + ";".join(objs) + ";"
+
+
+def build_p2bandgrav(two_player: bool = True) -> str:
+    """A body sitting on the dual's own ceiling band (no object up there) enters a gravity portal. The first rigs (p2grav) put
+    a row of blocks under the ceiling band, which is not the case of a level whose second body rides the band itself."""
+    objs = floor_run(0, 6000.0)
+    objs.append(obj(GRAV_NORM, 1500.0, 315.0))                      # P2's lane, on the band ceiling (top 360): only P2 touches it
+    objs.append(obj(GRAV_FLIP, 2700.0, GROUND_TOP + 45.0))          # then both sit on the floor: a flip portal at head height of both
+    objs.append(obj(GRAV_NORM, 3900.0, GROUND_TOP + 45.0))
+    objs.append(obj(GRAV_FLIP, 4800.0, GROUND_TOP + 45.0))
+    objs.append(obj(GRAV_NORM, 5400.0, 315.0))                      # both on the band ceiling again (P1 too): the first body's own case
+    UNITS.append({"what": "p2bandgrav", "two_player": int(two_player),
+                  "portals": [["norm", 1500, "band ceiling, P2"], ["flip", 2700, "floor, both"], ["norm", 3900, "floor, both"],
+                              ["flip", 4800, "floor, both"], ["norm", 5400, "band ceiling, both"]]})
+    PLAN.append((0, 0))
+    return header(dual=True, two_player=two_player) + ";" + ";".join(objs) + ";"
+
+
+def build_p2orb() -> str:
+    objs = _p2_run(6000.0)
+    # a yellow orb in each lane at the same x: the floor lane's at jump height over the floor, the ceiling lane's under the ceiling
+    for x in (1500.0, 2700.0, 3900.0):
+        objs.append(obj(YELLOW_ORB, x, GROUND_TOP + 75.0))
+        objs.append(obj(YELLOW_ORB, x, P2_CEIL - 75.0))
+    # presses meant to meet the orbs: P1 only at the first x, P2 only at the second, both at the third (ticks are for the 1x speed: x / 311 * 240)
+    for x, mask in ((1500.0, 1), (2700.0, 2), (3900.0, 3)):
+        t = int(x / 311.6 * 240.0)
+        PLAN.append((t - 6, mask))
+        PLAN.append((t + 14, 0))
+    UNITS.append({"what": "p2orb", "orbs": [[1500, "both lanes", 1], [2700, "both lanes", 2], [3900, "both lanes", 3]]})
+    return header(dual=True, two_player=True) + ";" + ";".join(objs) + ";"
+
+
+def build_p2death() -> str:
+    objs = _p2_run(6000.0)
+    objs.append(obj(SPIKE, 1800.0, GROUND_TOP + 15.0))                 # the floor lane's
+    objs.append(obj(SPIKE, 4200.0, P2_CEIL - 15.0, rot=180))           # the ceiling lane's, long after
+    PLAN.append((0, 0))
+    UNITS.append({"what": "p2death", "spikes": [[1800, "floor lane"], [4200, "ceiling lane"]]})
+    return header(dual=True, two_player=True) + ";" + ";".join(objs) + ";"
+
+
+BUILDERS = {"p2mask": build_p2mask, "p2mask_solo": build_p2mask_solo, "p2hold": build_p2hold, "p2grav": build_p2grav, "p2orb": build_p2orb,
+            "p2death": build_p2death,
+            "p2bandgrav": build_p2bandgrav, "p2bandgrav_dual": lambda: build_p2bandgrav(two_player=False),
+            "probe": build_probe, "slopes": build_slopes,
             "route1": build_route1, "route2": build_route2,
             "coincal": build_coincal,
             "coingate": build_coingate, "coingate2": build_coingate2,
@@ -7171,6 +7275,17 @@ BUILDERS = {"probe": build_probe, "slopes": build_slopes,
            "forcedrop_swing_mini_f10": lambda: build_forcedrop_mode("swing", True, 10),
            "forcedrop_ball_mini_f10": lambda: build_forcedrop_mode("ball", True, 10),
            "forcedrop_ship_mini_f10": lambda: build_forcedrop_mode("ship", True, 10),
+           "forcedrop_ship_f2_s4": lambda: build_forcedrop_mode("ship", False, 2, 4),
+           "forcedrop_ship_f5_s4": lambda: build_forcedrop_mode("ship", False, 5, 4),
+           "forcedrop_ship_f1_s4": lambda: build_forcedrop_mode("ship", False, 1, 4),
+           "forcedrop_ship_f2_s4_sc1": lambda: build_forcedrop_mode("ship", False, 2, 4, 1.0),
+           "forcedrop_ship_f2_s4_sc3": lambda: build_forcedrop_mode("ship", False, 2, 4, 3.0),
+           "forcedrop_ship_f2_s0_sc1": lambda: build_forcedrop_mode("ship", False, 2, 0, 1.0),
+           "forcedrop_ship_f10_s2": lambda: build_forcedrop_mode("ship", False, 10, 2),
+           "forcedrop_ship_f10_s3": lambda: build_forcedrop_mode("ship", False, 10, 3),
+           "forcedrop_ship_f10_s4": lambda: build_forcedrop_mode("ship", False, 10, 4),
+           "forcedrop_ship_mini_f10_s3": lambda: build_forcedrop_mode("ship", True, 10, 3),
+           "forcedrop_ship_mini_f10_s4": lambda: build_forcedrop_mode("ship", True, 10, 4),
            "forcedrop_cube_f3": lambda: build_forcedrop_mode("cube", False, 3),
            "forcedrop_cube_f10": lambda: build_forcedrop_mode("cube", False, 10),
            "forcedrop_cube_f30": lambda: build_forcedrop_mode("cube", False, 30),

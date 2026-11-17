@@ -60,7 +60,7 @@ def parse_plan_file(path: str | Path) -> list[tuple[int, int]]:
 
 # ---------- session ----------
 
-def gd_session_open(level: int, worker_id: int = 98, cfg: dict | None = None,
+def gd_session_open(level: int, worker_id: int = W.MCP_WORKER, cfg: dict | None = None,
                     mod_file: str | None = None) -> dict:
     """Launch one GD worker and hold it open (about 20 seconds).
 

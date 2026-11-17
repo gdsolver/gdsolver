@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gdtas.paths import LEVEL_DATA, WORKERS_ROOT
+from gdtas.paths import DEFAULT_WORKER, LEVEL_DATA, WORKERS_ROOT
 from gdtas.worker import Worker, WorkerError
 
 DUMPS = ("objrects.txt", "triggers.txt", "objgroups.txt", "obb.txt",
@@ -82,7 +82,7 @@ def refresh(level: int, worker_id: int, data_dir: Path, workers_root: Path,
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--levels", nargs="+", type=int, default=[19, 20, 21, 22])
-    ap.add_argument("--worker-id", type=int, default=99)
+    ap.add_argument("--worker-id", type=int, default=DEFAULT_WORKER)
     ap.add_argument("--data-dir", default=str(LEVEL_DATA))
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     a = ap.parse_args(argv)

@@ -1,6 +1,6 @@
 """Start a GD worker for a human to play, in a 16:9 window that records the input.
 
-    python py/start_manual_worker.py --worker-id 91 --level 3
+    python py/start_manual_worker.py --worker-id 101 --level 3
 
 Why it is needed: the Steam copy refuses to start while another GD is alive, so a
 human demo needs a worker instance of its own. This is the recording counterpart
@@ -27,12 +27,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import observe
-from gdtas.paths import BUILD_MOD, WORKERS_ROOT
+from gdtas.paths import BUILD_MOD, PERSON_WORKER, WORKERS_ROOT
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--worker-id", type=int, default=91)
+    ap.add_argument("--worker-id", type=int, default=PERSON_WORKER)
     ap.add_argument("--level", type=int, default=3)
     ap.add_argument("--slowmo", type=int, default=1)
     ap.add_argument("--resolution-index", type=int, default=25,

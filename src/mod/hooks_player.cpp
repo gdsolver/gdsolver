@@ -155,6 +155,23 @@ class $modify(PlayerObject) {
         PlayerObject::update(dt);
         if (isP1) pressLine("update-out");
         if (isP1) traceModifierCounters(this);
+        // cfg nodedbg=t0,t1 (print only): the node stopDashing (0x4f4cc7 in the 2.2091 exe) reads its rotation from, this+0x740.
+        // One line a tick: the update-call counter, the player's and the node's rotation, the node's running actions and vtable.
+        if (isP1 && g_nodeDbg1 >= g_nodeDbg0 && (long long)g_tick >= g_nodeDbg0 && (long long)g_tick <= g_nodeDbg1 && botDriving()) {
+            auto* node = *reinterpret_cast<cocos2d::CCNode**>(reinterpret_cast<char*>(this) + 0x740);
+            char b[320];
+            if (node) {
+                const uintptr_t vt = *reinterpret_cast<uintptr_t*>(node);
+                snprintf(b, sizeof(b),
+                         "nodedbg: t=%lld frame=%lld prot=%.4f node=%p nrot=%.4f nrotx=%.4f nroty=%.4f acts=%u scale=%.3f vis=%d parent=%p vt=base+0x%llx",
+                         (long long)g_tick, (long long)g_frame, this->getRotation(), (void*)node, node->getRotation(), node->getRotationX(), node->getRotationY(),
+                         node->numberOfRunningActions(), node->getScale(), node->isVisible() ? 1 : 0, (void*)node->getParent(),
+                         (unsigned long long)(vt - (uintptr_t)geode::base::get()));
+            } else {
+                snprintf(b, sizeof(b), "nodedbg: t=%lld node=null", (long long)g_tick);
+            }
+            writeResult(b);
+        }
     }
 
     // cfg `sticktrace=t0,t1`: postCollision's ground-object bookkeeping (see g_stickT0).
@@ -583,7 +600,8 @@ class $modify(PlayerObject) {
         // ...and whether THIS tick's press is still queued behind us (see above).
         const int pend = (g_nextInput < g_cfg.inputs.size()
                           && g_cfg.inputs[g_nextInput].step == g_tick
-                          && g_cfg.inputs[g_nextInput].down) ? 1 : 0;
+                          && g_cfg.inputs[g_nextInput].down
+                          && !g_cfg.inputs[g_nextInput].p2) ? 1 : 0;
         // `uid` names WHICH orb, and the line is unusable without it wherever more
         // than one is in reach. Two open questions both need exactly this field:
         //   - lv14 t=13,363 has a yellow and a gravity orb bracketing the player,

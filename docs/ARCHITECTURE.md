@@ -96,8 +96,10 @@ plan and the model trace the next divergence is measured against.
 * Output contracts: `SOLVED at ...`, `PARTIAL: frontier died at t=.. x=..`,
   `FAILED: ...` on stdout; files `<out>` (the plan, `input=<tick>,<buttons>` lines,
   where `<buttons>` is a bitmask of the buttons held from that tick: bit 0 is
-  player 1's jump, the other bits are reserved and a reader that does not drive
-  one refuses the plan),
+  player 1's jump and bit 1 is player 2's (a two-player level's second button,
+  which the solver plans and this version replays; the harness will not launch
+  such a plan on a package without the path), the other
+  bits are reserved and a reader that does not drive one refuses the plan),
   `<out>.trace.csv` (per-tick model state) and `<out>.bands.txt` (per-layer
   frontier width).
 
@@ -300,9 +302,9 @@ solver's command line:
 
 | area | on by default | turned off by |
 |---|---|---|
-| the model's rules (`leveldp`) | every measured ramp, dual, portal and kill rule. The 0.4.0 clean-up removed 276 switches, so the rules older than it mostly have no off arm (a few keep one); every rule added since keeps a `--no-` spelling | the older ones: `--no-portalpress`, `--no-portalunpin`, `--no-hazendpoint`, `--no-upsidecoyote`, `--no-padtable`, `--no-airpress`, `--no-anchorride`, `--no-rotsplit`, `--no-obb-all`; the newer: `--no-<flag>`, e.g. `--no-gravtrig`, `--no-teleporttrig`, `--no-portreread`, `--no-flipbonk` |
-| the search (`leveldp`) | `--ladderovercap`, `--ladderprefix`, `--rejoinprobe 5` | `--no-ladderovercap`, `--no-ladderprefix`, `--rejoinprobe 0` |
-| the repair loop | `cpflight=600`, `cpcarryparts=3`, `dplearnresets=1`, `dpmodelreanchor=3`, `offboardfree`, `offboardband`, `voidband`, `cpfollowsection`, `cpdisabled`, `cpfollowfloats`, `cprotnode`, `cppersistguard`, `dpseedpickups`, `snapnodesync`, `obbnolatch` | `cpflight=0`, `cpcarryparts=31`, `dplearnresets=-1`, the others `=0` |
+| the model's rules (`leveldp`) | every measured ramp, dual, portal and kill rule. The 0.4.0 clean-up removed 276 switches, so the rules older than it mostly have no off arm (a few keep one); a rule added since keeps a `--no-` spelling until the rule is folded into the default and the switch removed (171 in v0.6.0, 53 in v0.7.0; dp/removed_flags.txt) | the older ones: `--no-portalpress`, `--no-portalunpin`, `--no-hazendpoint`, `--no-upsidecoyote`, `--no-padtable`, `--no-airpress`, `--no-anchorride`, `--no-rotsplit`; the newer: `--no-<flag>`, e.g. `--no-teleporttrig`, `--no-portreread`, `--no-flipbonk`, `--no-stopjump`, `--no-chanmove` |
+| the search (`leveldp`) | `--ladderovercap`, `--ladderprefix`, `--rejoinprobe 5`, `--statecross`, `--crossbehind`, `--incanchor`, `--rlbound 1500` | `--no-ladderovercap`, `--no-ladderprefix`, `--rejoinprobe 0`, `--no-statecross`, `--no-crossbehind`, `--no-incanchor`, `--rlbound 0` |
+| the repair loop | `cpflight=600`, `cpcarryparts=2`, `dplearnresets=1`, `dpmodelreanchor=3`, `dpcapenvrepeat=3`, `dpmissedportalrepeat=3`, `dpspeedfirst`, `camrand`, `vtime` (not given: the fast loop's dt while it runs), `offboardfree`, `offboardband`, `voidband`, `cpfollowsection`, `cpdisabled`, `cpfollowfloats`, `cprotnode`, `cppersistguard`, `dpseedpickups`, `snapnodesync`, `obbnolatch` | `cpflight=0`, `cpcarryparts=31`, `dplearnresets=-1`, `vtime=0`, the others `=0` |
 | coins ([COINS.md](COINS.md)) | `dpcoinwin=60,2,700`, `coinapproachreach`, `coinmissearly`, `routeprereq` | `=0` |
 | the section solver ([SECTION_SOLVE.md](SECTION_SOLVE.md)) | `dpsectierfirst`, `dpsecstate`, `dpsecrecaway`, `secsnapem`, `secjbkeep`, `secheaddash`, `secheadaccel`, `secgracedash`, `secrungcoinoff`, `secbookfirst`, `secredoreach`, `secwsnapauto`, `secwsnapgate`, `sectionhooklazy` | `=0` |
 | the level slice ([LEVEL_SLICE.md](LEVEL_SLICE.md)) | `slicetriggers`, `sliceuids`, `slicekeepgroups`, `slicenotouch`, `slicefirstref`, `slicegiveupcopy` | `=0` |

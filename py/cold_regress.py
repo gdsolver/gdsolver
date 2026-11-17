@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """The cold regression: every level solved from nothing by the game itself.
 
-    python py/cold_regress.py                    # all 22, pool 90-93, a launch per level
+    python py/cold_regress.py                    # all 22, over the default pool (99-101), a launch per level
     python py/cold_regress.py --levels 16 22     # just those two
     python py/cold_regress.py --one-session      # all of them in ONE game
     python py/cold_regress.py --bless            # adopt this run as the baseline
@@ -71,8 +71,8 @@ sys.path.insert(0, str(HERE))
 
 import cold_manifest
 import run_guard
-from gdtas.paths import BUILD_MOD, DATA
-from gdtas.worker import run_session, snapshot_mod
+from gdtas.paths import BUILD_MOD, DATA, DEFAULT_POOL
+from gdtas.worker import WorkerError, run_session, snapshot_mod
 
 # The runner's own limits inside a launch (py/run_guard.py). main() and other runners that
 # call one() / one_session() set these; 0 turns a limit off. LEVEL_DEADLINE_S is the
@@ -169,10 +169,13 @@ def _run_meta(a) -> dict:
     prov = getattr(a, "build_prov", None)
     if prov:
         head = prov["commit"]
-    return {"head": head, "mod": str(a.mod),
+    meta = {"head": head, "mod": str(a.mod),
             "mod_sha256": hashlib.sha256(Path(a.mod).read_bytes()).hexdigest(),
             "cfg": list(a.cfg), "levels": list(a.levels),
             "resolution": getattr(a, "resolution", None), "arrangement": "one-session"}
+    if getattr(a, "fresh_verify", False):
+        meta["fresh_verify"] = True       # --adopt then needs each CLEARED level's sidecar
+    return meta
 
 
 def run_resolution(workers: list[int]) -> tuple[int | None, str]:
@@ -231,9 +234,25 @@ def assign(levels: list[int], pool: list[int]) -> dict[int, list[int]]:
 def wipe(worker_id: int) -> None:
     """Everything the loop learns lives in the worker's data dir, so a cold run
     starts by deleting it. Leaving one file behind is a seed, and a seeded run
-    is not a cold one (CLAUDE.md's first rule)."""
+    is not a cold one (CLAUDE.md's first rule).
+
+    Not under a GD that is running: those files are that run's, and the launch would
+    refuse the worker ("already running") only after they were gone. Three workers
+    share the default pool, so a batch that reaches a busy one is the ordinary case.
+    A GD that is only finishing the previous level gets the launch's own 15 seconds."""
     from gdtas.paths import WORKERS_ROOT
-    d = WORKERS_ROOT / f"worker-{worker_id}" / "session" / "data"
+    from gdtas.worker import WorkerError, processes_under
+    root = WORKERS_ROOT / f"worker-{worker_id}"
+    deadline = time.time() + 15.0
+    while True:
+        pids = processes_under(root)
+        if not pids:
+            break
+        if time.time() >= deadline:
+            raise WorkerError(f"worker-{worker_id} is already running (PID {pids}); its data is not wiped. "
+                              f"Name a free worker with --pool.")
+        time.sleep(1.0)
+    d = root / "session" / "data"
     for name in ("dp_seed.txt", "dp_plan.txt", "dp_plan.txt.trace.csv",
                  "dp_tail.txt", "dp_tail.txt.trace.csv", "dp_fixup.trace.csv",
                  "dp_fixups.txt", "dp_fixups_noop.txt", "dp_groups.txt",
@@ -251,10 +270,23 @@ def wipe(worker_id: int) -> None:
             pass
 
 
+def _say_guard_stop(r: dict) -> None:
+    """A level the runner's guard ended (the memory floor, a level deadline) and that did not clear says so in its `why`: the summary line read "stuck: out of wall time" for a level the
+    memory floor stopped at 474 s of a 1200 s budget, which hides that the machine, not the level, ended the run. The reason stays in `stopped`."""
+    if r.get("stopped") and not r.get("cleared") and not str(r.get("why", "")).startswith("crash"):
+        r["why"] = "stuck: stopped by the guard (" + str(r["stopped"])[:48] + ")"
+
+
 def one(level: int, wid: int, budget: float, extra: list[str],
         out_dir: Path, mod_file: Path = BUILD_MOD) -> dict:
     t0 = time.time()
-    wipe(wid)
+    try:
+        wipe(wid)
+    except WorkerError as e:                    # a worker that is running somebody's session
+        return {"lv": level, "cleared": False, "why": f"ERROR {e}",
+                "iters": 0, "deepest_t": -1, "deepest_x": -1.0, "fx": 0,
+                "record": "?", "wall": time.time() - t0, "fp": "",
+                "timeout": False, "died_plan": "", "data": ""}
     guard = run_guard.LevelGuard(GUARD["level_deadline_s"], GUARD["mem_floor_mb"],
                                  out_dir / f"guard_lv{level}.jsonl", first_level=level)
     try:
@@ -279,8 +311,16 @@ def one(level: int, wid: int, budget: float, extra: list[str],
     out = read_result(txt, getattr(r, "timed_out", False))
     out["lv"] = level
     out["wall"] = time.time() - t0
+    crash = getattr(r, "crash", "")
+    if crash:
+        # Why the launch ended, which the level's own log cannot say (the mod may not have loaded at all): the
+        # table says "crash: ..." rather than "stuck", and the whole sentence is kept beside it.
+        out["crash"] = crash
+        if not out.get("cleared"):
+            out["why"] = "crash: " + (crash if len(crash) <= 60 else crash[:57] + "...")
     if guard.stopped:
         out["stopped"] = guard.stopped["why"]
+        _say_guard_stop(out)
     run_guard.note_walls(out_dir, {level: out["wall"]})
     # wipe() runs at the START of a run, so the loser's working files are still
     # there when this returns. Naming the directory is the whole handover: the
@@ -377,6 +417,7 @@ def one_session(levels: list[int], wid: int, budget: float, extra: list[str],
             run_guard.note_stop(out_dir, -1, stop)
             for r in part:
                 r["stopped"] = stop["why"]
+                _say_guard_stop(r)
         if not stop or guard.level not in remaining:
             results += part
             break
@@ -386,6 +427,7 @@ def one_session(levels: list[int], wid: int, budget: float, extra: list[str],
             if r["lv"] == guard.level:
                 r["stopped"] = stop["why"]
                 r["timeout"] = True
+                _say_guard_stop(r)
         results += part[:cut + 1]
         rest = remaining[cut + 1:]
         if guard.memory_stop or time.time() >= t_end:
@@ -405,9 +447,14 @@ def _one_session_pass(levels: list[int], wid: int, budget: float, extra: list[st
                       out_dir: Path, mod_file: Path = BUILD_MOD, part: int = 0):
     """One game over `levels`: (one entry per requested level, the guard it ran under)."""
     t0 = time.time()
-    wipe(wid)
     guard = run_guard.LevelGuard(GUARD["level_deadline_s"], GUARD["mem_floor_mb"],
                                  out_dir / "guard_suite.jsonl", first_level=None)
+    try:
+        wipe(wid)
+    except WorkerError as e:                    # a worker that is running somebody's session
+        return [{"lv": lv, "cleared": False, "why": f"ERROR {e}", "iters": 0,
+                 "deepest_t": -1, "deepest_x": -1.0, "fx": 0, "record": "?",
+                 "wall": time.time() - t0, "fp": ""} for lv in levels], guard
     levels_arg = "levels=" + ",".join(str(l) for l in levels)
     # Per-level wall clock. The log carries no timestamps of its own, so the
     # only clock is this side: run_session reads what result.txt gained about
@@ -433,6 +480,8 @@ def _one_session_pass(levels: list[int], wid: int, budget: float, extra: list[st
         return [{"lv": lv, "cleared": False, "why": f"ERROR {e}", "iters": 0,
                  "deepest_t": -1, "deepest_x": -1.0, "fx": 0, "record": "?",
                  "wall": time.time() - t0, "fp": ""} for lv in levels], guard
+    if getattr(r, "crash", ""):
+        print(f"  worker-{wid}: the game ended: {r.crash}", flush=True)
     txt = "\n".join(r.lines)
     # A suite the guard split runs more than one game; each keeps its own log.
     suite_log = out_dir / ("coldlog_suite.txt" if part == 0
@@ -561,6 +610,238 @@ def read_result(txt: str, timed_out: bool = False) -> dict:
             # The last [fp] is the state the run ended in -- the cheapest single
             # value to diff two runs by (see logFingerprint in repair.hpp).
             "fp": fps[-1] if fps else ""}
+
+
+FRESH_TIMEOUT_S = 900.0
+FRESH_SIDECAR = "fresh_verify_lv{}.json"
+FRESH_LOG = "fresh_replay_lv{}.txt"
+
+
+def _sha256(p: Path) -> str:
+    import hashlib
+    return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def fresh_classify(lines: list[str], clear: bool, detail: str, timed_out: bool,
+                   stall: dict | None = None) -> tuple[str, str, dict | None]:
+    """What a replay's log says, as (kind, detail, death). The two kinds that are about the PLAN:
+    `death` (the replay died: tick, x, and who when the game said) and `no_complete` (the game ended
+    with neither a death nor a completion). `instrument` is the clock ending it: the replay did not
+    finish, and nothing is claimed about the plan."""
+    if clear:
+        return "ok", detail or "", None
+    if timed_out and stall:
+        # the launch was ended because its log went quiet, not because the replay's time was spent: say where it stopped and under what load
+        return ("instrument", f"stalled: result.txt quiet for {stall.get('quiet_s')}s after \"{stall.get('last_line', '')[:80]}\" "
+                f"({stall.get('gd_running')} game process(es) on the machine, {stall.get('mem_free_gb')} GB free)", None)
+    if timed_out:
+        return "instrument", f"timeout ({detail})", None
+    death = None
+    who = ""
+    for ln in lines:
+        m = re.match(r"killer: t=(\d+) who=(\w+)", ln)
+        if m:
+            who = m.group(2)
+        m = re.match(r"death: attempt=\d+ tick=(\d+) x=([\d.]+)", ln)
+        if m and death is None:
+            death = {"tick": int(m.group(1)), "x": float(m.group(2)), "who": who}
+    if death:
+        return "death", f"died at t={death['tick']} x={death['x']:.1f}" + (f" ({death['who']})" if death["who"] else ""), death
+    return "no_complete", f"the replay ended with no completion and no death ({detail})", None
+
+
+def fresh_apply(r: dict, side: dict) -> None:
+    """Put a fresh-verify sidecar's verdict on a result. A replay that died or never completed is
+    `stuck (mid_session_only)`; an instrument failure (no plan, the game would not start, the
+    clock) is `unverified`, which says nothing about the plan and is still not a clear."""
+    r["fresh_verify"] = side["kind"] if side["kind"] != "ok" else "ok"
+    r["fresh_verify_detail"] = side.get("detail", "")
+    if side["kind"] == "ok":
+        return
+    r["cleared"] = False
+    r["why"] = ("stuck (mid_session_only)" if side["kind"] in ("death", "no_complete")
+                else f"unverified (fresh-verify: {side.get('detail', '')[:60]})")
+
+
+def fresh_verify(results: list[dict], wid: int, mod_file: Path, out_dir: Path,
+                 extra_cfg: list[str] | None = None, data_dir: Path | None = None) -> None:
+    """--fresh-verify: after the solve, play each saved solution once from the start in a NEW game.
+
+    `dpsolve: solution saved` is the loop's own claim, made in the session that solved the
+    level, and a level can be cleared there and not from the start: the loop re-anchors on the
+    game's state (a restored checkpoint), so a state the restore built can differ from the one
+    the plan reaches by playing from tick 0 (a custom two-player level: a P2 that dies at
+    t=27928 when the plan is played from the head). The replay is the bare one -- solve=0,
+    blockinput, the cfg input path -- and does not inherit the solver's cfg, which is what
+    verify_solutions.verify_one builds. A level whose replay dies or never completes is reported
+    `stuck (mid_session_only)`: it cleared in the session and nowhere else. A replay that could
+    not be made (no plan file, the game would not start, the clock) is `unverified` -- a failed
+    instrument, not a finding about the plan.
+
+    The evidence is kept beside the logs, per level, so the verdict can be read again without
+    running the game (and --adopt does): fresh_verify_lv<N>.json (the request, the package's and the
+    plan's SHA256, the kind and the reason) and fresh_replay_lv<N>.txt (the replay's whole log).
+
+    A development tool's check: nothing here is reached from the Play menu, and the mod's own
+    clear gate is not touched. The worker must be free (the suite's game has ended); the solution
+    is read from its data dir, where the next level's wipe() would delete it, so a per-level run
+    calls this right after the level."""
+    from gdtas.paths import WORKERS_ROOT
+    from verify_solutions import verify_one
+    data = data_dir or (WORKERS_ROOT / f"worker-{wid}" / "session" / "data")
+    mod_sha = _sha256(mod_file) if Path(mod_file).exists() else ""
+    for r in results:
+        if not r.get("cleared"):
+            continue
+        lv = r["lv"]
+        src = data / f"solution_lv{lv}_dp.txt"
+        side = {"requested": True, "level": lv, "mod": str(mod_file), "mod_sha256": mod_sha,
+                "plan": src.name, "plan_sha256": "", "kind": "", "detail": "", "death": None,
+                "log": ""}
+        if not src.exists():
+            side["kind"], side["detail"] = "instrument", f"no {src.name} in {data}"
+        else:
+            side["plan_sha256"] = _sha256(src)
+            try:
+                shutil.copy2(src, out_dir / src.name)       # the solution that was judged, beside the logs
+            except OSError:
+                pass
+            try:
+                v = verify_one(wid, src, lv, FRESH_TIMEOUT_S, WORKERS_ROOT,
+                               extra_cfg=list(extra_cfg or []), mod_file=mod_file)
+                (out_dir / FRESH_LOG.format(lv)).write_text("\n".join(v.lines), encoding="utf-8", errors="replace")
+                side["log"] = FRESH_LOG.format(lv)
+                side["kind"], side["detail"], side["death"] = fresh_classify(v.lines, v.clear, v.detail, v.timed_out,
+                                                                           getattr(v, "stall", None))
+                if getattr(v, "stall", None):
+                    side["stall"] = v.stall
+            except Exception as e:                          # noqa: BLE001  a worker that will not start
+                side["kind"], side["detail"] = "instrument", f"ERROR {e}"
+        (out_dir / FRESH_SIDECAR.format(lv)).write_text(json.dumps(side, indent=1), encoding="utf-8")
+        print(f"  fresh-verify lv{lv}: {'ok' if side['kind'] == 'ok' else side['kind'].upper() + ' ' + side['detail'][:120]}",
+              flush=True)
+        fresh_apply(r, side)
+
+# The bare replay's cfg (verify_solutions.verify_one builds the same list, plus the level and its plan); test_cold_regress_verdict holds the two together.
+FRESH_BARE_CFG = ["enabled=1", "attempts=1", "quitwhendone=1", "blockinput=1", "cbs=0", "cos=1", "notrace=1",
+                  "fastdt=0.0166667", "fastloops=1800", "skiprender=1", "solve=0", "music=mute", "coins=0"]
+
+
+def fresh_verify_one_session(results: list[dict], wid: int, mod_file: Path, out_dir: Path,
+                             extra_cfg: list[str] | None = None, data_dir: Path | None = None,
+                             retry: bool = True) -> dict:
+    """--fresh-verify-one-session: the saved solutions of every cleared level, played from the start, all in ONE new game.
+
+    The same bare replay as fresh_verify (solve=0, blockinput, a new process that did not solve), but the game is started once: the mod's suite
+    (`levels=`) enters each level in turn and reads that level's plan from the directory named by `suiteplans=` (mod/config.hpp suite::g_planDir).
+    A launch that stalls at its start has been seen (a menu that never enters the level, a level that never loads), and a suite has one start where
+    the per-level form has twenty-two. What is lost is the independent launch per level; a state one level leaves behind is looked for in the
+    one-session cold run.
+
+    The verdict of each level is read from its own section of the log (split_suite) with the classifier fresh_classify uses, and each level gets the
+    sidecar and the replay log fresh_verify writes (plus `arrangement: one-session`). A game that stalls or ends early leaves the level it was in and
+    the levels after it `instrument`; with `retry` those are played once more by fresh_verify, one launch each, and the sidecar keeps what the
+    one-session attempt said (`one_session_first`) and that the retry was used. The count of stalls and of retried levels is printed and written to
+    fresh_verify_suite.json, so a retry never hides how often the game stalls."""
+    from gdtas import results as gres
+    from gdtas.paths import WORKERS_ROOT
+    data = data_dir or (WORKERS_ROOT / f"worker-{wid}" / "session" / "data")
+    mod_sha = _sha256(mod_file) if Path(mod_file).exists() else ""
+    plan_dir = out_dir / "fresh_plans"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    sides: dict[int, dict] = {}
+    ready: list[int] = []
+    for r in results:
+        if not r.get("cleared"):
+            continue
+        lv = r["lv"]
+        src = data / f"solution_lv{lv}_dp.txt"
+        side = {"requested": True, "level": lv, "mod": str(mod_file), "mod_sha256": mod_sha, "plan": src.name, "plan_sha256": "",
+                "kind": "", "detail": "", "death": None, "log": "", "arrangement": "one-session"}
+        if not src.exists():
+            side["kind"], side["detail"] = "instrument", f"no {src.name} in {data}"
+        else:
+            side["plan_sha256"] = _sha256(src)
+            for dst in (out_dir / src.name, plan_dir / src.name):
+                try:
+                    shutil.copy2(src, dst)
+                except OSError:
+                    pass
+            ready.append(lv)
+        sides[lv] = side
+    stall = None
+    ended = ""
+    gave_up = False
+    if ready:
+        cfg = (FRESH_BARE_CFG + list(extra_cfg or []) + ["levels=" + ",".join(str(lv) for lv in ready),
+                                                         "suiteplans=" + plan_dir.resolve().as_posix()])
+        try:
+            rs = run_session(wid, cfg, timeout_s=FRESH_TIMEOUT_S + 120.0 * len(ready), workers_root=WORKERS_ROOT,
+                             mod_file=mod_file, done_marker=SUITE_DONE)
+            txt = "\n".join(rs.lines)
+            stall = getattr(rs, "stall", None)
+            timed_out = bool(getattr(rs, "timed_out", False))
+            ended = getattr(rs, "crash", "") or ""
+            sections = dict(split_suite(txt))
+            last_lv = max(sections, key=lambda k: txt.find(f"suite: level={k} ")) if sections else None
+            # The mod's suite cannot leave a level whose replay ended in a death (the dead PlayLayer stays up): it says so and stops. That is the game's
+            # answer, not a stall of the launch, and the levels after the dead one are the ones played again by themselves.
+            gave_up = "suite: gave up waiting to leave the level" in txt
+            for lv in ready:
+                side = sides[lv]
+                sec = sections.get(lv)
+                if sec is None:
+                    why = (f"stalled before this level (result.txt quiet {stall.get('quiet_s')}s after \"{stall.get('last_line', '')[:60]}\")" if stall
+                           else (f"the game ended: {ended}" if ended else
+                                 (f"the suite stopped after lv{last_lv}: it could not leave the level the game was in (a replay that ended in a death)" if gave_up
+                                  else ("the clock ended the suite" if timed_out else "the suite ended"))))
+                    side["kind"], side["detail"] = "instrument", f"not reached: {why}"
+                    continue
+                lines = sec.split("\n")
+                clear, detail = gres.clear_verdict(lines)
+                (out_dir / FRESH_LOG.format(lv)).write_text(sec, encoding="utf-8", errors="replace")
+                side["log"] = FRESH_LOG.format(lv)
+                here_out = timed_out and lv == last_lv
+                side["kind"], side["detail"], side["death"] = fresh_classify(lines, clear, detail, here_out,
+                                                                           stall if here_out else None)
+                if here_out and stall:
+                    side["stall"] = stall
+        except Exception as e:                              # noqa: BLE001  a worker that will not start
+            for lv in ready:
+                sides[lv]["kind"], sides[lv]["detail"] = "instrument", f"ERROR {e}"
+    redo = [lv for lv in ready if sides[lv]["kind"] == "instrument"] if retry else []
+    for r in results:
+        lv = r.get("lv")
+        if lv not in sides:
+            continue
+        side = sides[lv]
+        if lv in redo:
+            continue
+        (out_dir / FRESH_SIDECAR.format(lv)).write_text(json.dumps(side, indent=1), encoding="utf-8")
+        print(f"  fresh-verify lv{lv}: {'ok' if side['kind'] == 'ok' else side['kind'].upper() + ' ' + side['detail'][:120]}", flush=True)
+        fresh_apply(r, side)
+    if redo:
+        for lv in redo:
+            first = {k: sides[lv].get(k) for k in ("kind", "detail", "stall")}
+            print(f"  fresh-verify lv{lv}: one-session attempt was {first['kind'].upper()} ({str(first['detail'])[:100]}); one more launch by itself", flush=True)
+        fresh_verify([r for r in results if r.get("lv") in redo], wid, mod_file, out_dir, extra_cfg, data_dir)
+        for lv in redo:
+            p = out_dir / FRESH_SIDECAR.format(lv)
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+                d["one_session_first"] = {k: sides[lv].get(k) for k in ("kind", "detail", "stall")}
+                d["per_launch_retry"] = True
+                d["arrangement"] = "one-session, then per-launch"
+                p.write_text(json.dumps(d, indent=1), encoding="utf-8")
+            except (OSError, ValueError):
+                pass
+    summary = {"arrangement": "one-session", "levels": ready, "stalled": bool(stall), "stall": stall, "game_ended": ended,
+               "stopped_after_a_level_it_could_not_leave": bool(ready) and gave_up,
+               "retried_per_launch": redo, "kinds_first_attempt": {str(lv): sides[lv]["kind"] for lv in ready}}
+    (out_dir / "fresh_verify_suite.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    print(f"  fresh-verify one-session: {len(ready)} level(s) in one game, {1 if stall else 0} stall(s)"
+          + (f", per-launch retry for {redo}" if redo else ", no retry"), flush=True)
+    return summary
 
 
 def report(results: list[dict], base: dict, a) -> int:
@@ -758,6 +1039,25 @@ def adopt(a) -> int:
         r = read_result(sec)
         r["lv"], r["wall"] = lv, 0.0
         results.append(r)
+    if run.get("fresh_verify"):
+        # The run asked for the replay from the start, so a CLEARED the log alone shows is not
+        # the verdict: it is whatever the replay said, kept in the sidecar. Without the sidecar
+        # (or with one for another package) the verdict is unknown, and unknown is refused.
+        for r in results:
+            if not r["cleared"]:
+                continue
+            sp = d / FRESH_SIDECAR.format(r["lv"])
+            if not sp.exists():
+                print(f"refused: the run asked for --fresh-verify and lv{r['lv']} has no {sp.name} "
+                      f"beside the log: whether its solution clears from the start is unknown")
+                return 2
+            side = json.loads(sp.read_text(encoding="utf-8"))
+            if side.get("level") != r["lv"] or side.get("mod_sha256") != run["mod_sha256"] \
+                    or side.get("kind") not in ("ok", "death", "no_complete", "instrument"):
+                print(f"refused: {sp.name} is not a fresh-verify verdict of this run's package "
+                      f"for lv{r['lv']}")
+                return 2
+            fresh_apply(r, side)
     return report(results, load_baseline(coins), a)
 
 
@@ -798,7 +1098,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--levels", nargs="+", type=int,
                     default=list(range(1, 23)))
-    ap.add_argument("--pool", nargs="+", type=int, default=[90, 91, 92, 93])
+    ap.add_argument("--pool", nargs="+", type=int, default=list(DEFAULT_POOL))
     # THE PER-LEVEL CLOCK. A level that solves but takes an hour is a red
     # signal, not a result worth waiting for: the user's ruling of 2026-09-03
     # is to drop it early, keep what it had, and go and find out why. The cap
@@ -827,6 +1127,16 @@ def main(argv=None) -> int:
     ap.add_argument("--bless", action="store_true",
                     help="save this run's iteration counts as the baseline "
                          "(runs --one-session: see the note at the top)")
+    ap.add_argument("--fresh-verify", action="store_true",
+                    help="after a level is CLEARED, play its saved solution once from the start "
+                         "in a new game; one that does not clear is reported `stuck "
+                         "(mid_session_only)` (see fresh_verify). Use it for an acceptance run.")
+    ap.add_argument("--fresh-verify-one-session", action="store_true",
+                    help="--fresh-verify, but the saved solutions are replayed one after another in ONE new game "
+                         "(cfg `suiteplans=`), one launch instead of one per level; a game that stalls leaves the "
+                         "levels it did not finish `unverified`, which are played once more by themselves, and the "
+                         "stall and the retry are counted (see fresh_verify_one_session). With --one-session only; "
+                         "other arrangements use --fresh-verify's own form.")
     # Which binary is being measured is the question this file exists to answer,
     # and it had no way to say. A release built by CI is not the build on the
     # desk -- different configuration, so not obviously the same arithmetic.
@@ -840,6 +1150,8 @@ def main(argv=None) -> int:
                          "(a folder holding coldlog_suite.txt and coldlog_suite.meta.json)")
     add_guard_args(ap)
     a = ap.parse_args(argv)
+    if getattr(a, "fresh_verify_one_session", False):
+        a.fresh_verify = True
     if a.adopt:
         return adopt(a)
     if not a.mod.exists():
@@ -926,7 +1238,8 @@ def main(argv=None) -> int:
     cold_manifest.start(DATA, mod=a.mod, cfg=CFG + list(a.cfg), levels=list(a.levels),
                         arrangement="one-session" if one_session_mode else "per-level",
                         resolution=a.resolution, coins=coins,
-                        build=getattr(a, "build_prov", None), geode=a.geode)
+                        build=getattr(a, "build_prov", None), geode=a.geode,
+                        fresh_verify=bool(a.fresh_verify))
     run_guard.note_guard(DATA, guard_settings)
     logs = {lv: DATA / f"coldlog_lv{lv}.txt" for lv in a.levels}
     # A suite has no per-level clock to set, so its default stays where it was;
@@ -948,6 +1261,10 @@ def main(argv=None) -> int:
         # package the run never loaded, and --adopt believes this file.
         a.run_meta = _run_meta(a)
         results = one_session(a.levels, wid, budget, list(a.cfg), DATA, a.mod)
+        if a.fresh_verify_one_session:
+            fresh_verify_one_session(results, wid, a.mod, DATA)
+        elif a.fresh_verify:
+            fresh_verify(results, wid, a.mod, DATA)
         (DATA / "coldlog_suite.meta.json").write_text(
             json.dumps(a.run_meta, indent=1, sort_keys=True), encoding="utf-8")
         for r in results:
@@ -984,6 +1301,8 @@ def main(argv=None) -> int:
         for lv in buckets[w]:
             cap = iter_cap(lv, base)
             res = one(lv, w, per_level, list(a.cfg), DATA, a.mod)
+            if a.fresh_verify:
+                fresh_verify([res], w, a.mod, DATA)
             res["cap"] = cap
             res["wallcap"] = per_level
             with lock:

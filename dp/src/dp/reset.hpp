@@ -109,10 +109,11 @@ inline void resetInvocationState() {
 
     // constants.hpp -- the measured values, which --flags override per call
     g_hazDbgUid = -1;
+    g_hazDbgFrom = g_hazDbgTo = -1;
     g_tpLatchExact = false;
     g_fixGravDual = true;
     g_expInZero = true;
-    g_bandOwnTrack = false;
+    g_bandOwnTrack = true;
     g_boxOff = true;
     g_gravToggle = true;
     g_portalStartY = true;
@@ -130,6 +131,8 @@ inline void resetInvocationState() {
     g_sizeExit = true;
     g_padWaveOld = true;
     g_rideOverSpeed = true;
+    g_rideOverSpeedUnder = true;
+    g_ringSpeedFirst = true;
     g_tpPortalForce = true;
     g_forceMiniFly = true;
     g_lawFromBelowShip = true;
@@ -137,10 +140,23 @@ inline void resetInvocationState() {
     g_waveRampEnd = true;
     g_ceilHeldNoLand = true;
     g_ceilOwner = true;
-    g_ceilFarBox = false;
+    g_ceilFarBox = true;
+    g_waveFlipCap = true;
+    g_ballSeatGround = true;
+    g_rideSupGrace = true;
+    g_robotSlopeNoHover = true;
+    g_waveFlipCapFloor = true;
+    g_waveFlipCeilUp = true;
+    g_wavePortalRotMini = true;
+    g_rampSeatAll = true;
+    g_portalObbMode = true;
     g_wavePortalRot = true;
+    g_modeSwitchKeep = false;
+    g_wavePortalSize = true;
+    g_obbFloat = false;
     g_noColCeil = true;
     g_slideUnderDir = true;
+    g_seedChain = true;
     g_waveSeatHaz = true;
     g_tpRampLaunch = true;
     g_rotTouch = true;
@@ -159,6 +175,14 @@ inline void resetInvocationState() {
     g_flyBandCentre = true;
     g_spiderNoExtCol = true;
     g_autoLockMoves = true;
+    g_followTouch = false;
+    g_chanMove = true;
+    g_tap2Max = 4;
+    g_p2Born = true;
+    g_holdSeed2 = true;
+    g_wavePortalHalf = 0.0;
+    g_chanSwitch.clear();
+    g_areaAdd = true;
     g_tpSkipFly = true;
     g_portReRead = true;
     g_touchOwnOff = true;
@@ -202,6 +226,11 @@ inline void resetInvocationState() {
     g_tpTrigForce = true;
     g_startGmod = std::nan("");
     g_tpBack = true;
+    g_tpTrigOnce = true;
+    g_wavePortalSlope = true;
+    g_dashAway = true;
+    g_spiderOrbRot = true;
+    g_bandHoldZoom = true;
     g_tpJumpNext = true;
     g_tpTrigOff = true;
     g_startXhi = std::nan("");
@@ -293,6 +322,18 @@ inline void resetInvocationState() {
     g_autoDisarm.clear();
     g_dynObbRot = true;
     g_recLagUp = true;
+    g_autoTrigFrame = true;
+    g_recLag0 = true;
+    g_forceRaw = true;
+    g_movingWallUp = true;
+    g_stickUphill = true;
+    g_ballContRide = true;
+    g_waveCeilEnd = true;
+    g_dualOrbLate = true;
+    g_ringFlipRide = true;
+    g_landTapSpent = true;
+    g_flyFrameSup = true;
+    g_wavePadSink = true;
     g_rotated.clear();
     g_rotSpec.clear();
     g_rotTailParts.clear();
@@ -300,6 +341,10 @@ inline void resetInvocationState() {
     g_closedPast = true;
     g_closedPastAll = true;
     g_xTrack.clear();
+    g_xTrackW.clear();
+    g_camRows.clear();
+    g_camXtrackRaw.clear();
+    g_camFromFile = false;
     g_recLeadsN = 0;
     g_touchRecLeads = true;
     g_touchRecLeadsN = 0;
@@ -308,6 +353,11 @@ inline void resetInvocationState() {
     g_touchEntered.clear();
     g_touchEnteredT.clear();
     g_dynDbg = -1;
+    if (g_geoDumpF) std::fclose(g_geoDumpF);   // --geodump (dynamics.hpp): print only, per call
+    g_geoDumpF = nullptr;
+    g_geoT0 = 0;
+    g_geoT1 = -1;
+    g_geoStride = 1;
     g_formulaDriven = 0;
     g_recProvGiven = false;
     g_recProvRec = g_recProvAnchor = g_recProvReach = -1;
@@ -388,6 +438,8 @@ inline void resetInvocationState() {
     g_gpHandoff.clear();
     g_vetoPhys = false;
     g_resimLadderPartial = false;
+    g_resimLadderBound = 1500;   // --rlbound (constants.hpp); 0 is the off arm
+    g_resimLadderSpread0 = false;
     g_verdictInfo = false;
     g_resimPX = 0.f;
     g_preBtnSet = false;
@@ -471,6 +523,9 @@ inline void resetInvocationState() {
     g_ctrlWaveNow = true;
     g_ctrlLiftLag = true;
     g_ctrlTrigs.clear();
+    g_pcTrigs.clear();
+    g_pcTouchBoxes.clear();
+    g_revTrigs.clear();
     g_ctrlTrigFrom = -1;
     g_holdTapSpans.clear();
     g_startHoldField = -1;
@@ -478,6 +533,7 @@ inline void resetInvocationState() {
     g_tpOrbOwn = true;
     g_dashRot = true;
     g_dashSprite = true;
+    g_dashSpriteOnce = true;
     g_robotRot = true;
     g_spiderRot = true;
     g_waveSlopeMini = 0.700;
@@ -485,8 +541,21 @@ inline void resetInvocationState() {
     g_waveRingMiniPobb = true;
     g_sectionRound = false;
     g_dropA1c = true;
-    g_sectionUid = false;
+    g_sectionUid = true;
+    g_robotHeldMove = true;
+    g_robotBufJump = true;
+    g_robotHeldSpent = true;
+    g_ceilRobotJump = true;
+    g_p2TouchBox = true;
+    g_spiderPadLatch = true;
+    g_areaOutSame = true;
+    g_dualInLat = true;
+    g_slopeLagPlain = true;
+    g_startRevOff = g_startRevCarry = std::nan("");
     g_ballDashRot = true;
+    g_stopJump = true;
+    g_reverseTrig = true;
+    g_lawUnderFlip = true;
     g_winRePushJump.clear();
 
     // level.hpp -- the rotated copies belong to the level that built them, and g_baseLv points
@@ -554,6 +623,9 @@ inline void resetInvocationState() {
     kSupportTol = 0.01;
     g_startSpeedMul = 0.0;
     g_dynHazPad = 0.0;
+    g_dynSeamGap = 30000;
+    g_dynSeamLen = true;
+    g_dynSeamCut = 0;
     g_fixRadiusCollision = 0;
     g_fixGravityBug = 0;
     g_fixNegativeScale = 0;
@@ -561,6 +633,7 @@ inline void resetInvocationState() {
     g_dynamicLevelHeight = 0;
     g_platformerMode = 0;
     g_maxPlayY = 1e18;
+    g_fixNearReach = true;
     g_goalSpare = kDefGoalSpare;
     g_upsideCoyote = 1;
     g_rawValues = kRawValuesDefault;
@@ -576,6 +649,9 @@ inline void resetInvocationState() {
     g_solidOrdDbgT0 = g_solidOrdDbgT1 = -1;
     g_spentOrb.clear();
     g_spentOrb2.clear();
+    g_spentGlobal = true;
+    g_spentMap1.clear();
+    g_spentMap2.clear();
     g_heldCellCap = 0;
     g_heldCellTwins = 0;
     g_histStatOn = false;
@@ -584,6 +660,30 @@ inline void resetInvocationState() {
     g_goalGd = false;
     g_endPortalX = 0.0;
     g_endPortalFlipX = 0;
+    g_reverseSync = -1;
+    g_twoPlayer = 0;
+    g_dualBornLinked = true;
+    g_p2Held = true;
+    g_p2Shared = true;
+    g_seatPast = true;
+    g_flyRideDown = true;
+    g_p2SoloAfter = true;
+    g_ballOrbTap = true;
+    g_portSeenOverflow = 0;
+    g_ghostOn = false;
+    g_ghostBase = 0;
+    g_ghostLvl.clear();
+    g_swapBodies = false;
+    g_bodyBit = 1;
+    g_startAct2 = -1;
+    g_twoBodyCall = false;
+    g_pinRows.clear();
+    g_p2SecX = false;
+    g_p2Taps = false;
+    g_p2TapPress = false;
+    g_mustPress.clear();
+    g_p2ReplayLvl.clear();
+    g_p2ReplayBase = 0;
     g_offBoardMargin = 0.0;
     g_shiftDbgUid = -1;
     g_shiftDbgDone = false;
@@ -703,6 +803,9 @@ inline void resetInvocationState() {
     g_refAdoptT = -1;
     g_refAdoptFields.clear();
     g_groupInit.clear();
+    g_bootAuto = true;
+    g_groupAutoPaths.clear();
+    g_groupAutoTL.clear();
     g_needSkip = TouchMask{};
     g_touchWinAhead = true;
     g_anchorMove = true;

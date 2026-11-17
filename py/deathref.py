@@ -87,7 +87,7 @@ sys.path.insert(0, str(_PY.parent / "mcp"))
 from gdmcp.data import diff_trace                                  # noqa: E402
 from gdtas import plan as P                                        # noqa: E402
 from gdtas import results as R                                     # noqa: E402
-from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT  # noqa: E402
+from gdtas.paths import DATA, DEFAULT_POOL, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT  # noqa: E402
 from gdtas.solveutil import (copy_held_file, has_grouped_colliders,  # noqa: E402
                              rot2900s, spent2900_from_dump)
 from gdtas.worker import run_session                               # noqa: E402
@@ -398,10 +398,9 @@ def run_pool(level: int, ticks: list[int], a) -> list[dict]:
 
 
 def record(a) -> int:
-    # Only OUR pool matters: worker 98/99 belong to the resident MCP session and
-    # a GD running in a container does not appear here at all. A worker of the
-    # mainline batch pool (90-97) that is not in our pool is still worth saying
-    # out loud -- it means a cold run is in progress.
+    # Only OUR pool matters, and a GD running in a container does not appear here
+    # at all. A running worker that is not in our pool is still worth saying out
+    # loud -- it means a cold run or a resident session is in progress.
     busy = busy_worker_ids()
     if busy:
         print(f"GD running on workers {sorted(busy)}")
@@ -893,7 +892,7 @@ def main(argv=None) -> int:
                     help="deaths within this many px of x are the same site")
     ap.add_argument("--min-rows", type=int, default=200,
                     help="reject a reference whose trace is shorter than this")
-    ap.add_argument("--pool", nargs="+", type=int, default=[90, 91, 92, 93, 94, 95])
+    ap.add_argument("--pool", nargs="+", type=int, default=list(DEFAULT_POOL))
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     ap.add_argument("--timeout-minutes", type=float, default=6.0)
     ap.add_argument("--allow-busy", action="store_true",

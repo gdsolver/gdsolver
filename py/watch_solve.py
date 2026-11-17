@@ -5,7 +5,7 @@ runs there is no drawing and no HUD refresh: the overlay looks frozen, for twent
 or thirty minutes. Nothing else prints either. All this does is watch the
 worker's result.txt and the log from outside.
 
-  python watch_solve.py [--worker 90] [--log data/solvelog_lv20_vr.txt]
+  python watch_solve.py [--worker 99] [--log data/solvelog_lv20_vr.txt]
                         [--interval 10]
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gdtas.paths import WORKERS_ROOT  # noqa: E402
+from gdtas.paths import DEFAULT_WORKER, WORKERS_ROOT  # noqa: E402
 
 
 def tail_match(path: Path, pat: str, n: int = 1) -> list[str]:
@@ -32,7 +32,7 @@ def tail_match(path: Path, pat: str, n: int = 1) -> list[str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--worker", type=int, default=90)
+    ap.add_argument("--worker", type=int, default=DEFAULT_WORKER)
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     ap.add_argument("--log", default=str(Path(__file__).resolve().parent.parent / "data" / "solvelog_lv20_vr.txt"))
     ap.add_argument("--interval", type=float, default=10.0)

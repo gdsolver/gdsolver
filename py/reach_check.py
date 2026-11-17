@@ -51,7 +51,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import runtmp             # noqa: E402  private tmp + trace fingerprints
-from gdtas.paths import LEVELDP_EXE  # noqa: E402
+from gdtas.paths import DEFAULT_WORKER, LEVELDP_EXE  # noqa: E402
 from quick_regress import (DATA, LEVEL_DATA, REF, groups_args, has_grouped_colliders,  # noqa: E402
                            plan_of, read_ref, start_fields)
 
@@ -273,7 +273,7 @@ def main(argv=None) -> int:
     ap.add_argument("--verify", action="store_true",
                     help="replay each solved tail once in GD to confirm it "
                          "survives (needs a worker)")
-    ap.add_argument("--worker-id", type=int, default=99)
+    ap.add_argument("--worker-id", type=int, default=DEFAULT_WORKER)
     ap.add_argument("--timeout-minutes", type=float, default=6.0)
     a = ap.parse_args(argv)
     tmp = runtmp.RunTmp("reach_check", a.tmp, root=DATA / "tmp_reachcheck")

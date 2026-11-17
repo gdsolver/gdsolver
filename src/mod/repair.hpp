@@ -95,10 +95,16 @@ struct AnchorRow {
     // Player 1's m_gravityMod (+0xb84): a touch-triggered gravity trigger (2066) sets it from the touch, which
     // no x says, so the anchor tells dp (--startgmod, dp --gravtouch).
     float gmod = 1.f;
+    // GD's reverse correction (PlayerObject m_maybeReverseSpeed / m_maybeReverseAcceleration): the x a reverse ring or pad still owes after
+    // turning the player round, and the part of it the next tick adds. Not in the dump; the anchor tells dp (--startrev, dp's reverse carry).
+    float revOff = 0.f, revCarry = 0.f;
     // The farthest x of the attempt so far: a teleport can move the player back, and GD's crossing queue
     // (checkSpawnObjects) then waits for x to pass it again (--startxhi, dp --tpback).
     float xmax = 0.f;
     int gframe = 0;          // rotated gameplay (0/1/2/3 = 0/90/180/270)
+    // The camera on this tick, for dp's screen-centred Area actions (written into --xtrack as camL / camW): the left edge of the view in object space
+    // (-m_objectLayer.x / zoom) and the width it shows (window width / zoom). 0 = not read.
+    float camL = 0.f, camW = 0.f;
     int snapUid = -1;        // m_objectSnappedTo's uid, and how far it snapped
     float snapDist = 0.f;
     float pmin = 0.f, pmax = 0.f;   // GD's flight band (getMinPortalY / getMaxPortalY)
@@ -373,8 +379,17 @@ inline void record(GJBaseGameLayer* l, long long t) {
     r.rot2 = (r.dual && l->m_player2) ? l->m_player2->getRotation() : 0.f;   // `p2rot`
     r.speed = (float)p->m_playerSpeed;
     r.gmod = (float)p->m_gravityMod;
-    r.xmax = (t > 0 && g_live[(size_t)t - 1].valid) ? std::max(g_live[(size_t)t - 1].xmax, r.x) : r.x;
+    r.revOff = (float)p->m_maybeReverseSpeed;
+    r.revCarry = (float)p->m_maybeReverseAcceleration;
+    r.xmax =(t > 0 && g_live[(size_t)t - 1].valid) ? std::max(g_live[(size_t)t - 1].xmax, r.x) : r.x;
     r.gframe = g_gameFrame;
+    {
+        const float zoom = *reinterpret_cast<const float*>(reinterpret_cast<const char*>(l) + gdoff::kLayerCameraZoom);
+        if (l->m_objectLayer && zoom > 0.f) {
+            r.camL = -l->m_objectLayer->getPositionX() / zoom;
+            r.camW = cocos2d::CCDirector::sharedDirector()->getWinSize().width / zoom;
+        }
+    }
     r.snapUid = p->m_objectSnappedTo ? p->m_objectSnappedTo->m_uniqueID : -1;
     r.snapDist = p->m_snapDistance;
     r.pmin = l->getMinPortalY();
@@ -675,13 +690,20 @@ inline std::string xtrackArg(long long t0) {
     const char* src = (anchors::g_src == &anchors::g_deepest) ? "deep" : "dead";
     const std::string path = std::string(DATA_DIR) + "/dp_xtrack_" + src + "_"
                              + std::to_string(t0) + ".txt";
-    std::string body = "tick,x\n";
+    // camL / camW (dp's screen-centred Area actions) only when every row has them: the track is read as one or the other.
+    bool cam = true;
+    for (long long t = 1; t <= t0; ++t) {
+        const AnchorRow* r = anchors::row(t);
+        if (r && r->camW <= 0.f) { cam = false; break; }
+    }
+    std::string body = cam ? "tick,x,camL,camW\n" : "tick,x\n";
     long long n = 0;
-    char b[64];
+    char b[128];
     for (long long t = 1; t <= t0; ++t) {
         const AnchorRow* r = anchors::row(t);
         if (!r) continue;
-        snprintf(b, sizeof(b), "%lld,%.4f\n", t, (double)r->x);
+        if (cam) snprintf(b, sizeof(b), "%lld,%.4f,%.4f,%.4f\n", t, (double)r->x, (double)r->camL, (double)r->camW);
+        else snprintf(b, sizeof(b), "%lld,%.4f\n", t, (double)r->x);
         body += b;
         ++n;
     }
@@ -693,6 +715,40 @@ inline std::string xtrackArg(long long t0) {
         f << body;
     }
     std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        std::filesystem::remove(tmp, ec);
+        return std::filesystem::exists(path) ? path : "";
+    }
+    return path;
+}
+
+// dp's --camtrack (screen-centred Area actions): the camera on every tick of the DEEPEST attempt (the longest recording, the one that reaches furthest ahead of any anchor), as
+// tick,x,camL,camW. A screen-centred Area action reads the camera where the plan will be, and the xtrack stops at the anchor. Written once per deepest-buffer serial
+// (a temporary renamed, like xtrackArg's). Empty when no row carries a camera.
+inline std::string camtrackArg() {
+    const std::vector<AnchorRow>& v = anchors::g_deepest.size() > 2 ? anchors::g_deepest : *anchors::g_src;
+    const std::string path = std::string(DATA_DIR) + "/dp_camtrack_" + std::to_string((long long)anchors::g_deepestSerial) + "_"
+                             + std::to_string(v.size()) + ".txt";
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) return path;
+    std::string body = "tick,x,camL,camW\n";
+    long long n = 0;
+    char b[128];
+    for (size_t t = 1; t < v.size(); ++t) {
+        const AnchorRow& r = v[t];
+        if (!r.valid || r.camW <= 0.f) continue;
+        snprintf(b, sizeof(b), "%zu,%.4f,%.4f,%.4f\n", t, (double)r.x, (double)r.camL, (double)r.camW);
+        body += b;
+        ++n;
+    }
+    if (n == 0) return "";
+    const std::string tmp = path + ".tmp" + std::to_string(
+        (unsigned long long)std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f << body;
+    }
     std::filesystem::rename(tmp, path, ec);
     if (ec) {
         std::filesystem::remove(tmp, ec);
@@ -851,6 +907,9 @@ constexpr int kFineTriesPerLadder = 4;
 constexpr long long kCapTiers[] = {16000, 40000};
 constexpr double kTierYq = 0.5, kTierVq = 2.5;
 inline int g_capTier = 0;    // 0 = the base setting
+inline bool g_capEnvNow = false;   // cfg dpcapenvrepeat: the searches are asked for --capenvelope (until the run is deeper)
+// cfg dpsearch: the run has said which search answers its calls, and why a chosen one was not used (baseArgs); once per run.
+inline bool g_searchNoted = false;
 inline int g_topTierIter = 0;  // the round the ladder reached its last tier (cfg dptopstop)
 // MEASURED AND REJECTED (2026-08-23): the driver retries a doomed anchor with more capacity on
 // a coarser grid (16,000 then 40,000 states, yq 0.5 / vq 2.5), and that ladder is what carries
@@ -1172,10 +1231,13 @@ inline bool g_showRequest = false;
 //              itself a moving part: you cannot record past a wall you cannot pass, and you
 //              cannot pass it without the recording.
 //   Deep       the deepest verified plan, later, to record what THAT route sets in motion.
-enum RecordKind { RecNone = 0, RecBootstrap = 1, RecDeep = 2 };
+enum RecordKind { RecNone = 0, RecBootstrap = 1, RecDeep = 2, RecProbe = 3 };
 inline int g_recordKind = RecNone;
 inline bool g_recordRequest = false;
 inline bool g_deepActive = false;
+// A two-player level that has nothing that moves still needs one tick of looking: the game starts its second player where the model has no way to know (a dual from
+// tick 1, on a band the level's own header sets), so the first solve starts from the game's tick-1 row (prepareFirstStart) and the pass ends as soon as that row is taken.
+inline bool g_bootSpawnOnly = false;
 // Whether the attempt CURRENTLY on screen was started as a recording pass. Latched from
 // g_deepActive when the attempt begins (resetLevel) and left alone until the next one starts.
 //
@@ -2264,7 +2326,50 @@ inline void logRotSeedRead(long long t0, const char* site) {
                 + (o.startRotMiss.empty() ? "" : " NOT IN THE QUEUE: " + o.startRotMiss));
 }
 
+// cfg `dppin`: the ticks GD held player 1 on a spot (dp --pinrows), from one attempt's rows: a tick whose x equals the previous or the next
+// tick's, in a run of three or more -- `tick,x,y` lines. A Teleport trigger fired again every tick onto a moving target leaves exactly that (x
+// frozen, y following the target); the rows are the same for every plan, the controls being off in it.
+inline std::string pinRowsText(const std::vector<AnchorRow>& v) {
+    std::string out;
+    std::vector<size_t> run;
+    auto flush = [&]() {
+        if (run.size() >= 3)
+            for (const size_t tt : run)
+                out += std::to_string(tt) + "," + std::to_string((double)v[tt].x) + "," + std::to_string((double)v[tt].y) + "\n";
+        run.clear();
+    };
+    auto valid = [&](size_t t) { return t < v.size() && v[t].valid; };
+    for (size_t t = 1; t < v.size(); ++t) {
+        const bool same = valid(t) && ((valid(t - 1) && std::fabs(v[t].x - v[t - 1].x) < 1e-3f)
+                                       || (valid(t + 1) && std::fabs(v[t].x - v[t + 1].x) < 1e-3f));
+        if (same) run.push_back(t);
+        else flush();
+    }
+    flush();
+    return out;
+}
+// The no-death pass's own recording (the first call has no finished attempt to read): set when that pass is adopted (finishDeepRecord), cfg dppin only.
+inline std::string g_bootPinRows;
+// cfg dpswitch (see the probe passes below): the table written for the body whose presses moved the world, and whose
+inline std::string g_switchTablePath;
+inline int g_switchTableBody = 2;
+inline long long g_probeDepth = 0;   // the bootstrap pass's length, which the probe presses are spread over
+inline int g_probeBody = 0;          // the probe pass in flight (1 or 2), 0 = none
+
 inline void addWorldArgs(std::vector<std::string>& a);
+
+// dp --bootauto (on by default in dp; cfg dpargs --no-bootauto is the off arm): a no-death recording that groupsretime leaves out, for being on another
+// clock than the live record, is still handed to dp as --groupsauto, which reads it only for the objects an x-crossing trigger alone moves and the
+// layered record holds at rest. This mirrors dp's default: when the flag went default-on in dp only, this side still waited for the spelling in dpargs,
+// so a run without it never passed --groupsauto and the dp half of the fix had nothing to read.
+inline bool bootAutoRequested() {
+    bool on = true;
+    for (const std::string& s : g_cfg.dpArgs) {
+        if (s == "--bootauto") on = true;
+        if (s == "--no-bootauto") on = false;
+    }
+    return on;
+}
 
 inline void addWorldArgs(std::vector<std::string>& a) {
     std::error_code ec;
@@ -2301,6 +2406,16 @@ inline void addWorldArgs(std::vector<std::string>& a) {
         && std::filesystem::exists(g_groupsDeepPath, ec)) {
         a.push_back("--groups");
         a.push_back(g_groupsDeepPath);
+    }
+    if (bootAutoRequested()) {
+        if (!g_groupsBootPath.empty() && bootPart >= 0 && std::filesystem::exists(g_groupsBootPath, ec)) {
+            a.push_back("--groupsauto");
+            a.push_back(g_groupsBootPath);
+        }
+        if (!g_groupsDeepPath.empty() && deepPart >= 0 && std::filesystem::exists(g_groupsDeepPath, ec)) {
+            a.push_back("--groupsauto");
+            a.push_back(g_groupsDeepPath);
+        }
     }
     if (!g_groupsPath.empty()
         && std::filesystem::exists(g_groupsPath, ec)) {
@@ -2344,9 +2459,13 @@ inline void addWorldArgs(std::vector<std::string>& a) {
         // when it, the tick before or the tick after is in a band mode, either body: the fly floor
         // reads row t-1 and the ceilings row t+1, so a stretch's edge ticks are rows its clamps
         // read. Elsewhere the reader holds the last row written, the last band tick's.
+        // ...and a DUAL, whatever its bodies are: the dual cube's and robot's band is a wall for the flipped / upright
+        // body (dp --dualcubeband, 2026-09-29 -- after the sentence above was written), and a dual cube section the
+        // recording leaves out is read as the last row held, which was a transitional 670..860 where GD's zoom
+        // opened the band to 534..966 (a custom level, t=37,672..37,826; the model clamped the flipped body at 844.5).
         auto bandMode = [](const AnchorRow* a) {
             auto m = [](int k) { return k == 1 || k == 2 || k == 3 || k == 4 || k == 6 || k == 7; };
-            return a && (m(a->mode) || m(a->m2));
+            return a && (m(a->mode) || m(a->m2) || a->dual);
         };
         // Only changes: the reader holds the last row's value until the next, so flat stretches
         // cost one row instead of thousands. The rows themselves are dp's band_rows.hpp, which
@@ -2421,6 +2540,72 @@ inline void addWorldArgs(std::vector<std::string>& a) {
                     + std::to_string(last);
         return wins;
     };
+    // cfg `dppin`: ...and the ticks GD held player 1 on a spot (--pinrows, pinRowsText): from the attempt the call anchors on, or -- the first
+    // call, with no finished attempt -- from the no-death pass's own recording (g_bootPinRows).
+    if (g_cfg.dpPin) {
+        const std::string rowsTxt = (n > 1) ? pinRowsText(*anchors::g_src) : g_bootPinRows;
+        if (!rowsTxt.empty()) {
+            const std::string pp = std::string(DATA_DIR) + "/dp_pin.txt";
+            std::ofstream pf(pp, std::ios::trunc);
+            pf << rowsTxt;
+            pf.close();
+            a.push_back("--pinrows");
+            a.push_back(pp);
+        }
+        // ...and the second body's own section cell (dp --p2secx): the pair a teleport trigger ran apart is read in two cells
+        a.push_back("--p2secx");
+    }
+    // cfg `dpincanchor`, `dprlbound`: placement only where an object can change (dp --incanchor); a probe before each resim-ladder rung's full
+    // search (dp --rlbound)
+    a.push_back(g_cfg.dpIncAnchor ? "--incanchor" : "--no-incanchor");
+    if (g_cfg.dpRlSpread0) a.push_back("--rlspread0");
+    a.push_back(g_cfg.dpStateCross ? "--statecross" : "--no-statecross");
+    // cfg `dpareaadd`: an Area Move's displacement on top of a closed-form object's placement (dp --areaadd)
+    a.push_back(g_cfg.dpAreaAdd ? "--areaadd" : "--no-areaadd");
+    a.push_back(g_cfg.dpCrossCx ? "--crosscx" : "--no-crosscx");   // cfg `dpcrosscx`
+    a.push_back(g_cfg.dpCrossBehind ? "--crossbehind" : "--no-crossbehind");   // cfg `dpcrossbehind`
+    a.push_back(g_cfg.dpWaveFlipCap ? "--waveflipcap" : "--no-waveflipcap");   // cfg `dpwaveflipcap`
+    a.push_back(g_cfg.dpRampSeatAll ? "--rampseatall" : "--no-rampseatall");   // cfg `dprampseatall`
+    a.push_back(g_cfg.dpPortalObbMode ? "--portalobbmode" : "--no-portalobbmode");   // cfg `dpportalobbmode`
+    a.push_back(g_cfg.dpSlopeLagPlain ? "--slopelagplain" : "--no-slopelagplain");   // cfg `dpslopelagplain`
+    a.push_back(g_cfg.dpWaveFlipCapFloor ? "--waveflipcapfloor" : "--no-waveflipcapfloor");   // cfg `dpwaveflipcapfloor`
+    a.push_back(g_cfg.dpWaveFlipCeilUp ? "--waveflipceilup" : "--no-waveflipceilup");   // cfg `dpwaveflipceilup`
+    a.push_back(g_cfg.dpWavePortalRotMini ? "--waveportalrotmini" : "--no-waveportalrotmini");   // cfg `dpwaveportalrotmini`
+    a.push_back(g_cfg.dpBallSeatGround ? "--ballseatground" : "--no-ballseatground");   // cfg `dpballseatground`
+    a.push_back(g_cfg.dpRobotSlopeNoHover ? "--robotslopenohover" : "--no-robotslopenohover");   // cfg `dprobotslopenohover`
+    a.push_back(g_cfg.dpRideSupGrace ? "--ridesupgrace" : "--no-ridesupgrace");   // cfg `dpridesupgrace`
+    a.push_back("--crossminlag");   // cfg `dpcrossminlag`
+    a.push_back(std::to_string(std::max<long long>(1, g_cfg.dpCrossMinLag)));
+    // cfg `dpdualbornlinked`: a dual portal's new body born linked (dp --dualbornlinked)
+    a.push_back(g_cfg.dpDualBornLinked ? "--dualbornlinked" : "--no-dualbornlinked");
+    a.push_back("--rlbound");
+    a.push_back(std::to_string(g_cfg.dpRlBound));
+    // cfg `dptap`: a Tap the first body's plan passes gets the second player's press (dp --p2tappress, the per-body wrapper's)
+    // cfg `dpswitch`: the table the probe passes made (dp --p2switch), and every press of the second... of the plan the caller holds (--switchpre): the
+    // geometry a schedule gives is the table evaluated at the plan's presses, which the prefix of an anchored call already made.
+    if (g_cfg.dpSwitch && !g_switchTablePath.empty()) {
+        a.push_back("--p2switch");
+        a.push_back("--switchtab");
+        a.push_back(g_switchTablePath);
+        const int swBody = g_switchTableBody;
+        std::string pre;
+        bool down = false;
+        for (const InputCmd& c : g_plan) {
+            if ((swBody == 2) != c.p2) continue;
+            if (c.down && !down) { if (!pre.empty()) pre += ","; pre += std::to_string(c.step); }
+            down = c.down;
+        }
+        if (!pre.empty()) { a.push_back("--switchpre"); a.push_back(pre); }
+    }
+    if (g_cfg.dpTap) {
+        a.push_back("--p2tappress");
+        // ...and no more presses of the second player until the first has got past the farthest wall it has died at (+100): a Tap in toggle mode
+        // shuts the door again with the next press (dp --p2holdx)
+        if (g_bestDeath >= 0 && g_bestDeathX > 0.f) {
+            a.push_back("--p2holdx");
+            a.push_back(std::to_string((double)g_bestDeathX + 100.0));
+        }
+    }
     const std::string wins = windows(false), wins2 = windows(true);
     if (!wins.empty()) {
         a.push_back("--ctrlwin");
@@ -2565,7 +2750,7 @@ inline std::string snapFile(const std::string& path) {
 inline constexpr const char* kFileArgs[] = {
     "--groups", "--fixups", "--bandtrack", "--rejoinwatch", "--replay",
     "--triggers", "--objgroups", "--obb", "--levelsettings", "--rotgameplay",
-    "--forceids", "--xtrack", "--items", "--areas", "--start-state"};
+    "--forceids", "--xtrack", "--camtrack", "--items", "--areas", "--start-state", "--groupsauto"};
 inline bool isFileArg(const std::string& s) {
     for (const char* f : kFileArgs)
         if (s == f) return true;
@@ -2825,14 +3010,31 @@ inline std::vector<std::string> baseArgs(const std::string& out,
                                "--shipvq", num(tiered ? kTierVq : kVq),
                                "--threads", kThreads};
     if (g_cfg.dpPhaseProf) a.push_back("--phaseprof");   // print only (see timedSolve)
+    if (g_capEnvNow) a.push_back("--capenvelope");   // cfg dpcapenvrepeat (config.hpp)
     // --groupfire: searches only, which is what the flag says to the solver -- it changes how a
     // search SHARES a placement between states, which a replay (one state, its own fire ticks)
     // never did. Always passed here since the 0.4.0 clean-up removed cfg dpgroupfire.
     a.push_back("--groupfire");
     // cfg dpsearch (config.hpp): another search than the layer DP answers these calls.
-    if (g_cfg.dpSearch != "dp") {
+    // Monte Carlo cannot follow a coin route (dp search_dp.hpp: it declines a call with coin rules), so with coins on every one of its
+    // calls would come back declined and be answered by the layer DP: say so once and ask for the DP outright. Beam follows coins
+    // (it ranks the states by the coins they hold). The other reasons for a decline (rotation, control windows, item gates, a turned
+    // start frame) depend on the level and the call, and the solver prints each one as `search: montecarlo declines (...)`.
+    std::string search = g_cfg.dpSearch;
+    if (search == "montecarlo" && g_cfg.coinRoute) {
+        if (!g_searchNoted) {
+            g_searchNoted = true;
+            writeResult("search: warning - Monte Carlo cannot follow a coin route; the layer DP answers every call of this solve");
+        }
+        search = "dp";
+    } else if (search != "dp" && !g_searchNoted) {
+        g_searchNoted = true;
+        writeResult("search: the calls of this solve are answered by " + search
+                    + " (cfg dpsearch); a call it cannot follow is answered by the layer DP, and the solver says why on a `search:` line");
+    }
+    if (search != "dp") {
         a.push_back("--search");
-        a.push_back(g_cfg.dpSearch);
+        a.push_back(search);
     }
     // cfg dpcapladder: a small cap first, raised only where the search runs out of states.
     // Not on the tiers: those are the escalation that asked for MORE states on purpose. The DP's
@@ -3058,9 +3260,21 @@ inline int heldBefore(const std::vector<InputCmd>& plan, long long t0) {
     int held = 0;
     for (const InputCmd& c : plan) {
         if (c.step >= t0) break;
-        held = c.down ? 1 : 0;
+        if (!c.p2) held = c.down ? 1 : 0;
     }
     return held;
+}
+
+// The buttons held when a tail anchored at t0 starts (bit 0 player 1's, bit 1 player 2's): the last edge of each in the plan before t0. A tail file is read against it
+// (loadInputsFile's initialMask).
+inline int maskBefore(const std::vector<InputCmd>& plan, long long t0) {
+    int mask = 0;
+    for (const InputCmd& c : plan) {
+        if (c.step >= t0) break;
+        const int bit = c.p2 ? 2 : 1;
+        mask = c.down ? (mask | bit) : (mask & ~bit);
+    }
+    return mask;
 }
 
 // Does a SWING anchored at t0 still owe the flip of a press? The swing's press sets a pending
@@ -3080,6 +3294,7 @@ inline int swingPendingAt(const std::vector<InputCmd>& plan, long long t0) {
     long long lastStep = -1;
     for (const InputCmd& c : plan) {
         if (c.step >= t0) break;
+        if (c.p2) continue;
         prev = last;
         last = c.down ? 1 : 0;
         lastStep = c.step;
@@ -3103,12 +3318,32 @@ inline void addStartGmod(std::vector<std::string>& a, const AnchorRow* r) {
     }
 }
 
+// dp's reverse-carry anchor: GD's reverse correction there (AnchorRow::revOff / revCarry), as `--startrev R,C`. Written only while one is
+// owed, so every other argv is as before; dp reads it only under the flag.
+inline void addStartRev(std::vector<std::string>& a, const AnchorRow* r) {
+    if (!r || !r->valid || (r->revOff == 0.f && r->revCarry == 0.f)) return;
+    a.push_back("--startrev");
+    a.push_back(num(r->revOff) + "," + num(r->revCarry));
+}
+
 inline void addStartP2dx(std::vector<std::string>& a, const AnchorRow* r) {
     if (!r || !r->dual) return;
     const float d = r->x2 - r->x;
     if (std::fabs(d) <= 0.01f) return;
     a.push_back("--startp2dx");
     a.push_back(num(d));
+}
+
+// dp --startact2: a two-player level's second player has a button of its own, and the anchor's tick left it as the plan's player 2 edges before t0 say.
+inline void addStartAct2(std::vector<std::string>& a, const AnchorRow* r, const std::vector<InputCmd>& plan, long long t0) {
+    if (!r || !r->dual || !solver::g_levelTwoPlayer) return;
+    int held = 0;
+    for (const InputCmd& c : plan) {
+        if ((long long)c.step >= t0) break;
+        if (c.p2) held = c.down ? 1 : 0;
+    }
+    a.push_back("--startact2");
+    a.push_back(std::to_string(held));
 }
 
 // The first 27 of the 30 fields of `--start`, in the order leveldp reads them
@@ -3372,6 +3607,7 @@ inline int edgeAgeAt(long long t0) {
     long long lastEdge = -1;
     for (const InputCmd& c : p) {
         if (c.step >= t0) break;      // plans are in step order
+        if (c.p2) continue;
         if (c.down != down) { down = c.down; lastEdge = c.step; }
     }
     return lastEdge < 0 ? -1 : (int)std::max<long long>(0, t0 - lastEdge - 1);
@@ -3488,6 +3724,8 @@ struct TraceRow {
     // this row (dp's trace column `fxblk`, fixup.hpp g_fxBlockedUid); -1 when none,
     // and when the trace predates the column.
     int fxblk = -1;
+    // The second body's own button on this step (dp's trace column `act2`, written for a two-player level only); -1 when the trace has none.
+    int act2 = -1;
     // Whether THIS ROW carried the classification columns. g_traceClassMissing
     // answers it for the header; a row can be short of them while the header
     // has them all, and that row must still be recorded from -- its family is
@@ -3666,6 +3904,7 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
         r.clampuid = text(c, "clampuid");
         r.frame = integer(c, "frame", -1);
         r.fxblk = integer(c, "fxblk", -1);
+        r.act2 = integer(c, "act2", -1);
         r.bandf = num(c, "bandf");
         r.bandc = num(c, "bandc");
         out[t] = r;
@@ -3678,6 +3917,7 @@ inline bool loadTrace(const std::string& path, std::map<long long, TraceRow>& ou
 struct FixupKey {
     double x = 0, y = 0, vy = 0, y2 = 0, vy2 = 0;
     int in = 0, mode = 0, mini = 0, flip = 0, g = 0, kill = 0, dual = 0;
+    int in2 = -1;   // the second body's button (a two-player level's record; -1 = not said, which matches either)
 };
 
 // Read a record back into its key. `dual` is not a column -- the second body rides in a named
@@ -3702,6 +3942,11 @@ inline bool parseFixupKey(const std::string& line, FixupKey& k,
                         &k.y2, &k.vy2, &d1, &d2, &gg) == 5)
             k.dual = 1;
     }
+    const size_t q = line.find(",in2=");
+    if (q != std::string::npos) {
+        int v = -1;
+        if (std::sscanf(line.c_str() + q, ",in2=%d", &v) == 1 && (v == 0 || v == 1)) k.in2 = v;
+    }
     return true;
 }
 
@@ -3717,6 +3962,7 @@ inline bool sameTransition(const FixupKey& a, const FixupKey& b) {
     if (a.in != b.in || a.kill != b.kill || a.mode != b.mode || a.mini != b.mini
         || a.flip != b.flip || a.g != b.g || a.dual != b.dual)
         return false;
+    if (a.in2 >= 0 && b.in2 >= 0 && a.in2 != b.in2) return false;   // dp Fixup::in2: a record that names the second body's button matches only that one
     if (std::fabs(a.x - b.x) > 1.2 || std::fabs(a.y - b.y) > 4.0
         || std::fabs(a.vy - b.vy) > 1.0)
         return false;
@@ -3903,6 +4149,7 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
     key.dual = dual ? 1 : 0;
     key.y2 = mPrev->second.y2;
     key.vy2 = mPrev->second.vy2;
+    key.in2 = (dual && solver::g_levelTwoPlayer && mCur->second.act2 >= 0) ? mCur->second.act2 : -1;
     // ...and "covered" is refined by the solver's own answer, the only side that can see the
     // gate: covered by a record the solver keeps back is a model wall. It REPLACES FixupOnFile
     // and nothing else, so every other outcome -- a refined record written over a disagreeing
@@ -3916,10 +4163,12 @@ inline int writeFixup(long long t, int kill, const std::map<long long, TraceRow>
     if (dual) {
         // The second body's own before-state and GD's own deltas for it. Named tail, so a
         // reader that predates duals sees a record it understands and treats as single-body.
-        snprintf(dual2, sizeof(dual2), ",dual2=%.4f,%.4f,%.4f,%.4f,%d",
-                 mPrev->second.y2, mPrev->second.vy2,
-                 gCur ? gCur->y2 - gPrev->y2 : 0.0, gCur ? gCur->v2 - gPrev->v2 : 0.0,
-                 (flying || !gCur) ? 255 : (gCur->g2 ? 1 : 0));
+        int n2 = snprintf(dual2, sizeof(dual2), ",dual2=%.4f,%.4f,%.4f,%.4f,%d",
+                          mPrev->second.y2, mPrev->second.vy2,
+                          gCur ? gCur->y2 - gPrev->y2 : 0.0, gCur ? gCur->v2 - gPrev->v2 : 0.0,
+                          (flying || !gCur) ? 255 : (gCur->g2 ? 1 : 0));
+        // ...and, in a two-player level, the button the second body had on this step (its own, not the first's): a record measured with one must not fire for the other.
+        if (key.in2 >= 0 && n2 > 0 && n2 < (int)sizeof(dual2) - 12) snprintf(dual2 + n2, sizeof(dual2) - (size_t)n2, ",in2=%d", key.in2);
     }
     char line[700];
     snprintf(line, sizeof(line),
@@ -4270,6 +4519,7 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
                                "--threads", kThreads};
     addStartP2dx(a, anchors::row(t0));   // dp --p2xoff
     addStartGmod(a, anchors::row(t0));   // dp --gravtouch
+    addStartRev(a, anchors::row(t0));    // dp's reverse carry
     if (!band.empty()) { a.push_back("--startband"); a.push_back(band); }
     {   // ...and the touch triggers GD had already set off by t0, and the
         // gravity portals it had already spent (cfg touchpayload, off by default,
@@ -4347,6 +4597,7 @@ inline int fixupPass(long long t0, const std::string& startArgStr, const std::st
         {
             const std::string xt = xtrackArg(t0);
             if (!xt.empty()) { a.push_back("--xtrack"); a.push_back(xt); }
+            { const std::string ct = camtrackArg(); if (!ct.empty()) { a.push_back("--camtrack"); a.push_back(ct); } }
         }
     }
     std::error_code ec;
@@ -4937,6 +5188,10 @@ inline long long g_needSpeedFrom = -1;     // the change it undoes (a forced run
 inline long long g_needSpeedUntil = -1;    // ...until the run is past this tick
 inline bool g_needSpeedRung = false;       // the forced rung is still owed
 inline double g_speedLockX = -1.0;         // the run crossed a wall in another lane here: changes before it are answered
+// cfg dpspeedfirst: the wall (the deepest death) at which a flight in ANOTHER speed lane has died clearly short of the
+// deepest plan (laneDir < 0, kLaneMargin), -1 = none; and whether speedArm has said that it let the speed question go first.
+inline long long g_laneWall = -1;
+inline bool g_laneFirstSaid = false;
 inline long long g_nsPinSaved = -1;        // the section solve's pin, lifted for the forced rung
 // A speed switch REPLACES the deepest plan with the model's claim that another lane gets through. The claim can be
 // false (a long ship/wave level: "SOLVED" for a lane the game kills at x=51,800, in place of a plan GD had flown to x=58,676),
@@ -4967,7 +5222,23 @@ inline bool speedArm(const char* why) {
     // windows are spent): the wall has had its first window, and stateFire has run.
     if (g_cfg.dpSecState) {
         const bool sameWall = g_autoTriedWall >= 0 && wall >= g_autoTriedWall && wall < g_autoTriedWall + kAutoCreep;
-        if (!sameWall || g_swWall != g_autoTriedWall || g_swPhase != 3) return false;
+        // cfg dpspeedfirst: a flight in another speed lane has died short of the deepest plan at this wall, so the wall is
+        // not a size wall the probe could settle: the ladder's claim for the other lane was the speed question's answer
+        // being tried the expensive way (a long custom level, 2026-10-17: three ladder jobs of 56, 286 and 112 s at the same anchor
+        // and a section solve and a size probe in between, before this question was asked and answered in 15 s). So it
+        // goes ahead of the size probe.
+        const bool laneFirst = g_cfg.dpSpeedFirst && g_laneWall >= 0 && wall >= g_laneWall && wall < g_laneWall + kAutoCreep;
+        if (laneFirst) {
+            if (!g_laneFirstSaid) {
+                g_laneFirstSaid = true;
+                char lb[260];
+                snprintf(lb, sizeof(lb), "dpsolve:   [secspeed] a flight in another speed lane died short of the deepest plan at "
+                         "this wall (t=%lld): the speed question goes ahead of the size probe (cfg dpspeedfirst)", wall);
+                writeResult(lb);
+            }
+        } else if (!sameWall || g_swWall != g_autoTriedWall || g_swPhase != 3) {
+            return false;
+        }
     }
     const std::vector<AnchorRow>& v = anchors::g_deepest;
     auto at = [&](long long t) -> const AnchorRow* {
@@ -5054,6 +5325,7 @@ inline bool stateReqActive() {
 }
 
 inline bool stateFire(const char* why) {
+    if (solver::g_levelTwoPlayer) return false;   // as autoFire: no section probe on a two-player level
     if (g_swWall != g_autoTriedWall) {
         g_swWall = g_autoTriedWall;
         g_swPhase = 0;
@@ -5171,6 +5443,7 @@ inline void stateRungDone(int kind, bool found) {
 // Queue the rung the way the `secrung` command does; poll() hands over at the next frame boundary
 // with no job in flight. Returns whether it was queued.
 inline bool autoFire(const char* why) {
+    if (solver::g_levelTwoPlayer) return false;   // a two-player level is not given to the section solver (refuseSecsolveOnTwoPlayer)
     const bool coinRung = g_cfg.dpSecCoinRung && g_cfg.coinRoute && g_coinWall >= 0
                           && !g_coinWallPlan.empty();
     // "No verified plan yet" is g_bestDeath < 0, not an empty g_best: a plan that never presses
@@ -5412,6 +5685,7 @@ inline void loadModePortals(const std::string& csv) {
         if (p2 == std::string::npos) continue;
         int mode = -1;
         switch (std::atoi(line.c_str() + p1 + 1)) {
+            case 6:  mode = g_cfg.dpMissedPortalRepeat > 0 ? 0 : -1; break;   // cube (only while cfg dpmissedportalrepeat is on, default 3)
             case 5:  mode = 1; break;   // ship
             case 16: mode = 2; break;   // ball
             case 19: mode = 3; break;   // UFO
@@ -5530,6 +5804,31 @@ inline bool runLadder(long long dt) {
             g_spentAnchors.erase(at);   // never tried for this reason
             speedRung = nForced;
             ++nForced;
+        }
+    }
+    // cfg dpbirthrung: a death after a dual portal made the second body of a two-player level is tried first from an anchor
+    // just after that birth. An anchor before it has no second body (the search is the one-body one, which presses the
+    // second body's button with the first's); an anchor after it does, and the call searches the two bodies one after the
+    // other. The birth is read off the recorded game rows (the first row with the dual set), the anchor is 3 ticks later
+    // (not on the portal's own tick: an anchor there lets the portal fire again). Not a forced rung (a partial is taken
+    // only if it outlives the death, as for the usual ones) and tried once per wall: a rung that led nowhere is in
+    // g_spentAnchors, which a new wall clears.
+    if (g_cfg.dpBirthRung && solver::g_levelTwoPlayer) {
+        long long tb = -1;
+        for (long long t = dt; t >= 2; --t) {
+            const AnchorRow* a = anchors::row(t);
+            const AnchorRow* b = anchors::row(t - 1);
+            if (a && b && a->dual && !b->dual) { tb = t; break; }
+        }
+        const long long at = tb + 3;
+        const AnchorRow* dr = anchors::row(dt - 1);   // the death is inside the dual (one that ended since is not this rung's)
+        if (tb > 0 && at < dt - kBackOff && dr && dr->dual && !g_spentAnchors.count(at)) {
+            const AnchorRow* ar = anchors::row(at);
+            if (ar && ar->dual) {
+                writeResult("dpsolve:   [birthrung] the second body was made at t=" + std::to_string(tb)
+                            + ", the death is at t=" + std::to_string(dt) + " - trying the anchor t=" + std::to_string(at) + " first");
+                rungs.insert(rungs.begin() + (std::ptrdiff_t)nForced, (int)(dt - at));
+            }
         }
     }
     // One-shot: the slit belongs to this hint's rung alone.
@@ -5702,6 +6001,7 @@ inline bool runLadder(long long dt) {
             {
                 const std::string xt = xtrackArg(t0);
                 if (!xt.empty()) { a.push_back("--xtrack"); a.push_back(xt); }
+                { const std::string ct = camtrackArg(); if (!ct.empty()) { a.push_back("--camtrack"); a.push_back(ct); } }
             }
         }
         a.push_back("--start");
@@ -5712,7 +6012,9 @@ inline bool runLadder(long long dt) {
             if (ea >= 0) { a.push_back("--startedge"); a.push_back(std::to_string(ea)); }
         }
         addStartP2dx(a, r);   // dp --p2xoff
+        addStartAct2(a, r, g_plan, t0);   // dp --startact2 (a two-player level only)
         addStartGmod(a, r);   // dp --gravtouch
+        addStartRev(a, r);    // dp's reverse carry
         // ...and the coins GD had already credited by t0 (AnchorRow::coins).
         const std::string coinMask = g_cfg.coinRoute ? std::to_string(r->coins) : "";
         if (!coinMask.empty()) { a.push_back("--coinmask"); a.push_back(coinMask); }
@@ -5815,7 +6117,7 @@ inline bool runLadder(long long dt) {
                          "t=%lld", o.rejoinT);
             writeResult(jb);
         }        std::vector<InputCmd> cand;
-        loadInputsFile(g_tailPath, cand, true);
+        loadInputsFile(g_tailPath, cand, true, maskBefore(g_plan, t0));
         // A tail with no inputs at all is a legal plan -- "never press" is what some stretches
         // want -- so the file's EXISTENCE is the test, not whether it parsed any lines.
         // loadInputsFile answers the second question, and using it for the first would throw
@@ -6036,7 +6338,7 @@ inline bool runLadder(long long dt) {
                 const int frc = timedSolve(g_csv, fa, "fine");
                 const dpbridge::SolveOutcome of = dpbridge::outcome();
                 std::vector<InputCmd> fc;
-                loadInputsFile(g_tailPath, fc, true);
+                loadInputsFile(g_tailPath, fc, true, maskBefore(g_plan, t0));
                 const bool fHave = std::filesystem::exists(g_tailPath, ec);
                 // Past the wall by a margin, or alive at the window's end (a horizon-cut SOLVED,
                 // which the adoption below already tells from a goal-reaching one by horizonCut).
@@ -6273,7 +6575,7 @@ inline void modelReanchor() {
             const dpbridge::SolveOutcome so = dpbridge::outcome();
             std::vector<InputCmd> tail;
             const bool have = std::filesystem::exists(g_tailPath, ec)
-                           && loadInputsFile(g_tailPath, tail, true);
+                           && loadInputsFile(g_tailPath, tail, true, maskBefore(g_plan, ts));
             const long long newDeath = so.resimDead > 0 ? so.resimFirst
                                                        : std::numeric_limits<long long>::max();
             const bool applied = so.startStateT == ts;
@@ -6330,7 +6632,8 @@ inline void modelReanchor() {
 inline std::string planFnv(const std::vector<InputCmd>& p) {
     uint64_t h = 1469598103934665603ULL;
     for (const InputCmd& c : p) {
-        const uint64_t v = (uint64_t)c.step * 2u + (uint64_t)(c.down ? 1 : 0);
+        // player 2's edge hashes apart from player 1's at the same tick; a plan without one hashes as it always did
+        const uint64_t v = (uint64_t)c.step * 2u + (uint64_t)(c.down ? 1 : 0) + (c.p2 ? (1ULL << 40) : 0ULL);
         for (int i = 0; i < 8; ++i) {
             h ^= (uint8_t)(v >> (i * 8));
             h *= 1099511628211ULL;
@@ -6942,6 +7245,11 @@ inline void start(GJBaseGameLayer* l) {
     g_groupsBootX.clear();
     g_retimeLeftOut = 0;
     g_deepActive = false;
+    g_bootSpawnOnly = false;
+    g_bootPinRows.clear();
+    g_switchTablePath.clear();
+    g_probeBody = 0;
+    g_probeDepth = 0;
     g_recordAttempt = false;
     g_deepDoneAt = -1;
     g_recordKind = RecNone;
@@ -6952,6 +7260,8 @@ inline void start(GJBaseGameLayer* l) {
     g_waveRelaxedX = -1.f;
     g_escalations = 0;
     g_capTier = 0;
+    g_capEnvNow = false;
+    g_searchNoted = false;
     g_topTierIter = 0;
     g_needTrigDropped = 0;
     g_needTrigSuspect = 0;
@@ -7083,6 +7393,8 @@ inline void start(GJBaseGameLayer* l) {
     g_needSpeedFrom = g_needSpeedUntil = -1;
     g_needSpeedRung = false;
     g_speedLockX = -1.0;
+    g_laneWall = -1;         // cfg dpspeedfirst
+    g_laneFirstSaid = false;
     g_nsPinSaved = -1;
     g_retired = RetiredBest{};
     g_lastDeath = -1;
@@ -8608,6 +8920,33 @@ inline void onDeath(long long dt, float deathX) {
     // Another death in the same tick bucket; enough of them are veto credit
     // on their own (the note at g_deathRuns).
     const int sameDeaths = ++g_deathRuns[dt / 4];
+    if (g_cfg.dpCapEnvRepeat > 0 && !g_capEnvNow && sameDeaths >= g_cfg.dpCapEnvRepeat) {
+        g_capEnvNow = true;
+        char eb[200];
+        snprintf(eb, sizeof(eb), "dpsolve:   [capenv] the same wall %d times (t=%lld) - the searches keep each class's "
+                 "extremes first from here (--capenvelope), until the run is deeper", sameDeaths, (long long)dt);
+        writeResult(eb);
+    }
+    // cfg dpmissedportalrepeat: the same wall again and again -- ask where the run crossed a mode portal without
+    // coming out in its mode, once per wall (g_triedMissedPortal), the way the wedge below and the exhausted
+    // ladder (escalate) do. The next ladder goes first to the tick before that crossing, with the crossing forced.
+    if (g_cfg.dpMissedPortalRepeat > 0 && !g_triedMissedPortal && sameDeaths >= g_cfg.dpMissedPortalRepeat) {
+        anchors::ladderOn(false);
+        const long long mt = missedPortalTick();
+        if (mt > 0) {
+            g_triedMissedPortal = true;
+            g_forceAnchorT = mt - kPortalSettle;
+            char fb[96];
+            snprintf(fb, sizeof(fb), "%.1f,%.1f,%d,-1e18,1e18",
+                     g_missedPortalX + 45.0, g_missedPortalX + 75.0, g_missedPortalMode);
+            g_forcePortalBand = fb;
+            char mb[256];
+            snprintf(mb, sizeof(mb), "dpsolve:   [portalretry] the same wall %d times (t=%lld) - the run crossed a mode "
+                     "portal at t=%lld in the wrong mode; the next ladder goes back there and forces the crossing "
+                     "(--deadband %s)", sameDeaths, (long long)dt, mt, fb);
+            writeResult(mb);
+        }
+    }
     // cfg dpfastveto: the plan the round before flew, flown again and killed on the
     // same tick. The search is deterministic and the model did not move, so waiting for more hits
     // at this site is waiting for the same answer: measured on lv22 (step horizon, 2026-09-19),
@@ -8756,6 +9095,10 @@ inline void onDeath(long long dt, float deathX) {
             // are 1,900 to 12,000 px apart.
             if ((double)deathX > (double)g_bestDeathX + kLaneMargin) laneDir = 1;
             else if ((double)deathX < (double)g_bestDeathX - kLaneMargin) laneDir = -1;
+            if (laneDir < 0 && g_cfg.dpSpeedFirst && rungWall() != g_laneWall) {   // cfg dpspeedfirst: evidence at this wall
+                g_laneWall = rungWall();
+                g_laneFirstSaid = false;
+            }
             char sb2[300];
             snprintf(sb2, sizeof(sb2), "dpsolve:   [secspeed] this flight was at %.1fx at x=%.0f and the deepest plan at %.1fx: "
                      "t=%lld x=%.0f against t=%lld x=%.0f - ranked by x, %s", (double)sNew, xr, (double)sOld, dt,
@@ -8806,6 +9149,10 @@ inline void onDeath(long long dt, float deathX) {
         if (g_capTier != 0) {
             writeResult("dpsolve:   deeper - back to the cheap search");
             g_capTier = 0;
+        }
+        if (g_capEnvNow) {
+            writeResult("dpsolve:   [capenv] deeper - back to the plain cap");
+            g_capEnvNow = false;
         }
         if (g_horizonNow != horizonDefault()) {
             if (horizonDefault() == g_horizonFull)
@@ -9193,15 +9540,17 @@ inline bool levelHasMovingParts() {
 // inputs and no dying, to see what the level does on its own. The reset happens at the next
 // frame boundary (poll), like every other level change here.
 inline bool startBootstrapRecord() {
-    if (!levelHasMovingParts()) return false;
+    const bool spawnOnly = !levelHasMovingParts() && solver::g_levelTwoPlayer;
+    if (!levelHasMovingParts() && !spawnOnly) return false;
+    g_bootSpawnOnly = spawnOnly;
     g_recordKind = RecBootstrap;
     g_deepActive = true;
     g_cfg.noDeath = true;
     g_cfg.inputs.clear();
     g_recordRequest = true;
-    g_hudPhase = "watching the level run itself, to see what moves";
-    writeResult("dpsolve: recording what the level does on its own (no inputs, nodeath) "
-                "before solving");
+    g_hudPhase = spawnOnly ? "taking the game's starting row of a two-player level" : "watching the level run itself, to see what moves";
+    writeResult(spawnOnly ? "dpsolve: taking the starting row of a two-player level (no inputs, nodeath) before solving"
+                          : "dpsolve: recording what the level does on its own (no inputs, nodeath) before solving");
     return true;
 }
 
@@ -9224,6 +9573,158 @@ inline bool startDeepRecord() {
     return true;
 }
 
+// ---- cfg dpswitch: what each body's button does to the world, seen once, in this run -------------------------------------------------------------
+// A two-player level can give a body's press an effect on the world (a toggle-mode Touch trigger: every press of the second player flips a set of walls).
+// After the bootstrap pass (nothing pressed: the baseline) the level is run twice more, nodeath, once with player 1 pressing every kSwitchSpacing ticks and
+// once with player 2 -- two ticks down each time -- and each run's moving-geometry recording is set against the baseline's: the objects that differ within
+// a few ticks of a press are what that press switches, and their rows over the next stretch are what it did to them (dp switch_model.hpp has the table's
+// format and what is made of it). Only this run's own recordings go in, as the bootstrap pass's does. The table is for ONE body (the one whose presses moved
+// more); a level where neither does gets none and the flag does nothing.
+constexpr long long kSwitchSpacing = 600, kSwitchFirst = 100;
+inline std::string probeGroupsPath(int body) { return std::string(DATA_DIR) + "/dp_probe_b" + std::to_string(body) + ".txt"; }
+
+inline bool startSwitchProbe(int body) {
+    if (g_probeDepth < kSwitchFirst + 4 * kSwitchSpacing) return false;   // a level too short to tell two presses apart
+    g_probeBody = body;
+    g_recordKind = RecProbe;
+    g_deepActive = true;
+    g_cfg.noDeath = true;
+    g_cfg.inputs.clear();
+    for (long long t = kSwitchFirst; t + 40 < g_probeDepth; t += kSwitchSpacing) {
+        g_cfg.inputs.push_back(InputCmd{(int)t, true, body == 2});
+        g_cfg.inputs.push_back(InputCmd{(int)t + 2, false, body == 2});
+    }
+    g_recordRequest = true;
+    g_hudPhase = "pressing each button on its own, to see what it moves";
+    writeResult(std::string("dpsolve: switch probe: body ") + std::to_string(body) + " presses every " + std::to_string(kSwitchSpacing) + " ticks (nodeath)");
+    return true;
+}
+
+struct SwProbeRow { long long t; double cx, cy, w, h, rot; int on; };
+inline bool readGroupsFile(const std::string& path, std::unordered_map<int, std::vector<SwProbeRow>>& out) {
+    std::ifstream f(path);
+    if (!f) return false;
+    std::string ln;
+    while (std::getline(f, ln)) {
+        if (ln.empty() || ln[0] == 't' || ln[0] == 'i') continue;
+        long long t;
+        int uid, on;
+        double cx, cy, w, h, rot;
+        if (std::sscanf(ln.c_str(), "%lld,%d,%lf,%lf,%lf,%lf,%d,%lf", &t, &uid, &cx, &cy, &w, &h, &on, &rot) == 8) out[uid].push_back({t, cx, cy, w, h, rot, on});
+    }
+    for (auto& kv : out)
+        std::stable_sort(kv.second.begin(), kv.second.end(), [](const SwProbeRow& a, const SwProbeRow& b) { return a.t < b.t; });
+    return !out.empty();
+}
+inline SwProbeRow swRowAt(const std::vector<SwProbeRow>& v, long long t) {
+    size_t lo = 0, hi = v.size();
+    while (lo < hi) {
+        const size_t m = (lo + hi) / 2;
+        if (v[m].t <= t) lo = m + 1;
+        else hi = m;
+    }
+    return lo == 0 ? v.front() : v[lo - 1];
+}
+inline bool swDiffers(const SwProbeRow& a, const SwProbeRow& b) {
+    return std::fabs(a.cx - b.cx) > 5e-4 || std::fabs(a.cy - b.cy) > 5e-4 || std::fabs(a.w - b.w) > 5e-4 || std::fabs(a.h - b.h) > 5e-4
+           || std::fabs(a.rot - b.rot) > 5e-4 || a.on != b.on;
+}
+
+// One body's table text (switch_model.hpp's format) and how many objects it holds, from the baseline and that body's probe recording
+inline int swTableFor(int body, const std::unordered_map<int, std::vector<SwProbeRow>>& base,
+                      const std::unordered_map<int, std::vector<SwProbeRow>>& probe, std::string& out) {
+    std::vector<long long> taus;
+    for (long long t = kSwitchFirst; t + 40 < g_probeDepth; t += kSwitchSpacing) taus.push_back(t);
+    // which objects each press moved: their rows differ from the baseline's in the 12 ticks after it
+    std::vector<std::vector<int>> moved(taus.size());
+    for (const auto& kv : probe) {
+        const auto bi = base.find(kv.first);
+        const std::vector<SwProbeRow>& bl = bi != base.end() ? bi->second : kv.second;
+        for (size_t k = 0; k < taus.size(); ++k)
+            for (long long t = taus[k] + 1; t <= taus[k] + 12; ++t)
+                if (swDiffers(swRowAt(kv.second, t), swRowAt(bl, t))) { moved[k].push_back(kv.first); break; }
+    }
+    // The first press whose effect is the real one: a press before the Touch trigger is armed moves nothing it controls, and what moves then
+    // (objects that answer the player's jump, not the switch) is a few; the press a toggle's first curve belongs to is the first to move at least
+    // half as many objects as the busiest press did.
+    size_t maxMoved = 0;
+    for (const auto& m : moved) maxMoved = std::max(maxMoved, m.size());
+    size_t a = 0;
+    while (a + 1 < taus.size() && (moved[a].empty() || moved[a].size() * 2 < maxMoved)) ++a;
+    if (a + 1 >= taus.size() || moved[a].empty() || moved[a + 1].empty()) return 0;
+    std::vector<int> uids = moved[a];
+    for (const int u : moved[a + 1]) if (std::find(uids.begin(), uids.end(), u) == uids.end()) uids.push_back(u);
+    std::sort(uids.begin(), uids.end());
+    char b[256];
+    out = "switch 1\nbody " + std::to_string(body) + "\ntend " + std::to_string(g_probeDepth) + "\n";
+    for (const int u : uids) {
+        const std::vector<SwProbeRow>& pl = probe.at(u);
+        const auto bi = base.find(u);
+        const std::vector<SwProbeRow>& bl = bi != base.end() ? bi->second : pl;
+        const SwProbeRow r0 = bl.front();
+        snprintf(b, sizeof b, "r %d %.3f %.3f %.3f %.3f %d %.3f\n", u, r0.cx, r0.cy, r0.w, r0.h, r0.on, r0.rot);
+        out += b;
+        for (size_t i = 1; i < bl.size(); ++i) {
+            snprintf(b, sizeof b, "b %d %lld %.3f %.3f %.3f %.3f %d %.3f\n", u, bl[i].t, bl[i].cx, bl[i].cy, bl[i].w, bl[i].h, bl[i].on, bl[i].rot);
+            out += b;
+        }
+        for (int k = 1; k <= 2; ++k) {
+            const long long tau = taus[a + (size_t)k - 1];
+            const long long nxt = k == 1 ? taus[a + 1] : tau + kSwitchSpacing - 200;
+            std::vector<long long> ticks{tau};
+            for (const SwProbeRow& r : pl) if (r.t > tau && r.t < nxt) ticks.push_back(r.t);
+            for (const SwProbeRow& r : bl) if (r.t > tau && r.t < nxt) ticks.push_back(r.t);
+            std::sort(ticks.begin(), ticks.end());
+            ticks.erase(std::unique(ticks.begin(), ticks.end()), ticks.end());
+            for (const long long t : ticks) {
+                const SwProbeRow x = swRowAt(pl, t), y = swRowAt(bl, t);
+                snprintf(b, sizeof b, "c %d %d %lld %.3f %.3f %.3f %.3f %.3f %d\n", u, k, t - tau, x.cx - y.cx, x.cy - y.cy, x.w - y.w, x.h - y.h,
+                         x.rot - y.rot, x.on != y.on ? 1 : 0);
+                out += b;
+            }
+        }
+    }
+    return (int)uids.size();
+}
+
+// Both probes are in: set each against the baseline and write the table of the body that moved more
+inline void buildSwitchTable() {
+    std::unordered_map<int, std::vector<SwProbeRow>> base;
+    if (!readGroupsFile(g_groupsBootPath, base)) return;
+    std::string best;
+    int bestN = 0, bestBody = 0;
+    for (int body = 1; body <= 2; ++body) {
+        std::unordered_map<int, std::vector<SwProbeRow>> probe;
+        if (!readGroupsFile(probeGroupsPath(body), probe)) continue;
+        std::string text;
+        const int n = swTableFor(body, base, probe, text);
+        writeResult("dpsolve: switch probe: body " + std::to_string(body) + "'s presses move " + std::to_string(n) + " object(s)");
+        if (n > bestN) { bestN = n; best = text; bestBody = body; }
+    }
+    if (bestN == 0) return;
+    const std::string path = std::string(DATA_DIR) + "/dp_switch.txt";
+    std::ofstream f(path, std::ios::trunc);
+    f << best;
+    f.close();
+    g_switchTablePath = path;
+    g_switchTableBody = bestBody;
+    writeResult("dpsolve: switch table written: body " + std::to_string(bestBody) + ", " + std::to_string(bestN) + " object(s) (" + path + ")");
+}
+
+// The probe pass is over: keep its recording; the next probe, or the table and the first attempt
+inline void finishSwitchProbe(const char* why) {
+    const int body = g_probeBody;
+    g_probeBody = 0;
+    const grouptrace::Roll r = grouptrace::g_lastRoll;
+    char b[200];
+    const bool ok = r.rows >= 100 && copyRecording(std::string(DATA_DIR) + "/grouptrace_last.txt", probeGroupsPath(body));
+    snprintf(b, sizeof b, "dpsolve:   switch probe body %d (%s): %lld samples to t=%lld - %s", body, why, r.rows, r.depth, ok ? "kept" : "discarded");
+    writeResult(b);
+    if (body == 1 && startSwitchProbe(2)) return;
+    buildSwitchTable();
+    beginFirstAttempt();
+}
+
 // The no-death pass is over (it reached the end, or it stopped getting anywhere). Take the
 // recording and put the loop back where it was.
 inline void finishDeepRecord(const char* why) {
@@ -9232,6 +9733,16 @@ inline void finishDeepRecord(const char* why) {
     g_deepActive = false;
     g_recordKind = RecNone;
     g_cfg.noDeath = false;
+    if (kind == RecProbe) {
+        finishSwitchProbe(why);
+        return;
+    }
+    if (kind == RecBootstrap && g_bootSpawnOnly) {   // nothing moves here: no recording to adopt, only the tick-1 row taken
+        g_bootSpawnOnly = false;
+        writeResult(std::string("dpsolve:   spawn row of a two-player level (") + why + ")");
+        beginFirstAttempt();
+        return;
+    }
     const grouptrace::Roll r = grouptrace::g_lastRoll;
     const std::string dst = (kind == RecBootstrap) ? g_groupsBootPath : g_groupsDeepPath;
     const char* what = (kind == RecBootstrap) ? "bootstrap record" : "deep record";
@@ -9255,6 +9766,17 @@ inline void finishDeepRecord(const char* why) {
                  what, why, r.rows);
     }
     writeResult(b);
+    if (kind == RecBootstrap && g_cfg.dpPin) {
+        // cfg dppin: this pass's own rows (nothing banks them) for the first call's --pinrows
+        g_bootPinRows = pinRowsText(anchors::g_live);
+        writeResult("dpsolve:   pinned ticks of the bootstrap pass: "
+                    + std::to_string((long long)std::count(g_bootPinRows.begin(), g_bootPinRows.end(), '\n')));
+    }
+    if (kind == RecBootstrap && g_cfg.dpSwitch && solver::g_levelTwoPlayer && r.rows >= 100) {
+        // cfg dpswitch: before the first solve, what each body's button does (the probe passes above)
+        g_probeDepth = r.depth;
+        if (startSwitchProbe(1)) return;
+    }
     if (kind == RecBootstrap) {
         // Now solve (or verify the seed), in a world that is already known to move.
         beginFirstAttempt();
@@ -9520,7 +10042,24 @@ inline bool onCleared() {
 }
 
 // Called once per frame. Installs whatever the worker thread produced, at a frame boundary.
+// A two-player level is not given to the section solver. Its search steps the first player through the game from a snapshot; the second player has a button of its own
+// that the search does not plan, so a section's "solution" would be one body's route with the other's presses left to chance. The loop's two-body search (dp cliMain) is
+// what solves such a level. Said once per session, and enforced here -- every way a section solve begins (the ladder's autoFire, the state probes, the `secsolve` /
+// `secrung` commands, cfg `secsolve=1`) ends in secsolve::g_on or g_secReqPending, and both are cleared on a two-player level before anything reads them.
+inline bool g_secRefused2PSaid = false;
+inline void refuseSecsolveOnTwoPlayer() {
+    if (!solver::g_levelTwoPlayer) return;
+    if (!secsolve::g_on && !g_secReqPending) return;
+    secsolve::g_on = false;
+    g_secReqPending = false;
+    if (!g_secRefused2PSaid) {
+        g_secRefused2PSaid = true;
+        writeResult("dpsolve:   [secsolve] refused: a two-player level is solved by the loop's two-body search, not by the section solver");
+    }
+}
+
 inline void poll() {
+    refuseSecsolveOnTwoPlayer();
     // A start() queued behind an earlier session's still-running orphaned worker (see
     // g_pendingLayer) -- retry now that the slot is free. Re-validated against the session that
     // asked: g_started/g_cfg.dpSolve alone would still be true for a THIRD Solve session queued
@@ -9544,6 +10083,10 @@ inline void poll() {
         g_recordRequest = false;
         g_paused = false;
         if (auto* pl = PlayLayer::get()) pl->resetLevel();
+        return;
+    }
+    if (g_deepActive && g_bootSpawnOnly && g_tick >= 3) {
+        finishDeepRecord("the spawn row is taken");
         return;
     }
     if (g_deepActive && g_horizon > 0 && g_tick > (long long)g_horizon * 2) {

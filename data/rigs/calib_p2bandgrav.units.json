@@ -1,0 +1,33 @@
+[
+ {
+  "what": "p2bandgrav",
+  "two_player": 1,
+  "portals": [
+   [
+    "norm",
+    1500,
+    "band ceiling, P2"
+   ],
+   [
+    "flip",
+    2700,
+    "floor, both"
+   ],
+   [
+    "norm",
+    3900,
+    "floor, both"
+   ],
+   [
+    "flip",
+    4800,
+    "floor, both"
+   ],
+   [
+    "norm",
+    5400,
+    "band ceiling, both"
+   ]
+  ]
+ }
+]

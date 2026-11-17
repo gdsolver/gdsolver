@@ -1,0 +1,148 @@
+{
+ "build": {
+  "bindings": {
+   "commit": "12720f23abb4f1488b10b7ba13c0b7df6633f92a",
+   "fork_branch": "2.209b-levelinfo-pad"
+  },
+  "clean": false,
+  "clean_note": "the compiled sources (src, dp, tools, CMakeLists, mod.json, scripts) were those of the commit; the only difference in the checkout was data/solution_lv*_dp.txt, which an earlier cold run had rewritten and which is not compiled into the package. The package was not rebuilt from a clean checkout because the build is not reproducible and the result would not be the package that was measured",
+  "codegen": {
+   "note": "the prebuilt Codegen the bindings' CMake fetched before the rolling release moved on; a Codegen built from the bindings' own source writes identical headers (3057 files compared, 0 differ), which is what scripts/ci-build-2209.ps1 builds now",
+   "sha256": "94cb023669f6e5dfe9c7686193a6c293500c07789bb86dc73c4cdad44f61fe01"
+  },
+  "commit": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+  "game": "Geometry Dash 2.209, GEODE_COMP_GD_VERSION 22091 (the hotfix executable)",
+  "package": {
+   "bytes": 2610676,
+   "sha256": "56f6c89e81f717142ed0df154e374404cf1a3f8b8b2edba5bc331acb44019502"
+  },
+  "sdk": {
+   "note": "a private copy of the SDK at that version with the patch's headers applied; it is not a git checkout, so it is identified by these hashes",
+   "patch": "tools/geode-sdk-2209.patch",
+   "patch_sha256": "8650411039661870dc3405a1fe1c3710a948586cff5003fcf9bf100187990f05",
+   "patched_headers_sha256": {
+    "loader/include/Geode/cocos/CCDirector.h": "411efd3235194bde79f6e62f63dad06f9faaaed4a5a8d44b4b56c8e48afdbbc3",
+    "loader/include/Geode/cocos/base_nodes/CCNode.h": "9ab56100f4baa7dfc0539a168950e3a5633ea451185cf4cbde6e57dbde556d58",
+    "loader/include/Geode/cocos/robtop/keyboard_dispatcher/CCKeyboardDelegate.h": "846b8fe72a6408a150fa270ab95b02c906d37f9fa42782ca215810739232a39d",
+    "loader/include/Geode/cocos/robtop/keyboard_dispatcher/CCKeyboardDispatcher.h": "5b782d5747799441c72873f3ff5d78495ce21fecab33054c65ffe7c5004853d2",
+    "loader/include/Geode/cocos/robtop/mouse_dispatcher/CCMouseDelegate.h": "fb55aee5d12252e0792d17179c503ded27d56aff3c6feb52e054859207d70c4c",
+    "loader/include/Geode/cocos/robtop/xml/DS_Dictionary.h": "bbfd94353cf923bae34e84581f47466d967c88a4f685dde31d059423c8f2c10a",
+    "loader/include/Geode/cocos/support/zip_support/ZipUtils.h": "a50d7786f1247eb2614a92108dd647d640538b8afc43ad3f17c2329ec76728f0",
+    "loader/include/Geode/cocos/touch_dispatcher/CCTouchDispatcher.h": "9bed8519a195e949cf5ca63e9dc50ed335eeb2fbb5aa768182302fd55d9f2fb6",
+    "loader/include/Geode/ui/ScrollLayer.hpp": "e649b3113c6fd7fb4075699f1f548d9f1fb8232a5dce7e3ce050442358b9ed66",
+    "loader/include/Geode/ui/Scrollbar.hpp": "79d6b72af7259380cfefb27d0ad488495442ceab42f1374d72d22b68c7ad4e31"
+   },
+   "version": "5.10.1"
+  },
+  "tree": "b538db6f526fcef19635430dcf0f7e90bfe6245e"
+ },
+ "checks_before_adoption": {
+  "adopt": "py/cold_regress.py --adopt on each saved run: complete, 22 of 22 cleared, record none, every coin on the coin run, resolution 25, the fresh-verify replay from the start cleared every level",
+  "fp": "the no-coin baseline's run was the second of two no-coin runs of the same package; their [fp] lines agree on all 22 levels"
+ },
+ "driver": {
+  "clean": false,
+  "commit": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+  "note": "each run's driver was the build's own checkout, at the build's commit; as for the build, only data/solution_lv*_dp.txt differed, rewritten by the runs themselves"
+ },
+ "runs": {
+  "coin": {
+   "arrangement": "one-session",
+   "baseline_file": "cold_baseline_coins.json",
+   "cfg": [
+    "coinroute=1",
+    "coins=1"
+   ],
+   "coins": "on",
+   "fresh_verify": true,
+   "geode": {
+    "dll_sha256": "0c34f50454c102637038cae48c8c7dd685da3582fe474358024b1eb6833684d3",
+    "version": "v5.11.2"
+   },
+   "guard_stops": {},
+   "levels": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22
+   ],
+   "manifest_build_commit": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+   "manifest_dirty": true,
+   "manifest_driver_dirty": true,
+   "manifest_driver_head": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+   "manifest_head": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+   "resolution": 25,
+   "retained_log_sha256": {
+    "cold_manifest.json": "a429f4edcc6a7c4332b5ea662d890058364ec67a7dcc4d99daf37dccc1c5a9fd",
+    "coldlog_suite.meta.json": "e62dcd9327231982c19b3b9513e09ed08886bc861338975adba42c24242474fc",
+    "coldlog_suite.txt": "af554bec9861da8bed66a6af05a4532d96394f12ff7f4becbd56dd7a3eedb774"
+   }
+  },
+  "nocoin": {
+   "arrangement": "one-session",
+   "baseline_file": "cold_baseline.json",
+   "cfg": [],
+   "coins": "off",
+   "fresh_verify": true,
+   "geode": {
+    "dll_sha256": "0c34f50454c102637038cae48c8c7dd685da3582fe474358024b1eb6833684d3",
+    "version": "v5.11.2"
+   },
+   "guard_stops": {},
+   "levels": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22
+   ],
+   "manifest_build_commit": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+   "manifest_dirty": false,
+   "manifest_driver_dirty": false,
+   "manifest_driver_head": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+   "manifest_head": "a2bf878f65bfcf952cb01c0c17616e4e0ef7bc52",
+   "resolution": 25,
+   "retained_log_sha256": {
+    "cold_manifest.json": "a7b77cc9340391a26465f8d8b32c134411b7f2ba3104121954ff1896d1db4cd5",
+    "coldlog_suite.meta.json": "6b56fc15eb7ff278881365cd8b50e356ee13674881bc04781478862383750b7a",
+    "coldlog_suite.txt": "46f058099068c3efb861dc01954372167a0fef4cd892af3b569944ee2162872c"
+   }
+  }
+ },
+ "what": "How data/cold_baseline.json and data/cold_baseline_coins.json were made: which build, which driver checkout and which package each run measured. Written beside the baselines at adoption so the correspondence can be read later; the saved logs themselves are kept privately and are identified by the hashes below."
+}

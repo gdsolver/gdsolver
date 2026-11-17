@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import plan as P                                     # noqa: E402
 from gdtas import results as R                                  # noqa: E402
-from gdtas.paths import LEVEL_DATA, WORKERS_ROOT                      # noqa: E402
+from gdtas.paths import LEVEL_DATA, MCP_WORKER, WORKERS_ROOT           # noqa: E402
 from gdtas.worker import Worker, WorkerError                    # noqa: E402
 from gdtas.solveutil import (copy_held_file, has_grouped_colliders,  # noqa: E402
                              read_lines)
@@ -149,7 +149,7 @@ def main(argv=None) -> int:
     ap.add_argument("--all", action="store_true",
                     help="every level with a solution in data/")
     ap.add_argument("--data-dir", default=str(LEVEL_DATA))
-    ap.add_argument("--worker-id", type=int, default=98)
+    ap.add_argument("--worker-id", type=int, default=MCP_WORKER)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--live", action="store_true",
                     help="re-record the live replay (.groups.live.txt) rather "

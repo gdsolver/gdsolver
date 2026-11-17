@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gdtas.paths import REPO, worker_dir  # noqa: E402
+from gdtas.paths import DEFAULT_POOL, REPO, worker_dir  # noqa: E402
 
 try:
     import capstone
@@ -42,7 +42,7 @@ except ImportError:                                            # pragma: no cove
 # WORKERS IN ORDER FOR ONE THAT EXISTS. They are all the same binary, so the
 # number does not matter.
 def _worker_exe() -> Path:
-    for w in (99, 98, 97, 96, 95, 94, 93, 92, 91, 90):
+    for w in (*DEFAULT_POOL, 98, 97, 96, 95, 94, 93, 92, 91, 90):
         p = worker_dir(w) / f"GeometryDash-worker-{w}.exe"
         if p.exists():
             return p

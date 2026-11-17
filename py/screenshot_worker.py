@@ -1,6 +1,6 @@
 """Turn a GD worker's window into a PNG.
 
-    python py/screenshot_worker.py --worker-id 97 --out data/shot.png
+    python py/screenshot_worker.py --worker-id 101 --out data/shot.png
 
 Why it is needed: a solve runs with skiprender=1, so the screen shows nothing but
 the HUD. To judge a wall by eye there is no alternative to replaying the best plan

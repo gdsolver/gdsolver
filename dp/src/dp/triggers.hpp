@@ -540,6 +540,8 @@ inline bool g_portalRot = true;
 // before that has 13 columns and still parses, with the easing defaulting to
 // linear (which is what the model assumed anyway).
 struct TrigRow {
+    // An Advanced Follow's (3016) own save string, "key=value|key=value" (the advp column); empty where the dump has none (an older exporter).
+    std::string advp;
     int uid, id, target, center, touch, spawn;
     double cx, cy, w, h, dur, ox, oy;
     int ease = 0; double erate = 2.0;
@@ -611,6 +613,9 @@ struct TrigRow {
     // trigger has no centre group. `ctrCol` is false on dumps that predate it. --rotparent.
     int ctrObj = 0;
     bool ctrCol = false;
+    // A Move's m_moveModX / m_moveModY, the 69th and 70th columns: the multiplier on the player's step for a Move locked to the player (1 where the dump
+    // predates them or the row sets none). --lockmod.
+    double moveModX = 1.0, moveModY = 1.0;
 };
 
 
@@ -847,6 +852,23 @@ inline bool loadTrigRows(const std::string& path,
                                     if (c != std::string::npos && c + 1 < line.size()) {
                                         r.ctrObj = std::atoi(line.c_str() + c + 1);
                                         r.ctrCol = true;
+                                        // movemodx,movemody: the two columns after ctrobj
+                                        const size_t c2 = line.find(',', c + 1);
+                                        if (c2 != std::string::npos && c2 + 1 < line.size()) {
+                                            double mx = 1.0, my = 1.0;
+                                            if (std::sscanf(line.c_str() + c2 + 1, "%lf,%lf", &mx, &my) == 2) {
+                                                r.moveModX = mx;
+                                                r.moveModY = my;
+                                                // advp, the column after movemody
+                                                const size_t c3 = line.find(',', c2 + 1);
+                                                const size_t c4 = c3 == std::string::npos ? c3 : line.find(',', c3 + 1);
+                                                if (c4 != std::string::npos && c4 + 1 < line.size()) {
+                                                    r.advp = line.substr(c4 + 1);
+                                                    while (!r.advp.empty() && (r.advp.back() == '\r' || r.advp.back() == '\n')) r.advp.pop_back();
+                                                    if (r.advp == "-") r.advp.clear();
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1071,6 +1093,22 @@ inline bool countItemWalkFed(int item) {
         if (!walk) return false;
     }
     return true;
+}
+
+// --tap2: like countItemWalkFed, but a giver that sits in a Tap's own group (giverBehindTap: its presses are counted by the state) is the game's counter too -- and at least one giver is such.
+template <class F>
+inline bool countItemTapFed(int item, F&& giverBehindTap) {
+    bool tap = false;
+    for (const auto& kv : g_itemGiver) {
+        if (kv.second != item) continue;
+        bool walk = false;
+        for (const Collectible& c : g_collect)
+            if (c.uid == kv.first) { walk = true; break; }
+        if (walk) continue;
+        if (!giverBehindTap(kv.first)) return false;
+        tap = true;
+    }
+    return tap;
 }
 
 // The MOD's two dumps, joined into "enter this box -> these uids move by this".
@@ -1377,6 +1415,7 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
     // adds an empty entry for a group nobody is in, and the finds after it see that entry -- as
     // they did when this map was parsed here, fresh, on every call.
     std::unordered_map<int, std::vector<int>> byGroup = *membersP;
+    std::vector<TouchTrig> deferredTaps;   // --tapfeed: cosmetic-looking Taps kept back until the kept Counts are known
     for (const auto& kv : trig) {
         const TrigRow& T = kv.second;
         // A COUNT trigger (1611 instant / 1811) is a root here as well: its
@@ -1580,7 +1619,18 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
         // --countactgrp (constants.hpp): a Count's "activate group" switches its target group, as a Toggle root's
         // does -- where the state's counter is the game's, i.e. every giver of its item is a pickup the player
         // walks into (countItemWalkFed)
-        const bool countAct = g_countActGrp && isCount && T.actgrp >= 0 && countItemWalkFed(T.item);
+        // --tap2: ...or by a Tap whose presses the state counts (State::taps / tapsX) -- every giver of the item a walk-in pickup or in a Tap's own group
+        auto giverBehindTap = [&](int giverUid) {
+            for (const auto& kv : trig) {
+                if (kv.second.id != 1595 || kv.second.target == 0) continue;
+                const auto gi = byGroup.find(kv.second.target);
+                if (gi != byGroup.end() && std::find(gi->second.begin(), gi->second.end(), giverUid) != gi->second.end())
+                    return true;
+            }
+            return false;
+        };
+        const bool countAct = g_countActGrp && isCount && T.actgrp >= 0
+            && (countItemWalkFed(T.item) || countItemTapFed(T.item, giverBehindTap));
         if (countAct) tt.togOn = T.actgrp;
         if (isCount) {
             tt.item = T.item;
@@ -2145,12 +2195,36 @@ inline std::vector<TouchTrig> loadTouchTriggers(const std::string& trigPath,
         // Without a type map nothing is known about the chain, and the gate stays.
         if (g_worldGates && !g_coinRoute && (isCount || isTap || isCmp) && objTypes
             && !tt.ctl.empty() && hard <= 0 && tt.togOn < 0 && !trigOff) {
-            ++nGateCosmetic;
+            // --tapfeed: a Tap whose chain only feeds a Pickup is cosmetic by itself; it is the world's when a kept
+            // Count reads that item (below, once the Counts are known)
+            if (isTap) deferredTaps.push_back(std::move(tt));
+            else ++nGateCosmetic;
             continue;
         }
         // (--tapdisarm: a chain that only switches triggers off still has its box.)
         // (--boxarm: ...and so does a toggle block that only switches Moves back on.)
         if (!tt.ctl.empty() || trigOff || !armUids.empty()) out.push_back(std::move(tt));
+    }
+    // --tapfeed: the Taps kept back above come in when a kept Count (or Item Compare) reads an item their Pickup gives.
+    // A custom level: a Tap at x=22,905 feeds item 10 through a Pickup; a Count (item 10 == 4) starts the Move of 529
+    // objects, among them a spike the wave meets. The Tap was dropped as a gate that moves nothing collidable, the Count
+    // never reached 4 in the model, and the spike stood 24 ticks longer than in the game (the cold loop sat on that
+    // wall for ~1,800 s).
+    if (!deferredTaps.empty()) {
+        std::vector<int> readItems;
+        for (const TouchTrig& t : out)
+            if (t.count >= 0 && t.item != 0) readItems.push_back(t.item);
+        for (TouchTrig& t : deferredTaps) {
+            bool feeds = false;
+            for (const TrigCtl& c : t.ctl) {
+                const auto gi = g_itemGiver.find(c.uid);
+                if (gi == g_itemGiver.end()) continue;
+                for (const int w : readItems) if (w == gi->second) { feeds = true; break; }
+                if (feeds) break;
+            }
+            if (feeds) out.push_back(std::move(t));
+            else ++nGateCosmetic;
+        }
     }
     if (nGateCosmetic)
         std::printf("triggers: --worldgates left out %zu gate(s) whose chain reaches nothing "
@@ -2442,6 +2516,30 @@ inline std::vector<SpawnFire> spawnFiresFromRoots(const std::vector<const TrigRo
     return out;
 }
 
+// --chantog: the rotate-gameplay triggers (2900) of the level, {channel, x}, read from rotgameplay.txt before the autonomous triggers are built.
+inline std::vector<std::pair<int, double>> g_chanSwitch;
+inline void readChanSwitchers(const std::string& path) {
+    g_chanSwitch.clear();
+    std::ifstream in(path);
+    if (!in) return;
+    std::string line;
+    std::getline(in, line);   // header
+    while (std::getline(in, line)) {
+        int uid = 0, id = 0, chan = 0;
+        double px = 0.0, py = 0.0;
+        if (std::sscanf(line.c_str(), "%d,%d,%lf,%lf,%d", &uid, &id, &px, &py, &chan) == 5 && id == 2900)
+            g_chanSwitch.push_back({chan, px});
+    }
+}
+// A Toggle on channel c that the player passes before some switch of an earlier channel: the channel is not the active one yet at that
+// first crossing, so the crossing does not fire it. One whose earlier channels all lie behind it can be the active one and fires as before.
+inline bool chanNotYetActive(const TrigRow& T) {
+    if (T.chan == 0) return false;
+    for (const std::pair<int, double>& s : g_chanSwitch)
+        if (s.first < T.chan && s.second > T.cx) return true;
+    return false;
+}
+
 // The autonomous counterpart (see AutoTrig): move (901) and toggle (1049) rows
 // with touch=0 / spawn=0, chains walked exactly like the touch loader's. The
 // root row itself is the actor, so the walk is seeded with the root's own
@@ -2475,6 +2573,9 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
         const TrigRow& T = kv.second;
         if (T.touch || T.spawn || T.target == 0) continue;
         if (T.id != 901 && T.id != 1049) continue;
+        // --chantog: a channelled Toggle is not fired by the crossing (the --chantog note in speed.hpp). Left in, its anchor re-times the
+        // recorded on/off of everything it reaches to ITS crossing -- a group that a later, unchannelled Toggle switches.
+        if (!g_chanMove && T.id == 1049 && chanNotYetActive(T)) continue;   // --chanmove reads the channel per tick instead (AutoTrig::chan)
         // g_offMoves: a Move switched off when the player reaches it does not fire (see
         // offAtCrossing); a box that switches it back on moves its group (loadTouchTriggers).
         // Only a Move: an autonomous Toggle's on/off is read from the recording, which is what GD
@@ -2500,6 +2601,11 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
         at.offInit = offInit ? 1 : 0;
         at.uid = T.uid;
         at.cx = T.cx;
+        at.cy = T.cy;
+        if (g_chanMove && (T.id == 901 || T.id == 1049)) {   // --chanmove (speed.hpp)
+            at.chan = T.chan;
+            at.chanStatic = T.id == 1049 && chanNotYetActive(T);
+        }
         at.delay = (T.id == 1049) ? 0 : 1;
         at.toggleRoot = (T.id == 1049) ? 1 : 0;
         // The root's own switch, when the root is a Toggle (see AutoTrig::tog).
@@ -2514,6 +2620,7 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
             double lock, lockY;
             std::vector<std::pair<int, int>> remap;   // as in the touch walk
             double sdelay = 0.0;   // the spawn delays so far, in ticks (AutoTrig::tog only)
+            double lmx = 1.0;      // m_moveModX of the Move that opened the lock (--lockmod)
         };
         const bool rootMoves = (T.ox != 0.0 || T.oy != 0.0);
         std::vector<Item> stack{{T.target, (float)T.ox, (float)T.oy,
@@ -2522,6 +2629,7 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
                                  rootMoves ? T.erate : 2.0,
                                  lockWindowTicks(T.lockx, T.dur),
                                  lockWindowTicks(T.locky, T.dur)}};
+        if (T.lockx) stack.back().lmx = T.moveModX;
         int guard = 0;
         while (!stack.empty() && guard++ < 4096) {
             const Item it = stack.back();
@@ -2564,6 +2672,7 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
                     const bool moves = (t2->second.ox != 0.0 || t2->second.oy != 0.0);
                     const double d2 = t2->second.dur * 240.0;
                     const bool longer = moves && d2 >= it.dur;
+                    const double lmxNext = (lockWindowTicks(t2->second.lockx, t2->second.dur) > it.lock) ? t2->second.moveModX : it.lmx;
                     stack.push_back({remapGroup(it.remap, t2->second.target),
                                      it.dx + (float)t2->second.ox,
                                      it.dy + (float)t2->second.oy,
@@ -2575,10 +2684,11 @@ inline std::vector<AutoTrig> loadAutoTriggers(const std::string& trigPath,
                                      g_spawnRemap
                                          ? composeRemap(t2->second.remap, it.remap)
                                          : std::vector<std::pair<int, int>>{},
-                                     dl});
+                                     dl, lmxNext});
                 } else {
                     at.ctl.push_back({uid, it.dx, it.dy, it.dur, it.ease,
                                       it.erate, it.lock, it.lockY});
+                    if (it.lock > 0.0) at.lockModX = it.lmx;   // --lockmod
                 }
             }
         }

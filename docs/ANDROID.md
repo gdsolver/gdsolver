@@ -3,7 +3,7 @@
 Experimental and not supported. The model's physics is Windows GD's; whether Android GD
 behaves the same is not known, so a result reached on Android is Android's alone.
 
-v0.6.0 has no Android build. The Android game is on 2.209 too, and there is no 2.209 port
+v0.6.0 and v0.7.0 have no Android build. The Android game is on 2.209 too, and there is no 2.209 port
 of the bindings for android64 yet. The last Android pre-release is v0.5.0's, for GD 2.2081
 under Geode, and the CI's Android job now runs only when started by hand. Nothing the README
 or the results claim was measured on Android.

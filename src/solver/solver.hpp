@@ -12,6 +12,11 @@ namespace solver {
 // value the stream spells in its own way (nan, inf) is handed to a stream, so the text is the stream's
 // whatever the value. The overloads are exactly the types a dump row inserts: an operand of any other type
 // is a compile error here rather than a silent conversion.
+// cfg `exportdigits` (default 9; 6 is the stream's default and the old export): the significant digits of every float in the level dumps below. Six digits give
+// 0.1 px at x >= 10,000 and 1 px at x >= 100,000 -- the corners of a turned hazard's box (obb.txt) and the positions of every object are
+// rounded to that, and a wave that grazes a small turned spike by 0.02 px is not killed by a box that was rounded by 0.03 (a custom level, x 67,718).
+inline int g_exportDigits = 9;
+
 struct TextBuf {
     std::string s;
     TextBuf& operator<<(const char* p) { s.append(p); return *this; }
@@ -42,7 +47,7 @@ private:
             return *this;
         }
         char b[40];
-        const auto r = std::to_chars(b, b + sizeof b, v, std::chars_format::general, 6);
+        const auto r = std::to_chars(b, b + sizeof b, v, std::chars_format::general, g_exportDigits);
         s.append(b, (size_t)(r.ptr - b));
         return *this;
     }
@@ -201,6 +206,10 @@ inline std::vector<float> g_coinMoveX;
 // wherever it fires: SubZero 4002 spawns one from a touch box at x=30,857 on the way back, 6,278 px
 // short of its end portal, and that is where the only route through its third coin ends.
 inline int g_endTriggers = 0;
+// The level's Two-Player Mode (kA10), as the last levelsettings.txt export read it: the loop needs it before it asks the solver anything.
+inline bool g_levelTwoPlayer = false;
+// The level's kA42 as its header says (level_entry.hpp levelHeaderReverseSync), -1 until a level has been entered.
+inline int g_levelReverseSync = -1;
 // ...and the tick one fired this attempt (EndTriggerGameObject::triggerObject, hooks_player.cpp),
 // -1 while none has. Reset with the attempt.
 inline long long g_endTriggerFiredTick = -1;
@@ -300,7 +309,7 @@ inline bool holdingAt(const std::vector<InputCmd>& plan, long long t) {
     bool h = false;
     for (auto& c : plan) {
         if (c.step > t) break;
-        h = c.down;
+        if (!c.p2) h = c.down;
     }
     return h;
 }
@@ -449,7 +458,12 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
     //   both axes (measured on a custom level: y' = exit y + (y - 720) for entry heights 705 to 762, and x
     //   14.70 behind where it would have been, which is exit x - real x = 3,347 - 3,361.7, not the bounding
     //   box centre 3,369 that cx holds). 0 on every other row.
-          "tpsave,tprx,tpry\n";
+          "tpsave,tprx,tpry,"
+    // - pcctl: the Player Control trigger's (id 1932, PlayerControlGameObject) components and targets: bit 0
+    //   m_stopJump (property 540), 1 m_stopMove (541), 2 m_stopRotation (542), 3 m_stopSlide (543), then which
+    //   players it is aimed at as activatePlayerControlTrigger (0x2174e0) reads them: bit 4 m_targetPlayer1 (138),
+    //   bit 5 m_targetPlayer2 (200); neither is both. 0 on every other row.
+          "pcctl\n";
     // PlayLayer's anti-cheat spike (id 8, created last, at 0,105) sits in m_objects but never
     // collides: GD only hands it to destroyPlayer as a check (hooks_playlayer.cpp). Written out,
     // the model read it as a hazard on the spawn point and a ship or ball start died on tick 2
@@ -657,6 +671,12 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
             gpl = (e->m_targetPlayer1 ? 1 : 0) | (e->m_targetPlayer2 ? 2 : 0)
                   | (e->m_followCPP ? 4 : 0);
         }
+        int pcctl = 0;
+        if (obj->m_objectID == 1932) {
+            auto* pc = static_cast<PlayerControlGameObject*>(obj);
+            pcctl = (pc->m_stopJump ? 1 : 0) | (pc->m_stopMove ? 2 : 0) | (pc->m_stopRotation ? 4 : 0)
+                    | (pc->m_stopSlide ? 8 : 0) | (pc->m_targetPlayer1 ? 16 : 0) | (pc->m_targetPlayer2 ? 32 : 0);
+        }
         rf << obj->m_objectID << "," << (int)obj->m_objectType << ","
            << (r.origin.x + r.size.width * 0.5f) << ","
            << (r.origin.y + r.size.height * 0.5f) << ","
@@ -686,6 +706,7 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
            << "," << optudg
            << "," << (obj->m_hasExtendedCollision ? 1 : 0)
            << "," << tpsave << "," << tprx << "," << tpry
+           << "," << pcctl
            << "\n";
     }
 }
@@ -881,6 +902,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
     // coincide with the bounding box and are not emitted
     {
         std::ofstream bf(std::string(DATA_DIR) + "/obb.txt", std::ios::trunc);
+        bf.precision(g_exportDigits);   // cfg exportdigits
         // oob = m_shouldUseOuterOb. A column so that this is not guessed.
         // The hazard test is a dedicated loop in checkCollisions (win 0x2137f0),
         // two-stage: "passes the AABB, and if m_shouldUseOuterOb is set, OBB vs
@@ -1134,7 +1156,14 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
               //               find it: the group's registered parent (m_parentGroupsDict, key 274)
               //               first, else the group's only member. -1 when neither exists (a Rotate
               //               then turns each object about itself), 0 with no centre group.
-              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj\n";
+              //   movemodx/movemody: a Move's m_moveModX / m_moveModY (EffectGameObject): the multiplier on the player's (or camera's) step when the Move is locked
+              //               to it -- 1 by default, but a level can set any value (a custom level's parallax thorns use -0.07: the group moves 7% of the player's
+              //               step the other way). Written on every row; 1 where it is not set. Read by dp's lock machinery.
+              //   advp:       an Advanced Follow trigger's (AdvancedFollowTriggerObject, 3016) own save string, GD's writing of the properties it parsed from the level:
+              //               "key=value|key=value" over every key it writes (position and layer included), '-' on any other row. Which of those keys the trigger sets decides
+              //               what it follows (138 = Target Player 1, 306 = X only, 307 = Y only, 71 = a group, 200 = Player 2, ...), and none of them is a column above.
+              //               Read only by dp's Advanced Follow model; a dump without the column leaves it with nothing to act on.
+              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj,movemodx,movemody,advp\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -1332,7 +1361,22 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
                                 m = static_cast<GameObject*>(g->objectAtIndex(0));
                         if (m) ctr = m->m_uniqueID;
                     }
-                    tf << "," << ctr << "\n";
+                    std::string advp = "-";
+                    if (auto* af = geode::cast::typeinfo_cast<AdvancedFollowTriggerObject*>(obj)) {
+                        const std::string ss = af->getSaveString(l);
+                        advp.clear();
+                        for (size_t p = 0; p < ss.size();) {
+                            const size_t c1 = ss.find(',', p);
+                            if (c1 == std::string::npos) break;
+                            size_t c2 = ss.find(',', c1 + 1);
+                            if (c2 == std::string::npos) c2 = ss.size();
+                            if (!advp.empty()) advp += "|";
+                            advp += ss.substr(p, c1 - p) + "=" + ss.substr(c1 + 1, c2 - c1 - 1);
+                            p = c2 + 1;
+                        }
+                        if (advp.empty()) advp = "-";
+                    }
+                    tf << "," << ctr << "," << e->m_moveModX << "," << e->m_moveModY << "," << advp << "\n";
                 }
             }
             ++nTrig;
@@ -1476,6 +1520,9 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
            << "\nplatformerMode=" << (ls->m_platformerMode ? 1 : 0)
            << "\nreverseGameplay=" << (ls->m_reverseGameplay ? 1 : 0)
            << "\n";
+        // kA42 from the header, not from the member (level_entry.hpp levelHeaderReverseSync); no line when the level
+        // string was not at hand, which dp reads as "unknown" (the debt is booked, as before the key existed).
+        if (g_levelReverseSync >= 0) sf << "reverseSync=" << g_levelReverseSync << "\n";
         // ...and where GD ends the level (the solver's --goalgd): PlayLayer::checkForEnd finishes it when the
         // player reaches EndPortalObject::getSpawnPos, the portal's x - 300 / zoom (+ for a portal flipped in x).
         // 0 = no end portal. The End triggers (id 3600) are counted: they can finish it earlier.
@@ -1484,6 +1531,10 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
            << "\nendPortalFlipX=" << ((l->m_endPortal && l->m_endPortal->m_flippedX) ? 1 : 0)
            << "\nendTriggers=" << g_endTriggers
            << "\n";
+        // ...and a two-player level's own mode (kA10), written only then so that every other level's file is the bytes it was:
+        // the solver gives the second body a button of its own and takes the gravity link away (dp frames.hpp g_twoPlayer).
+        if (ls->m_twoPlayerMode) sf << "twoPlayer=1\n";
+        g_levelTwoPlayer = ls->m_twoPlayerMode;
         log::info("levelsettings: fixRadiusCollision={} platformer={} "
                   "reverse={}", (int)ls->m_fixRadiusCollision,
                   (int)ls->m_platformerMode, (int)ls->m_reverseGameplay);

@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gdtas import plan as P                                # noqa: E402
-from gdtas.paths import WORKERS_ROOT                       # noqa: E402
+from gdtas.paths import DEFAULT_WORKER, WORKERS_ROOT        # noqa: E402
 from gdtas.worker import run_session                       # noqa: E402
 
 BASE = ["attempts=1", "quitwhendone=1", "blockinput=1", "cbs=0", "cos=1",
@@ -102,7 +102,7 @@ def seam_ok(a, inputs: list[tuple[int, int]], need: int) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", type=int, default=20)
-    ap.add_argument("--worker", type=int, default=99)
+    ap.add_argument("--worker", type=int, default=DEFAULT_WORKER)
     ap.add_argument("--out", default=str(DATA / "solution_lv20_chain.txt"))
     ap.add_argument("--step", type=float, default=3000.0,
                     help="px to advance per section")

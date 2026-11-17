@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gdtas.paths import LEVEL_DATA
+from gdtas.paths import DEFAULT_POOL, LEVEL_DATA
 
 LEVELS = list(range(1, 23))
 
@@ -110,7 +110,7 @@ def main(argv=None) -> int:
     todo = [l for l in sorted(hit) if l != 22]
     if todo:
         print("\nregression:\n  python py/cold_regress.py --levels "
-              + " ".join(str(l) for l in todo) + " --pool 90 92 93 94 95 96")
+              + " ".join(str(l) for l in todo) + " --pool " + " ".join(str(w) for w in DEFAULT_POOL))
     else:
         print("\nregression: **not needed** (no solved level enters the code path)")
     return 0

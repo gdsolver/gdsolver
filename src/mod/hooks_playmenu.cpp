@@ -76,6 +76,9 @@ struct LevelFacts {
     // Reads the attempt count or keeps items across attempts, and the attempt pin is on
     // (g_attemptOne): solved as its first attempt, a yellow note rather than a red one.
     bool attempts = false;
+    // Two-player mode (header kA10): the second player is planned too, so it is a yellow note (the support is
+    // experimental and a level whose press switches the other player's world is not solved), not a red one.
+    bool twoPlayer = false;
     // Reads the attempt count or keeps items across attempts, but only what is shown depends on it
     // (levelwarn::attemptReachesPlay): no note, a line in the log.
     bool attemptShown = false;
@@ -136,8 +139,7 @@ inline LevelFacts readLevel(GJGameLevel* level, bool mainLevel) {
     const size_t b = s.find_first_not_of(" \t\r\n");
     const size_t e = s.find_last_not_of(" \t\r\n");
     s = (b == std::string::npos) ? std::string() : s.substr(b, e - b + 1);
-    if (s.rfind("H4sI", 0) == 0)    // base64 of a gzip header: the stored, compressed form
-        s = std::string(cocos2d::ZipUtils::decompressString(s, false, 0));
+    s = gdcompat::rawLevelString(std::move(s));    // the stored, compressed form: gzip ("H4sI") or zlib ("eJ", a level made before 2.0)
     if (s.empty()) {
         // No string to read (not expected on a level that can start): fall back to the fields.
         f.platformer = level->isPlatformer();
@@ -162,6 +164,10 @@ inline LevelFacts readLevel(GJGameLevel* level, bool mainLevel) {
     f.newest = w.newest;
     f.newerIds = levelwarn::newerSummary(w);
     f.attemptShown = w.attemptShown;
+    if (f.unmodelled & levelwarn::kTwoPlayer) {
+        f.unmodelled &= ~levelwarn::kTwoPlayer;
+        f.twoPlayer = true;
+    }
 #ifdef GEODE_IS_WINDOWS
     // With the attempt pin (cfg attemptone, hooks_attempt.cpp) the model is no longer blind to such
     // a level: every attempt is its first. What it still cannot do -- a level that opens only after
@@ -202,9 +208,10 @@ inline const cocos2d::ccColor3B kInfoBlue{160, 205, 255};
 inline const char* describeSearch(int s) {
     switch (s) {
         case UI_SEARCH_BEAM:
-            return "Experimental: keeps the best states each tick. More likely not to be solved.";
+            return "Experimental: keeps the best states each tick. More likely not to be solved. Follows coin routes.";
         case UI_SEARCH_MONTECARLO:
-            return "Experimental: random playouts. More likely not to be solved.";
+            return "Experimental: random playouts. More likely not to be solved. With Coins, or on a level with rotation, "
+                   "control windows or item gates, it cannot follow the call and the DP answers it (the log says so).";
         default:
             return "The reachability DP, which the solver is built around.";
     }
@@ -259,6 +266,11 @@ inline std::vector<std::string> holdPlayDetails() {
     return {"Unchecked (default): a click on a level's Play button opens this menu first.",
             "Checked: a click on Play starts the level at once, as without the mod, and the menu opens when the button is held "
             "(a ring fills around it). For when you mostly play the levels yourself."};
+}
+
+inline std::vector<std::string> replayStepDetails() {
+    return {"On: the replay is advanced in fixed steps of 1/60 s. It no longer depends on the length of the frames. On a monitor faster than 60 Hz the motion looks like 60 fps.",
+            "Off (default): the replay runs on the game's own frame time, as it does without the mod."};
 }
 
 inline std::vector<std::string> secSolveDetails() {
@@ -368,6 +380,15 @@ inline void showInfo(const char* title, const std::vector<std::string>& paragrap
 class Options : public PopupBase {
 public:
     using Change = std::function<void(int, int, bool)>;   // glitch mode, search, section search
+    using ReplayChange = std::function<void(bool)>;        // the Replay form: fixed replay step on or off
+    // The form a Replay has: the fixed replay step and the Hold Play row; the choices about how Solve searches are not in it.
+    static Options* createReplay(bool replayStep, ReplayChange onChange) {
+        auto* r = new Options();
+        r->m_replayForm = true;
+        if (r->initReplay(replayStep, std::move(onChange))) { r->autorelease(); return r; }
+        delete r;
+        return nullptr;
+    }
     static Options* create(int glitch, int search, bool secSolve, Change onChange) {
         auto* r = new Options();
         if (r->init(glitch, search, secSolve, std::move(onChange))) { r->autorelease(); return r; }
@@ -379,6 +400,10 @@ protected:
     int m_glitch = UI_GLITCH_OFF;
     int m_search = UI_SEARCH_DP;
     bool m_secSolve = true;
+    bool m_replayForm = false;
+    bool m_replayStep = false;
+    ReplayChange m_onReplay;
+    CCMenuItemToggler* m_stepToggle = nullptr;
     Change m_onChange;
     CCMenuItemToggler* m_secToggle = nullptr;
     CCMenuItemToggler* m_menuToggle = nullptr;
@@ -446,6 +471,36 @@ protected:
             ui::addChildAtPosition(m_buttonMenu, btn, Anchor::Top, ccp(95.f * dir, y - 24.f));
         }
         return t;
+    }
+
+    // The Replay form: 190 high; the fixed replay step row (with its (i)), the Hold Play row and its note, OK.
+    bool initReplay(bool replayStep, ReplayChange onChange) {
+        using namespace cocos2d;
+        if (!PopupBase::init(kW, 190.f)) return false;
+        this->setID("play-menu-options"_spr);
+        m_replayStep = replayStep;
+        m_onReplay = std::move(onChange);
+        this->setTitle("Options");
+        m_stepToggle = addToggleRow("replay-step", "Fixed replay step", -50.f, m_replayStep, menu_selector(Options::onReplayStep), 4);
+        m_menuToggle = addToggleRow("menu", "Hold Play to open this menu", -86.f, !Mod::get()->getSettingValue<bool>("play-menu"),
+                                    menu_selector(Options::onMenuSetting), 3);
+        m_menuNote = CCLabelBMFont::create("", "chatFont.fnt");
+        m_menuNote->setScale(.55f);
+        m_menuNote->setColor(kWarnYellow);
+        m_menuNote->setID("menu-note"_spr);
+        ui::addChildAtPosition(m_mainLayer, m_menuNote, Anchor::Top, ccp(0, -104.f));
+        auto* okSpr = ButtonSprite::create("OK", "goldFont.fnt", "GJ_button_01.png", .8f);
+        auto* ok = CCMenuItemSpriteExtra::create(okSpr, this, menu_selector(Options::onOk));
+        ok->setID("ok-button"_spr);
+        ui::addChildAtPosition(m_buttonMenu, ok, Anchor::Bottom, ccp(0.f, 26.f));
+        showMenuNote(!Mod::get()->getSettingValue<bool>("play-menu"));
+        return true;
+    }
+
+    // CCMenuItemToggler calls its target before it flips its own state (see the menu's onCoins).
+    void onReplayStep(CCObject*) {
+        m_replayStep = !m_stepToggle->isToggled();
+        if (m_onReplay) m_onReplay(m_replayStep);
     }
 
     bool init(int glitch, int search, bool secSolve, Change onChange) {
@@ -529,6 +584,7 @@ protected:
             case 0: showInfo("Section search", secSolveDetails()); break;
             case 1: showInfo("Avoid glitches", glitchDetails()); break;
             case 3: showInfo("Hold Play to open this menu", holdPlayDetails()); break;
+            case 4: showInfo("Fixed replay step", replayStepDetails()); break;
             default: showInfo("Search", searchDetails()); break;
         }
     }
@@ -536,6 +592,11 @@ protected:
     // The arrow keys move the search, as they did when it was the only choice here; the glitch choice
     // takes the up and down keys.
     void keyDown(cocos2d::enumKeyCodes key, double p1) override {
+        if (m_replayForm) {
+            if (key == cocos2d::enumKeyCodes::KEY_Enter) { onOk(nullptr); return; }
+            PopupBase::keyDown(key, p1);
+            return;
+        }
         if (key == cocos2d::enumKeyCodes::KEY_Left || key == cocos2d::enumKeyCodes::KEY_Right) {
             m_search = (m_search + (key == cocos2d::enumKeyCodes::KEY_Left ? -1 : 1)
                         + UI_SEARCH_COUNT) % UI_SEARCH_COUNT;
@@ -577,12 +638,14 @@ protected:
     int m_glitch = UI_GLITCH_OFF;
     bool m_secSolve = true;
     int m_search = UI_SEARCH_DP;
+    bool m_replayStep = false;   // the Replay form of Options: fixed replay step (saved "play-replaystep")
     CCMenuItemSpriteExtra* m_optBtn = nullptr;
     cocos2d::CCLabelBMFont* m_note = nullptr;
     cocos2d::CCLabelBMFont* m_rngNote = nullptr;
     cocos2d::CCLabelBMFont* m_redNote = nullptr;
     cocos2d::CCLabelBMFont* m_yellowNote = nullptr;
     cocos2d::CCLabelBMFont* m_attemptNote = nullptr;
+    cocos2d::CCLabelBMFont* m_twoNote = nullptr;
     cocos2d::CCLabelBMFont* m_versionNote = nullptr;
     // ONE line for everything Options changed (Avoid glitches, no section search, another search), red if
     // the search is an experiment and yellow otherwise, with an (i) button for what each costs.
@@ -631,7 +694,8 @@ protected:
     int noteCount() const {
         const int unsolved = (m_facts.unmodelled ? 1 : 0)
                              + (m_facts.newer && !m_facts.official ? 1 : 0)
-                             + (m_facts.attempts ? 1 : 0);
+                             + (m_facts.attempts ? 1 : 0)
+                             + (m_facts.twoPlayer ? 1 : 0);
         const int solved = (!olderSolve(false).empty()
                             || (m_facts.coins > 0 && !olderSolve(true).empty())) ? 1 : 0;
         // ...and one row kept for the line about what Options changed, which comes and goes with the
@@ -748,6 +812,7 @@ protected:
         // is only shown there. They keep the last Start's choices (saved values), like Coins.
         m_glitch = savedGlitchMode();
         m_secSolve = Mod::get()->getSavedValue<bool>("play-secsolve", true);
+        m_replayStep = Mod::get()->getSavedValue<bool>("play-replaystep", false);
         m_search = std::clamp(Mod::get()->getSavedValue<int>("play-search", UI_SEARCH_DP), 0,
                               UI_SEARCH_COUNT - 1);
         {
@@ -779,6 +844,10 @@ protected:
                                  "first attempt, so a level that opens only after dying will not "
                                  "be solved.",
                                  kWarnYellow, "attempt-note"_spr);
+        m_twoNote = makeNote("A two-player level: both players are planned (experimental), and a "
+                             "level where one player's press switches the other's world will not "
+                             "be solved.",
+                             kWarnYellow, "two-player-note"_spr);
         // A level already solved needs neither; solving it again with another version than the one
         // that did may still fail, and that is said instead (refresh fills it in).
         m_versionNote = makeNote("", kWarnYellow, "solved-version-note"_spr);
@@ -862,8 +931,8 @@ protected:
         const bool bot = m_mode != UI_MODE_NORMAL;
         m_coinToggle->setVisible(bot);
         m_coinLabel->setVisible(bot);
-        m_optBtn->setVisible(m_mode == UI_MODE_SOLVE);
-        m_optBtn->setEnabled(m_mode == UI_MODE_SOLVE);
+        m_optBtn->setVisible(m_mode == UI_MODE_SOLVE || m_mode == UI_MODE_REPLAY);
+        m_optBtn->setEnabled(m_mode == UI_MODE_SOLVE || m_mode == UI_MODE_REPLAY);
         m_note->setVisible(bot);
         // The one line for what Options changed.
         const bool optChanged = m_glitch != UI_GLITCH_OFF || !m_secSolve || m_search != UI_SEARCH_DP;
@@ -904,6 +973,7 @@ protected:
               std::pair{m_versionNote, !older.empty()},
               std::pair{m_yellowNote, !solved && m_facts.newer && !m_facts.official},
               std::pair{m_attemptNote, !solved && m_facts.attempts},
+              std::pair{m_twoNote, !solved && m_facts.twoPlayer},
               std::pair{m_redNote, !solved && m_facts.unmodelled != 0}}) {
             label->setVisible(bot && show);
             if (bot && show) {
@@ -949,6 +1019,11 @@ protected:
 
     // Options over the menu; its choices come back here as they are made.
     void onOptions(CCObject*) {
+        if (m_mode == UI_MODE_REPLAY) {
+            Ref<Popup> me = this;
+            if (auto* o = Options::createReplay(m_replayStep, [me](bool on) { me->m_replayStep = on; })) o->show();
+            return;
+        }
         if (m_mode != UI_MODE_SOLVE) return;
         Ref<Popup> self = this;
         auto* o = Options::create(m_glitch, m_search, m_secSolve, [self](int glitch, int search, bool secSolve) {
@@ -968,10 +1043,12 @@ protected:
         g_uiGlitchMode = m_mode == UI_MODE_SOLVE ? m_glitch : UI_GLITCH_OFF;
         g_uiGlitch = g_uiGlitchMode != UI_GLITCH_OFF;
         g_uiSecSolve = m_mode != UI_MODE_SOLVE || m_secSolve;
+        g_uiReplayStep = m_mode == UI_MODE_REPLAY && m_replayStep;
         g_uiSearch = m_mode == UI_MODE_SOLVE ? m_search : UI_SEARCH_DP;
         g_uiArmedLevel = m_level.data();
         Mod::get()->setSavedValue<int>("play-mode", m_mode);
         if (m_facts.coins > 0) Mod::get()->setSavedValue<bool>("play-coins", m_coins);
+        if (m_mode == UI_MODE_REPLAY) Mod::get()->setSavedValue<bool>("play-replaystep", m_replayStep);
         if (m_mode == UI_MODE_SOLVE) {
             // The checkbox's old key keeps meaning "any glitch avoidance", for a downgrade.
             Mod::get()->setSavedValue<int>("play-glitch-mode", m_glitch);
@@ -1024,13 +1101,13 @@ bool open(Layer* layer, GJGameLevel* level, CCObject* sender, bool mainLevel) {
     // What the notes were decided from, so a note can be traced back to the objects behind it.
     log::info("play menu: lv{} checked: not modelled: {}; objects from 2.0 on: {}{}{}; random "
               "numbers: {}; changes by attempt (taken as the first): {}; changes by attempt in what "
-              "is shown only: {}",
+              "is shown only: {}; two-player: {}",
               level->m_levelID.value(), levelwarn::describeAll(facts.unmodelled),
               facts.newerIds,
               facts.newer ? " (newest " + levelwarn::versionName(facts.newest) + ")" : std::string(),
               facts.official ? " (a main level: yellow not shown)" : "",
               facts.random ? "yes" : "no", facts.attempts ? "yes" : "no",
-              facts.attemptShown ? "yes" : "no");
+              facts.attemptShown ? "yes" : "no", facts.twoPlayer ? "yes" : "no");
     Ref<Layer> self = layer;
     Ref<CCObject> from = sender;
     auto* p = Popup::create(level, facts, [self, from] { self->onPlay(from.data()); });
@@ -1411,6 +1488,11 @@ class $modify(PlayMenuPreview, MenuLayer) {
         if (kind == "info1") { playmenu::showInfo("Avoid glitches", playmenu::glitchDetails()); return; }
         if (kind == "info2") { playmenu::showInfo("Search", playmenu::searchDetails()); return; }
         if (kind == "info3") { playmenu::showInfo("Hold Play to open this menu", playmenu::holdPlayDetails()); return; }
+        if (kind == "info4") { playmenu::showInfo("Fixed replay step", playmenu::replayStepDetails()); return; }
+        if (kind == "optionsreplay") {
+            if (auto* o = playmenu::Options::createReplay(true, nullptr)) o->show();
+            return;
+        }
         if (kind == "options") {
             if (auto* o = playmenu::Options::create(UI_GLITCH_WAVE, UI_SEARCH_BEAM, false, nullptr)) o->show();
             return;
@@ -1422,9 +1504,11 @@ class $modify(PlayMenuPreview, MenuLayer) {
             playmenu::showInfo("Avoid glitches", v);
             return;
         }
-        if (kind != "menu" && kind != "menuinfo" && kind != "press") return;
-        // `press` leaves the saved choices alone: it is the player's route, not a layout photograph.
-        const bool press = kind == "press";
+        if (kind != "menu" && kind != "menuinfo" && kind != "press" && kind != "pressstep") return;
+        // `press` leaves the saved choices alone: it is the player's route, not a layout photograph. `pressstep` is `press` with the
+        // Replay form's Fixed replay step chosen first (the saved value the menu reads), to reach the option without a click.
+        const bool press = kind == "press" || kind == "pressstep";
+        if (kind == "pressstep") Mod::get()->setSavedValue<bool>("play-replaystep", true);
         if (!press) {
             Mod::get()->setSavedValue<int>("play-glitch-mode", UI_GLITCH_WAVE);
             Mod::get()->setSavedValue<bool>("play-secsolve", false);

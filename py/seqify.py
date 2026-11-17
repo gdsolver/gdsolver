@@ -1,7 +1,7 @@
 """Which attempt sequence clears a level from a fresh game: find the shortest prelude for a solved plan.
 
-    python py/seqify.py <plan> --level 9 --pool 94
-    python py/seqify.py <plan> --levelfile <level.lvl> --pool 94
+    python py/seqify.py <plan> --level 9 --pool 99
+    python py/seqify.py <plan> --levelfile <level.lvl> --pool 99
 
 A level can start differently on its first attempt (an Item Persistence / attempt-count start: the first attempt
 dies, the later ones play). The solver flies its plans in a session that is already past that, so the plan it
@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gdtas import plan, results
-from gdtas.paths import WORKERS_ROOT
+from gdtas.paths import DEFAULT_WORKER, WORKERS_ROOT
 from gdtas.worker import run_session
 
 
@@ -106,7 +106,7 @@ def main(argv=None) -> int:
     ap.add_argument("plan")
     ap.add_argument("--level", type=int, help="official/numbered level id")
     ap.add_argument("--levelfile", help="a .lvl file (level 9001 with levelfile=)")
-    ap.add_argument("--pool", type=int, default=94, help="the one worker to use")
+    ap.add_argument("--pool", type=int, default=DEFAULT_WORKER, help="the one worker to use")
     ap.add_argument("--max-prelude", type=int, default=3)
     ap.add_argument("--start-k", type=int, default=0, help="first prelude length to try (a test aid)")
     ap.add_argument("--timeout-minutes", type=float, default=8.0)

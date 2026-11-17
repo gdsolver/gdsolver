@@ -48,7 +48,7 @@ import fidelity_diff as FD                                     # noqa: E402
 import quick_regress as QR                                     # noqa: E402
 from gdmcp.data import diff_trace                              # noqa: E402
 from gdtas import plan as P                                    # noqa: E402
-from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT  # noqa: E402
+from gdtas.paths import DATA, DEFAULT_WORKER, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT  # noqa: E402
 
 # The gate: how far the spine may drift from the head run and still count.
 SPINE_TOL = 0.05
@@ -624,7 +624,7 @@ def main(argv=None) -> int:
     ap.add_argument("--venue", choices=("windows", "external"), default="windows",
                     help="windows: a local worker (gdtas.worker). external: the "
                          "module named by GDSOLVER_SECQUEUE_VENUE")
-    ap.add_argument("--worker", type=int, default=99)
+    ap.add_argument("--worker", type=int, default=DEFAULT_WORKER)
     ap.add_argument("--cap", type=int, default=100)
     ap.add_argument("--limit", type=int, default=0, help="0 = every window")
     ap.add_argument("--windows", default="", help="comma-separated t0 to run")

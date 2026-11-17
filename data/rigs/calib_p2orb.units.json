@@ -1,0 +1,22 @@
+[
+ {
+  "what": "p2orb",
+  "orbs": [
+   [
+    1500,
+    "both lanes",
+    1
+   ],
+   [
+    2700,
+    "both lanes",
+    2
+   ],
+   [
+    3900,
+    "both lanes",
+    3
+   ]
+  ]
+ }
+]

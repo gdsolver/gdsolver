@@ -74,10 +74,29 @@ WORKERS_ROOT = _machine_local("GD-workers", "GDSOLVER_WORKERS")
 # mod.json naming a new build finds nothing until that build is frozen too.
 GD_BASE = Path(os.environ.get("GDSOLVER_GD_BASE")
                or WORKERS_ROOT / f"base-{GD_VERSION}")
-# The range the mainline batch (cold_regress and friends) claims as its pool.
-# Two GD processes sharing one data root mix their result.txt, so the resident
-# side (the MCP server) has to use ids outside this range.
-MAIN_POOL = tuple(range(90, 98))
+# The workers that run the build the mod targets: the game's current executable
+# (GD 2.209's hotfix build, frozen as base-2.209b). A tool that picks a worker for
+# itself starts from these and from nothing else -- a worker of another build (an
+# older executable, another GD version) refuses the package or loads it with its
+# hooks off.
+#   DEFAULT_POOL    what a batch spreads its levels over (cold_regress and friends);
+#                   a one-session run uses the first.
+#   DEFAULT_WORKER  a tool that needs one worker takes the first of the pool, which is
+#                   also the one a batch reaches first: name another whenever a batch
+#                   may be running.
+#   MCP_WORKER      the resident MCP session and the probes that share its policy
+#                   (gdprobe, regen_groups): the second, so they sit beside a batch
+#                   on DEFAULT_WORKER rather than under it.
+#   PERSON_WORKER   the tools a person sits at (watch, play, screenshot): the last,
+#                   which a batch reaches last.
+# Two GD processes sharing one data root mix their result.txt, so a launch is refused
+# while a GD already runs under the worker (gdtas.worker._wait_free): name a free one
+# with --pool / --worker / --worker-id when a batch is running.
+DEFAULT_POOL = (99, 100, 101)
+DEFAULT_WORKER = DEFAULT_POOL[0]
+MCP_WORKER = DEFAULT_POOL[1]
+PERSON_WORKER = DEFAULT_POOL[-1]
+# The MCP server refuses ids below this one.
 MCP_MIN_WORKER_ID = 98
 
 # The reachability-DP solver. Built from dp/ in this repository; the historical

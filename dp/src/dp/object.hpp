@@ -54,6 +54,8 @@ struct Obj {
     // tick from the recording or the trigger definitions). Fixups do not
     // apply near one -- see nearDynObject in fixup.hpp.
     uint8_t dynObj = 0;
+    // --fixreach: the layered record holds this object with ONE row, i.e. it never moved in the run(s) recorded (set where its samples are made)
+    uint8_t recStatic = 0;
     // A ring a Rotate turns (Dynamics::turnedBox, --ringturn, with the recording's angle changing).
     // --ringrectgate leaves it out: when GD rebuilds such a ring's cached rect is not read yet.
     uint8_t rotTurned = 0;
@@ -102,6 +104,9 @@ struct Obj {
     // against the recorded corners it is right for 0 of 64 (lv17), 0/72
     // (lv18), 0/63 (lv19), 0/117 (lv20), 0/50 (lv22).
     uint8_t obbOk = 0;
+    float gc[8] = {0,0,0,0,0,0,0,0};   // --obbfloat: GD's own four float corners of the turned box, with the centre they were dumped at
+    uint8_t hasGc = 0;
+    double gcx = 0, gcy = 0;
     double bhw = 0, bhh = 0;   // half sizes along the box's own axes
     double bc = 1, bs = 0;     // its long axis as a unit vector (bc, bs)
     // How far this object moved in y on THIS tick (0 for static ones). Only the
@@ -109,6 +114,9 @@ struct Obj {
     // contact rule has to be read in the RELATIVE frame once the surface itself
     // moves; see the ceiling ride.
     double dcy = 0.0;
+    // How much this object's half-height changed on THIS tick (the dynamic set writes it with dcy): a surface that is SCALED moves its face (cy +- hh) with its
+    // centre standing still, and a rider is carried by the face (--facecarry).
+    double dhh = 0.0;
     // TELEPORT PORTAL (GameObjectType 28, object id 747). tpY is the ABSOLUTE y
     // the player is put at, dumped by the MOD as
     // getRealPosition().y + m_teleportYOffset -- not an offset, because the base
@@ -187,6 +195,10 @@ struct Obj {
     // button is held (0 = none), and whether the recording has it on at this tick (Dynamics::seek).
     float holdTapX = 0.f;
     uint8_t recOn = 1;
+    // --onlag (dynamic objects; 1 / 1 otherwise): onNew = 0 on the tick of the recorded row that switched the object on,
+    // onPrev = 0 on the tick after it. Only the wave's hazard loop reads them.
+    uint8_t onPrev = 1;
+    uint8_t onNew = 0;
 };
 
 // A verbatim port of GameObject::isFacingDown() (2.2081 win 0x1a1910). GD turns
@@ -219,8 +231,71 @@ inline bool objFacingDown(const Obj& o) {
 // AABB overlaps by 1.61 px in y, but projecting the object's four corners onto
 // the PLAYER's own v axis (the cube is at -52.435 deg) gives max = -15.880
 // against the player's half of 15 -- separated by 0.88 px. GD does not fire.
+// --obbfloat (default off): GD's two-box test as GD runs it, in single precision. OBB2D::calculateWithCenter builds each box's four corners
+// from float sin/cos of its angle, the half sizes and the centre, in this order (the Broma-named CCPoint operators, read off the
+// disassembly 2026-10-24):  X = (cos, sin) * halfW,  Y = (-sin, cos) * halfH,  c0 = (C - X) - Y,  c1 = (C + X) - Y,  c2 = (C + X) + Y,
+// c3 = (C - X) + Y;  its two axes are c1 - c0 and c3 - c0, each scaled by 1 / |axis|^2 (a float reciprocal, then a multiply), and each axis's
+// origin is the double of c0.y * axis.y + c0.x * axis.x. OBB2D::overlaps1Way projects the other box's four corners onto each axis
+// (float products and sum, widened to double) and separates when the origin + 1 lies below the least or the greatest lies below the origin;
+// the test is that in both directions. At x ~ 50,000 a float steps 0.004 px and the corner arithmetic costs several steps, so a contact the
+// double-precision test below calls 5 micrometres short is a touch in the game (a custom level, a ball meeting a turned cube portal at
+// t=27,946: -0.005 px; the same level's mini wave at a turned gravity portal, t=26,919; another's at t=15,210: -0.016 px).
+inline bool g_obbFloat = false;
+#pragma fp_contract(off)
+struct ObbF32P { float x, y; };
+struct ObbF32Box { ObbF32P c[4]; ObbF32P ax[2]; double org[2]; };
+// axes and origins from four corners, as OBB2D::calculateWithCenter does after it has built them
+inline ObbF32Box obbF32FromCorners(const ObbF32P* c) {
+    ObbF32Box b;
+    for (int k = 0; k < 4; ++k) b.c[k] = c[k];
+    const ObbF32P e[2] = { ObbF32P{b.c[1].x - b.c[0].x, b.c[1].y - b.c[0].y},
+                           ObbF32P{b.c[3].x - b.c[0].x, b.c[3].y - b.c[0].y} };
+    for (int i = 0; i < 2; ++i) {
+        const float ls = e[i].x * e[i].x + e[i].y * e[i].y;
+        const float r = 1.0f / ls;
+        b.ax[i] = ObbF32P{e[i].x * r, e[i].y * r};
+        b.org[i] = (double)(b.c[0].y * b.ax[i].y + b.c[0].x * b.ax[i].x);
+    }
+    return b;
+}
+inline ObbF32Box obbF32Build(double cx, double cy, double hw, double hh, double ang) {
+    const float fa = (float)ang;
+    const float sn = sinf(fa), cs = cosf(fa);
+    const float fhw = (float)hw, fhh = (float)hh;
+    const ObbF32P X{cs * fhw, sn * fhw}, Y{-sn * fhh, cs * fhh};
+    const ObbF32P C{(float)cx, (float)cy};
+    const ObbF32P cmx{C.x - X.x, C.y - X.y}, cpx{C.x + X.x, C.y + X.y};
+    const ObbF32P c[4] = { ObbF32P{cmx.x - Y.x, cmx.y - Y.y}, ObbF32P{cpx.x - Y.x, cpx.y - Y.y},
+                           ObbF32P{cpx.x + Y.x, cpx.y + Y.y}, ObbF32P{cmx.x + Y.x, cmx.y + Y.y} };
+    return obbF32FromCorners(c);
+}
+inline bool obbF32OneWay(const ObbF32Box& a, const ObbF32Box& o) {
+    for (int i = 0; i < 2; ++i) {
+        double lo = 0.0, hi = 0.0;
+        for (int k = 0; k < 4; ++k) {
+            const double p = (double)(a.ax[i].x * o.c[k].x + a.ax[i].y * o.c[k].y);
+            if (k == 0 || p < lo) lo = p;
+            if (k == 0 || p > hi) hi = p;
+        }
+        if (a.org[i] + 1.0 < lo || hi < a.org[i]) return false;
+    }
+    return true;
+}
+inline bool obbSatF32(double cx1, double cy1, double hw1, double hh1, double a1,
+                      double cx2, double cy2, double hw2, double hh2, double a2) {
+    const ObbF32Box A = obbF32Build(cx1, cy1, hw1, hh1, a1), B = obbF32Build(cx2, cy2, hw2, hh2, a2);
+    return obbF32OneWay(A, B) && obbF32OneWay(B, A);
+}
+// the same against a box whose four float corners the game itself dumped (--obb): no rebuilding from a rounded angle
+inline bool obbHitGcF32(const float* gc, double px, double py, double half, double ang) {
+    const ObbF32P c[4] = { ObbF32P{gc[0], gc[1]}, ObbF32P{gc[2], gc[3]}, ObbF32P{gc[4], gc[5]}, ObbF32P{gc[6], gc[7]} };
+    const ObbF32Box A = obbF32FromCorners(c), B = obbF32Build(px, py, half, half, ang);
+    return obbF32OneWay(A, B) && obbF32OneWay(B, A);
+}
+#pragma fp_contract(on)
 inline bool obbSat(double cx1, double cy1, double hw1, double hh1, double a1,
                    double cx2, double cy2, double hw2, double hh2, double a2) {
+    if (g_obbFloat) return obbSatF32(cx1, cy1, hw1, hh1, a1, cx2, cy2, hw2, hh2, a2);
     const double dx = cx2 - cx1, dy = cy2 - cy1;
     const double c1 = std::cos(a1), s1 = std::sin(a1);
     const double c2 = std::cos(a2), s2 = std::sin(a2);
@@ -243,7 +318,9 @@ inline bool orientedHit(const Obj& o, double px, double py, double half,
     if (!o.oriented)
         return std::fabs(px - o.cx) <= o.hw + half
             && std::fabs(py - o.cy) < o.hh + half;
-    if (pRot != 0.0) {
+    if (g_obbFloat && o.hasGc && std::fabs(o.cx - o.gcx) < 1e-3 && std::fabs(o.cy - o.gcy) < 1e-3)
+        return obbHitGcF32(o.gc, px, py, half, -pRot * 3.14159265358979 / 180.0);
+    if (pRot != 0.0 || g_obbFloat) {   // --obbfloat: GD builds the box at any angle, zero included
         // BOTH angles have to be in the same handedness. GD's rotations are
         // cocos's (clockwise positive) and obbSat is written in the ordinary
         // counter-clockwise convention, so both get negated -- negating only
@@ -314,6 +391,10 @@ inline double sawMarginFor(uint8_t mode) {
 inline bool obbOverlap(const Obj& o, double px, double py, double ph,
                        double pdeg) {
     const double th = -pdeg * (1.0 / kRadToDeg);   // cocos rotation is CW +
+    if (g_obbFloat && o.hasGc && std::fabs(o.cx - o.gcx) < 1e-3 && std::fabs(o.cy - o.gcy) < 1e-3)
+        return obbHitGcF32(o.gc, px, py, ph, th);
+    if (g_obbFloat)   // --obbfloat (above): the object's x axis is (bc, bs)
+        return obbSatF32(o.cx, o.cy, o.bhw, o.bhh, std::atan2(o.bs, o.bc), px, py, ph, ph, th);
     const double pc = std::cos(th), ps = std::sin(th);
     const double dx = px - o.cx, dy = py - o.cy;
     // the object's axes

@@ -20,7 +20,7 @@ It is off unless a session asks for it, and with it off nothing changes.
 ## Running one
 
 ```bash
-python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --at 5200 --worker-id 93
+python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --at 5200 --worker-id 101
 ```
 
 The worker is always named (`--worker-id`): which workers are free is the operator's arrangement.
@@ -66,7 +66,7 @@ A custom level is played from its level file: `--level 9001 --levelfile <file>`.
 ### Taking over wherever the replay stands
 
 ```bash
-python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --worker-id 93
+python py/takeover.py play --level 16 --plan data/solution_lv16_dp.txt --worker-id 101
 ```
 
 With neither `--at` nor `--at-x` (the session's `takeoverkey=1`, off by default) there is no point
@@ -99,7 +99,7 @@ same plan is fed at. That is the claim `check` tests rather than assumes.
 ## Checking a run
 
 ```bash
-python py/takeover.py check <run directory> --worker-id 93
+python py/takeover.py check <run directory> --worker-id 101
 ```
 
 For every attempt, with nobody at the keyboard:

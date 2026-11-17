@@ -142,6 +142,29 @@ def main() -> int:
             pids["p"] = []
             w5 = W.CrashWatch(root, titles=lambda p: [], clock=lambda: clock["t"], wer=lambda: {1234})
             check(w5.check() == "", "a WerFault.exe is not looked for when the worker has no process")
+
+            # ---- the mod's exe guard: a launch whose mod refused the executable is reported at once
+            logdir = root / "geode" / "logs"
+            logdir.mkdir(parents=True)
+            guard_line = ("07:26:43 WARN  [Main] [GD Solver]: gdsolver: this Geometry Dash build (GD v1792203143, libcocos2d 6ad2d987, "
+                          "libExtensions 6ad2d987) is not the one this mod was built for (GD 2.209, first executable); the mod is not loaded")
+            (logdir / "Geode 2026-10-20 07.00.00.log").write_text("07:00:00 INFO [Main] [Geode]: an older launch\n" + guard_line + "\n", encoding="utf-8")
+            pids["p"] = []
+            w6 = W.CrashWatch(root, titles=lambda p: [], clock=lambda: clock["t"])
+            check(w6.check() == "", "a Geode log that existed before the launch is not this launch's (its guard line is not read)")
+            (logdir / "Geode 2026-10-20 08.00.00.log").write_text("08:00:00 INFO  [Main] [Geode]: Loading mod gdsolver.solver\n", encoding="utf-8")
+            check(w6.check() == "", "a new log without the guard line is no refusal")
+            (logdir / "Geode 2026-10-20 08.00.00.log").write_text(
+                "08:00:00 INFO  [Main] [Geode]: Loading mod gdsolver.solver\n" + guard_line + "\n", encoding="utf-8")
+            why = w6.check()
+            check("exe guard" in why and "GD v1792203143" in why and "same build of the game" in why,
+                  "the guard line in this launch's log is a refusal, with the mod's own words: " + why)
+            check(w6.reason == why, "and the reason is kept for the end of the launch")
+            clock["t"] += 1000.0
+            w7 = W.CrashWatch(root, titles=lambda p: [], clock=lambda: clock["t"])
+            (logdir / "Geode 2026-10-20 09.00.00.log").write_text(guard_line + "\n", encoding="utf-8")
+            clock["t"] += 200.0
+            check(w7.check() == "", "the log is read only for the first 180 seconds of a launch")
         finally:
             W.processes_under = W_processes
 

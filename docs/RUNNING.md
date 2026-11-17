@@ -16,6 +16,10 @@ no stored solution of that kind. **Start** (or `Enter`) starts the level in the 
 game's own, so any level can be picked. A platformer level gets no menu: the solver does not play
 platformer mode, so its play button just plays it.
 
+Under Replay, Options has **Fixed replay step** (off by default): the replay is advanced in fixed
+steps of 1/60 s, so it no longer depends on the length of the frames; on a screen faster than 60 Hz
+the motion then looks like 60 fps. Off, the replay runs on the game's own frame time.
+
 Under Solve an **Options** button in the top-right corner opens the settings about how the level is
 searched, which keep the last Start's choices. Each has an (i) button that says what every value of it means; the menu itself shows
 only one line (yellow, or red for an experimental search) naming what is not at its default, with an (i) button of its own:
@@ -39,8 +43,10 @@ only one line (yellow, or red for an experimental search) naming what is not at 
   **DP (default)**, the reachability DP every result in this repository comes from; **Beam**,
   which keeps the best states by the solver's own score at each tick; or **Monte Carlo**, random
   playouts from a fixed seed. The last two are experiments, more likely to fail a level the DP
-  clears, and while one is chosen the menu's Options line turns red. Whatever the search, every plan
-  is flown and judged by the game.
+  clears, and while one is chosen the menu's Options line turns red. A call the chosen search cannot
+  follow is answered by the DP, and the log says so on a `search:` line; Monte Carlo cannot follow a
+  coin route, so with Coins on the DP answers every call of the solve and the result file says that
+  once as a warning. Whatever the search, every plan is flown and judged by the game.
 
 The choice is made per play. The menu opens on Replay when a solution for the level is stored (with Coins ticked when the coin solution is), and on Solve when none is. Turning the mod setting **Choose
 the mode on Play** off makes a click on the play button just play the level, as without the mod; holding
@@ -64,10 +70,12 @@ them refuses the run.
   also reverses the player or puts two of them close together); a level that runs differently
   from one attempt to the next (an Item Compare or Item Edit that reads the attempt count, or an
   item Item Persistence keeps, sets off triggers that reach something the player touches or the
-  player itself — a level that only shows the count is not named); or a two-player level, whose
-  second player has a button of its own that the bot does not press. The line gives each a few
+  player itself — a level that only shows the count is not named). The line gives each a few
   words ("some teleport triggers") and names two at most, then how many more; the game's log has
   them in full, on the `play menu: lv<N> checked:` line.
+* **Yellow — a two-player level**: the second player has a button of its own, and the solver plans it,
+  each body against the other's plan; the support is experimental, and a level where one player's press
+  is a switch for the other's way is not solved yet ([TWO_PLAYER.md](TWO_PLAYER.md)).
 * **Yellow — objects from 2.0 on** (custom levels only): the model is measured against the newer
   mechanics one at a time and much of that is still to do, so such a level is slower to solve and
   may not be solved. It counts the objects of types that did not exist before 2.0 (robot, spider,
@@ -139,7 +147,7 @@ game flying a plan. It is hidden while the level is held still.
 | `F8` | end a human takeover (a debugging session, [TAKEOVER.md](TAKEOVER.md)); does nothing elsewhere |
 | `F9` | quit to the level screen |
 | `F10` | the iteration map: where the repair loop spent its rounds. On during a solve, off in a replay, and this flips whichever it currently is |
-| `Tab` | the replay panel: GD's own record of the deepest verified attempt, played in the free area from the middle of the screen to the top-right ([REPLAY_PANEL.md](REPLAY_PANEL.md)). On by default while a solve runs with the screen dark (never in the showing of the solution); the key goes round the whole verified path -> its last stretch -> off. While it is on screen, `F2` `F3` `F4` and the arrows are the panel's (stop, step, seek, pace); with the screen on they are the game's. `replaypanel=0` in `autorun.cfg` starts it off |
+| `Tab` | the replay panel: GD's own record of the deepest verified attempt, played in the free area from the middle of the screen to the top-right ([REPLAY_PANEL.md](REPLAY_PANEL.md)). On by default while a solve runs with the screen dark (never in the showing of the solution); the key goes round the whole path (ending with the model's plan in blue) -> its last stretch -> off. While it is on screen, `F2` `F3` `F4` and the arrows are the panel's (stop, step, seek, pace); with the screen on they are the game's. `replaypanel=0` in `autorun.cfg` starts it off |
 | `←` `→` | seek back / forward. A tap is five seconds; holding accelerates. While the game is stopped they step a frame instead. Refused during a solve: the level is the loop's own verification replay and nudging it would spoil the round |
 | `↑` `↓` | spectating speed, one notch (0.25x … 16x). Physics stays at 1/240 either way, so the trajectory and the tick numbers do not change |
 
@@ -188,6 +196,10 @@ python py/itermap_from_log.py --all
 ```bash
 python py/watch_plan_replay.py --level 22 --itermap
 ```
+
+The replay opens on a free worker and leaves every other game running, a solve or a regression
+included. `--kill-others` stops every GeometryDash process first (the Steam copy too), for a window
+that has the screen to itself; use it only when nothing else is running.
 
 ## Sound
 

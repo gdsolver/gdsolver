@@ -124,7 +124,7 @@ inline const CensusField kCensusFields[] = {
      }, true},
     {"boost", [](State& s) { s.boost = 0; s.boost2 = 0; s.a1cLatch = 0; }, true},
     {"arms", [](State& s) { s.fgArm = 0; s.ogLinger = 0; s.holdDead = 0; s.armT = 255; }, true},
-    {"coins", [](State& s) { s.coins = 0; s.items = 0; s.taps = 0; }, true},
+    {"coins", [](State& s) { s.coins = 0; s.items = 0; s.taps = 0; s.tapsX[0] = s.tapsX[1] = s.tapsX[2] = 0; }, true},
     {"latch", [](State& s) { s.portalLatch = GravLatch{}; s.portalLatch2 = GravLatch{}; }, true},
     {"fireB", [](State& s) { for (auto& f : s.fireB) f = 0; }, true},
 };

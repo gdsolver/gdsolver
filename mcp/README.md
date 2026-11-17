@@ -29,7 +29,7 @@ dumps, and therefore does not conflict with the main line's build.
 
 | tool | what it does |
 |---|---|
-| `gd_session_open(level, worker_id=98, cfg)` | launch one worker and hold it |
+| `gd_session_open(level, worker_id=100, cfg)` | launch one worker and hold it |
 | `gd_session_close()` | release it |
 | `gd_session_info()` | what is held (level / sha1 of the .geode in use / last result) |
 | `gd_run(plan \| plan_file)` | run one plan and return **only a summary** |
@@ -113,9 +113,11 @@ python -m gdmcp.cli diff --trace data/solution_lv12_dp.txt.trace.csv `
 
 ## The promises that keep this from colliding with the main line
 
-1. **Workers 98 and above only.** 90–97 are the Pool for the main line's batches
-   (`cold_regress` and the like). If 2 GDs sit on the same worker, result.txt gets
-   mixed up and returns plausible numbers that belong to a different run.
+1. **Workers 98 and above only, and not under a running GD.** A session starts on worker 100, the
+   second of the default pool (99-101, the workers of the game's current build); the batches
+   (`cold_regress` and the like) start from 99. If 2 GDs sit on the same worker, result.txt gets
+   mixed up and returns plausible numbers that belong to a different run, so a launch is refused
+   while a GD runs under the worker: name a free one (`worker_id=`) when a batch holds 100.
    The code rejects `worker_id < 98` as well.
 2. **Never write to the repository's own `data/`.** All writes go to the worker's data_root.
    Reads do go there (`objrects_lv<N>.txt` is invariant per level, so it is reused).

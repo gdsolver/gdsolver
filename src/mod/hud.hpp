@@ -181,7 +181,7 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
         : (g_paused || probe::g_pause) ? "step back / forward (10 substeps)"
                                        : "seek back / forward (hold to accelerate)",
         keyName(Key::Faster).c_str(), keyName(Key::Slower).c_str(),
-        panelKeys ? "  (the panel's pace)" : "   -   or drag the bar");
+        panelKeys ? "  (the panel's pace)   -   or click / drag its bar" : "   -   or drag the bar");
     lbl->setString(buf);
 }
 

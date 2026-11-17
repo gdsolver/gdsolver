@@ -1,6 +1,6 @@
 """Run the same plan in the model (leveldp) and in GD; print THE FIRST DIVERGING TICK.
 
-    python py/fidelity_diff.py --levels 1 2 3 --pool 91 93 94
+    python py/fidelity_diff.py --levels 1 2 3 --pool 99 100
 
 Finding out "where the model and GD disagree" does not require re-solving the
 level. data/solution_lv*_dp.txt is verified to clear, so it is enough to REPLAY
@@ -54,7 +54,7 @@ from gdtas.solveutil import copy_held_file, has_grouped_colliders
 from gdmcp.data import diff_trace
 from gdtas import plan as P
 from gdtas import results as R
-from gdtas.paths import DATA, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
+from gdtas.paths import DATA, DEFAULT_POOL, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -412,7 +412,7 @@ def format_table(results: list[Result], tol: float) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--levels", nargs="+", type=int, required=True)
-    ap.add_argument("--pool", nargs="+", type=int, default=[91, 93, 94, 95, 96, 97])
+    ap.add_argument("--pool", nargs="+", type=int, default=list(DEFAULT_POOL))
     ap.add_argument("--plans", default=str(DATA / "solution_lv{}_dp.txt"),
                     help="path to the plan; {} is replaced by the level number")
     ap.add_argument("--tol", type=float, default=0.3)

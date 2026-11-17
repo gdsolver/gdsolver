@@ -162,6 +162,9 @@ inline int g_mapPref = -1;
 // Test hook (cfg `f10auto`): seconds after the showing starts at which the mod presses F10 itself. Outside g_cfg, which a play
 // menu Start resets, so the list survives a session set up by the menu.
 inline std::vector<double> g_f10Auto;
+// Test hook (cfg `panelmouse`): triples (seconds after the replay panel first shows, bar fraction at which a press lands, bar fraction it is
+// dragged to before the release or -1 for a click). The panel presses its own bar through the same handlers a touch reaches.
+inline std::vector<double> g_panelMouseAuto;
 
 // [2026-08-28, user direction] A SOLVE SHOWS IT BY DEFAULT. That is the session where the map is
 // the thing worth watching: the marks appear as the loop produces them, and a run's walls are

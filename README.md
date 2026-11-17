@@ -32,6 +32,7 @@ start the game. [Geode](https://geode-sdk.org) has to be installed first; see
 <p align="center">
   <a href="https://youtu.be/TIzsdUE_3t0"><img src="https://img.youtube.com/vi/TIzsdUE_3t0/maxresdefault.jpg" width="32%" alt="Video: Thinking Space II solved by gdsolver"></a>
   <a href="https://youtu.be/NCWuxt7xN5w"><img src="https://img.youtube.com/vi/NCWuxt7xN5w/maxresdefault.jpg" width="32%" alt="Video: Society solved by gdsolver"></a>
+  <a href="https://youtu.be/kCB-GeGtaD0"><img src="https://img.youtube.com/vi/kCB-GeGtaD0/maxresdefault.jpg" width="32%" alt="Video: Grief solved by gdsolver"></a>
 </p>
 
 | Level | Uploaded by |
@@ -41,10 +42,12 @@ start the game. [Geode](https://geode-sdk.org) has to be installed first; see
 | Amethyst | iMist |
 | Thinking Space II | Cairox |
 | Society | Neomarbilan |
+| Grief | IcEDCave |
 
-These five are solved cold by the v0.6.0 build, the way any level is — its play
-button, **Solve**, and nothing else: no seeds, no previous solution, no hints,
-nothing but the level.
+Each of these six was solved cold, the way any level is — the play button,
+**Solve**, and nothing else: no seeds, no previous solution, no hints, nothing but
+the level. The videos were recorded on the builds that were current at the time
+(v0.5.0 to v0.7.0); the v0.7.0 build clears all six.
 
 These are other people's levels, solved by a bot. A solution is a TAS, not a
 completion: while the mod drives nothing is recorded, and its replays are marked as
@@ -52,8 +55,8 @@ bot input (see [Safety](#safety--community-notes)). They are also custom levels,
 and unlike the official levels they are not guaranteed to solve: on v0.5.0, of
 100 rated levels drawn at random, 93 cleared within 20 minutes each, and of the 29
 of those saved in 2.2, 26. Of 126 levels the game itself features (Daily, Weekly
-and Event), 74 cleared just before v0.6.0: 41 of 50 Daily, 23 of 50 Weekly and 10
-of 26 Event levels ([docs/CUSTOM_LEVELS.md](docs/CUSTOM_LEVELS.md)).
+and Event), 77 cleared on v0.7.0: 42 of 50 Daily, 24 of 50 Weekly and 11 of 26
+Event levels ([docs/CUSTOM_LEVELS.md](docs/CUSTOM_LEVELS.md)).
 
 Give it a level and it looks for an input sequence that clears it. It does not
 re-implement the game's physics: an approximate, measured-where-it-matters model
@@ -211,10 +214,11 @@ The work on custom levels:
 **The next milestone: two-player levels, the gimmicks the model does not cover
 yet, and divergences.**
 
-* **Two-player levels.** The second player has a button of its own, which the bot
-  does not press yet, so such a level is planned with presses the game never gives
-  it. Plans already carry a button mask (bit 0 is player 1's jump, the other bits
-  are reserved); the second player's button is next.
+* **Two-player levels.** The solver plans the second player's button too: each
+  body is searched against the other's plan, and a plan carries both buttons (bit
+  0 is player 1's jump, bit 1 player 2's, the other bits are reserved). A level
+  where one player's press is a switch that moves the other's world is not solved
+  yet ([docs/TWO_PLAYER.md](docs/TWO_PLAYER.md)).
 * **The gimmicks the play menu names in red** — teleports that move you sideways
   or have several exits, orbs that push you, triggers set off by touch or a spawn,
   and the rest ([docs/CUSTOM_LEVELS.md](docs/CUSTOM_LEVELS.md)) — each measured
@@ -294,6 +298,7 @@ cmake --build build-dp --config Release        # -> build-dp/dp/Release/leveldp.
 # the mod for Geometry Dash 2.209 (what the release is): the Geode SDK with tools/geode-sdk-2209.patch,
 # bindings that carry bindings/2.209, GEODE_COMP_GD_VERSION 22090 (the first 2.209 executable) or 22091 (the hotfix);
 # the script does all of it from nothing and is what CI runs
+# (in Windows PowerShell 5.1 do not redirect it with *>&1: CMake's stderr notices become errors and stop it; redirect from cmd, or use pwsh 7)
 ./scripts/ci-build-2209.ps1 -BindingsRepo <fork of geode-sdk/bindings with 2.209> -BindingsRef <ref>
 
 # the mod for another game: the package takes that version into its own mod.json (mod.json itself names 2.209)
