@@ -777,9 +777,6 @@ struct Config {
     // cfg `dpswingpending`: an anchor taken on the tick a SWING's press takes effect carries
     // the pending flip in --start's 16th field (see swingPendingAt in repair.hpp). On since
     // v0.1.4; always on since the flag clean-up.
-    // cfg `dphoverstrict`: an anchored robot whose vy is not flat into t0 gets no hover budget
-    // unless the hover starts on t0 itself (see robotHoverLeft in repair.hpp). On since
-    // v0.1.4; always on since the flag clean-up.
     // cfg `dpbandend`: pass --bandtrackend with the last tick the recording behind
     // dp_band.txt reached, so a portal past it sets the band instead of the held last row
     // (dp/src/dp/bands.hpp g_bandTrackEnd). On since v0.1.4; always on since the flag clean-up.

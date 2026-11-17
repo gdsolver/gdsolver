@@ -2396,7 +2396,7 @@ inline int cliMainOnce(int argc, char** argv) {
             // past that point was timed for a level moving at the wrong speed,
             // which is why they came back SOLVED and then died in GD.
             // GD's measurement is exact and needs no rule, so prefer it.
-            // 16th field = the ROBOT's remaining hover budget (rHover).
+            // 16th field = robot hover (fixed ticks if positive; remaining time if negative), or swing flip (0/1).
             // Without it every re-anchor taken mid-hover restarts with the
             // budget at 0, so the model falls at the mode's gravity through a
             // stretch where GD holds vy dead flat -- and the driver, whose fixup
@@ -2586,7 +2586,12 @@ inline int cliMainOnce(int argc, char** argv) {
                 for (RotTrig& r : g_rotTrig)
                     if (r.frame == sf) r.firedT = (int)t0;
             }
-            init.rHover = (uint8_t)a[15];   // see the 16th-field note above
+            if (init.mode == 5) {
+                if (a[15] < 0.0) init.rHover = std::min(-a[15], kRobotHoverTime);
+                else if (a[15] > 0.0) init.rHover = -std::floor(std::min(a[15], 255.0));
+            } else if (init.mode == 7) {
+                init.rHover = a[15] > 0.0;
+            }
             // ...and `action` as well as `held`, from the same 7th field. They
             // are the same fact ("was the button down coming into this tick")
             // and the anchor only ever carried one of them. Everything that
@@ -2613,7 +2618,7 @@ inline int cliMainOnce(int argc, char** argv) {
             init.dashSlope = dashSlopeClamped((float)a[17], (int)init.frame);
             // ...and a dash continues on `s.action` exactly like the hover, so
             // it needs the same seed for the same reason.
-            if (a[15] > 0 || a[16] > 0) init.action = (uint8_t)a[6];
+            if (init.rHover || a[16] > 0) init.action = (uint8_t)a[6];
             g_startHoldField = (int)a[6];   // --holdseed reads it with the hist payload
             // 23rd/24th (note above). A caller that omits them leaves 0 = the
             // old behaviour.
@@ -3405,10 +3410,11 @@ inline int cliMainOnce(int argc, char** argv) {
     // --gravtouch (modifiers.hpp): GD's gravity value at the anchor (--startgmod) where the crossing triggers
     // give another -- a touched trigger before the anchor set it -- stands as an entry of its own at the anchor's
     // x, which the state starts on. After the gravspawn entries, which the crossing value includes.
-    if (g_gravTouch && !std::isnan(g_startGmod) && init.frame == 0) {
-        const double cross = gravModOf(crossXOf(x0, g_tpBack ? init.tpBack : 0), 0);
+    if (g_gravTouch && !std::isnan(g_startGmod) && (init.frame == 0 || !init.dual)) {
+        const double crossX = stepCrossX(init.frame, init.xAbs, init.y, init.tpBack);
+        const double cross = gravModOf(crossX, 0);
         if (std::fabs(g_startGmod - cross) > 1e-6) {
-            g_gravTouchBoxes.push_back({x0, -1e9, 0.0, 0.0, g_startGmod, -1});
+            g_gravTouchBoxes.push_back({crossX, -1e9, 0.0, 0.0, g_startGmod, -1});
             init.gravTouch = (uint8_t)g_gravTouchBoxes.size();
             std::printf("gravtouch: the anchor at x=%.1f starts at gravity x%.3f (the crossing triggers give x%.3f)\n",
                         x0, g_startGmod, cross);
@@ -8014,6 +8020,11 @@ inline int cliMainOnce(int argc, char** argv) {
                 std::printf("seed: t=%lld ball728=%d\n", t, (int)s.ball728);
                 // --p2xoff (State::dx2): seeded at an anchor from --startp2dx
                 std::printf("seed: t=%lld dx2=%.4f\n", t, (double)s.dx2);
+                if (s.dual && s.dashing2)
+                    std::printf("seed: t=%lld dashF2=%u dashAng2=%u dashNeg2=%u\n", t,
+                                (unsigned)s.dashF2, (unsigned)s.dashAng2, (unsigned)s.dashNeg2);
+                if (s.rHover || (s.dual && s.rHover2))
+                    std::printf("seed: t=%lld rHover=%.17g rHover2=%.17g\n", t, s.rHover, s.rHover2);
                 // --followy (State::followF): seeded from the recording at an anchor
                 if (!g_followYs.empty())
                     std::printf("seed: t=%lld followOk=%d followF=%.3f|%.3f followOwn=%d|%d followN=%d|%d\n", t,
@@ -8133,24 +8144,23 @@ inline int cliMainOnce(int argc, char** argv) {
             double rowVy = (double)s.vy;
             int rowFlip = (int)s.flip;
             if ((s.mode == 1 || s.mode == 3) && !s.dual && !s.jumpBuf
-                && !s.pressSpent) {
+                && !s.pressSpent && !s.ctrlT && (!s.holdDead || !s.action)
+                && !(g_stopJump && s.pcRel)) {
                 int nextIn = curIn;
                 for (size_t j = fxIdx; j < fx.size() && fx[j].first <= t + 1; ++j)
                     nextIn = fx[j].second;
                 if (!g_ctrlWin.empty() && ctrlInputOffAt(t + 1, curIn != 0)) nextIn = 0;
-                const float ringDx = (s.dx > 0.f) ? s.dx : K.dxF;
-                const Obj* ring = nextIn
-                    ? flyEarlyRing(s, K, (double)ringDx * timeWarpAt((double)s.xAbs)
-                                             * (s.rev ? -1.0 : 1.0))
-                    : nullptr;
+                const Obj* ring = nextIn ? flyEarlyRing(s, K) : nullptr;
                 if (ring) {
                     State d = s;
                     const bool hs = g_histStatOn;   // a look ahead for the row, not a fire
                     g_histStatOn = false;
-                    applyFlyEarlyRing(d, ring, ringDx);
+                    const bool took = tryApplyFlyRing(d, ring, K);
                     g_histStatOn = hs;
-                    rowVy = (double)d.vy;
-                    rowFlip = (int)d.flip;
+                    if (took) {
+                        rowVy = (double)d.vy;
+                        rowFlip = (int)d.flip;
+                    }
                 }
             }
             const double vyGd = (g_dashVySet ? g_dashVy : rowVy)
@@ -8238,12 +8248,13 @@ inline int cliMainOnce(int argc, char** argv) {
                     heldPress = e.v ? 1 : 0;
                 }
                 char ds[512];
+                const double hoverArg = s.mode == 5 && s.rHover ? -s.rHover : s.rHover;
                 std::snprintf(ds, sizeof ds,
-                              "%lld,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%d,%d,0,%d,%d,%.6f,"
+                              "%lld,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%d,%d,0,%.17g,%d,%.6f,"
                               "-1,0,%d,%d,%.6f,%d,%d,%d,%d,%d,%d,%.6f",
                               t, dwx, dwy, (double)s.vy * (s.frame == 3 ? -1.0 : 1.0), (int)s.mode,
                               (int)s.grounded, heldPress, (int)s.flip, (int)s.mini, (int)s.dual, (double)s.y2,
-                              (double)s.vy2, (int)s.flip2, (int)s.grounded2, (int)s.rHover, (int)s.dashing,
+                              (double)s.vy2, (int)s.flip2, (int)s.grounded2, hoverArg, (int)s.dashing,
                               (double)s.dashSlope, (int)s.frame, (int)s.rev, (double)s.rot, (int)s.rotNeg,
                               (int)s.boost, (int)s.mode2, (int)s.mini2, (int)s.flipT, (int)s.armT,
                               (double)s.rotStep);

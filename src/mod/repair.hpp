@@ -82,6 +82,7 @@ struct AnchorRow {
     // to be read.
     int dashing = 0;
     float dashSlope = 0.f;   // dy per px of x, from the ring's own rotation (0 for an upright one)
+    double robotHover = 0.0;
     // ...and the second body's (histPayload, version 5): GD dashes each body on its own, and a
     // dual pair that takes one dash ring together holds both while the button is.
     int dashing2 = 0;
@@ -359,6 +360,9 @@ inline void record(GJBaseGameLayer* l, long long t) {
     r.mini2 = (r.dual && l->m_player2)
                   ? ((l->m_player2->m_vehicleSize < 0.9f) ? 1 : 0) : -1;
     r.dashing = p->m_isDashing ? 1 : 0;
+    r.robotHover = r.mode == 5 && !r.dashing && !r.onGround
+                        && p->m_maybeIsBoosted && p->m_jumpBuffered && !p->m_touchedPad
+                    ? std::clamp(1.5 - p->m_accelerationOrSpeed, 0.0, 1.5) : 0.0;
     // dp/step.hpp builds this from the ring object's rotation in degrees, so take it from the
     // ring GD says the player is riding rather than from m_dashAngle, whose units and meaning
     // would have to be established first.
@@ -3208,50 +3212,6 @@ inline int groundedOf2(const AnchorRow& r) {
     return (r.g2 || r.v2 == 0.f) ? 1 : 0;
 }
 
-// How much of the robot's hover the anchor still has. GD keeps no counter for it, so it is read
-// off the trajectory -- the way the driver reads it out of its dump, and for the same reason:
-// while hovering, GD holds vy EXACTLY constant, so counting back over "airborne and the same vy"
-// gives what has been spent, and the tick where that run breaks is the jump that armed it.
-//
-// Without this an anchor taken mid-hover starts with an empty budget and only the model falls,
-// while GD flies level. Every tick of that is recorded as a divergence by a comparison that is
-// itself an anchored resim -- measured by the driver on lv21's x=18,705 wall, where 45 of 63
-// records were this, and all 45 then went back into the model as --fixups and overwrote correct
-// physics next to the wall.
-constexpr int kRobotHoverTicks = 67;   // measured 2026-08-10; see the driver's robot_hover_left
-
-inline int robotHoverLeft(long long t0) {
-    const AnchorRow* cur = anchors::row(t0);
-    if (!cur || cur->mode != 5 || cur->onGround) return 0;   // grounded = GD has dropped it
-    // Falling is not hovering: a robot at terminal velocity holds vy just as flat, and crediting
-    // that invents a budget nobody armed. Zero is NOT excluded -- a hover keeps whatever vy it
-    // began with, and a pad or orb can set that to zero.
-    const float vp = cur->flip ? -cur->vy : cur->vy;
-    if (vp < 0.f) return 0;
-    long long j = t0;
-    for (int i = 0; i <= kRobotHoverTicks; ++i) {
-        const AnchorRow* prev = anchors::row(j - 1);
-        if (!prev || prev->onGround || prev->vy != cur->vy) break;
-        --j;
-    }
-    // cfg `dphoverstrict=1`: NO FLAT RUN AT ALL IS NOT A FULL BUDGET. When vy already differs from
-    // the tick before, the loop above stops at once and `left` came out as the whole 67 -- for a
-    // robot rising or falling under gravity, which is not hovering. A hover that begins exactly on
-    // t0 looks the same backwards, so the tick after decides: flat into t0+1 is a hover that has
-    // just started, anything else is not a hover.
-    // Measured on lv19 (2026-09-17): the anchor at t0=12,310 (robot, airborne, held, vy=2.014,
-    // changed from t0-1) was sent with 67; every fixup after it reads dvy=-0.194 per tick with the
-    // model level and GD falling -- the signature of a budget GD did not have -- and the cold run
-    // spent two iterations at x=17,600 on it.
-    if (j == t0) {
-        const AnchorRow* next = anchors::row(t0 + 1);
-        const bool startsHere = next && !next->onGround && next->vy == cur->vy;
-        return startsHere ? kRobotHoverTicks : 0;
-    }
-    const long long left = kRobotHoverTicks - (t0 - j);
-    return left > 0 ? (int)left : 0;
-}
-
 // The button state the tail inherits: the last input in the plan BEFORE t0. Guessing 0 is not
 // free -- in ship it selects a different acceleration branch and the trajectory drifts from the
 // first tick. The window has to be the same one the prefix is cut on (`< t0`), or the tail is
@@ -3392,9 +3352,11 @@ inline std::string startArg(long long t0, const AnchorRow& r, int held, int swin
     // draws exactly the same flat line as a hover at vy=0, right up to the 68th tick).
     // ...and a swing's pending flip rides the same field (rHover is robot-only in dp and free in
     // mode 7; see swingPendingAt).
-    const int hover = r.dashing ? 0
-                    : (r.mode == 7 && swingPending) ? 1 : robotHoverLeft(t0);
-    s += "," + std::to_string(hover) + "," + std::to_string(r.dashing)
+    const double hover = (!r.dashing && r.mode == 7 && swingPending) ? 1.0
+                         : r.robotHover > 0.0 ? -r.robotHover : 0.0;
+    char hoverText[32];
+    std::snprintf(hoverText, sizeof(hoverText), "%.17g", hover);
+    s += std::string(",") + hoverText + "," + std::to_string(r.dashing)
        + "," + num(r.dashSlope);
     s += "," + std::to_string(r.snapUid) + "," + num(r.snapDist);
     s += "," + std::to_string(gf) + "," + std::to_string(rv);

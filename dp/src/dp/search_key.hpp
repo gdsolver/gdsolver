@@ -1,4 +1,5 @@
 #pragma once
+#include <bit>
 #include "dp/thread_pool.hpp"
 
 namespace dp {
@@ -171,6 +172,11 @@ inline bool bandClamps(const State& s) {
 inline uint64_t coinKeyBits(const State& s) {
     return s.coins ? ((uint64_t)s.coins * 0x2545F4914F6CDD1Dull) : 0;
 }
+inline uint64_t hoverTicksForKey(double budget, int mode) {
+    if (mode != 5) return budget != 0.0;
+    return (uint64_t)(budget > 0.0 ? std::ceil(budget / kRobotHoverTick) : -budget);
+}
+
 inline uint64_t modelKeyOf(const State& s, long long t) {
     // dedupe key: exact enough to keep distinct behaviours, coarse enough to
     // saturate. cube y 0.5px / vy 0.1; ship coarser (y 1px / vy 0.2) or the
@@ -185,6 +191,7 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
     // are the right ones for it. Wave (4) is left out too -- its vy only ever
     // takes +-4*dx, so the vy bins cost it nothing, and lv17 already clears.
     const bool flying = (s.mode == 1 || s.mode == 3);
+    const bool timedHover = g_robotHoverWarp && !g_timeWarps.empty();
     const double ys = flying ? g_shipYq : g_cubeYq;
     const double vs = flying ? g_shipVq : g_cubeVq;
     const int32_t yq = (int32_t)std::lround(s.y * ys);
@@ -212,6 +219,7 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
     // (--keyxq / --keyxqfly; both 4.0 unless given, which is this expression exactly)
     const bool flyX = (s.mode == 1 || s.mode == 3 || s.mode == 4 || s.mode == 7);
     const int32_t xq = (int32_t)std::lround(s.xAbs * (flyX ? g_keyXqFly : g_keyXq));
+    const bool p2Action = s.action2 == 1 || (s.action2 == 2 && s.action);
     uint64_t k = ((uint64_t)(uint32_t)yq << 32) ^ ((uint64_t)(uint32_t)xq << 18)
            ^ ((uint32_t)vq << 6)
            ^ ((uint64_t)s.mini << 5)
@@ -225,8 +233,6 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // taking a bit: gated on the difference, so every key where the two
            // agree -- all of them until a grounded impulse happens under a held
            // button -- stays bit-identical to before.
-           // pressSpent2 is left out for the same reason ringHold2 is: the second
-           // body's ring bookkeeping has never been in this key.
            ^ ((s.pressSpent != s.ringHold)
                   ? ((uint64_t)s.pressSpent * 0x9E3779B97F4A7C15ull) : 0)
            // In a dual, the second half is part of the state: two states that
@@ -308,7 +314,9 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // completely different trajectories if one has 60 ticks of float
            // left and the other has none. Without this the dedupe keeps
            // whichever arrived first and the hover is silently unavailable.
-           ^ ((uint64_t)s.rHover << 56)
+           ^ ((timedHover && s.mode == 5 && s.rHover > 0.0)
+                  ? std::bit_cast<uint64_t>(s.rHover) * 0xD1342543DE82EF95ull
+                  : hoverTicksForKey(s.rHover, s.mode) << 56)
            // ...and while that budget is live, whether the button is STILL
            // DOWN is part of the state too. The robot's hover reads the
            // previous tick's input (GD runs buttons after the update), so the
@@ -326,16 +334,25 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // ...and the same for a DASH, which is held in exactly the same way
            ^ ((uint64_t)s.dashing << 54)
            ^ ((uint64_t)((s.rHover || s.dashing) ? s.action : 0) << 55)
+           ^ ((s.dashing && s.dashSlope != 0.f)
+                  ? (uint64_t)std::bit_cast<uint32_t>(s.dashSlope) * 0xA0761D6478BD642Full : 0)
+           ^ ((s.dual && s.rHover2)
+                  ? ((((timedHover && s.mode2 == 5 && s.rHover2 > 0.0)
+                          ? std::bit_cast<uint64_t>(s.rHover2)
+                          : hoverTicksForKey(s.rHover2, s.mode2)) << 1) | (s.mode2 == 5 && p2Action))
+                        * 0x8CB92BA72F3D8DD7ull : 0)
            // --dualdash: ...and the second body's dash, which its own step now keeps (0 off)
            ^ ((s.dual && s.dashing2)
-                  ? (0x5B2E7A1D93C4F086ull ^ ((uint64_t)s.action << 31)) : 0)
+                  ? (0x5B2E7A1D93C4F086ull ^ ((uint64_t)p2Action << 31)) : 0)
+           ^ ((s.dual && s.dashing2 && s.dashSlope2 != 0.f)
+                  ? (uint64_t)std::bit_cast<uint32_t>(s.dashSlope2) * 0xE7037ED1A0B428DBull : 0)
            // --p2born: ...and a second body born holding nothing whose plan level has not yet shown a release
            ^ ((g_p2Born && s.dual && s.action2 == 3) ? 0x6E3B95C1A7D204F8ull : 0)
            // --dualinlat: ...and in a dual whose second body takes the button a tick after the first
            // (ship or UFO against anything else), the two buttons it has just seen are part of the state
            ^ ((g_dualInLat && s.dual && (s.mode2 == 1 || s.mode2 == 3) && !(s.mode == 1 || s.mode == 3))
                   ? (0x3C79AC492BA7B653ull ^ ((uint64_t)s.action << 29)
-                     ^ ((uint64_t)(s.action2 >= 2 ? (s.action2 == 3 ? 0 : s.action) : s.action2) << 30))
+                     ^ ((uint64_t)p2Action << 30))
                   : 0)
            // --revcarry: ...and the correction a reverse ring still owes (State::revOff), in 0.25 px buckets: two states alike
            // in everything else run to different x. 0 for every state that never met such a ring, so those keys stay as they were.
@@ -518,6 +535,24 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
                || s.mode == 7)
                   ? ((uint64_t)s.held << 1) : 0)
            ^ s.grounded;
+    if (s.dual) {
+        const unsigned press2 = (s.pressSpent2 != s.pressSpent)
+                               | ((s.ringHold2 != s.ringHold) << 1)
+                               | ((s.holdDead2 != s.holdDead) << 2)
+                               | ((g_dualJumpBuf && s.jumpBuf2) << 3);
+        k ^= (uint64_t)press2 * 0xD1342543DE82EF95ull;
+        if (s.mode2 == 4) {
+            const bool held2 = (g_twoPlayer && g_p2Held ? p2Action : s.held != 0)
+                               && !(g_waveHoldDead && s.holdDead2);
+            if (held2 != (s.held != 0)) k ^= 0x589965CC75374CC3ull;
+        }
+    }
+    if (g_wavePortalRot && g_wavePortalSize) {
+        if (s.waveResized && s.mode == 4 && s.vy != 0.f && (s.mini || !g_wavePortalRotMini))
+            k ^= 0x3F84D5B5B5470917ull;
+        if (s.dual && s.waveResized2 && s.mode2 == 4 && s.vy2 != 0.f && (s.mini2 || !g_wavePortalRotMini))
+            k ^= 0x9216D5D98979FB1Bull;
+    }
     // Which gravity portals this state has spent (State::portalLatch). Unlike
     // `trig` this is not partitioned into the group -- a spent portal moves no
     // geometry, so both states want the same windows -- and the separation has

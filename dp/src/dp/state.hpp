@@ -655,12 +655,6 @@ struct State {
     // entries are dropped as soon as the player leaves that pad's box.
     const Obj* usedPad[4];
     uint8_t mini;        // size portal 18 = mini (half 9), 17 = back to normal
-    // ROBOT: hover ticks still available on this jump (see kRobotHoverTicks).
-    // Set to the full budget when the jump fires, spent one per tick while the
-    // button stays held, and dropped to 0 the moment it is released -- GD's
-    // release flag is only cleared by the next jump, so the budget cannot be
-    // picked back up in mid-air.
-    uint8_t rHover = 0;
     // DASH ring (37) / gravity dash ring (38): while the button stays held the
     // player travels on a straight line at the ring's own angle and gravity is
     // switched off entirely. Measured on lv21's ring at (2445,229): the press
@@ -705,9 +699,8 @@ struct State {
     // The WAVE and the CUBE maintain it; every other mode leaves it at 0 and
     // keeps the old bound-only test, which is the conservative direction.
     float rot = 0.f;
-    // --waveportalsize: set (to the wave's rotation) by a size portal the wave met on the tick that produced this state, 1e9 otherwise.
-    // Not an accumulator: every step overwrites it, so an anchor needs no seed.
-    float rotPrev = 1e9f;
+    // --waveportalsize: whether either wave changed size on the preceding tick, per body.
+    uint16_t waveResized = 0, waveResized2 = 0;
     // Sign of the cube's spin. GD keeps it in m_rotationSpeed and NEGATES IT ON
     // EVERY GRAVITY FLIP -- measured on lv22's seeded clear: the only two sign
     // changes in 4,000 ticks are at t=732 (flip 1->0) and t=1,308 (flip 0->1),
@@ -1241,10 +1234,6 @@ struct State {
     // portal starts both at 0 (it is spawned upside down, in its own mode). Like flipT, not
     // carried by --start (255 = no grace). In the padding after dashing2, so sizeof is unchanged.
     uint8_t flipT2 = 255, modeT2 = 255;
-    // --dualhover: the SECOND body's robot hover budget (see rHover), swapped by swapHalves and
-    // merged by stepBoth under the flag. It accumulates and is NOT seeded at an --start anchor, as
-    // rHover is not; 0 whenever the flag is off. In the padding after modeT2, so sizeof is unchanged.
-    uint8_t rHover2 = 0;
     // --ballscaleair: GD's +0x728 per body -- runBallRotation (the ground stake: a landing, a roll, a
     // pad, a speed portal) raises it, toggleRollMode (0x39b570) clears it whenever the ball flag
     // changes and flipGravity before a ball's air stake (ringJump's own stake leaves it alone), and
@@ -1266,6 +1255,7 @@ struct State {
     uint16_t dashF = 0;
     // --balldashsprite: the dash art's spin summed so far, in 1/16 degree (saturating), see speed.hpp. Same rules as dashF.
     uint16_t dashAng = 0;
+    uint16_t dashF2 = 0;
     float rot2 = 0.f, rotStep2 = 0.f;
     float dashSlope2 = 0.f;
     // --slopestick: the ramp GD's +0x5e8 holds -- the one the body last landed on -- by uid, -1 when
@@ -1304,6 +1294,10 @@ struct State {
     // --tap2: the counts of the SECOND, third and fourth counting Taps (State::taps is the first), the same six-bit count with 0x80 the window has opened and 0x40 it has shut. They accumulate over the
     // window and are not seeded at an anchor, for taps' reason (the presses before it reach the search as GD's own counter, --itembase). 0 without the flag. At the END on purpose (positional State{...}).
     uint8_t tapsX[3] = {0, 0, 0};
+    uint16_t dashAng2 = 0;
+    uint8_t dashNeg2 = 0;
+    // Robot: remaining time, or a negative count of fixed ticks. Swing: pending flip (0/1).
+    double rHover = 0.0, rHover2 = 0.0;
 };
 
 // THIS ASSERT IS A QUESTION, NOT A BUDGET. If you added a field and the build
@@ -1428,7 +1422,7 @@ struct State {
 // [2026-10-23] 648 -> 656: spdSpill (--spdseenall, the speed portals the four places gave up, a pointer to a persistent list). It accumulates and is not seeded at an anchor, for spdFired's reason.
 // [2026-10-23] 656 -> 664: the merge of --spdseenall (spdSpill, +8) and --balldashsprite (dashAng, a uint16 that sat in padding on its own branch) leaves dashAng without a slot in the padding: one more 8-byte row.
 constexpr size_t kStateBytes =
-    (664u +(size_t)(kTouchBits - 32) * sizeof(uint16_t)
+    (680u +(size_t)(kTouchBits - 32) * sizeof(uint16_t)
           + (sizeof(TouchMask) - sizeof(uint32_t))
           + 2u * (sizeof(GravLatch) - sizeof(Bits<128>)) + 7u) / 8u * 8u;
 static_assert(sizeof(State) == kStateBytes,

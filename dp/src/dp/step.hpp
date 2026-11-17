@@ -137,6 +137,7 @@ struct StepCtx {
     // at their place, not sent away. Null outside that pass (the windows are then the same).
     const std::vector<const Obj*>* nearRect = nullptr;
     const std::vector<const Obj*>* slopesRect = nullptr;
+    double sharedTimeScale = std::nan("");
 };
 
 // slopeVetoesSolid for the element `o` of K.near, through the group's index
@@ -1613,7 +1614,9 @@ inline void notePressRingFired(State& c, int uid) {
 // (a custom level t=2,741: GD fires yellow 447, entered a tick before gravity 443; both read as earlier).
 // The flight threshold read on the body's own side (playerIsFallingBugged's first branch): --fixgravthr,
 // --fixgravdual (constants.hpp).
-inline bool fixedGravThr(bool dual) { return g_fixGravityBug && (g_fixGravDual || !dual); }
+inline bool fixedFlightGravThr(const State& s) {
+    return (s.frame & 1) != 0 || (g_fixGravityBug && (g_fixGravDual || !s.dual));
+}
 inline bool flyRingContact(const Obj* ob, double px, double py, double ph, double pRot = 0.0) {
     // --ringrotbox (speed.hpp): a rotated ring against the player's rotated box, all four axes
     // --ringrectgate (speed.hpp): ...once the rect test has passed. collisionCheckObjects asks the oriented
@@ -1853,8 +1856,7 @@ inline void updateTouchRings(State& c, const State& s, const StepCtx& K, double 
 }
 // `foot` (--earlyring, speed.hpp): the pick for a press on foot, which leaves the teleport orb to its
 // contact path.
-inline const Obj* flyEarlyRing(const State& s, const StepCtx& K, double stepDx, bool foot = false) {
-    (void)stepDx;
+inline const Obj* flyEarlyRing(const State& s, const StepCtx& K, bool foot = false) {
     const Obj* pick = nullptr;
     int pickRank = 4;
     for (const Obj* ob : *K.orbs) {
@@ -1915,12 +1917,11 @@ inline double tpExitTurn(int uid, long long t) {
     }
     return turn;
 }
-// --robothoverwarp (constants.hpp): the robot's hover budget in ticks at time warp `tScale`
-inline uint8_t robotHoverTicks(double tScale) {
-    if (!g_robotHoverWarp || tScale == 1.0 || tScale <= 0.0) return (uint8_t)kRobotHoverTicks;
-    const double inc = (double)(float)(0.225f * (float)tScale) * 0.1;   // updateJump: +0x830 += dt * 0.1
-    const int n = (int)std::ceil(1.5 / inc - 1e-9);
-    return (uint8_t)std::clamp(n, 1, 255);
+inline double spendRobotHover(double remaining, double tScale) {
+    if (remaining < 0.0) return std::min(0.0, remaining + 1.0);
+    const double spent = g_robotHoverWarp && tScale > 0.0
+        ? (float)((double)(0.225f * (float)tScale) * 0.1) : kRobotHoverTick;
+    return std::max(0.0, remaining - spent);
 }
 // --tpexitmove (modifiers.hpp): how far the Moves that carry teleport `uid`'s exit have taken it by tick t
 inline double tpExitShift(int uid, long long t, bool yAxis) {
@@ -2133,6 +2134,12 @@ inline bool applyFlySpiderRing(State& c, const Obj* ob, const StepCtx& K) {
     return true;
 }
 
+inline bool tryApplyFlyRing(State& c, const Obj* ob, const StepCtx& K) {
+    if (ob->type == 43) return applyFlySpiderRing(c, ob, K);
+    applyFlyEarlyRing(c, ob, c.dx > 0.f ? c.dx : K.dxF);
+    return true;
+}
+
 // --a1clatch: PlayerObject::playerIsFallingBugged (0x39a430, the whole function), which updateJump
 // asks on every tick +0xa1c is up (0x38c115, and on the flying branch 0x38cb26 on every tick) and
 // which lowers the byte when it answers true. Two arms, vy in world terms and g2 the speed's
@@ -2222,6 +2229,14 @@ inline bool pressFreshFires(const TouchTrig& T, const State& par, long long t) {
     if (!(std::fabs((double)par.xAbs - bx) < T.hw + h0 && std::fabs((double)par.y - by) < T.hh + h0))
         return false;
     return !(g_touchOwnOff && !T.ownTog.empty() && !touchOwnOn(T, t));
+}
+
+inline double stepCrossX(int frame, double x, double y, uint8_t tpBack) {
+    if (g_crossWorldX && frame != 0) {
+        double worldY;
+        fromFrame(frame, x, y, x, worldY);
+    }
+    return crossXOf(x, g_tpBack ? tpBack : 0);
 }
 
 inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
@@ -2539,7 +2554,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     if ((unsigned)s.frame < 4)
         ++g_frameRevReach[g_threadSlot & (kThreadSlots - 1)].n[s.frame][s.rev ? 1 : 0];
     State c = s;
-    c.rotPrev = 1e9f;   // --waveportalsize (speed.hpp): set again only by this tick's size portal
+    c.waveResized = 0;   // --waveportalsize (speed.hpp): set again only by this tick's size portal
     c.tpSkip = 0;   // one tick of life: set again only by this tick's teleport
     // --tptrigforce: no push this step when the last one ended with a trigger teleport (bit 2; modifiers.hpp)
     struct ForceMuteScope {
@@ -2596,6 +2611,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     if (waveNow && ctrlOffNowAt(K.t, t_followHalf2 != 0, K.x)) input = 0;
     // --ctrltouch: ...and a touched Options trigger's, from the tick after the touch (State::ctrlT)
     if (s.ctrlT) input = 0;
+    const bool ringPress = input && (!s.holdDead || !s.action);
     // The ring a ship or UFO takes fired at the end of the previous tick (speed.hpp, the fly
     // rings), so this tick runs from the state it left.
     // --dualflyring: ...in a dual as well. pushButton runs per player and each body walks its own
@@ -2605,16 +2621,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // p2 at -11.18; the model, gated out here, fired it through the late loop on 1,299 and left GD
     // there (y 234.04 against 234.30 at 1,299). A ring that turns the body's gravity reports it to
     // the partner under --dualorbflip, as the late loop does.
-    if (!g_flyRingNested && (s.mode == 1 || s.mode == 3) && input
+    if (!g_flyRingNested && (s.mode == 1 || s.mode == 3) && ringPress
         && !s.jumpBuf && !s.pressSpent && K.orbs) {
-        const float ringDx = (s.dx > 0.f) ? s.dx : K.dxF;
-        const double stepDx = (double)ringDx * timeWarpAt((double)s.xAbs) * (s.rev ? -1.0 : 1.0);
-        if (const Obj* ring = flyEarlyRing(s, K, stepDx)) {
+        if (const Obj* ring = flyEarlyRing(s, K)) {
             State s2 = s;
-            // --flyspiderring: a spider orb with no surface to go to stays with the late loop
-            const bool took = (ring->type == 43) ? applyFlySpiderRing(s2, ring, K)
-                                                 : (applyFlyEarlyRing(s2, ring, ringDx), true);
-            if (took) {
+            if (tryApplyFlyRing(s2, ring, K)) {
                 g_flyRingNested = 1;
                 State r = stepOne(s2, input, K, dead, linkFlip);
                 g_flyRingNested = 0;
@@ -2634,9 +2645,9 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // --earlyring (speed.hpp): the ring a fresh press on foot goes to, out of the previous tick's
     // m_touchedRings. The foot branch reads it as ringTookPress; the late loop fires it.
     const Obj* earlyRingTook = nullptr;
-    if (input && !s.jumpBuf && !s.pressSpent && K.orbs
+    if (ringPress && !s.jumpBuf && !s.pressSpent && K.orbs
         && (s.mode == 0 || s.mode == 2 || s.mode == 5 || s.mode == 6 || s.mode == 7))
-        earlyRingTook = flyEarlyRing(s, K, 0.0, true);
+        earlyRingTook = flyEarlyRing(s, K, true);
     bool spawnRingJumpNow = false;   // --spawnringjump: set where a spawn ring takes the press
     int spawnRingUid = -1;           // ...and which ring that was (--spawnringon)
     // --ballstake: the ball's stake as it stood before a ring re-staked it this tick, which is what
@@ -2693,14 +2704,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // --tpback: every crossing is read at crossX (modifiers.hpp), the farthest x while a teleport has the
     // state behind it
     // --crossworldx (speed.hpp): on a turned frame the crossing coordinate is the player's world x, not the frame's own travel axis
-    double crossIn = (double)s.xAbs;
-    if (g_crossWorldX && s.frame != 0) {
-        double wX = 0.0, wY = 0.0;
-        fromFrame((int)s.frame, (double)s.xAbs, (double)s.y, wX, wY);
-        crossIn = wX;
-    }
-    const double sCrossX = crossXOf(crossIn, g_tpBack ? s.tpBack : 0);
-    const double tScale = timeWarpAt(sCrossX);
+    const double sCrossX = stepCrossX(s.frame, s.xAbs, s.y, s.tpBack);
+    const double tScale = std::isnan(K.sharedTimeScale) ? timeWarpAt(sCrossX) : K.sharedTimeScale;
     // --gravtrig: the gravity trigger's value in force over this tick, by the same rule as the
     // time warp (modifiers.hpp, GravTrig). It scales the gravity steps below and nothing else.
     // --gravtouch: ...and the touch-triggered one this branch fired last (State::gravTouch, gravModOf).
@@ -5174,7 +5179,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // test and writes nothing to +0xa1c; a fresh press taps from pushButton instead
             if (!(input && !s.action)) a1cNoFall = true;
             c.spiderJumpT = 0;   // GD's +0x820 (State::spiderJumpT)
-            c.pressSpent = 1;   // --spiderspend (constants.hpp)
             if (spiderBufNow) c.ringHold = 0;   // --spiderbufjump: the ring's press is used up by this landing teleport, so a held button does not repeat it
             if (g_touchCensus) g_tcBranch |= 1;
             // ...and the block-pin has to let go. `pinnedOnBlock` was armed
@@ -5476,8 +5480,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (isRobot) {
                     VPSET(vpNew) *= kRobotJumpScale;
                     c.rHover = (rePushNoHoverAt(K.t) || (g_robotSlopeNoHover && s.onSlope))   // --robotslopenohover
-                                   ? (uint8_t)0
-                                   : robotHoverTicks(tScale);
+                                   ? 0.0 : kRobotHoverTime;
                 }
                 // A jump taken WHILE STILL ON A RAMP carries the ramp's own
                 // push on top of the jump. The ramp-exit rule next door only
@@ -5718,7 +5721,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (forcePushOn())
                     VPSET(vpNew) += forceBoxAcc(modX, modY, pHalf,
                                          forceUnitFor(s.mode, useDx), (long long)K.t) * gdSign;
-                c.rHover = (uint8_t)(s.rHover - 1);
+                c.rHover = spendRobotHover(s.rHover, tScale);
                 YSET(c.y) = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;
             } else {
@@ -5977,7 +5980,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 VYSET(c.vy) = (float)(-jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                * kRobotJumpScale);
-                c.rHover = robotHoverTicks(tScale);
+                c.rHover = kRobotHoverTime;
                 c.grounded = 0;
             }
             // --ceilrobotjump (speed.hpp): ...and the same for a press not yet spent, on any ceiling plane
@@ -5989,7 +5992,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 VYSET(c.vy) = (float)(-jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                * kRobotJumpScale);
-                c.rHover = robotHoverTicks(tScale);
+                c.rHover = kRobotHoverTime;
                 c.grounded = 0;
             }
         }
@@ -6139,7 +6142,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 VYSET(c.vy) = (float)(jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                * kRobotJumpScale);
-                c.rHover = robotHoverTicks(tScale);
+                c.rHover = kRobotHoverTime;
                 c.grounded = 0;
             }
             // ...and the CUBE the same, now measured (speed.hpp, the ground cube jump)
@@ -6665,7 +6668,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // ordinary robot jump arms it (GD zeroes this+0x830 in
                         // the same block that writes the jump velocity)
                         vj *= kRobotJumpScale;
-                        c.rHover = robotHoverTicks(tScale);
+                        c.rHover = kRobotHoverTime;
                     }
                     VYSET(c.vy) = (float)(vj * (c.flip ? -1.0 : 1.0));
                     c.grounded = 0;
@@ -6740,7 +6743,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         {
                             const double vr = (double)c.vy * gsign;
                             VYSET(c.vy) = (float)((vr < 0.0 ? std::min(vr, -1.0) : 0.0) * gsign);
-                            if (c.mode == 5) c.rHover = (uint8_t)std::min<int>(c.rHover, 1);
+                            if (c.mode == 5 && c.rHover) c.rHover = -1.0;
                         }
                         continue;
                     }
@@ -7034,7 +7037,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             // budget held it at the face for the rest of the budget. One tick of hover
                             // left after the bonk reproduces GD's rows exactly; that is fitted on this one
                             // contact (three attempts), not read out of the binary.
-                            if (g_bonkOuter) c.rHover = (uint8_t)std::min<int>(c.rHover, 1);
+                            if (g_bonkOuter && c.rHover) c.rHover = -1.0;
                             continue;
                         }
                         YSET(c.y) = (float)(head - gsign * pHalf);
@@ -7441,9 +7444,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // 0.0193 = 0.225 x kSwingG, same shape as ship/UFO).
             if (!pinnedOnBlock
                 && (s.flip || (double)s.y > (floorY + pHalf) + 0.5)) {
-                const bool thrFlipRest = fixedGravThr(s.dual) ? false   // --fixgravthr, --fixgravdual
-                                       : s.dual ? true
-                                                : (s.flip != 0);
+                const bool thrFlipRest = !fixedFlightGravThr(s) && (s.dual || s.flip);
                 const double vpRest = qVy(
                     isSwing ? -(gMod != 1.0 ? swingGm(false, gMod) : kSwingG)
                     : isUfo ? gdapprox::UfoModel::stepVy(
@@ -7669,9 +7670,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             // branch -- taken for a sideways, platformer or swing body or with +0x561 set -- compares
             // against 2g on the body's own side and reads no +0xa99. A dual ship the right way up on a
             // fixGravityBug level: GD's button-up steps are -0.069 at vy +0.35 (weak), the model's -0.103.
-            const bool thrFlip = fixedGravThr(s.dual) ? false
-                               : s.dual ? true
-                                        : (s.flip != 0);
+            const bool thrFlip = !fixedFlightGravThr(s) && (s.dual || s.flip);
             // FORCE BOX (id 2069): applies to the ship/UFO under the same
             // convention (start-of-tick position, world->player via gsign).
             // Measurements at the declaration of kFF2069 (a ship passing through
@@ -8826,7 +8825,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // every tick, 0x38cb26 -> 0x38cb2f, which comes to the same). Then the collision pass's raises.
     {
         if (!a1cNoFall && a1cNow) {
-            const bool fixedArm = g_fixGravityBug != 0 || s.frame != 0 || s.mode == 7;
+            const bool fixedArm = g_fixGravityBug || (s.frame & 1) != 0 || s.mode == 7;
             if (a1cFallingBugged(a1cVyUpd, a1cUpUpd, s.dual != 0, fixedArm,
                                  gdapprox::accelSwitchVyForSpeed(speedMulForDx(useDx))))
                 a1cNow = false;
@@ -8855,6 +8854,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (overlapsM && c.mode != preMode && !freshTap
                     && (c.mode == 1 || c.mode == 3 || c.mode == 4 || c.mode == 7)) {
                     VYSET(c.vy) = (float)((double)c.vy * kGravPortalScale);
+                    if (c.mode == 7) c.rHover = 0;
                     c.mode = preMode;
                     c.grounded = 0;
                     // --portalspidertap: a button the spider cannot use yet is kept while it stays down
@@ -9278,7 +9278,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0);
                                 if (c.mode == 5) {
                                     vj *= kRobotJumpScale;
-                                    c.rHover = robotHoverTicks(tScale);
+                                    c.rHover = kRobotHoverTime;
                                 }
                                 VYSET(c.vy) = (float)(vj * (c.flip ? -1.0 : 1.0));
                                 c.grounded = 0;
@@ -15602,7 +15602,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             const double kk = s.mini ? kWaveRotKMini : kWaveRotK;
             const double tgt = kRadToDeg * std::atan(s.mini ? 2.0 : 1.0) * (s.vy > 0.f ? -1.0 : 1.0);
             pRotHere = ((double)s.rot - kk * tgt) / (1.0 - kk);
-            if (g_wavePortalSize && s.rotPrev < 1e8f) pRotHere = (double)s.rot;   // --waveportalsize (speed.hpp)
+            if (g_wavePortalSize && s.waveResized) pRotHere = (double)s.rot;   // --waveportalsize (speed.hpp)
         }
         // --slopedbg: make "passed the x window but rejected by the OBB" visible.
         // Without this it cannot be told apart from "never entered the window"
@@ -16294,6 +16294,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     // now (this pass's earlier portals included), and with no
                     // press behind it -- it has not been anywhere yet.
                     c.mode2 = c.mode;
+                    c.waveResized2 = 0;
                     c.mini2 = c.mini;
                     if (g_dualSlide) c.slideT2 = c.slideT;   // --dualslide: born with p1's arm
                     c.ceilT2 = 0;
@@ -16301,9 +16302,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     c.flip2 = bornUnlinked ? c.flip : (uint8_t)(c.flip ? 0 : 1);
                     c.grounded2 = 0;
                     c.ringHold2 = 0;
-                    // Same "no press behind it" as ringHold2. GD's fresh p2 does inherit
-                    // +0x986 from a press already held at the split (--dualbornpress below).
-                    c.pressSpent2 = 0;
                     c.onSlope2 = 0;
                     c.slopeM2 = 0.f;
                     c.snapObj2 = nullptr;
@@ -16320,13 +16318,10 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         c.rotStep2 = c.rotStep;
                         c.rotNeg2 = c.rotNeg;
                     }
-                    c.holdDead2 = 0;
-                    // --dualbornpress (speed.hpp): ...except that GD's copyAttributes hands the new body
-                    // player 1's +0x985 / +0x986, so a press player 1 has spent is spent here too
-                    c.pressSpent2 = c.pressSpent;
-                    c.holdDead2 = c.holdDead;
-                
-                    c.jumpBuf2 = c.jumpBuf;   // --dualjumpbuf: +0x985 is copied the same way
+                    const bool inheritPress = !g_twoPlayer || ctrlOff2At(K.t);
+                    c.pressSpent2 = inheritPress ? c.pressSpent : 0;
+                    c.holdDead2 = inheritPress ? c.holdDead : 0;
+                    c.jumpBuf2 = inheritPress ? c.jumpBuf : 0;
                     // --dualflipclock: born upside down relative to the first body, in its own
                     // mode -- both clocks start here. Custom level D t=7,023: GD's new p2 rides the floor
                     // ramp p1 is on, upside down, for the next ticks (the flip grace's seat).
@@ -16340,6 +16335,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     c.touchRingT2 = 0;
                     for (int i = 0; i < 4; ++i) c.usedPad2[i] = nullptr;
                     { c.dashing2 = 0; c.dashSlope2 = 0.f; }   // --dualdash: a new body is not dashing
+                    c.dashF2 = c.dashAng2 = c.dashNeg2 = 0;
                     c.rHover2 = 0;   // --dualhover: nor hovering
                     c.dx2 = 0.f;   // --p2xoff: a new body is born at player 1's x
                 }
@@ -16904,7 +16900,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 }
                 const uint8_t miniBeforeThis = c.mini;
                 c.mini = wantMini;
-                if (g_wavePortalSize && c.mode == 4 && miniBeforeThis != wantMini) c.rotPrev = c.rot;   // --waveportalsize (speed.hpp)
+                if (g_wavePortalSize && c.mode == 4 && miniBeforeThis != wantMini) c.waveResized = 1;   // --waveportalsize (speed.hpp)
                 // --sizeseat: a flipped cube seated under a solid that grows to the normal size is
                 // seated under it at the new size on THIS tick; the support test above would only
                 // do it on the next one. A custom level, mini cube hanging under a block (face
@@ -17050,6 +17046,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             } else {
                 const uint8_t oldMode = c.mode;
                 c.mode = wantMode;
+                if (oldMode == 5 || oldMode == 7) c.rHover = 0;
                 if (!modeFiredThisTick && wantMode != oldMode) {   // --padafterportal
                     modeFiredThisTick = true;
                     modeFiredCx = p->cx;
@@ -17630,7 +17627,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                        * sgn);
                         c.grounded = 0;
                         // the hover budget belongs to the jump, not to the mode
-                        if (c.mode == 5) c.rHover = robotHoverTicks(tScale);
+                        if (c.mode == 5) c.rHover = kRobotHoverTime;
                     } else if (c.mode == 3) {   // -> UFO: a flap
                         // The same raise-to-target the flap itself is (see
                         // UfoModel::stepVy): the re-issue cannot SLOW a UFO
@@ -17772,12 +17769,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             }
         }
     }
-    // --robotleavehover (speed.hpp): a robot that a mode portal takes out of robot form on this tick leaves its hover budget behind
-    if (!dead && s.mode == 5 && c.mode != 5 && c.mode != 7) c.rHover = 0;
-    // --swingheldash (speed.hpp): a body that came into the swing dashing with the button held from the dash ring's
-    // press flips on the next tick, as a fresh edge does (the swing branch's pending bit, rHover)
-    if (g_swingHelDash && !dead && c.mode == 7 && s.mode != 7 && s.dashing && input && s.action && !s.holdDead)
-        c.rHover = 1;    // --portalunseat (speed.hpp): a ground body a mode portal gave a smaller box this tick is seated by the solid
+    // --swingheldash (speed.hpp): a carried dash press, like a fresh press, flips the new swing on the next tick.
+    if (!dead && c.mode == 7 && s.mode != 7 && input
+        && ((s.mode == 5 && !s.action) || (g_swingHelDash && s.dashing && s.action && !s.holdDead)))
+        c.rHover = 1;
+    // --portalunseat (speed.hpp): a ground body a mode portal gave a smaller box this tick is seated by the solid
     // pass only if that box, at the height the update phase left, still meets a solid
     if (g_portalUnseat && !dead && s.frame == 0 && c.mode != s.mode && pinnedOnBlock && prePinVyOk
         && (s.mode == 0 || s.mode == 2 || s.mode == 5 || s.mode == 6)
@@ -18624,12 +18620,6 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
         // at the top of every tick in every mode, which is also what GD's own
         // ringJump reads (the 0x989 mirror of m_jumpBuffered).
         //
-        // Its one impurity is harmless here: it is also cleared when a ring
-        // fires or the ball's tap spends the press, so the next tick could read
-        // as an edge while the button is merely still down -- but `ringHold` is
-        // set in both of those cases and is only cleared by a release, so the
-        // gate below is shut anyway.
-        //
         // `jumpBuf` IS NOT m_jumpBuffered. It agrees on press and release, and
         // that is all this gate needs, but GD clears 0x985 from a longer list:
         // releaseButton / releaseAllButtons / disablePlayerControls (the Player
@@ -18642,8 +18632,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                               || c.mode == 4 || c.mode == 7);
         // On foot the contact path also runs on the tick of a release -- GD takes the release in
         // the buttons phase, after the collision pass (speed.hpp, the ring buffer)
-        const bool ringGate = ringFly ? (input && !s.jumpBuf)
-                                      : (input != 0 || s.jumpBuf);
+        const bool ringGate = ringFly ? (ringPress && !s.jumpBuf)
+                                      : (ringPress || (s.jumpBuf && !s.holdDead));
         if (!input) {
             c.ringHold = 0;      // released: the next press may ring again
             c.pressSpent = 0;    // ...and GD's releaseButton clears +0x986 with it
@@ -20762,11 +20752,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             }
         }
     }
-    // The BALL's tap spends the press too: GD's ball arm of updateJump ends with
-    // `flipGravity, vy *= 0.6, m_jumpBuffered = 0`. Cleared once here rather than
-    // at each of the four tap sites, which is the same thing -- ballFlippedThisTick
-    // is exactly "the ball tapped on this tick".
-    if (ballFlippedThisTick) c.jumpBuf = 0;
+    if (ballFlippedThisTick || spiderWarpedThisTick) c.jumpBuf = 0;
     g_ballTapped = ballFlippedThisTick;   // --repelland (fixup.hpp stepBoth)
     // --repela0c: GD's +0xa0c (State::hitG). propellPlayer clears it; hitGround sets it on every
     // grounded tick, and a tap needs the ground, so a tapping body held it at the repel; the tap
@@ -21399,6 +21385,9 @@ inline void swapHalves(State& s) {
     {
         std::swap(s.dashing, s.dashing2);
         std::swap(s.dashSlope, s.dashSlope2);
+        std::swap(s.dashF, s.dashF2);
+        std::swap(s.dashAng, s.dashAng2);
+        std::swap(s.dashNeg, s.dashNeg2);
     }
     // ...and the velocity-limit exemption, which became per-half on 2026-09-06
     // (State::boost2). lv16 t=8,913 is a DUAL ship whose two halves both carry
@@ -21413,6 +21402,7 @@ inline void swapHalves(State& s) {
     std::swap(s.seatT, s.seatT2);
     std::swap(s.mode, s.mode2);
     std::swap(s.mini, s.mini2);
+    std::swap(s.waveResized, s.waveResized2);
     // ...and WHICH RAMP each half is riding. slopeUid0/slopeUidNow were left behind, so the
     // second body's step read the FIRST body's ramp uid -- which decides the seam hand-over
     // clamp (rTopIsSeam ... sp->uid != s.slopeUid0) and whether a re-acquisition counts as the
