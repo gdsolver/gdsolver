@@ -172,6 +172,11 @@ inline bool bandClamps(const State& s) {
 inline uint64_t coinKeyBits(const State& s) {
     return s.coins ? ((uint64_t)s.coins * 0x2545F4914F6CDD1Dull) : 0;
 }
+inline uint64_t hoverTicksForKey(double budget, int mode) {
+    if (mode != 5) return budget != 0.0;
+    return (uint64_t)(budget > 0.0 ? std::ceil(budget / kRobotHoverTick) : -budget);
+}
+
 inline uint64_t modelKeyOf(const State& s, long long t) {
     // dedupe key: exact enough to keep distinct behaviours, coarse enough to
     // saturate. cube y 0.5px / vy 0.1; ship coarser (y 1px / vy 0.2) or the
@@ -186,6 +191,7 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
     // are the right ones for it. Wave (4) is left out too -- its vy only ever
     // takes +-4*dx, so the vy bins cost it nothing, and lv17 already clears.
     const bool flying = (s.mode == 1 || s.mode == 3);
+    const bool timedHover = g_robotHoverWarp && !g_timeWarps.empty();
     const double ys = flying ? g_shipYq : g_cubeYq;
     const double vs = flying ? g_shipVq : g_cubeVq;
     const int32_t yq = (int32_t)std::lround(s.y * ys);
@@ -308,7 +314,9 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // completely different trajectories if one has 60 ticks of float
            // left and the other has none. Without this the dedupe keeps
            // whichever arrived first and the hover is silently unavailable.
-           ^ ((uint64_t)s.rHover << 56)
+           ^ ((timedHover && s.mode == 5 && s.rHover > 0.0)
+                  ? std::bit_cast<uint64_t>(s.rHover) * 0xD1342543DE82EF95ull
+                  : hoverTicksForKey(s.rHover, s.mode) << 56)
            // ...and while that budget is live, whether the button is STILL
            // DOWN is part of the state too. The robot's hover reads the
            // previous tick's input (GD runs buttons after the update), so the
@@ -329,7 +337,9 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            ^ ((s.dashing && s.dashSlope != 0.f)
                   ? (uint64_t)std::bit_cast<uint32_t>(s.dashSlope) * 0xA0761D6478BD642Full : 0)
            ^ ((s.dual && s.rHover2)
-                  ? (((uint64_t)s.rHover2 << 1) | (s.mode2 == 5 && p2Action))
+                  ? ((((timedHover && s.mode2 == 5 && s.rHover2 > 0.0)
+                          ? std::bit_cast<uint64_t>(s.rHover2)
+                          : hoverTicksForKey(s.rHover2, s.mode2)) << 1) | (s.mode2 == 5 && p2Action))
                         * 0x8CB92BA72F3D8DD7ull : 0)
            // --dualdash: ...and the second body's dash, which its own step now keeps (0 off)
            ^ ((s.dual && s.dashing2)

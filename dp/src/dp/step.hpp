@@ -1917,12 +1917,11 @@ inline double tpExitTurn(int uid, long long t) {
     }
     return turn;
 }
-// --robothoverwarp (constants.hpp): the robot's hover budget in ticks at time warp `tScale`
-inline uint8_t robotHoverTicks(double tScale) {
-    if (!g_robotHoverWarp || tScale == 1.0 || tScale <= 0.0) return (uint8_t)kRobotHoverTicks;
-    const double inc = (double)(float)(0.225f * (float)tScale) * 0.1;   // updateJump: +0x830 += dt * 0.1
-    const int n = (int)std::ceil(1.5 / inc - 1e-9);
-    return (uint8_t)std::clamp(n, 1, 255);
+inline double spendRobotHover(double remaining, double tScale) {
+    if (remaining < 0.0) return std::min(0.0, remaining + 1.0);
+    const double spent = g_robotHoverWarp && tScale > 0.0
+        ? (float)((double)(0.225f * (float)tScale) * 0.1) : kRobotHoverTick;
+    return std::max(0.0, remaining - spent);
 }
 // --tpexitmove (modifiers.hpp): how far the Moves that carry teleport `uid`'s exit have taken it by tick t
 inline double tpExitShift(int uid, long long t, bool yAxis) {
@@ -5481,8 +5480,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (isRobot) {
                     VPSET(vpNew) *= kRobotJumpScale;
                     c.rHover = (rePushNoHoverAt(K.t) || (g_robotSlopeNoHover && s.onSlope))   // --robotslopenohover
-                                   ? (uint8_t)0
-                                   : robotHoverTicks(tScale);
+                                   ? 0.0 : kRobotHoverTime;
                 }
                 // A jump taken WHILE STILL ON A RAMP carries the ramp's own
                 // push on top of the jump. The ramp-exit rule next door only
@@ -5723,7 +5721,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (forcePushOn())
                     VPSET(vpNew) += forceBoxAcc(modX, modY, pHalf,
                                          forceUnitFor(s.mode, useDx), (long long)K.t) * gdSign;
-                c.rHover = (uint8_t)(s.rHover - 1);
+                c.rHover = spendRobotHover(s.rHover, tScale);
                 YSET(c.y) = (float)((double)s.y + kYScale * vpNew * gsign * tScale);
                 yFree = c.y;
             } else {
@@ -5982,7 +5980,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 VYSET(c.vy) = (float)(-jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                * kRobotJumpScale);
-                c.rHover = robotHoverTicks(tScale);
+                c.rHover = kRobotHoverTime;
                 c.grounded = 0;
             }
             // --ceilrobotjump (speed.hpp): ...and the same for a press not yet spent, on any ceiling plane
@@ -5994,7 +5992,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 VYSET(c.vy) = (float)(-jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                * kRobotJumpScale);
-                c.rHover = robotHoverTicks(tScale);
+                c.rHover = kRobotHoverTime;
                 c.grounded = 0;
             }
         }
@@ -6144,7 +6142,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 VYSET(c.vy) = (float)(jph.jump
                                * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0)
                                * kRobotJumpScale);
-                c.rHover = robotHoverTicks(tScale);
+                c.rHover = kRobotHoverTime;
                 c.grounded = 0;
             }
             // ...and the CUBE the same, now measured (speed.hpp, the ground cube jump)
@@ -6670,7 +6668,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         // ordinary robot jump arms it (GD zeroes this+0x830 in
                         // the same block that writes the jump velocity)
                         vj *= kRobotJumpScale;
-                        c.rHover = robotHoverTicks(tScale);
+                        c.rHover = kRobotHoverTime;
                     }
                     VYSET(c.vy) = (float)(vj * (c.flip ? -1.0 : 1.0));
                     c.grounded = 0;
@@ -6745,7 +6743,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                         {
                             const double vr = (double)c.vy * gsign;
                             VYSET(c.vy) = (float)((vr < 0.0 ? std::min(vr, -1.0) : 0.0) * gsign);
-                            if (c.mode == 5) c.rHover = (uint8_t)std::min<int>(c.rHover, 1);
+                            if (c.mode == 5 && c.rHover) c.rHover = -1.0;
                         }
                         continue;
                     }
@@ -7039,7 +7037,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                             // budget held it at the face for the rest of the budget. One tick of hover
                             // left after the bonk reproduces GD's rows exactly; that is fitted on this one
                             // contact (three attempts), not read out of the binary.
-                            if (g_bonkOuter) c.rHover = (uint8_t)std::min<int>(c.rHover, 1);
+                            if (g_bonkOuter && c.rHover) c.rHover = -1.0;
                             continue;
                         }
                         YSET(c.y) = (float)(head - gsign * pHalf);
@@ -9280,7 +9278,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                             * (c.mini ? (kCubeJumpMini / kCubeJump) : 1.0);
                                 if (c.mode == 5) {
                                     vj *= kRobotJumpScale;
-                                    c.rHover = robotHoverTicks(tScale);
+                                    c.rHover = kRobotHoverTime;
                                 }
                                 VYSET(c.vy) = (float)(vj * (c.flip ? -1.0 : 1.0));
                                 c.grounded = 0;
@@ -17629,7 +17627,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                                        * sgn);
                         c.grounded = 0;
                         // the hover budget belongs to the jump, not to the mode
-                        if (c.mode == 5) c.rHover = robotHoverTicks(tScale);
+                        if (c.mode == 5) c.rHover = kRobotHoverTime;
                     } else if (c.mode == 3) {   // -> UFO: a flap
                         // The same raise-to-target the flap itself is (see
                         // UfoModel::stepVy): the re-issue cannot SLOW a UFO

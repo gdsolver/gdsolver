@@ -84,7 +84,8 @@ constexpr double kFlyThinTol = 6.0;
 // arm that jumps (0x38c728) and restored only by releaseButton (0x398260).
 constexpr double kRobotGScale = 0.9;
 constexpr double kRobotJumpScale = 0.5;
-constexpr int kRobotHoverTicks = 67;
+constexpr double kRobotHoverTime = 1.5;
+constexpr double kRobotHoverTick = (float)((double)0.225f * 0.1);
 // --robothoverwarp: the dt that grows the budget is the time warp's (updateJump's own argument), so under a warp
 // the hover lasts 1.5 / (0.1 x 0.225 x warp) ticks: 75 at 0.9. A custom level: an upside-down robot jumps at
 // t=8,578 under a 0.9 warp; GD's +0x830 climbs by 0.02025 a tick and the hover runs 75 ticks, the model's 67.
