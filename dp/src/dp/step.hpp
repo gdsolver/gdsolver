@@ -137,6 +137,7 @@ struct StepCtx {
     // at their place, not sent away. Null outside that pass (the windows are then the same).
     const std::vector<const Obj*>* nearRect = nullptr;
     const std::vector<const Obj*>* slopesRect = nullptr;
+    double sharedTimeScale = std::nan("");
 };
 
 // slopeVetoesSolid for the element `o` of K.near, through the group's index
@@ -2231,6 +2232,14 @@ inline bool pressFreshFires(const TouchTrig& T, const State& par, long long t) {
     return !(g_touchOwnOff && !T.ownTog.empty() && !touchOwnOn(T, t));
 }
 
+inline double stepCrossX(int frame, double x, double y, uint8_t tpBack) {
+    if (g_crossWorldX && frame != 0) {
+        double worldY;
+        fromFrame(frame, x, y, x, worldY);
+    }
+    return crossXOf(x, g_tpBack ? tpBack : 0);
+}
+
 inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                      bool* linkFlip = nullptr) {
     // --stopjump (speed.hpp): a Player Control trigger released the button at the end of an earlier tick and the plan
@@ -2696,14 +2705,8 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
     // --tpback: every crossing is read at crossX (modifiers.hpp), the farthest x while a teleport has the
     // state behind it
     // --crossworldx (speed.hpp): on a turned frame the crossing coordinate is the player's world x, not the frame's own travel axis
-    double crossIn = (double)s.xAbs;
-    if (g_crossWorldX && s.frame != 0) {
-        double wX = 0.0, wY = 0.0;
-        fromFrame((int)s.frame, (double)s.xAbs, (double)s.y, wX, wY);
-        crossIn = wX;
-    }
-    const double sCrossX = crossXOf(crossIn, g_tpBack ? s.tpBack : 0);
-    const double tScale = timeWarpAt(sCrossX);
+    const double sCrossX = stepCrossX(s.frame, s.xAbs, s.y, s.tpBack);
+    const double tScale = std::isnan(K.sharedTimeScale) ? timeWarpAt(sCrossX) : K.sharedTimeScale;
     // --gravtrig: the gravity trigger's value in force over this tick, by the same rule as the
     // time warp (modifiers.hpp, GravTrig). It scales the gravity steps below and nothing else.
     // --gravtouch: ...and the touch-triggered one this branch fired last (State::gravTouch, gravModOf).

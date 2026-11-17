@@ -378,6 +378,15 @@ inline double touchPreY(const State& s, const State& c, bool set, double y) {
 // `input2` is the second body's own button (a plan's input bit 1) in a two-player level (g_twoPlayer); -1, and every call in a level
 // that is not two-player, gives it the first body's, as a dual's two halves always had.
 inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, int input2 = -1) {
+    StepCtx sharedWarp;
+    const StepCtx* physics = &K;
+    if (s.dual && !g_timeWarps.empty()) {
+        sharedWarp = K;
+        const float p1x = (g_swapBodies && s.frame == 0) ? (float)((double)s.xAbs + s.dx2) : s.xAbs;
+        const double p1y = g_swapBodies ? s.y2 : s.y;
+        sharedWarp.sharedTimeScale = timeWarpAt(stepCrossX(s.frame, p1x, p1y, s.tpBack));
+        physics = &sharedWarp;
+    }
     bool d1 = false;
     g_halfNow = 0;
     g_fxBlockedUid = -1;
@@ -388,7 +397,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, i
     g_preBtnSet = false;
     t_spiderFreshWarp = false;   // --spidertptouch
     t_ringLinkLate = 0;   // --ringtaplink
-    State c = stepOne(s, input, K, d1, &p1FlippedGravity);
+    State c = stepOne(s, input, *physics, d1, &p1FlippedGravity);
     const bool p1FreshWarp = t_spiderFreshWarp;   // p1's, before p2's stepOne can overwrite it
     const bool p1RingLate = t_ringLinkLate != 0;
     const int p1RingKind = t_ringLinkLate;
@@ -521,7 +530,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, i
         sb.action = (s.action2 == 3) ? (uint8_t)0 : ((s.action2 == 2) ? s.action : s.action2);
         p2Delayed = true;
     }
-    State cb = stepOne(sb, p2in, K, d2, &p2FlippedGravity);
+    State cb = stepOne(sb, p2in, *physics, d2, &p2FlippedGravity);
     if (p2x) {
         const double moved = ((double)cb.xAbs - (double)sb.xAbs) - ((double)c.xAbs - (double)s.xAbs);
         c.dx2 = (std::fabs(moved) > 0.5) ? (float)((double)s.dx2 + moved) : s.dx2;
@@ -731,7 +740,7 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, i
     // A flipped body that tapped on this tick did not tap in GD: the repel came first and
     // flipGravity took its ground away, so the tap's writes are undone here -- the polarity the
     // tap left is the repel's too; its vy, spent press and cleared byte are put back.
-    if (s.dual && !d1 && !d2 && c.mode == 2 && c.mode2 == 2
+    if (s.dual && !g_twoPlayer && !d1 && !d2 && c.mode == 2 && c.mode2 == 2
         && (p1HitG || p2HitG)) {
         const uint8_t f1 = p1Tapped ? (uint8_t)!c.flip : c.flip;
         const uint8_t f2 = p2Tapped ? (uint8_t)!c.flip2 : c.flip2;
