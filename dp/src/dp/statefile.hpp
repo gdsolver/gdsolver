@@ -32,7 +32,7 @@ inline std::string g_startStatePath;
 
 struct StateFile {
     static constexpr uint32_t kMagic = 0x54534447u;   // "GDST"
-    static constexpr uint32_t kVersion = 2;
+    static constexpr uint32_t kVersion = 3;
     int64_t t = -1;
     float dxF = 0.f;
     State s{};

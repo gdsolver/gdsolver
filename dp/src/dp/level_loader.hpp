@@ -2676,6 +2676,8 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 dropped = "in a dump without the gmod column";
             else if (g_trigGateCol && (f[colTouch] == "1" || f[colSpawn] == "1"))
                 dropped = "touch/spawn-triggered, not on the crossing queue";
+            else if (gpl & 4)
+                dropped = "following a triggering player, but an x-crossing has none";
             else if (gpl & 2)
                 dropped = "for player 2 only";
             if (dropped) {
@@ -2692,8 +2694,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                            : touched ? " (a state that touches it fires it: --gravtouch)" : "");
             } else {
                 g_gravTrigs.push_back({o.cx, gm, o.uid});
-                loadPrintf("gravtrig: uid %d at x=%.0f gravity x%.3f%s\n", o.uid, o.cx, gm,
-                           (gpl & 4) ? " (the player that crosses it)" : "");
+                loadPrintf("gravtrig: uid %d at x=%.0f gravity x%.3f\n", o.uid, o.cx, gm);
             }
         }
         // CAMERA MODE (id 2925, --camfree; bands.hpp): its Free Mode on the crossing queue

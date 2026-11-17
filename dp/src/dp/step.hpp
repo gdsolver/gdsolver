@@ -8856,6 +8856,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                 if (overlapsM && c.mode != preMode && !freshTap
                     && (c.mode == 1 || c.mode == 3 || c.mode == 4 || c.mode == 7)) {
                     VYSET(c.vy) = (float)((double)c.vy * kGravPortalScale);
+                    if (c.mode == 7) c.rHover = 0;
                     c.mode = preMode;
                     c.grounded = 0;
                     // --portalspidertap: a button the spider cannot use yet is kept while it stays down
@@ -16335,6 +16336,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
                     c.touchRingT2 = 0;
                     for (int i = 0; i < 4; ++i) c.usedPad2[i] = nullptr;
                     { c.dashing2 = 0; c.dashSlope2 = 0.f; }   // --dualdash: a new body is not dashing
+                    c.dashF2 = c.dashAng2 = c.dashNeg2 = 0;
                     c.rHover2 = 0;   // --dualhover: nor hovering
                     c.dx2 = 0.f;   // --p2xoff: a new body is born at player 1's x
                 }
@@ -17045,6 +17047,7 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             } else {
                 const uint8_t oldMode = c.mode;
                 c.mode = wantMode;
+                if (oldMode == 5 || oldMode == 7) c.rHover = 0;
                 if (!modeFiredThisTick && wantMode != oldMode) {   // --padafterportal
                     modeFiredThisTick = true;
                     modeFiredCx = p->cx;
@@ -17767,12 +17770,11 @@ inline State stepOne(const State& s, int input, const StepCtx& K, bool& dead,
             }
         }
     }
-    // --robotleavehover (speed.hpp): a robot that a mode portal takes out of robot form on this tick leaves its hover budget behind
-    if (!dead && s.mode == 5 && c.mode != 5 && c.mode != 7) c.rHover = 0;
-    // --swingheldash (speed.hpp): a body that came into the swing dashing with the button held from the dash ring's
-    // press flips on the next tick, as a fresh edge does (the swing branch's pending bit, rHover)
-    if (g_swingHelDash && !dead && c.mode == 7 && s.mode != 7 && s.dashing && input && s.action && !s.holdDead)
-        c.rHover = 1;    // --portalunseat (speed.hpp): a ground body a mode portal gave a smaller box this tick is seated by the solid
+    // --swingheldash (speed.hpp): a carried dash press, like a fresh press, flips the new swing on the next tick.
+    if (!dead && c.mode == 7 && s.mode != 7 && input
+        && ((s.mode == 5 && !s.action) || (g_swingHelDash && s.dashing && s.action && !s.holdDead)))
+        c.rHover = 1;
+    // --portalunseat (speed.hpp): a ground body a mode portal gave a smaller box this tick is seated by the solid
     // pass only if that box, at the height the update phase left, still meets a solid
     if (g_portalUnseat && !dead && s.frame == 0 && c.mode != s.mode && pinnedOnBlock && prePinVyOk
         && (s.mode == 0 || s.mode == 2 || s.mode == 5 || s.mode == 6)
@@ -21384,6 +21386,9 @@ inline void swapHalves(State& s) {
     {
         std::swap(s.dashing, s.dashing2);
         std::swap(s.dashSlope, s.dashSlope2);
+        std::swap(s.dashF, s.dashF2);
+        std::swap(s.dashAng, s.dashAng2);
+        std::swap(s.dashNeg, s.dashNeg2);
     }
     // ...and the velocity-limit exemption, which became per-half on 2026-09-06
     // (State::boost2). lv16 t=8,913 is a DUAL ship whose two halves both carry

@@ -575,7 +575,11 @@ inline State stepBoth(const State& s, int input, const StepCtx& K, bool& dead, i
     // --dualhover: ...and its robot hover budget (State::rHover2)
     c.rHover2 = cb.rHover2;
     // --dualdash: ...and its dash (State::dashing2 / dashSlope2), for the same reason
-    { c.dashing2 = cb.dashing2; c.dashSlope2 = cb.dashSlope2; }
+    c.dashing2 = cb.dashing2;
+    c.dashSlope2 = cb.dashSlope2;
+    c.dashF2 = cb.dashF2;
+    c.dashAng2 = cb.dashAng2;
+    c.dashNeg2 = cb.dashNeg2;
     c.slopeUid02 = cb.slopeUid02;  c.slopeUidNow2 = cb.slopeUidNow2;
     c.snapObj2 = cb.snapObj2;   c.usedOrb2 = cb.usedOrb2;
     c.usedOrbOld2 = cb.usedOrbOld2;

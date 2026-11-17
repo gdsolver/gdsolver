@@ -3405,8 +3405,8 @@ inline int cliMainOnce(int argc, char** argv) {
     // --gravtouch (modifiers.hpp): GD's gravity value at the anchor (--startgmod) where the crossing triggers
     // give another -- a touched trigger before the anchor set it -- stands as an entry of its own at the anchor's
     // x, which the state starts on. After the gravspawn entries, which the crossing value includes.
-    if (g_gravTouch && !std::isnan(g_startGmod) && init.frame == 0) {
-        const double crossX = crossXOf(x0, g_tpBack ? init.tpBack : 0);
+    if (g_gravTouch && !std::isnan(g_startGmod) && (init.frame == 0 || !init.dual)) {
+        const double crossX = stepCrossX(init.frame, init.xAbs, init.y, init.tpBack);
         const double cross = gravModOf(crossX, 0);
         if (std::fabs(g_startGmod - cross) > 1e-6) {
             g_gravTouchBoxes.push_back({crossX, -1e9, 0.0, 0.0, g_startGmod, -1});
@@ -8015,6 +8015,9 @@ inline int cliMainOnce(int argc, char** argv) {
                 std::printf("seed: t=%lld ball728=%d\n", t, (int)s.ball728);
                 // --p2xoff (State::dx2): seeded at an anchor from --startp2dx
                 std::printf("seed: t=%lld dx2=%.4f\n", t, (double)s.dx2);
+                if (s.dual && s.dashing2)
+                    std::printf("seed: t=%lld dashF2=%u dashAng2=%u dashNeg2=%u\n", t,
+                                (unsigned)s.dashF2, (unsigned)s.dashAng2, (unsigned)s.dashNeg2);
                 // --followy (State::followF): seeded from the recording at an anchor
                 if (!g_followYs.empty())
                     std::printf("seed: t=%lld followOk=%d followF=%.3f|%.3f followOwn=%d|%d followN=%d|%d\n", t,

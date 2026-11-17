@@ -828,8 +828,7 @@ inline int gdEventOfOrb(int id) {
 //     0.431 a tick (2 x 0.215595), not 2 x 0.216; at 0.1 by 0.022;
 //   - only gravity moves: the ship's thrust is the same at 0.5 as at 1, and no impulse changes
 //     (the cube's 11.180, the ball's 3.354, the robot's 5.590, the UFO's flap).
-// A trigger for player 2 only (gpl bit 1) leaves player 1 alone; m_followCPP (bit 2) is player 1
-// in a run with one body.
+// A trigger for player 2 only (gpl bit 1) leaves player 1 alone.
 struct GravTrig {
     double cx, mod;
     int uid;

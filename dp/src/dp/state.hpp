@@ -1266,6 +1266,7 @@ struct State {
     uint16_t dashF = 0;
     // --balldashsprite: the dash art's spin summed so far, in 1/16 degree (saturating), see speed.hpp. Same rules as dashF.
     uint16_t dashAng = 0;
+    uint16_t dashF2 = 0;
     float rot2 = 0.f, rotStep2 = 0.f;
     float dashSlope2 = 0.f;
     // --slopestick: the ramp GD's +0x5e8 holds -- the one the body last landed on -- by uid, -1 when
@@ -1304,6 +1305,8 @@ struct State {
     // --tap2: the counts of the SECOND, third and fourth counting Taps (State::taps is the first), the same six-bit count with 0x80 the window has opened and 0x40 it has shut. They accumulate over the
     // window and are not seeded at an anchor, for taps' reason (the presses before it reach the search as GD's own counter, --itembase). 0 without the flag. At the END on purpose (positional State{...}).
     uint8_t tapsX[3] = {0, 0, 0};
+    uint16_t dashAng2 = 0;
+    uint8_t dashNeg2 = 0;
 };
 
 // THIS ASSERT IS A QUESTION, NOT A BUDGET. If you added a field and the build
