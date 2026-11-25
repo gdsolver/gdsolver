@@ -413,6 +413,20 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
     }
     S.areaPhase = areaPhase;
     S.spawnModel = !noSpawn;
+    S.spawnGroupBySource = false;
+    {
+        std::ifstream flags(ref + "/levelflags.txt");
+        std::string flag;
+        while (std::getline(flags, flag)) {
+            flag = tsTrim(flag);
+            if (flag == "spawnGroupBySource=0" || flag == "spawnGroupBySource=1") {
+                S.spawnGroupBySource = flag.back() == '1';
+                break;
+            }
+            // Older dumps have the level setting but not a separate copy of the layer's byte.
+            if (flag == "enable22Changes=0" || flag == "enable22Changes=1") S.spawnGroupBySource = flag.back() == '1';
+        }
+    }
     S.floatRotate = !doubleRotate;
     S.spawnPhase = spawnPhase;
     S.sectionWindow = !noWindow;

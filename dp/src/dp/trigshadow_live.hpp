@@ -93,7 +93,7 @@ struct TrigLive {
         std::string s;
         for (const std::string& d : {dir, ext}) {
             if (d.empty()) continue;
-            for (const char* f : {"objrects.txt", "objgroups.txt", "triggers.txt", "trigext.txt", "areas.txt", "rotgameplay.txt", "areaeffect.txt", "areaedit.txt", "areatargets.txt", "multi.txt", "stopdump.txt"}) {
+            for (const char* f : {"objrects.txt", "objgroups.txt", "triggers.txt", "trigext.txt", "areas.txt", "rotgameplay.txt", "areaeffect.txt", "areaedit.txt", "areatargets.txt", "multi.txt", "stopdump.txt", "levelflags.txt"}) {
                 const std::string p = d + "/" + f;
 #ifdef _WIN32
                 struct _stat64 st;

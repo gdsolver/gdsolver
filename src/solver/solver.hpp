@@ -1799,6 +1799,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
         const int p22b = l->m_player2 ? (l->m_player2->m_enable22Changes ? 1 : 0) : -1;
         std::ofstream ff(std::string(DATA_DIR) + "/levelflags.txt", std::ios::trunc);
         ff << "enable22Changes=" << ls22 << "\nplayer1Enable22Changes=" << p22a << "\nplayer2Enable22Changes=" << p22b << "\n";
+        // 2.2091 spawnGroup (RVA 0x3223fb) tests the layer's byte, not either player's copy of kA40.
+        ff << "spawnGroupBySource=" << (l->m_enable22Changes ? 1 : 0) << "\n";
     }
 }
 
