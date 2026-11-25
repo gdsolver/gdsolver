@@ -542,11 +542,14 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                              && colTpRMod >= 0 && colTpRMod < kObjFields && colTpRMin >= 0
                              && colTpRMin < kObjFields && colTpRMax >= 0 && colTpRMax < kObjFields;
     // --tppush: a teleport's velocity, from the tp* force columns of its row (modifiers.hpp TpForce)
+    auto tpFlagsOf = [&](const std::string* f) {
+        return colTpFm >= 0 && colTpFm < kObjFields ? std::atoi(f[colTpFm].c_str()) : 0;
+    };
     auto tpForceOf = [&](const std::string* f) {
         TpForce t;
         if (!g_tpPush || !tpForceCols) return t;
         auto num = [&](int c) { return f[c].empty() ? 0.f : (float)std::atof(f[c].c_str()); };
-        t.fm = (uint8_t)(f[colTpFm].empty() ? 0 : std::atoi(f[colTpFm].c_str()));
+        t.fm = (uint8_t)(tpFlagsOf(f) & 7);   // Redirect Dash is independent of the force flags.
         t.f = num(colTpF);
         t.ang = num(colTpAng);
         t.rmod = num(colTpRMod);
@@ -557,7 +560,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
     // --tpexitrot (modifiers.hpp): the exit a force's direction was read off -- a turned object standing at the
     // teleport's target -- and its Rotates, not lockrot ones, with the g_autoTrig entry that dates each
     auto tpExitOf = [&](int uid, double ex, double ey) {
-        if (!g_tpExitRot || (ex == 0.0 && ey == 0.0)) return;
+        if (!g_tpExitRot) return;
         for (const auto& kv : rotObjPos) {
             if (std::fabs(kv.second.first - ex) > 0.5 || std::fabs(kv.second.second - ey) > 0.5) continue;
             const auto it = g_rotTailParts.find(kv.first);
@@ -1993,7 +1996,9 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                            o.uid, o.cx, o.cy, o.tpY, o.tpRY, o.tpRX);
             }
             o.tpForce = tpForceOf(f);
-            if (o.tpForce.fm & 5) tpExitOf(o.uid, o.tpEx, o.tpEy);   // --tpexitrot
+            const int tpFlags = tpFlagsOf(f);
+            const bool hasExitAngle = (tpFlags & 8) ? !(tpFlags & 16) : (o.tpEx != 0.0 || o.tpEy != 0.0);
+            if (hasExitAngle && ((o.tpForce.fm & 5) || (tpFlags & 8))) tpExitOf(o.uid, o.tpEx, o.tpEy);   // --tpexitrot
             if (o.id != 747) tpExitMovesOf(o.uid, o.tpEx, o.tpEy);   // --tpexitmove
             if (o.tpForce.fm || (o.tpKeep & 2)) tpActUids.push_back(o.uid);
             if (o.tpForce.fm)
@@ -2005,7 +2010,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             // (m_orangePortal), NOT the tpy closed formula -- an old dump
             // without the tpex/tpey columns plans against a target measured
             // wrong on lv22 (705 saved vs 1905 real). Refresh objrects.
-            if (o.id != 747 && o.tpEx == 0.0 && o.tpEy == 0.0)
+            if (o.id != 747 && !hasExitAngle && !(tpFlags & 8))
                 loadPrintf("teleport: uid %d id %d at (%.0f,%.0f) has NO exit "
                            "columns (old objrects dump) - target unreliable, "
                            "refresh objrects\n", o.uid, o.id, o.cx, o.cy);
@@ -2687,37 +2692,39 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         else if (o.id == 3022 && g_teleportTrig) {
             const double tx = f[34].empty() ? 0.0 : std::atof(f[34].c_str());
             const double ty = f[35].empty() ? 0.0 : std::atof(f[35].c_str());
-            // --tpforceonly: no exit object but a force on: the force alone, the body kept in x and y (as the touch-triggered one below)
-            const bool forceOnly = g_shadowSupply && g_shadowStepModes && tx == 0.0 && ty == 0.0 && tpForceOf(f).fm != 0;
+            const int tpFlags = tpFlagsOf(f);
+            const bool hasTarget = (tpFlags & 8) ? !(tpFlags & 16) : (tx != 0.0 || ty != 0.0);
+            // No exit object: teleportPlayer still applies a force or redirects a dash (0x316560..0x31695a).
+            const bool forceOnly = g_shadowSupply && g_shadowStepModes && !hasTarget && (tpForceOf(f).fm != 0 || (tpFlags & 8));
             const uint8_t igx = (uint8_t)(forceOnly || (!f[19].empty() && std::atoi(f[19].c_str())) ? 1 : 0);
             const uint8_t igy = (uint8_t)(forceOnly || (!f[20].empty() && std::atoi(f[20].c_str())) ? 1 : 0);
             const uint8_t grav = (uint8_t)(f[18].empty() ? 0 : std::atoi(f[18].c_str()));
             const char* dropped = nullptr;
             if (g_trigGateCol && (f[colTouch] == "1" || f[colSpawn] == "1"))
                 dropped = "touch/spawn-triggered, not on the crossing queue";
-            else if (tx == 0.0 && ty == 0.0 && !forceOnly)
+            else if (!hasTarget && !forceOnly)
                 dropped = "without a target in the dump (no tpex/tpey)";
             else if (!igx && std::fabs(tx - o.cx) > 0.5 && !(tx > o.cx)
                      && !(g_tpBack && tx < o.cx))   // --tpback (modifiers.hpp)
                 dropped = "moving x backwards";
+            if (hasTarget && (tpFlags & 8)) tpExitOf(o.uid, tx, ty);   // --tpexitrot, for a dash redirected by a trigger
             tpExitMovesOf(o.uid, tx, ty);   // --tpexitmove
             if (dropped) {
                 // --tptrigspawn (removed) (modifiers.hpp): a spawned one with a target goes to cli.hpp's chain walk
-                const bool spawned = g_trigGateCol && f[colSpawn] == "1" && f[colTouch] != "1"
-                                     && (tx != 0.0 || ty != 0.0);
+                const bool spawned = g_trigGateCol && f[colSpawn] == "1" && f[colTouch] != "1" && hasTarget;
                 if (spawned) g_tpSpawned.push_back({o.cx, tx, ty, igx, igy, grav, o.uid, tpForceOf(f)});
                 // --tptouch (modifiers.hpp): a touched one moves the state whose box overlaps it, unless its
                 // target is behind the box
-                const bool touched = g_trigGateCol && f[colTouch] == "1" && (tx != 0.0 || ty != 0.0)
+                const bool touched = g_trigGateCol && f[colTouch] == "1" && hasTarget
                                      && (igx || g_tpBack || tx >= o.cx - o.hw - 0.5);
                 if (touched)
                     g_tpTouchBoxes.push_back({o.cx, o.cy, o.hw, o.hh,
                                               TpTrig{o.cx, tx, ty, igx, igy, grav, o.uid, tpForceOf(f)}, o.uid});
                 // --shadowsupply: a touched one with no exit object (tpex / tpey 0) still gives its force (GJBaseGameLayer::teleportPlayer: no target group, the force branch alone; a custom level
                 // t=5391, yvel 7.96 * sin 66 = 7.2718) and moves nothing: kept in x and y, so the old step leaves the body where it is as well
-                else if (g_shadowSupply && g_shadowStepModes && g_trigGateCol && f[colTouch] == "1" && tx == 0.0 && ty == 0.0 && tpForceOf(f).fm != 0) {
+                else if (forceOnly && g_trigGateCol && f[colTouch] == "1") {
                     g_tpTouchBoxes.push_back({o.cx, o.cy, o.hw, o.hh, TpTrig{o.cx, tx, ty, 1, 1, grav, o.uid, tpForceOf(f)}, o.uid});
-                    loadPrintf("teleporttrig: uid %d at x=%.0f is a touch trigger with a force and no exit: the force only (--shadowsupply)\n", o.uid, o.cx);
+                    loadPrintf("teleporttrig: uid %d at x=%.0f is a touch trigger with a force or dash redirect and no exit (--shadowsupply)\n", o.uid, o.cx);
                 }
                 loadPrintf("teleporttrig: uid %d at x=%.0f is %s - NOT modelled%s\n",
                            o.uid, o.cx, dropped,

@@ -63,6 +63,8 @@ enum : size_t {
 
 // ----------------------------------------------------------------------------------------------------------------------------------------
 
+inline constexpr int kTpRedirectDash = 8, kTpDashUsesEntryAngle = 16;   // objrects tpfm
+
 // a GD object as the pass reads it
 struct GObj {
     int uid = -1;
@@ -1792,10 +1794,43 @@ inline void redirectPlayerForce(Ctx& c, float ang, float rmod, float rmin, float
 inline double (*g_tpExitShiftHook)(int uid, long long t, bool yAxis) = nullptr;
 inline double (*g_tpExitTurnHook)(int uid, long long t) = nullptr;
 inline thread_local long long g_tpExitTick = -1;
+inline void setDashBodyRotation(Mem& P);
+
+inline void redirectDash(Ctx& c, float degrees) {
+    // GD Win 2.2091: teleportPlayer 0x3167cf..0x31695a rotates the existing float vector without rescaling it.
+    Mem& P = c.P;
+    float x = (float)P.f64(0x570), y = (float)P.f64(0x578);
+    float delta = degrees * 0.017453292f - std::atan2(y, x);
+    // RVA 0x3373e0 folds the angular difference before sin/cos.
+    constexpr float pi = 3.1415927410125732f;
+    if (std::fabs(delta) > pi) {
+        const float turns = std::ceil(std::floor(std::fabs(delta) / pi) * 0.5f);
+        delta -= std::copysign(turns * (pi + pi), delta);
+    }
+    if (delta != 0.0f) {
+        const float sn = std::sin(delta), cs = std::cos(delta);
+        const float nx = cs * x - sn * y;
+        y = sn * x + cs * y;
+        x = nx;
+    }
+    const bool side = P.u8(po::Sideways) != 0;
+    const int wrapped = ((int)(-(std::atan2(y, x) * 57.29578f)) - (side ? 90 : 0)) % 360;
+    P.f64(0x580, -(wrapped < 0 ? wrapped + 360 : wrapped));
+    if (side) std::swap(x, y);
+    P.f64(0x570, x); P.f64(0x578, y);
+    if (x < 0.0f) setLeftward(P, !side);
+    else if (x > 0.0f) setLeftward(P, side);
+    setDashBodyRotation(P);
+    if (c.restartDashSpin) c.restartDashSpin(c);
+}
+
 inline void teleportPortal(Ctx& c, GObj* o) {
     Mem& P = c.P;
     P.u8(0x560, 1);
-    const bool hasTarget = o->objectId == 747 || o->tpEx != 0.0f || o->tpEy != 0.0f;   // the dump's exit sentinel; 747 has its own height
+    const bool dashRedirect = (o->tpFm & kTpRedirectDash) != 0;
+    const bool dashUsesEntry = (o->tpFm & kTpDashUsesEntryAngle) != 0;
+    // At RVA 0x3165cd the resolved pointer, not the target coordinates, distinguishes a linked exit.
+    const bool hasTarget = dashRedirect ? !dashUsesEntry : (o->objectId == 747 || o->tpEx != 0.0f || o->tpEy != 0.0f);
     // GD Win 2.2091: teleportPlayer's missing-target branch (RVA 0x3161d9) bypasses contact and position writes, but still applies gravity and force.
     if (hasTarget) {
         const float px = P.f32(po::PosX), py = P.f32(po::PosY);
@@ -1827,8 +1862,12 @@ inline void teleportPortal(Ctx& c, GObj* o) {
         P.u8(0xa14, 0);
         P.u8(0x5a0, 0);   // FUN_1404fec10 (the streak restarts at the new position)
     }
+    const bool redirectsDash = dashRedirect && P.u8(0x9ec);
     float forceAngle = o->tpAng;
-    if ((o->tpFm & 5) && g_tpExitTurnHook && g_tpExitTick >= 0) {
+    if (dashUsesEntry) {
+        // Without an exit, teleportPlayer instead reads the entry's live rotation at 0x316583.
+        forceAngle = (o->flipX ? 180.0f : 0.0f) - o->rot;
+    } else if (((o->tpFm & 5) || redirectsDash) && g_tpExitTurnHook && g_tpExitTick >= 0) {
         // GD Win 2.2091: teleportPlayer subtracts the exit's live rotation at RVAs 0x3162db..0x3162dd.
         const double turn = g_tpExitTurnHook(o->uid, g_tpExitTick);
         if (turn != 0.0) forceAngle = (float)((double)forceAngle - turn);
@@ -1852,6 +1891,7 @@ inline void teleportPortal(Ctx& c, GObj* o) {
             }
         }
     }
+    if (redirectsDash) redirectDash(c, forceAngle);
     if (c.L.dual) unsup(c, 1101);
 }
 

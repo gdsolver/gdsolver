@@ -431,7 +431,7 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
           "editvel,vmodx,vmody,ovrvel,force,free,touch,spawn,chan,axis,exstat,rev,"
     // - tpfm,tpf,tpang,tprmod,tprmin,tprmax: the velocity a teleport (type 28, the trigger 3022,
     //   the orb 3027) gives the player after the move -- the static or redirected force and the
-    //   direction it takes; see where they are computed. 0 on every other object.
+    //   direction it takes, or Redirect Dash; see where they are computed. 0 on every other object.
           "nocol,multiact,nomultiact,gmod,gpl,dontslide,"
           "tpfm,tpf,tpang,tprmod,tprmin,tprmax,"
     // - optudg: the Options trigger's (id 2899) m_unlinkDualGravity (property 160), On=1 / Off=-1 /
@@ -540,6 +540,7 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
             // The velocity teleportPlayer gives after the move (0x2103e7..0x2105c8):
             // tpfm bit 0 m_staticForceEnabled (345), bit 1 m_staticForceAdditive (443),
             // bit 2 m_redirectForceEnabled (347, which wins over the static force);
+            // bit 3 m_redirectDash (591), bit 4 marks its angle as coming from the entry itself.
             // tpf m_staticForce (346); tprmod / tprmin / tprmax the redirect's
             // m_redirectForceMod / Min / Max, passed to PlayerObject::redirectPlayerForce
             // (0x39fc60). tpang is the direction both use, in degrees, computed in float as
@@ -549,6 +550,7 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
             // 0) - its rotation (0x2103ba). A random exit (several members) takes member 0.
             tpfm = (tp->m_staticForceEnabled ? 1 : 0) | (tp->m_staticForceAdditive ? 2 : 0)
                    | (tp->m_redirectForceEnabled ? 4 : 0);
+            if (tp->m_redirectDash) tpfm |= exitObj ? 8 : 24;
             tpf = tp->m_staticForce;
             tprmod = tp->m_redirectForceMod;
             tprmin = tp->m_redirectForceMin;

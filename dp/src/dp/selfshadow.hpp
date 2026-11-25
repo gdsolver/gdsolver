@@ -175,6 +175,10 @@ public:
         dashOn = true; dashFirstDone = false;
         dashRot = dashElapsed = 0.0f; dashSpinRate = dashRate(P);
     }
+    void bindDashRestart(Ctx& c) {
+        g_self() = this;
+        c.restartDashSpin = [](Ctx& cc) { g_self()->restartDashAction(cc.P); };
+    }
     int frameSteps = 0, prevFrameSteps = 4;
     std::map<int, std::vector<int>> tpExit;   // a Teleport trigger's uid -> the uids of its target group, in group order
     long long curTickNow = 0;
@@ -194,6 +198,7 @@ public:
             if (it != uidIndex.end()) {
                 Ctx ct(P);
                 ct.L = L; ct.objs = world; ct.p22 = p22; ct.hsKnown = true; ct.usedRings = &usedRings; ct.fireOrder = &fireOrder;
+                bindDashRestart(ct);
                 GObj trg = (*world)[it->second];
                 // GJBaseGameLayer::teleportPlayer (0x315f20) picks the exit at random among the target group's objects when there are several: idx = (int)(count * r / 32767) from the C runtime's
                 // generator, state = state * 0x343fd + 0x269ec3 (one step per pick; a single object does not advance it). Without a seed (rngOn) the dump's exit stays.
@@ -340,6 +345,7 @@ public:
         sm(1);
         Ctx& cb = stepCtx(0);
         cb.L = L; cb.objs = &local; cb.p22 = p22; cb.hsKnown = true; cb.usedRings = &usedRings; cb.fireOrder = &fireOrder; cb.dashRot = &dashRot; cb.dualH = dualH;
+        bindDashRestart(cb);
         actLog.clear(); cb.actLog = &actLog;
         ButtonsBody b; b.c = &cb; b.touch = &rt; b.usedRings = &usedRings;
         for (int k = 1; k <= 3; ++k) b.holding[k] = holding[k];
@@ -437,8 +443,7 @@ public:
         cp.slopeRotation = [](Ctx& cc, float d) { upd::updateSlopeRotation(cc.P, d); };
         cp.dashRot = &dashRot;
         cp.stopDash = [](Ctx& cc) { SelfShadow& S = *g_self(); upd::stopDashing(cc); S.dashOn = false; };
-        cp.restartDashSpin = [](Ctx& cc) { g_self()->restartDashAction(cc.P); };
-        g_self() = this;
+        bindDashRestart(cp);
         cp.ringJump = [](Ctx& cc, GObj* o) {   // the pass touches a ring: playerTouchedRing registers it, then PlayerObject::ringJump decides (buttons.hpp)
             SelfShadow& S = *g_self();
             S.rt.touched(o->uid);
