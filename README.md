@@ -1,13 +1,13 @@
 # gdsolver
 
-**An automatic TAS solver for Geometry Dash** (2.209, Windows / Steam). It
+**An automatic TAS solver for Geometry Dash** (2.2091, Windows / Steam, on Geode 6). It
 solves a level by playing it — inside the game, from cold.
 
 **[Download `gdsolver.solver.geode`](https://github.com/gdsolver/gdsolver/releases/latest)**
 from the latest release, drop it into Geometry Dash's `geode/mods/` folder and
-start the game. [Geode](https://geode-sdk.org) has to be installed first; see
-[Installing](#installing). This release has no Android build
-([docs/ANDROID.md](docs/ANDROID.md)).
+start the game. [Geode](https://geode-sdk.org) 6.0.0 or newer has to be installed first (this
+mod does not load on Geode 5); see [Installing](#installing). This release has no Android build;
+the Android version follows the Windows release ([docs/ANDROID.md](docs/ANDROID.md)).
 
 <p align="center">
   <img src="docs/media/solve-to-replay.webp" width="720"
@@ -34,6 +34,11 @@ start the game. [Geode](https://geode-sdk.org) has to be installed first; see
   <a href="https://youtu.be/NCWuxt7xN5w"><img src="https://img.youtube.com/vi/NCWuxt7xN5w/maxresdefault.jpg" width="32%" alt="Video: Society solved by gdsolver"></a>
   <a href="https://youtu.be/kCB-GeGtaD0"><img src="https://img.youtube.com/vi/kCB-GeGtaD0/maxresdefault.jpg" width="32%" alt="Video: Grief solved by gdsolver"></a>
 </p>
+<p align="center">
+  <a href="https://youtu.be/qycE0ctN8kA"><img src="https://img.youtube.com/vi/qycE0ctN8kA/maxresdefault.jpg" width="32%" alt="Video: Tidal Wave solved by gdsolver"></a>
+  <a href="https://youtu.be/t_E1066gX94"><img src="https://img.youtube.com/vi/t_E1066gX94/maxresdefault.jpg" width="32%" alt="Video: Artemis 13 solved by gdsolver"></a>
+  <a href="https://youtu.be/F7i8C8DQghw"><img src="https://img.youtube.com/vi/F7i8C8DQghw/maxresdefault.jpg" width="32%" alt="Video: Green Bullet solved by gdsolver"></a>
+</p>
 
 | Level | Uploaded by |
 |---|---|
@@ -43,11 +48,15 @@ start the game. [Geode](https://geode-sdk.org) has to be installed first; see
 | Thinking Space II | Cairox |
 | Society | Neomarbilan |
 | Grief | IcEDCave |
+| Tidal Wave | OniLinkGD |
+| Artemis 13 | mvngo |
+| Green Bullet | cherryteam |
 
-Each of these six was solved cold, the way any level is — the play button,
+Each of these nine was solved cold, the way any level is — the play button,
 **Solve**, and nothing else: no seeds, no previous solution, no hints, nothing but
 the level. The videos were recorded on the builds that were current at the time
-(v0.5.0 to v0.7.0); the v0.7.0 build clears all six.
+(v0.5.0 to v0.8.0). The v0.7.0 build cleared the first six; the v0.8.0 release
+candidate cleared all nine.
 
 These are other people's levels, solved by a bot. A solution is a TAS, not a
 completion: while the mod drives nothing is recorded, and its replays are marked as
@@ -88,9 +97,15 @@ not progress on a save file.
 Those levels are also the supported set — see [What's next](#whats-next) for
 where custom levels and platformer mode stand.
 
-The per-level results — repairs and times for the 22 official levels and the 17
-spin-off levels, with and without coins, and how they compare with v0.4.0 — are in
-[docs/RESULTS.md](docs/RESULTS.md).
+The per-level results — repairs and times for the 22 official levels, with and without
+coins, and how they compare with v0.7.0 — are in [docs/RESULTS.md](docs/RESULTS.md).
+
+**v0.8.0, reference values** (the release candidate, cold, measured on the lab machine with the package built there; the full tables are in
+[docs/RESULTS.md](docs/RESULTS.md)): the 22 official levels clear in 23 repairs in all with every coin (v0.7.0: 27) and 15 for the end of the
+level alone (17); the 17 spin-off levels clear in 13 repairs for the end of the level alone (37), and the six that have coins in 20 with every coin (59); of the 129 Daily, Weekly and Event
+levels, 90 clear by two measurements put together (82 in the re-measurement of 2026-11-23, 1,200 s each; 8 more
+in later individual re-runs on rc2, 1,901 s each, a longer limit because they ran on a slower machine than the re-measurement; [docs/CUSTOM_LEVELS.md](docs/CUSTOM_LEVELS.md)).
+
 
 ## How it works
 
@@ -255,16 +270,17 @@ usual place is
 C:\Program Files (x86)\Steam\steamapps\common\Geometry Dash\geode\mods\
 ```
 
-Geode itself has to be installed first ([geode-sdk.org](https://geode-sdk.org)).
-The build is for **Windows and GD 2.209**, and for the executable of the Steam build it was made for:
+Geode itself has to be installed first ([geode-sdk.org](https://geode-sdk.org)), **version 6.0.0 or newer**:
+this mod is built on Geode 6 and does not load on Geode 5 (and a Geode 6 loader does not read a Geode 5 mod).
+The build is for **Windows and GD 2.2091**, and for the executable of the Steam build it was made for:
 Geometry Dash 2.209 exists as two executables with one version string (the first Steam build and a hotfix
-that moved nearly every function), Geode checks the version string only, and a mod built for the one hooks
+that moved nearly every function; Geode 6 names the hotfix 2.2091), and a mod built for the one hooks
 the middle of other functions in the other. So the mod checks the executable itself (the build stamps of
 GeometryDash.exe, libcocos2d.dll and libExtensions.dll) before it hooks anything; on a game it was not
 built for it stays off, writes one line to the log and shows one line on screen, and the game plays as if
 it were not installed. Nothing else is needed — no Python, no external process, no second copy of the game.
 
-**Android** (android64, GD 2.2081; not part of the 2.209 release): an Android build, if one is published, comes on the releases
+**Android** (android64; not part of this release): the Android version follows the Windows release, on the releases
 page as a separate pre-release, as an experiment. It is not supported: the model's physics is Windows GD's, and
 whether Android GD behaves the same has not been measured, so a result reached on
 Android is Android's alone. [docs/ANDROID.md](docs/ANDROID.md) says how the port
@@ -286,23 +302,20 @@ automated session being open, not to the mod being present. See
 ## Building
 
 Requirements: Visual Studio 2022 (C++ desktop workload), CMake ≥ 3.21, and for the
-mod the [Geode SDK](https://geode-sdk.org) (`GEODE_SDK` environment variable) and
-Geode CLI. The 2.209 build below sets up its own patched copy of the SDK; the
-build for another game uses the SDK as it is.
+mod the [Geode SDK](https://geode-sdk.org) 6.0.0 (`GEODE_SDK` environment variable) and
+Geode CLI ≥ 4.0.1. The mod's bindings are upstream's: the SDK's CMake clones
+`geode-sdk/bindings` itself.
 
 ```powershell
 # solver CLI only (no Geode needed)
 cmake -S . -B build-dp -DGDSOLVER_BUILD_MOD=OFF
 cmake --build build-dp --config Release        # -> build-dp/dp/Release/leveldp.exe
 
-# the mod for Geometry Dash 2.209 (what the release is): the Geode SDK with tools/geode-sdk-2209.patch,
-# bindings that carry bindings/2.209, GEODE_COMP_GD_VERSION 22090 (the first 2.209 executable) or 22091 (the hotfix);
-# the script does all of it from nothing and is what CI runs
-# (in Windows PowerShell 5.1 do not redirect it with *>&1: CMake's stderr notices become errors and stop it; redirect from cmd, or use pwsh 7)
-./scripts/ci-build-2209.ps1 -BindingsRepo <fork of geode-sdk/bindings with 2.209> -BindingsRef <ref>
-
-# the mod for another game: the package takes that version into its own mod.json (mod.json itself names 2.209)
-cmake -S . -B build -DGEODE_GD_VERSION=2.2081 -DGEODE_COMP_GD_VERSION=22081   # with the 2.2081 bindings
+# the mod for Geometry Dash 2.2091 on Geode 6.0.0 (what the release is); mod.json names both.
+# With MSVC 19.44 the SDK's loader/include/Geode/utils/file.hpp needs tools/geode6_sdk_file_hpp.patch
+# (`git -C $env:GEODE_SDK apply <repo>/tools/geode6_sdk_file_hpp.patch`); CI builds with clang and does not.
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGEODE_DONT_INSTALL_MODS=ON -DGEODE_CLI=<geode.exe 4.x>
+cmake --build build --config RelWithDebInfo     # -> build/gdsolver.solver.geode
 ```
 
 ## Watching a run

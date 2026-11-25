@@ -437,7 +437,7 @@ inline void swapWhenClear(geode::Ref<GJGameLevel> keep, int frames, std::string 
         g_forceCleanStart = true;
         g_swapInit = true;
         phase::begin("cutting / swapping the level in (slice)");
-        cocos2d::CCDirector::sharedDirector()->replaceScene(PlayLayer::scene(keep.data(), false, false));
+        cocos2d::CCDirector::sharedDirector()->replaceScene(PlayLayer::scene(keep.data(), false));
         phase::end();
     });
 }

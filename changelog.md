@@ -1,3 +1,56 @@
+# v0.8.0
+
+ * **Geode 6.0.0 and Geometry Dash 2.2091 (Windows), and nothing else.** This
+   version needs Geode 6.0.0: a mod built for Geode 5 does not load on it and
+   this one does not load on Geode 5. There is no Android build: the Android
+   version follows the Windows release.
+ * **The play menu, the notifications and the bot badge are Geode 6's own
+   components**: they look and sit as Geode's do, and a notification now appears
+   at the bottom of the screen. The overlay's lines stay where they are when the
+   search row comes and goes.
+
+### The model and the search
+
+ * **The model steps the level the way the game does, for many more triggers.** One
+   engine now does the model's whole tick, single-player and two-player levels
+   alike, and runs Spawn chains with delays and order, Toggle (touch Toggle Blocks
+   and toggle rings too), Move and Direction-mode Move, Scale and Transform, Areas,
+   Teleport, Event, Item and Advanced Follow triggers, rotation-queue entries and
+   camera triggers. Moving parts are placed as the game places them, and the
+   model follows the game's camera (its Y and zoom, Static Camera and Camera Edge,
+   camera-locked Moves).
+ * **Closer to the game where a plan starts from a state the game gave**: the
+   ground a mover left, a ride along the underside, a spider's teleport and
+   landing, a ball launched off a slope, a dash, a cube holding the button towards
+   a ring, and moving rings are all taken up as the game has them.
+ * **Two-player levels**: the second player takes its own button, and the second
+   body is searched from its birth with the gravity the dual portal gives it.
+ * **The repair ladder** reaches back to where the search was first held in; one
+   whole-level solve is made before the first section solve; a plan is joined onto
+   an old one only when that one reaches the goal. The ladder's second over-cap
+   step is skipped when the first left the death where it was
+   (`--ladderovercapstop`, on).
+ * **The search returns the same plan on any number of threads.**
+ * **It steps faster**: cheaper copies of the model's state, cheaper blocks, and an
+   index for the moving parts; the answers are the same.
+
+### Removed
+
+ * **804 switch spellings are gone**: switches that never changed the answer,
+   spellings that were accepted and did nothing, and the other arm of rules that are always on now. A
+   caller that still passes one is refused by name (exit 2) instead of being
+   ignored. The behaviour they fixed is always on.
+
+### For developers
+
+ * The mod is built on upstream's `geode-sdk/bindings` as the Geode SDK fetches
+   them: no fork of the bindings and no patched SDK are behind a release. The game's
+   own member names replace the mod's raw offsets wherever the bindings name the
+   member. CI builds the package with Geode's own `build-geode-mod` action.
+ * Building against a checked-out SDK with MSVC 19.44 needs
+   `tools/geode6_sdk_file_hpp.patch` (constexpr constructors in the SDK's
+   `file.hpp`); CI builds with clang and does not.
+
 # v0.7.0
 
  * **Geometry Dash 2.2091 (Windows)**, as v0.6.0. No Android build.

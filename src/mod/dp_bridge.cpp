@@ -28,6 +28,7 @@ int solveInProcess(const std::string& csv, const std::vector<std::string>& args)
 }
 
 std::vector<double> prepMarks() { return dpcore::prepMarks(); }
+std::string callStages() { return dpcore::callStages(); }
 
 SolveProgress progress() { return dpcore::progress(); }
 
@@ -185,6 +186,8 @@ std::string outcomeDiff(const SolveOutcome& a, const SolveOutcome& b) {
     f(a.rejoinT == b.rejoinT, "rejoinT");
     f(a.rejoinBadT == b.rejoinBadT, "rejoinBadT");
     f(sameText(a.rejoinBadWhy, b.rejoinBadWhy), "rejoinBadWhy");
+    f(a.rejoinRefusedT == b.rejoinRefusedT && a.rejoinRefusedDieT == b.rejoinRefusedDieT && a.rejoinRefusedN == b.rejoinRefusedN, "rejoinRefused");
+    f(a.rejoinShortT == b.rejoinShortT && a.rejoinShortEndT == b.rejoinShortEndT && a.rejoinShortN == b.rejoinShortN, "rejoinShort");
     f(a.needTrigMask == b.needTrigMask && a.needTrigPassed == b.needTrigPassed, "needTrig");
     f(a.seedRotQ == b.seedRotQ, "seedRotQ");
     f(a.rotQOrder == b.rotQOrder, "rotQOrder");

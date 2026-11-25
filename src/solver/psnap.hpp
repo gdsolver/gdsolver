@@ -1,4 +1,5 @@
 #pragma once
+#include "mod/gd_raw.hpp"
 // ============================================================================
 // Raw-byte snapshot of the player state (`psnap`)
 //
@@ -160,6 +161,12 @@ inline const std::vector<Mem>& scalars() {
 #define GB_OPAQUE(n)
 #define EM_SCALAR(n)
 #define EM_OPAQUE(n)
+#define PO_RAW_SCALAR(n,o,s) m.push_back({#n, (size_t)(o), (size_t)(s)});
+#define PO_RAW_OPAQUE(n,o,s)
+#define GO_RAW_SCALAR(n,o,s) m.push_back({#n, (size_t)(o), (size_t)(s)});
+#define GO_RAW_OPAQUE(n,o,s)
+#define GB_RAW_SCALAR(n,o,s)
+#define GB_RAW_OPAQUE(n,o,s)
 #include "../po_members.inc"
 #undef PO_SCALAR
 #undef GO_SCALAR
@@ -169,6 +176,12 @@ inline const std::vector<Mem>& scalars() {
 #undef GB_OPAQUE
 #undef EM_SCALAR
 #undef EM_OPAQUE
+#undef PO_RAW_SCALAR
+#undef PO_RAW_OPAQUE
+#undef GO_RAW_SCALAR
+#undef GO_RAW_OPAQUE
+#undef GB_RAW_SCALAR
+#undef GB_RAW_OPAQUE
         std::sort(m.begin(), m.end(),
                   [](const Mem& a, const Mem& b) { return a.off < b.off; });
         return m;
@@ -317,6 +330,12 @@ inline const std::vector<Mem>& goScalars() {
 #define GB_OPAQUE(n)
 #define EM_SCALAR(n)
 #define EM_OPAQUE(n)
+#define PO_RAW_SCALAR(n,o,s)
+#define PO_RAW_OPAQUE(n,o,s)
+#define GO_RAW_SCALAR(n,o,s) m.push_back({#n, (size_t)(o), (size_t)(s)});
+#define GO_RAW_OPAQUE(n,o,s)
+#define GB_RAW_SCALAR(n,o,s)
+#define GB_RAW_OPAQUE(n,o,s)
 #include "../po_members.inc"
 #undef PO_SCALAR
 #undef PO_OPAQUE
@@ -326,6 +345,12 @@ inline const std::vector<Mem>& goScalars() {
 #undef GB_OPAQUE
 #undef EM_SCALAR
 #undef EM_OPAQUE
+#undef PO_RAW_SCALAR
+#undef PO_RAW_OPAQUE
+#undef GO_RAW_SCALAR
+#undef GO_RAW_OPAQUE
+#undef GB_RAW_SCALAR
+#undef GB_RAW_OPAQUE
         return m;
     }();
     return tbl;
@@ -344,6 +369,12 @@ inline const std::vector<Mem>& gbScalars() {
 #define GB_OPAQUE(n)
 #define EM_SCALAR(n)
 #define EM_OPAQUE(n)
+#define PO_RAW_SCALAR(n,o,s)
+#define PO_RAW_OPAQUE(n,o,s)
+#define GO_RAW_SCALAR(n,o,s)
+#define GO_RAW_OPAQUE(n,o,s)
+#define GB_RAW_SCALAR(n,o,s) m.push_back({#n, (size_t)(o), (size_t)(s)});
+#define GB_RAW_OPAQUE(n,o,s)
 #include "../po_members.inc"
 #undef PO_SCALAR
 #undef PO_OPAQUE
@@ -353,6 +384,12 @@ inline const std::vector<Mem>& gbScalars() {
 #undef GB_OPAQUE
 #undef EM_SCALAR
 #undef EM_OPAQUE
+#undef PO_RAW_SCALAR
+#undef PO_RAW_OPAQUE
+#undef GO_RAW_SCALAR
+#undef GO_RAW_OPAQUE
+#undef GB_RAW_SCALAR
+#undef GB_RAW_OPAQUE
         return m;
     }();
     return tbl;
@@ -584,10 +621,10 @@ inline size_t layerBytes() {
 // symptom left in the beam-era records belongs to this family (with restore,
 // 1 activation in 48,900 attempts; without, 400 in 8,400 attempts).
 struct Touch {
-    gd::unordered_set<int> touchedRings;
-    gd::unordered_set<int> ringRelatedSet;
-    gd::map<int, bool> jumpPadRelated;
-    gd::unordered_map<int, GameObject*> potentialSlopeMap;
+    std::unordered_set<int> touchedRings;
+    std::unordered_set<int> ringRelatedSet;
+    std::map<int, bool> jumpPadRelated;
+    std::unordered_map<int, GameObject*> potentialSlopeMap;
     // References to "what am I touching right now". Pointer-typed, so not in
     // the whitelist. Objects are NOT re-created during a section, so carrying
     // the pointers does not leave them stale (if there were a path that
@@ -632,8 +669,8 @@ inline PlayerObject* partner(PlayerObject* p, GJBaseGameLayer* l) {
 
 inline void captureTouchOne(PlayerObject* p, Touch& out) {
     out.touchedRings = p->m_touchedRings;
-    out.ringRelatedSet = p->m_ringRelatedSet;
-    out.jumpPadRelated = p->m_jumpPadRelated;
+    out.ringRelatedSet = gdraw::ringRelatedSet(p);
+    out.jumpPadRelated = gdraw::jumpPadRelated(p);
     out.potentialSlopeMap = p->m_potentialSlopeMap;
     out.objectSnappedTo = p->m_objectSnappedTo;
     out.collidedObject = p->m_collidedObject;
@@ -646,8 +683,8 @@ inline void captureTouchOne(PlayerObject* p, Touch& out) {
 
 inline void restoreTouchOne(PlayerObject* p, const Touch& in) {
     p->m_touchedRings = in.touchedRings;
-    p->m_ringRelatedSet = in.ringRelatedSet;
-    p->m_jumpPadRelated = in.jumpPadRelated;
+    gdraw::ringRelatedSet(p) = in.ringRelatedSet;
+    gdraw::jumpPadRelated(p) = in.jumpPadRelated;
     p->m_potentialSlopeMap = in.potentialSlopeMap;
     if (g_snapCollideObj) {
         p->m_objectSnappedTo = in.objectSnappedTo;
@@ -715,30 +752,30 @@ inline void assignState(GJGameState& dst, GJGameState& src) {
     // Empty maps to park the four in while the rest is assigned (held across calls: an MSVC map
     // allocates its head node on construction).
     static decltype(dst.m_activatedObjectIDs) d0, s0;
-    static decltype(dst.m_unkMapPairGJGameEventIntVectorEventTriggerInstance) d1, s1;
-    static decltype(dst.m_unkMapPairGJGameEventIntInt) d2, s2;
+    static decltype(dst.m_gameEventTriggers) d1, s1;
+    static decltype(dst.m_gameEventCounts) d2, s2;
     static decltype(dst.m_proximityVolumeRelated) d3, s3;
     d0.swap(dst.m_activatedObjectIDs);
     s0.swap(src.m_activatedObjectIDs);
-    d1.swap(dst.m_unkMapPairGJGameEventIntVectorEventTriggerInstance);
-    s1.swap(src.m_unkMapPairGJGameEventIntVectorEventTriggerInstance);
-    d2.swap(dst.m_unkMapPairGJGameEventIntInt);
-    s2.swap(src.m_unkMapPairGJGameEventIntInt);
+    d1.swap(dst.m_gameEventTriggers);
+    s1.swap(src.m_gameEventTriggers);
+    d2.swap(dst.m_gameEventCounts);
+    s2.swap(src.m_gameEventCounts);
     d3.swap(dst.m_proximityVolumeRelated);
     s3.swap(src.m_proximityVolumeRelated);
     dst = src;   // every other member; the four maps are empty on both sides here
     dst.m_activatedObjectIDs.swap(d0);
     src.m_activatedObjectIDs.swap(s0);
-    dst.m_unkMapPairGJGameEventIntVectorEventTriggerInstance.swap(d1);
-    src.m_unkMapPairGJGameEventIntVectorEventTriggerInstance.swap(s1);
-    dst.m_unkMapPairGJGameEventIntInt.swap(d2);
-    src.m_unkMapPairGJGameEventIntInt.swap(s2);
+    dst.m_gameEventTriggers.swap(d1);
+    src.m_gameEventTriggers.swap(s1);
+    dst.m_gameEventCounts.swap(d2);
+    src.m_gameEventCounts.swap(s2);
     dst.m_proximityVolumeRelated.swap(d3);
     src.m_proximityVolumeRelated.swap(s3);
     syncOrderedMap(dst.m_activatedObjectIDs, src.m_activatedObjectIDs);
-    syncOrderedMap(dst.m_unkMapPairGJGameEventIntVectorEventTriggerInstance,
-                   src.m_unkMapPairGJGameEventIntVectorEventTriggerInstance);
-    syncOrderedMap(dst.m_unkMapPairGJGameEventIntInt, src.m_unkMapPairGJGameEventIntInt);
+    syncOrderedMap(dst.m_gameEventTriggers,
+                   src.m_gameEventTriggers);
+    syncOrderedMap(dst.m_gameEventCounts, src.m_gameEventCounts);
     syncOrderedMap(dst.m_proximityVolumeRelated, src.m_proximityVolumeRelated);
 }
 #else
@@ -947,7 +984,7 @@ inline long long g_snapEMFrom = 0;
 inline bool g_snapEMActive = false;
 
 struct EMSnap {
-    gd::vector<PulseEffectAction> pulses;
+    std::vector<PulseEffectAction> pulses;
     std::shared_ptr<EffectManagerState> full;   // cfg secsnapem only
 };
 

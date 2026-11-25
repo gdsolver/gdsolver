@@ -79,6 +79,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -98,7 +99,8 @@ from gdtas import inputguard
 from gdtas import runtmp
 from gdtas.paths import DATA, DEFAULT_POOL, LEVEL_DATA, LEVELDP_EXE, WORKERS_ROOT
 
-REF = LEVEL_DATA / "gdref"
+# GDSOLVER_GDREF=<dir>: another reference (a copy with columns added: py/gdref_addcols.py). The default is the lab's, which every instrument reads.
+REF = Path(os.environ["GDSOLVER_GDREF"]) if os.environ.get("GDSOLVER_GDREF") else LEVEL_DATA / "gdref"
 REF_RESOLUTION = 25   # the resolution index the colds play at (cold_regress.run_resolution)
 BASELINE = REF / "baseline.json"
 # Only the columns the reference needs. The first half is what diff_trace
@@ -124,7 +126,9 @@ BASELINE = REF / "baseline.json"
 REF_COLS = ["attempt", "tick", "x", "y", "yvel", "mode", "vsize",
             "dual", "p2y", "p2vy", "p2up", "p2ground", "p2ground2",
             "upsideDown", "onGround", "onGround2", "speed", "pmin", "pmax",
-            "snapuid", "snapdist", "gframe", "ctrlOff", "rot"]
+            "snapuid", "snapdist", "gframe", "ctrlOff", "rot",
+            "boost", "revoff", "revcar", "freemode",
+            "rotch", "rotidx", "rotrev"]
 
 
 def ctrlwin_args(level: int, gd: dict[int, dict] | None = None) -> list[str]:
@@ -374,6 +378,24 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
                 rev = 1
         except (KeyError, ValueError, TypeError):
             pass
+    # [2026-10-26] ...and the loop reads the same trend on EVERY frame, along that frame's own travel axis
+    # (src/mod/repair.hpp startArg): frames 1 and 3 travel along y, frames 1 and 2 against the axis, and a
+    # frame-2 anchor that is moving +x in world is the model's frame 0 going forward. This builder looked at
+    # frame 0 alone, so an anchor taken in a reversed run of a rotated frame started forward: on a custom
+    # level's UFO in frame 3 (reversed) the first tick moved the other way along y and the whole section
+    # was lost from tick 1. REV_AXES (on; --no-rev-axes turns it off) is the loop's rule; on the 22 official levels the
+    # output with it on is byte-identical to the frame-0 test alone (1119 / 1119 section traces).
+    if REV_AXES and prev is not None:
+        try:
+            if gf == 2:
+                rev = 0 if float(r["x"]) - float(prev["x"]) > 1e-6 else 1
+            else:
+                d = (float(r["y"]) - float(prev["y"])) if gf % 2 == 1 else (float(r["x"]) - float(prev["x"]))
+                fwd = 1.0 if gf in (0, 3) else -1.0
+                if d * fwd < -1e-6:
+                    rev = 1
+        except (KeyError, ValueError, TypeError):
+            pass
     # fields 23/24 = the player's sprite rotation and the direction it turns.
     #
     # THE HITBOX OF A ROTATED OBJECT IS DECIDED BY THIS ALONE. An anchor
@@ -395,6 +417,19 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
             rotneg = 1 if float(rot) < float(prev["rot"]) else 0
         except ValueError:
             rotneg = 0
+    # [2026-11-17] THE DIRECTION THE PLAYER TURNS FROM THIS ROW ON is what the anchor must carry, and the difference with the PREVIOUS row is the direction it turned BEFORE a gravity reversal that lands on
+    # the anchor tick itself: GD reverses the spin on the reversal, so row T0 still shows the old turn and row T0+1 the new one. Measured on a custom level (tick 2600: upsideDown 1 -> 0, rot -0.606 / tick before,
+    # +0.606 / tick after): seeded from the previous row the model kept turning the old way, its rot drifted 66 degrees off GD's in 55 ticks and a rotated pad's box (id 35 uid 27, 100 x 4 at 45 degrees) was
+    # met one tick late (depth with GD's rot +1.034 at the boost tick, with the model's -0.450). The next row, when the reference has it and the player turns in it, says where the spin goes.
+    if ref is not None:
+        nx = ref.get(t + 1)
+        if nx is not None and nx.get("rot") not in (None, ""):
+            try:
+                dn = float(nx["rot"]) - float(rot)
+                if abs(dn) > 0.01:
+                    rotneg = 1 if dn < 0 else 0
+            except ValueError:
+                pass
     # field 30 = the SIZE of that turn, degrees per tick (State::rotStep). It is
     # the magnitude of the very difference rotneg took the sign of, so the two
     # always agree about which pair of rows they came from. NOT a rate: the
@@ -448,9 +483,53 @@ def start_fields(t: int, r: dict, plan: Path, prev: dict | None = None,
     # POSITIONAL, so appending past an omitted optional silently feeds the new
     # field's value into flipT and leaves rotStep at its default. Passing the
     # sentinels keeps both meanings intact.
+    # field 25 (boost): GD's velocity-limit exemption, byte [player+0x952], from the dump's `boost` column (the loop's
+    # AnchorRow::boost). A reference recorded before the column existed has none = the literal 0 written here before.
+    boost = 1 if r.get("boost") == "1" else 0
+    # Field 28 = flipT, the ticks since gravity last flipped (the shadow stamps +0x808 from it: GD re-seats a body the band clamp lifted into a solid while the stamp is under 0.1 s = 24
+    # ticks old, and kills it after). The dump has no column, but a flip is the first row with the other upsideDown, so the age is read off the reference rows before this one: t - F,
+    # F the first row of the current value (frame 0 only: a turned frame's gravity byte is not the dump's upsideDown). A flip older than the window, or no earlier row, says nothing (-1).
+    # [M] a custom level t=11400: GD's +0x808 = 48.441669 = the clock of row 11386, the first with upsideDown 0; the clock of 11400 is 48.500002 (14 ticks).
+    flip_age = -1
+    if ref is not None and str(r.get("gframe", "0")) in ("0", "") and r.get("upsideDown") in ("0", "1"):
+        k = 0
+        while k < 24:
+            pr = ref.get(t - k - 1)
+            if pr is None:
+                break
+            if pr.get("upsideDown") != r.get("upsideDown"):
+                flip_age = k
+                break
+            k += 1
     return (f"{t},{r['x']},{r['y']},{r['yvel']},{mode},{g},{held},{fl},{mn},"
             f"{du},{y2},{vy2},{f2},{g2},{sp},{rh},{dsh},{dsl},{su},{sd},"
-            f"{frame},{rev},{rot},{rotneg},0,{m2},{mn2},-1,-1,{rotstep}")
+            f"{frame},{rev},{rot},{rotneg},{boost},{m2},{mn2},{flip_age},-1,{rotstep}")
+
+
+def rev_anchor_args(r: dict) -> list[str]:
+    """`--startrev R,C`: the reverse correction a ring or pad still owes at the anchor (GD's m_maybeReverseSpeed and
+    m_maybeReverseAcceleration, the dump's revoff / revcar), as the loop writes it (repair.hpp addStartRev: only while one
+    is owed). A reference without the columns, or one with nothing owed, gives no argument = as before."""
+    try:
+        ro, rc = float(r.get("revoff") or 0), float(r.get("revcar") or 0)
+    except ValueError:
+        return []
+    if ro == 0.0 and rc == 0.0:
+        return []
+    return ["--startrev", f"{r['revoff']},{r['revcar']}"]
+
+
+def freemode_anchor_args(r: dict) -> list[str]:
+    """GD's Free Mode byte at the anchor (the dump's `freemode` column), as the loop carries it in its hist payload (repair.hpp histPayload,
+    version 2's freeMode). While it is set GD's checkCollisions clamps no mode to the band, and an anchor that does not say so lets a wave or a
+    ship be clamped by the band it does not have: sections of the wave levels left the game's rows at tick 1. The press-latch names the payload
+    requires are sent as 0, as the instrument has always sent them. A reference without the column gets no argument. The 22 official ones had none until
+    py/gdref_addcols.py appended it from a newer recording of the same plans (lab_fm3's): only lv22 has Free Mode ticks (1583-2193, 3320-4631, 5601-8754,
+    19681-20178), and with the column quick's sections anchored at 3400 and 4200 track 798 ticks further each, every other file of the suite byte-identical."""
+    v = r.get("freemode")
+    if v not in ("0", "1"):
+        return []
+    return ["--anchor-state", f"owns=hist;hist=2|3|pressSpent:0,pressSpent2:0,freeMode:{v}"]
 
 
 def dash_at(t: int, r: dict, ref: dict, held: int, prev: dict | None
@@ -472,7 +551,38 @@ def dash_at(t: int, r: dict, ref: dict, held: int, prev: dict | None
     in. The slope is the measured y difference / x difference, and rotation
     sections (gframe != 0) are skipped because the meaning of the coordinates
     is swapped there.
+
+    THE FIRST ROW OF A DASH is not seen by that test (the row before it still moves), so an anchor on it started with gravity: the next row is read as
+    well -- vy 0 here and on the next row, not on the previous one, the button held, x and y moving. A UFO's / ship's onGround is sticky and may be 1 on
+    those rows, so it is not asked there. a custom level t=13,000 (a UFO): the model took gravity from tick 1 (y 23825.82 for GD's 23824.65)
+    although the same level started at 12,980 matched GD through 13,000 and beyond. The repair loop reads m_isDashing off the live player
+    (src/mod/repair.hpp), so only this offline reader had the hole; none of the 1,119 quick sections of the 22 official levels is anchored on such a row
+    (their output is byte-identical).
     """
+    if r.get("dashing1") not in (None, ""):   # a dump with the dumpride columns says it (the live m_isDashing the loop reads): the trajectory-form inference below mistook a ride down a ramp (a constant dy) for a dash on custom level A:22200 and custom level B:4600, and missed a dash on custom level C:13400, custom level D:4600 / 11800 (11-14)
+        if r["dashing1"] != "1": return (0, 0)
+        try: return (1, float(r.get("dashWord") or 0))
+        except ValueError: return (1, 0)
+    run = _dash_running(t, r, held, prev)
+    if run != (0, 0) or not held or ref is None or prev is None:
+        return run
+    try:
+        nxt = ref.get(t + 1)
+        if nxt is None or int(float(r.get("gframe") or 0)) != 0:
+            return (0, 0)
+        if float(r["yvel"]) != 0.0 or float(nxt["yvel"]) != 0.0 or float(prev["yvel"]) == 0.0:
+            return (0, 0)
+        dx = float(nxt["x"]) - float(r["x"])
+        dy = float(nxt["y"]) - float(r["y"])
+        if dx <= 0.0 or abs(dy) < 0.05:
+            return (0, 0)
+        return (1, dy / dx)
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return (0, 0)
+
+
+def _dash_running(t: int, r: dict, held: int, prev: dict | None) -> tuple[int, float]:
+    """The original two-row test (see dash_at)."""
     if not held or r.get("onGround") == "1" or prev is None:
         return (0, 0)
     try:
@@ -523,10 +633,12 @@ def rot_anchor_args(level: int, t0: int) -> list[str]:
     return extra
 
 
-# Set by either instrument's --rotseed. Module-level for the same reason as
-# NO_SPENTPAD below: fixcensus builds its sections through these helpers.
-ROT_SEED = False
-ROT_SEED_LEVEL = 1   # 1 = A (the loop's default cfg dprotseed), 2 = E
+# The queue a section starts with, as the loop gives its anchors (cfg dprotseed, level S since 2026-10-27's default): on, at level S, unless
+# --no-rotseed / --rotseed-level A. Module-level for the same reason as NO_SPENTPAD below: fixcensus builds its sections through these helpers.
+ROT_SEED = True
+# The loop's reverse test on every frame (start_fields); --no-rev-axes sets it False = the frame-0 test alone.
+REV_AXES = True
+ROT_SEED_LEVEL = 4   # 4 = S (the loop's default cfg dprotseed), 1 = A (the instrument's default before 2026-10-27), 2 = E
 ROT_SEED_EXE: Path | None = None
 _ROTSEED_ROWS: dict[int, dict] = {}
 _ROTSEED_LOCK = threading.Lock()
@@ -553,14 +665,14 @@ def rot_seed_args(level: int, t0: int) -> list[str]:
         rows = _ROTSEED_ROWS[level]
         togs = rotseed.toggles(level, LEVEL_DATA)
     out = ["--rotgameplay", str(LEVEL_DATA / f"rotgameplay_lv{level}.txt")]
-    if ROT_SEED_LEVEL == 4:   # S: the game's consumption loop replayed on the recording
-        cls, _why, seed = rotseed.seed_sim(rows, t0, q)
+    if ROT_SEED_LEVEL >= 4:   # S: the game's consumption loop replayed on the recording; T: and a touch 2900 consumed by overlap
+        cls, _why, seed = rotseed.seed_sim(rows, t0, q, touch=ROT_SEED_LEVEL >= 5)
     else:
         cls, _why, seed = rotseed.seed_for(rows, t0, q, ROT_SEED_LEVEL)
     if cls != "exact":
         return out
     out += ["--rotqueue", "--startrotq", seed, "--rotqtoggle"]
-    ts = rotseed.touch_seed(rows, t0, togs, MODE_ID, now_only=(ROT_SEED_LEVEL == 4))
+    ts = rotseed.touch_seed(rows, t0, togs, MODE_ID, now_only=(ROT_SEED_LEVEL >= 4))
     if ts:
         out += ["--touchseed", ts]
     return out
@@ -817,6 +929,8 @@ def seg_jobs(level: int, a) -> tuple[dict, list]:
                 args += ["--startband", f"{r['pmin']},{r['pmax']}"]
             args += band_track_args(level, gd, tmp.dir)
             args += rot_anchor_args(level, t)
+            args += rev_anchor_args(r)
+            args += freemode_anchor_args(r)
             args += pad_anchor_args(level, t, gd)
             # --xtrack-ref: the reference run's own x per tick, for dp's --xtrack (the loop
             # passes the anchor attempt's rows; the sections are anchored on this file's rows,
@@ -1187,7 +1301,7 @@ def main(argv=None) -> int:
     ap.add_argument("--tol", type=float, default=0.3)
     ap.add_argument("--extra-flag", action="append", default=[], metavar="FLAG",
                     help="extra leveldp flag for every section, repeatable; "
-                         "write it as --extra-flag=--trigwinsel, or argparse "
+                         "write it as --extra-flag=--no-areaadd, or argparse "
                          "reads the value as an option of its own")
     ap.add_argument("--xtrack-ref", action="store_true",
                     help="give every section dp's --xtrack from the reference csv: the "
@@ -1230,24 +1344,32 @@ def main(argv=None) -> int:
                          "before each anchor, but tell the solver to ignore "
                          "them (pre-2026-09-06 seeding)")
     ap.add_argument("--rotseed", action="store_true",
-                    help="give sections on a 2900 level the rotation queue the "
-                         "loop gives an exactly seeded call (rot_seed_args). Not "
-                         "the baseline's arrangement, so --bless refuses it")
-    ap.add_argument("--rotseed-level", choices=["A", "E", "S"], default="A",
-                    help="which witnesses count for --rotseed, as cfg dprotseed "
-                         "(A is the loop's default); S replays the game's own "
-                         "consumption loop over the recording (rotseed.seed_sim)")
+                    help="(the default; kept for old command lines) give sections on a 2900 level the rotation queue the "
+                         "loop gives an exactly seeded call (rot_seed_args)")
+    ap.add_argument("--no-rotseed", action="store_true",
+                    help="sections get no queue (the arrangement before 2026-10-27)")
+    ap.add_argument("--no-rev-axes", action="store_true",
+                    help="anchor a section's reverse run by the frame-0 test alone (the arrangement before 2026-10-26); "
+                         "the default is the loop's, along each frame's own travel axis")
+    ap.add_argument("--rotseed-level", choices=["A", "E", "S", "T"], default="S",
+                    help="which witnesses count for the queue seed, as cfg dprotseed "
+                         "(S is the loop's default and this tool's since 2026-10-27); S replays the game's own "
+                         "consumption loop over the recording (rotseed.seed_sim); A is the strictest witness level")
     ap.add_argument("--pool", nargs="+", type=int, default=list(DEFAULT_POOL))
     ap.add_argument("--workers-root", default=str(WORKERS_ROOT))
     ap.add_argument("--timeout-minutes", type=float, default=6.0)
     a = ap.parse_args(argv)
-    global NO_SPENTPAD, ROT_SEED, ROT_SEED_EXE, ROT_SEED_LEVEL
+    # The shadow step is the only tick there is: the old tick this quick used to run alone (no --shadowstep) is gone, so every section runs --shadowstep=all unless a flag of that name is given.
+    if not any(f.startswith("--shadowstep") for f in a.extra_flag):
+        a.extra_flag.insert(0, "--shadowstep=all")
+    global NO_SPENTPAD, ROT_SEED, ROT_SEED_EXE, ROT_SEED_LEVEL, REV_AXES
     NO_SPENTPAD = bool(a.no_spentpad)
-    ROT_SEED = bool(a.rotseed)
-    ROT_SEED_LEVEL = {"A": 1, "E": 2, "S": 4}[a.rotseed_level]
+    REV_AXES = not a.no_rev_axes
+    ROT_SEED = not a.no_rotseed
+    ROT_SEED_LEVEL = {"A": 1, "E": 2, "S": 4, "T": 5}[a.rotseed_level]
     ROT_SEED_EXE = Path(a.leveldp)
-    if a.rotseed and a.bless:
-        print("--bless refuses --rotseed: the baseline is measured without the queue")
+    if a.no_rotseed and a.bless:
+        print("--bless refuses --no-rotseed: the baseline is measured with the queue the loop gives (level S)")
         return 2
 
     # REJECT --bless ON A RESTRICTED RUN AT THE DOOR. bless REPLACES

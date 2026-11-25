@@ -1,0 +1,19 @@
+﻿diff --git a/loader/include/Geode/utils/file.hpp b/loader/include/Geode/utils/file.hpp
+index 7380cb1..ace7a38 100644
+--- a/loader/include/Geode/utils/file.hpp
++++ b/loader/include/Geode/utils/file.hpp
+@@ -38,10 +38,10 @@ namespace geode::utils::file {
+         decltype(Unknown) m_value = Unknown;
+         asp::fs::Error m_error = asp::fs::ErrorKind::Success;
+ 
+-        constexpr FileError() = default;
+-        constexpr FileError(decltype(Unknown) value) : m_value(value) {}
+-        constexpr FileError(asp::fs::Error error) : m_value(AspError), m_error(std::move(error)) {}
+-        constexpr FileError(decltype(Unknown) value, asp::fs::Error error) : m_value(value), m_error(std::move(error)) {}
++        FileError() = default;
++        FileError(decltype(Unknown) value) : m_value(value) {}
++        FileError(asp::fs::Error error) : m_value(AspError), m_error(std::move(error)) {}
++        FileError(decltype(Unknown) value, asp::fs::Error error) : m_value(value), m_error(std::move(error)) {}
+         constexpr FileError& operator=(decltype(Unknown) value) {
+             m_value = value;
+             return *this;

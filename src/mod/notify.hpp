@@ -30,7 +30,7 @@ namespace notify {
 // builds it with CCNode virtual calls numbered for 2.2081), so the mod's own toast stands in for
 // it there; it offers the same six calls. The comments below describe Geode's, which is what the
 // 2.2081 build still uses.
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && !defined(GDSOLVER_GEODE6)
 using Notification = gdsolver::ui::Toast;
 #else
 using Notification = geode::Notification;
@@ -128,7 +128,7 @@ inline void show(const std::string& text, NotificationIcon icon, float seconds) 
 
 // Once per frame, from the same place audio::sync runs.
 inline void watchdog() {
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && !defined(GDSOLVER_GEODE6)
     // The mod's own toast does not outlive the scene it was shown on by itself (Geode's notifications are kept across scenes).
     if (g_cur) g_cur->keepOnScene();
     if (g_retiring) g_retiring->keepOnScene();

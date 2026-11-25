@@ -60,7 +60,16 @@ std::string notice() {
 
 }  // namespace gdsolver::exeguard
 
-#if GDSOLVER_EXE_GUARD && GEODE_COMP_GD_VERSION >= 22090
+#if GDSOLVER_EXE_GUARD && GEODE_COMP_GD_VERSION >= 22090 && defined(GDSOLVER_GEODE6)
+
+// Geode 6 builds its notifications on GD 2.2091 itself (and keeps them across scenes): no notice of our own.
+$on_mod(Loaded) {
+    if (gdsolver::exeguard::allowed()) return;
+    geode::log::warn("{}", gdsolver::exeguard::message());
+    geode::Notification::create(gdsolver::exeguard::notice(), geode::NotificationIcon::Warning, 12.f)->show();
+}
+
+#elif GDSOLVER_EXE_GUARD && GEODE_COMP_GD_VERSION >= 22090
 
 namespace {
 

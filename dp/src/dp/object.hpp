@@ -52,12 +52,12 @@ struct Obj {
     int8_t gpBit = -1;
     // Lives in L.dyn.objs (a moving object; its cx/cy/box are rewritten per
     // tick from the recording or the trigger definitions). Fixups do not
-    // apply near one -- see nearDynObject in fixup.hpp.
+    // apply near one -- see nearDynObjectPtr in fixup.hpp.
     uint8_t dynObj = 0;
-    // --fixreach: the layered record holds this object with ONE row, i.e. it never moved in the run(s) recorded (set where its samples are made)
+    // --fixreach (removed): the layered record holds this object with ONE row, i.e. it never moved in the run(s) recorded (set where its samples are made)
     uint8_t recStatic = 0;
-    // A ring a Rotate turns (Dynamics::turnedBox, --ringturn, with the recording's angle changing).
-    // --ringrectgate leaves it out: when GD rebuilds such a ring's cached rect is not read yet.
+    // A ring a Rotate turns (Dynamics::turnedBox, --ringturn (removed), with the recording's angle changing).
+    // --ringrectgate (removed) leaves it out: when GD rebuilds such a ring's cached rect is not read yet.
     uint8_t rotTurned = 0;
     // Extended Collision (GameObject::m_hasExtendedCollision, +0x280, level property 511), from the
     // objrects `extcol` column. addToSection (0x226500) files such an object in the collision pass's
@@ -114,6 +114,12 @@ struct Obj {
     // contact rule has to be read in the RELATIVE frame once the surface itself
     // moves; see the ceiling ride.
     double dcy = 0.0;
+    // --shadowprevcy: the centre y this object had at the END of the previous tick (Dynamics::prevCy: after seek and applyTriggers), set where seek runs a 1-tick advance; NaN when there is no such tick
+    // (an anchor jump, an object seek does not place). The shadow's world takes the mover's previous y from it instead of cy - dcy.
+    float pcy = __builtin_nanf("");
+    // The same for x (--shadowdcx): how far a dynamic object moved in x on THIS tick, set where dcy is in Dynamics::seekOne from the recording; 0 for static ones. The shadow's world takes the
+    // previous x of a mover from it (GD's collidedWithSlopeInternal compares the slope's own step with the player's: a slope that runs with the player flips its side).
+    double dcx = 0.0;
     // How much this object's half-height changed on THIS tick (the dynamic set writes it with dcy): a surface that is SCALED moves its face (cy +- hh) with its
     // centre standing still, and a rider is carried by the face (--facecarry).
     double dhh = 0.0;
@@ -132,7 +138,7 @@ struct Obj {
     uint8_t tpGrav = 0;
     // A teleport's m_ignoreX / m_ignoreY (objrects tpix / tpiy), bit 0 keeps the player's x and
     // bit 1 its y: the orb's (read under --teleportorb) and the portal's (type 28, read under
-    // --tpkeepy). Left 0 on everything else.
+    // --tpkeepy (removed)). Left 0 on everything else.
     uint8_t tpKeep = 0;
     // The velocity a teleport portal sets after the move (--tppush; objrects tpfm..tprmax).
     TpForce tpForce;
@@ -145,7 +151,7 @@ struct Obj {
     // 1905.000, exactly its unexported orange half. 0,0 = column absent or no
     // linked exit (old dumps); the teleport block falls back to tpY and warns.
     double tpEx = 0.0, tpEy = 0.0;
-    // A teleport portal's m_saveOffset (objrects tpsave, tprx, tpry; --tpsaveoff): the body keeps its place
+    // A teleport portal's m_saveOffset (objrects tpsave, tprx, tpry; --tpsaveoff (removed)): the body keeps its place
     // relative to the portal's REAL position: y' = tpY + (y - tpRY), x' = exit x + (x - real x), i.e. x moves
     // by tpXOff = tpEx - real x (negative: back).
     uint8_t tpSave = 0;
@@ -199,6 +205,19 @@ struct Obj {
     // onPrev = 0 on the tick after it. Only the wave's hazard loop reads them.
     uint8_t onPrev = 1;
     uint8_t onNew = 0;
+    // --trigsupply-all / --trigsupply-group: the object's own scale as the shadow's timeline has it after this tick's step, as a ratio to the scale it was loaded with (ObjState::osx / osy: a Transform that
+    // scales takes the members' own scale along), and the tick it was set for (search_dp.hpp supplyPlaceMovers). shadowPlaceMovers hands it to the shadow's world object (GObj::scaleX / scaleY, which circleHit
+    // reads for a saw's radius); a tick other than the group's own means "not supplied": the load scale.
+    float sclX = 1.f, sclY = 1.f;
+    // ...and the same ratio BEFORE this tick's step (stamped by the same sclT): GD moves a scaled object on the step's tick but sizes its hitbox by the scale it had before, so the plain rect
+    // (shadowPlaceMovers) reads this one and the saw's radius the one above.
+    float sclPX = 1.f, sclPY = 1.f;
+    long long sclT = -1;
+    // ...and its own angle as the timeline has it after this tick's step (ObjState::rot, degrees), with the tick it was set for, as the scale above: supplyPlaceMovers writes it for a supplied portal /
+    // pad / ring that is oriented as loaded, shadowPlaceMovers reads it for the world object's angle. The Obj's own rot / rc / rs are NOT written: the same Obj is placed next for another group (another
+    // world) that may not be supplied, and the placement redraws the angle only from a recording row, so a written angle would stand there - which group a thread placed last would decide the box.
+    double rotSup = 0.0;
+    long long rotT = -1;
 };
 
 // A verbatim port of GameObject::isFacingDown() (2.2081 win 0x1a1910). GD turns
@@ -231,7 +250,7 @@ inline bool objFacingDown(const Obj& o) {
 // AABB overlaps by 1.61 px in y, but projecting the object's four corners onto
 // the PLAYER's own v axis (the cube is at -52.435 deg) gives max = -15.880
 // against the player's half of 15 -- separated by 0.88 px. GD does not fire.
-// --obbfloat (default off): GD's two-box test as GD runs it, in single precision. OBB2D::calculateWithCenter builds each box's four corners
+// GD's two-box test as GD runs it, in single precision. OBB2D::calculateWithCenter builds each box's four corners
 // from float sin/cos of its angle, the half sizes and the centre, in this order (the Broma-named CCPoint operators, read off the
 // disassembly 2026-10-24):  X = (cos, sin) * halfW,  Y = (-sin, cos) * halfH,  c0 = (C - X) - Y,  c1 = (C + X) - Y,  c2 = (C + X) + Y,
 // c3 = (C - X) + Y;  its two axes are c1 - c0 and c3 - c0, each scaled by 1 / |axis|^2 (a float reciprocal, then a multiply), and each axis's
@@ -240,7 +259,6 @@ inline bool objFacingDown(const Obj& o) {
 // the test is that in both directions. At x ~ 50,000 a float steps 0.004 px and the corner arithmetic costs several steps, so a contact the
 // double-precision test below calls 5 micrometres short is a touch in the game (a custom level, a ball meeting a turned cube portal at
 // t=27,946: -0.005 px; the same level's mini wave at a turned gravity portal, t=26,919; another's at t=15,210: -0.016 px).
-inline bool g_obbFloat = false;
 #pragma fp_contract(off)
 struct ObbF32P { float x, y; };
 struct ObbF32Box { ObbF32P c[4]; ObbF32P ax[2]; double org[2]; };
@@ -295,21 +313,7 @@ inline bool obbHitGcF32(const float* gc, double px, double py, double half, doub
 #pragma fp_contract(on)
 inline bool obbSat(double cx1, double cy1, double hw1, double hh1, double a1,
                    double cx2, double cy2, double hw2, double hh2, double a2) {
-    if (g_obbFloat) return obbSatF32(cx1, cy1, hw1, hh1, a1, cx2, cy2, hw2, hh2, a2);
-    const double dx = cx2 - cx1, dy = cy2 - cy1;
-    const double c1 = std::cos(a1), s1 = std::sin(a1);
-    const double c2 = std::cos(a2), s2 = std::sin(a2);
-    const double ax[4] = { c1, -s1, c2, -s2 };
-    const double ay[4] = { s1,  c1, s2,  c2 };
-    for (int i = 0; i < 4; ++i) {
-        const double ux = ax[i], uy = ay[i];
-        const double r1 = hw1 * std::fabs(c1 * ux + s1 * uy)
-                        + hh1 * std::fabs(-s1 * ux + c1 * uy);
-        const double r2 = hw2 * std::fabs(c2 * ux + s2 * uy)
-                        + hh2 * std::fabs(-s2 * ux + c2 * uy);
-        if (std::fabs(dx * ux + dy * uy) > r1 + r2) return false;
-    }
-    return true;
+    return obbSatF32(cx1, cy1, hw1, hh1, a1, cx2, cy2, hw2, hh2, a2);
 }
 // `pRot` is the PLAYER's sprite rotation in degrees. 0 (every caller that has
 // none to give) skips the extra test entirely, so nothing that works moves.
@@ -318,34 +322,23 @@ inline bool orientedHit(const Obj& o, double px, double py, double half,
     if (!o.oriented)
         return std::fabs(px - o.cx) <= o.hw + half
             && std::fabs(py - o.cy) < o.hh + half;
-    if (g_obbFloat && o.hasGc && std::fabs(o.cx - o.gcx) < 1e-3 && std::fabs(o.cy - o.gcy) < 1e-3)
+    if (o.hasGc && std::fabs(o.cx - o.gcx) < 1e-3 && std::fabs(o.cy - o.gcy) < 1e-3)
         return obbHitGcF32(o.gc, px, py, half, -pRot * 3.14159265358979 / 180.0);
-    if (pRot != 0.0 || g_obbFloat) {   // --obbfloat: GD builds the box at any angle, zero included
-        // BOTH angles have to be in the same handedness. GD's rotations are
-        // cocos's (clockwise positive) and obbSat is written in the ordinary
-        // counter-clockwise convention, so both get negated -- negating only
-        // one mirrors one box against the other and the test is silently wrong.
-        // ...and RETURN it. The test below projects the player as an
-        // AXIS-ALIGNED square onto the object's axes, which is strictly more
-        // conservative than the real two-box SAT -- running both lets the
-        // approximation veto the exact answer. Measured at lv22 t=776, where GD
-        // fires: all four true axes overlap (tightest margin 1.06 px) while the
-        // old test reads |lx| = 36.165 against ohw + r = 33.25 and rejects.
-        const double thO = std::atan2(-o.rs, o.rc);  // rc/rs hold cos/sin(-th)
-        return obbSat(o.cx, o.cy, o.ohw, o.ohh, -thO,
-                      px, py, half, half,
-                      -pRot * 3.14159265358979 / 180.0);
-    }
-    const double dx = px - o.cx, dy = py - o.cy;
-    // the player's box projected onto the object's two axes
-    const double r = half * (std::fabs(o.rc) + std::fabs(o.rs));
-    const double lx = dx * o.rc + dy * o.rs;
-    const double ly = -dx * o.rs + dy * o.rc;
-    if (std::fabs(lx) > o.ohw + r || std::fabs(ly) > o.ohh + r) return false;
-    // ...and the object's box projected onto the world axes
-    const double ex = o.ohw * std::fabs(o.rc) + o.ohh * std::fabs(o.rs);
-    const double ey = o.ohw * std::fabs(o.rs) + o.ohh * std::fabs(o.rc);
-    return std::fabs(dx) <= ex + half && std::fabs(dy) < ey + half;
+    // GD builds the box at any angle, zero included.
+    // BOTH angles have to be in the same handedness. GD's rotations are
+    // cocos's (clockwise positive) and obbSat is written in the ordinary
+    // counter-clockwise convention, so both get negated -- negating only
+    // one mirrors one box against the other and the test is silently wrong.
+    // ...and RETURN it. A test that projects the player as an AXIS-ALIGNED
+    // square onto the object's axes is strictly more conservative than the
+    // real two-box SAT -- running both lets the approximation veto the exact
+    // answer. Measured at lv22 t=776, where GD fires: all four true axes
+    // overlap (tightest margin 1.06 px) while that test reads |lx| = 36.165
+    // against ohw + r = 33.25 and rejects.
+    const double thO = std::atan2(-o.rs, o.rc);  // rc/rs hold cos/sin(-th)
+    return obbSat(o.cx, o.cy, o.ohw, o.ohh, -thO,
+                  px, py, half, half,
+                  -pRot * 3.14159265358979 / 180.0);
 }
 
 // Does the player's axis-aligned box (centre px,py, half `half`) touch hazard
@@ -391,27 +384,10 @@ inline double sawMarginFor(uint8_t mode) {
 inline bool obbOverlap(const Obj& o, double px, double py, double ph,
                        double pdeg) {
     const double th = -pdeg * (1.0 / kRadToDeg);   // cocos rotation is CW +
-    if (g_obbFloat && o.hasGc && std::fabs(o.cx - o.gcx) < 1e-3 && std::fabs(o.cy - o.gcy) < 1e-3)
+    if (o.hasGc && std::fabs(o.cx - o.gcx) < 1e-3 && std::fabs(o.cy - o.gcy) < 1e-3)
         return obbHitGcF32(o.gc, px, py, ph, th);
-    if (g_obbFloat)   // --obbfloat (above): the object's x axis is (bc, bs)
-        return obbSatF32(o.cx, o.cy, o.bhw, o.bhh, std::atan2(o.bs, o.bc), px, py, ph, ph, th);
-    const double pc = std::cos(th), ps = std::sin(th);
-    const double dx = px - o.cx, dy = py - o.cy;
-    // the object's axes
-    const double lx = dx * o.bc + dy * o.bs;
-    const double ly = -dx * o.bs + dy * o.bc;
-    const double rOnObj = ph * (std::fabs(pc * o.bc + ps * o.bs)
-                              + std::fabs(-ps * o.bc + pc * o.bs));
-    if (std::fabs(lx) >= o.bhw + rOnObj || std::fabs(ly) >= o.bhh + rOnObj)
-        return false;
-    // the player's axes
-    const double mx = dx * pc + dy * ps;
-    const double my = -dx * ps + dy * pc;
-    const double rOnPlrX = o.bhw * std::fabs(o.bc * pc + o.bs * ps)
-                         + o.bhh * std::fabs(-o.bs * pc + o.bc * ps);
-    const double rOnPlrY = o.bhw * std::fabs(-o.bc * ps + o.bs * pc)
-                         + o.bhh * std::fabs(o.bs * ps + o.bc * pc);
-    return std::fabs(mx) < ph + rOnPlrX && std::fabs(my) < ph + rOnPlrY;
+    // the object's x axis is (bc, bs)
+    return obbSatF32(o.cx, o.cy, o.bhw, o.bhh, std::atan2(o.bs, o.bc), px, py, ph, ph, th);
 }
 
 // GD's radius-hazard test is GJBaseGameLayer::playerCircleCollision (win
@@ -449,34 +425,9 @@ inline double sawRectHalfB(int mode, int mini) {
     return 15.0 * s;                 // cube/ship/ball/ufo/robot/swing
 }
 
-// Can NO point of the segment (x0,y0)-(x1,y1) be close enough to `o` for any of
-// the kill tests below to fire? A pre-check for the sub-stepped sweeps, which
-// test every hazard in the x window -- and the window spans every y -- at nine
-// points a tick. Everything those tests accept lies within the object's extent
-// (its bound, its turned box's projection, its radius) plus a player-side half
-// that never exceeds max(half, 15) (hazardHit's widest reach is branch B's rect
-// half, at most 15, plus the radius and a margin of at most 0.10), so an object
-// farther than that plus 2 px from the segment's bounding box cannot be hit
-// anywhere on it. True means "skip it": the answer the sweep would have given.
-inline bool outOfSweepReach(const Obj* o, double x0, double y0, double x1,
-                            double y1, double half) {
-    double ex = std::max(o->hw, o->radius), ey = std::max(o->hh, o->radius);
-    if (o->obbOk) {
-        ex = std::max(ex, o->bhw * std::fabs(o->bc) + o->bhh * std::fabs(o->bs));
-        ey = std::max(ey, o->bhw * std::fabs(o->bs) + o->bhh * std::fabs(o->bc));
-    }
-    const double reach = std::max(half, 15.0) + 2.0;
-    return o->cx + ex + reach < std::min(x0, x1) || o->cx - ex - reach > std::max(x0, x1)
-        || o->cy + ey + reach < std::min(y0, y1) || o->cy - ey - reach > std::max(y0, y1);
-}
 
-inline thread_local int8_t t_holdHeld = -1;   // the stepped state's button on the previous tick; -1: none
-inline thread_local double t_holdX = 0.0;     // ...and its x at the start of the tick
-inline bool holdTapGone(const Obj* o) {
-    if (o->holdTapX <= 0.f || t_holdHeld < 0) return false;
-    if (t_holdX > (double)o->holdTapX) return t_holdHeld != 0;
-    return o->recOn == 0;   // before the trigger is crossed, as recorded
-}
+// (holdTapGone(o), which asked the stepped state's button of the old tick (t_holdHeld / t_holdX), stood here: nothing set them once that tick left, so it answered false for every
+// object and its one caller, hazardHit below, never returned early on it. Removed 2026-11-20; the shadow's tick holds the same meaning in State::tog.)
 // The x spans of the objects such a trigger switches (with 30 px before and 15 after): there the
 // button is part of the state, as nearCtrlHoldBox makes it for --ctrltouch.
 inline std::vector<std::pair<double, double>> g_holdTapSpans;
@@ -489,7 +440,6 @@ inline bool nearHoldTap(double x) {
 inline bool hazardHit(const Obj* o, double px, double py, double half,
                       double margin, double sawAdd = kSawMargin,
                       int mode = -1, int mini = 0) {
-    if (holdTapGone(o)) return false;
     if (o->radius > 0.0) {
         const double dx = px - o->cx, dy = py - o->cy;
         const double hRect = sawRectHalfB(mode, mini);   // -1 when unmeasured
@@ -644,18 +594,6 @@ inline bool hazardHit(const Obj* o, double px, double py, double half,
     // cold run recorded 12 `kill` fixups in that one corridor, all at y=384.
     return std::fabs(px - o->cx) <= o->hw + half + margin
         && std::fabs(py - o->cy) <= o->hh + half + margin;
-}
-// --hazrectgate: the first stage where the caller goes on to the box-vs-box test (`boxFollows`, i.e. --obb-all):
-// a turned hazard's recorded rect against the player's rect, the game's first stage. The turned-box branch above
-// projects the player's square UNturned, so with the player turned it can refuse what both of the game's stages
-// accept. A custom level's turned spike against a ship at 4.3 deg: rects overlap by 0.29 px, boxes overlap, the game
-// kills, and the unturned square missed the box's normal axis by 0.24 px -- the model died a tick late.
-inline bool hazardStage1(const Obj* o, double px, double py, double half, double margin, double sawAdd,
-                         int mode, int mini, bool boxFollows) {
-    if (boxFollows && o->obbOk && o->radius <= 0.0)
-        return std::fabs(px - o->cx) <= o->hw + half + margin
-            && std::fabs(py - o->cy) <= o->hh + half + margin;
-    return hazardHit(o, px, py, half, margin, sawAdd, mode, mini);
 }
 
 }  // namespace dp

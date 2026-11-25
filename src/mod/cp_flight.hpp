@@ -72,42 +72,42 @@ inline const std::vector<CamMem>& gameStateScalars() {
 #define CPF_GS(m) CamMem{offsetof(GJGameState, m), sizeof(GJGameState::m)}
     static const std::vector<CamMem> v = {
         CPF_GS(m_cameraZoom), CPF_GS(m_targetCameraZoom), CPF_GS(m_cameraOffset),
-        CPF_GS(m_unkPoint1), CPF_GS(m_unkPoint2), CPF_GS(m_unkPoint3), cameraDeltaPoint<GJGameState>(),
-        CPF_GS(m_unkPoint5), CPF_GS(m_unkPoint6), CPF_GS(m_unkPoint7), CPF_GS(m_unkPoint8),
-        CPF_GS(m_unkPoint9), CPF_GS(m_unkPoint10), CPF_GS(m_unkPoint11), CPF_GS(m_unkPoint12),
-        CPF_GS(m_unkPoint13), CPF_GS(m_unkPoint14), CPF_GS(m_unkPoint15), CPF_GS(m_unkPoint16),
-        CPF_GS(m_unkPoint17), CPF_GS(m_unkPoint18), CPF_GS(m_unkPoint19), CPF_GS(m_unkPoint20),
-        CPF_GS(m_unkPoint21), CPF_GS(m_unkPoint22), CPF_GS(m_unkPoint23), CPF_GS(m_unkPoint24),
-        CPF_GS(m_unkPoint25), CPF_GS(m_unkPoint26), CPF_GS(m_unkPoint27), CPF_GS(m_unkPoint28),
-        CPF_GS(m_unkPoint29), CPF_GS(m_unkBool1), CPF_GS(m_unkInt1), CPF_GS(m_unkBool2),
-        CPF_GS(m_unkInt2), CPF_GS(m_unkBool3), CPF_GS(m_unkPoint30), CPF_GS(m_middleGroundOffsetY),
-        CPF_GS(m_unkInt3), CPF_GS(m_unkInt4), CPF_GS(m_unkBool4), CPF_GS(m_unkBool5),
-        CPF_GS(m_unkFloat2), CPF_GS(m_unkFloat3), CPF_GS(m_unkInt5), CPF_GS(m_unkInt6),
-        CPF_GS(m_unkInt7), CPF_GS(m_unkInt8), CPF_GS(m_unkInt9), CPF_GS(m_unkInt10),
-        CPF_GS(m_unkInt11), CPF_GS(m_unkFloat4), CPF_GS(m_unkUint1), CPF_GS(m_portalY),
-        CPF_GS(m_unkBool6), CPF_GS(m_gravityRelated), CPF_GS(m_unkInt12), CPF_GS(m_unkInt13),
-        CPF_GS(m_unkInt14), CPF_GS(m_unkInt15), CPF_GS(m_unkBool7), CPF_GS(m_isFreeMode),
-        CPF_GS(m_unkBool9), CPF_GS(m_unkFloat5), CPF_GS(m_unkFloat6), CPF_GS(m_unkFloat7),
-        CPF_GS(m_unkFloat8), CPF_GS(m_cameraAngle), CPF_GS(m_targetCameraAngle),
+        CamMem{16, 8}, CamMem{24, 8}, CamMem{32, 8}, cameraDeltaPoint<GJGameState>(),
+        CamMem{48, 8}, CamMem{56, 8}, CamMem{64, 8}, CamMem{72, 8},
+        CamMem{80, 8}, CamMem{88, 8}, CamMem{96, 8}, CamMem{104, 8},
+        CamMem{112, 8}, CamMem{120, 8}, CamMem{128, 8}, CamMem{136, 8},
+        CamMem{144, 8}, CamMem{152, 8}, CamMem{160, 8}, CamMem{168, 8},
+        CamMem{176, 8}, CamMem{184, 8}, CamMem{192, 8}, CamMem{200, 8},
+        CPF_GS(m_unkPoint25), CamMem{216, 8}, CamMem{224, 8}, CamMem{232, 8},
+        CPF_GS(m_unkPoint29), CPF_GS(m_dualStaticCamera), CPF_GS(m_gameplayOffsetX), CPF_GS(m_gameplayOffsetXDontZoom),
+        CPF_GS(m_gameplayOffsetY), CPF_GS(m_gameplayOffsetYDontZoom), CamMem{268, 8}, CPF_GS(m_middleGroundOffsetY),
+        CPF_GS(m_middleGroundOffsetYTarget), CPF_GS(m_middleGroundOffsetYDuration), CPF_GS(m_cameraMoveXActive), CPF_GS(m_cameraMoveYActive),
+        CPF_GS(m_cameraPadding), CPF_GS(m_cameraEasing), CPF_GS(m_unkInt5), CPF_GS(m_unkInt6),
+        CPF_GS(m_unkInt7), CPF_GS(m_unkInt8), CPF_GS(m_unkInt9), CPF_GS(m_flyCameraY),
+        CPF_GS(m_lastModeHeight), CPF_GS(m_lastCameraZoom), CPF_GS(m_zoomDuration), CPF_GS(m_portalY),
+        CPF_GS(m_portalYDuringZoom), CPF_GS(m_gravityRelated), CPF_GS(m_cameraCenterY), CPF_GS(m_cameraMoveYTarget),
+        CPF_GS(m_flyCameraTargetY), CPF_GS(m_unkInt15), CPF_GS(m_flyGroundActive), CPF_GS(m_isFreeMode),
+        CPF_GS(m_disableCameraGridSnap), CPF_GS(m_backgroundSpeedX), CPF_GS(m_backgroundSpeedY), CPF_GS(m_middlegroundSpeedX),
+        CPF_GS(m_middlegroundSpeedY), CPF_GS(m_cameraAngle), CPF_GS(m_targetCameraAngle),
         CPF_GS(m_playerStreakBlend), CPF_GS(m_timeWarp), CPF_GS(m_queuedTimeWarp),
         CPF_GS(m_timeWarpRelated), CPF_GS(m_currentChannel), CPF_GS(m_rotateChannel),
-        CPF_GS(m_totalTime), CPF_GS(m_levelTime), CPF_GS(m_unkDouble3), CPF_GS(m_commandIndex),
-        CPF_GS(m_unkUint3), CPF_GS(m_currentProgress), CPF_GS(m_unkUint4), CPF_GS(m_unkUint5),
-        CPF_GS(m_unkUint6), CPF_GS(m_unkUint7), CPF_GS(m_unkUint8),
+        CPF_GS(m_totalTime), CPF_GS(m_levelTime), CamMem{560, 8}, CPF_GS(m_commandIndex),
+        CPF_GS(m_unkUint3), CPF_GS(m_currentProgress), CPF_GS(m_stepCommandIndex), CPF_GS(m_positionHistoryTime),
+        CPF_GS(m_positionHistoryClock), CPF_GS(m_areaEffectCounter), CPF_GS(m_advancedFollowCounter),
         // two objects of the same layer, which a restore of the loop never re-creates
         CPF_GS(m_lastActivatedPortal1), CPF_GS(m_lastActivatedPortal2),
-        CPF_GS(m_cameraPosition), CPF_GS(m_unkBool10), CPF_GS(m_levelFlipping), CPF_GS(m_unkBool11),
-        CPF_GS(m_unkBool12), CPF_GS(m_isDualMode), CPF_GS(m_unkFloat9), CPF_GS(m_cameraEdgeValue0),
+        CPF_GS(m_cameraPosition), CPF_GS(m_isFlipped), CPF_GS(m_levelFlipProgress), CPF_GS(m_inSecondHalfOfFlipAnimation),
+        CPF_GS(m_isFlipping), CPF_GS(m_isDualMode), CPF_GS(m_dualAnimationProgress), CPF_GS(m_cameraEdgeValue0),
         CPF_GS(m_cameraEdgeValue1), CPF_GS(m_cameraEdgeValue2), CPF_GS(m_cameraEdgeValue3),
-        CPF_GS(m_unkUint10), CPF_GS(m_unkUint11), CPF_GS(m_unkUint12), CPF_GS(m_cameraStepDiff),
-        CPF_GS(m_unkFloat10), CPF_GS(m_timeModRelated), CPF_GS(m_timeModRelated2),
-        CPF_GS(m_unkUint13), CPF_GS(m_unkPoint32), cameraLastPoint<GJGameState>(), CPF_GS(m_unkBool20),
-        CPF_GS(m_unkBool21), CPF_GS(m_unkBool22), CPF_GS(m_unkUint14), CPF_GS(m_unkBool26),
+        CPF_GS(m_unkUint10), CPF_GS(m_positionHistoryIndex), CPF_GS(m_cameraHistorySlot), CPF_GS(m_cameraStepDiff),
+        CPF_GS(m_backgroundWidth), CPF_GS(m_timeModRelated), CPF_GS(m_timeModRelated2),
+        CPF_GS(m_teleportCameraEaseTimer), CamMem{860, 8}, cameraLastPoint<GJGameState>(), CPF_GS(m_player1GoingSideways),
+        CPF_GS(m_player1GoingLeft), CPF_GS(m_audioOnDeath), CPF_GS(m_respawnTime), CPF_GS(m_noDeathSFX),
         CPF_GS(m_cameraShakeEnabled), CPF_GS(m_cameraShakeDuration), CPF_GS(m_cameraShakeStrength),
-        CPF_GS(m_cameraShakeInterval), CPF_GS(m_lastShakeTime), CPF_GS(m_unkPoint34),
-        CPF_GS(m_dualRelated), CPF_GS(m_unkBool27), CPF_GS(m_unkBool28), CPF_GS(m_unkBool29),
-        CPF_GS(m_unkUint17), CPF_GS(m_unkBool30), CPF_GS(m_background), CPF_GS(m_ground),
-        CPF_GS(m_middleground), CPF_GS(m_unkBool31), CPF_GS(m_points), CPF_GS(m_unkBool32),
+        CPF_GS(m_cameraShakeInterval), CPF_GS(m_lastShakeTime), CamMem{912, 8},
+        CPF_GS(m_dualRelated), CPF_GS(m_advancedFollowNeedsSort), CPF_GS(m_instantExitStaticCameraX), CPF_GS(m_instantExitStaticCameraY),
+        CPF_GS(m_maxPortalY), CPF_GS(m_mainSongStopped), CPF_GS(m_background), CPF_GS(m_ground),
+        CPF_GS(m_middleground), CPF_GS(m_unlinkDualGravity), CPF_GS(m_points), CPF_GS(m_hasObtainedPoints),
         CPF_GS(m_pauseCounter), CPF_GS(m_pauseBufferTimer),
     };
 #undef CPF_GS
@@ -143,8 +143,8 @@ struct Camera {
     // diff on a custom level: the tween actions, where the camera's zoom and offset run, 3 -> 4, and the two
     // event maps 50 -> 51)
     decltype(GJGameState::m_tweenActions) tweens;
-    decltype(GJGameState::m_unkMapPairGJGameEventIntVectorEventTriggerInstance) events;
-    decltype(GJGameState::m_unkMapPairGJGameEventIntInt) eventCounts;
+    decltype(GJGameState::m_gameEventTriggers) events;
+    decltype(GJGameState::m_gameEventCounts) eventCounts;
     struct Node { bool have = false; cocos2d::CCPoint pos; float sx = 1.f, sy = 1.f, rot = 0.f; };
     Node objectLayer, ground1, ground2, middleground, background;
 };
@@ -174,8 +174,8 @@ inline void captureCamera(GJBaseGameLayer* l, Camera& c) {
     c.layer.clear();
     for (const LayerMem& m : layerScalars()) c.layer.insert(c.layer.end(), lb + m.off, lb + m.off + m.size);
     c.tweens = l->m_gameState.m_tweenActions;
-    c.events = l->m_gameState.m_unkMapPairGJGameEventIntVectorEventTriggerInstance;
-    c.eventCounts = l->m_gameState.m_unkMapPairGJGameEventIntInt;
+    c.events = l->m_gameState.m_gameEventTriggers;
+    c.eventCounts = l->m_gameState.m_gameEventCounts;
     captureNode(l->m_objectLayer, c.objectLayer);
     captureNode(l->m_groundLayer, c.ground1);
     captureNode(l->m_groundLayer2, c.ground2);
@@ -199,8 +199,8 @@ inline void restoreCamera(GJBaseGameLayer* l, const Camera& c) {
         o += m.size;
     }
     l->m_gameState.m_tweenActions = c.tweens;
-    l->m_gameState.m_unkMapPairGJGameEventIntVectorEventTriggerInstance = c.events;
-    l->m_gameState.m_unkMapPairGJGameEventIntInt = c.eventCounts;
+    l->m_gameState.m_gameEventTriggers = c.events;
+    l->m_gameState.m_gameEventCounts = c.eventCounts;
     restoreNode(l->m_objectLayer, c.objectLayer);
     restoreNode(l->m_groundLayer, c.ground1);
     restoreNode(l->m_groundLayer2, c.ground2);
@@ -889,6 +889,7 @@ struct Set {
     long long end = -1;
     float endX = 0.f;
     std::vector<AnchorRow> rows;
+    std::vector<int> ever;                       // the attempt's ever log (anchors::g_everDead): the rows' everN count into it, so a flight that takes the rows up to a checkpoint takes the log with them (splice)
     anchors::Seeds seeds;
     std::vector<std::vector<solver::CoinPos>> coinPos;
     std::vector<long long> coinGd, coinPickup, routeOn;
@@ -1304,6 +1305,7 @@ inline void bank(long long end, float endX, bool rolled) {
     s.end = end;
     s.endX = endX;
     s.rows = anchors::g_dead;
+    s.ever = anchors::g_everDead;
     s.seeds = anchors::g_seedsDead;
     s.coinPos = solver::g_coinPosLog;
     s.coinGd = solver::g_coinGdTick;
@@ -1453,6 +1455,12 @@ inline void splice(const Choice& c) {
     const Rec& r = *c.rec;
     const long long T = r.tick;
     anchors::g_live.assign(s.rows.begin(), s.rows.begin() + (T + 1));
+    // The rows' everN count into the log of the attempt they come from, so that attempt's log up to the checkpoint's own count comes with them (cfg everpayload): a log that starts empty would be filled by the
+    // first scan in scan order (by x, flags GD still holds from the attempt that took the checkpoint included) and an inherited row's everN would pick other entries from it -- on Grief a custom level the
+    // anchor t0=33823 of an attempt that started from the checkpoint at t=34200 listed the wave / size portals 200 px ahead of it as taken. The first scan then adds only what GD holds beyond that.
+    anchors::g_everLive.clear();
+    if (g_cfg.everPayload && (size_t)T < s.rows.size() && s.rows[(size_t)T].everN >= 0)
+        anchors::g_everLive.assign(s.ever.begin(), s.ever.begin() + std::min<size_t>((size_t)s.rows[(size_t)T].everN, s.ever.size()));
     padseed::g_first.clear();
     for (const auto& kv : s.seeds.pads) if (kv.second <= T) padseed::g_first.insert(kv);
     ringseed::g_fired.clear();

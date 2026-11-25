@@ -1,6 +1,8 @@
 #pragma once
 #include "dp/fixup.hpp"
+#include "dp/cam_y_obs.hpp"
 #include "dp/clearance.hpp"
+#include "dp/game_event.hpp"
 // ...and the reference watch, whose globals this file clears. It was not in the
 // chain: only cli.hpp includes this header, and cli.hpp had already pulled
 // refwatch.hpp in, so the omission was invisible until src/mod/dp_bridge.cpp --
@@ -9,6 +11,8 @@
 // cli.hpp, so there is no cycle.
 #include "dp/refwatch.hpp"
 #include "dp/search_census.hpp"
+#include "dp/port_audit.hpp"
+#include "dp/cap_audit.hpp"
 
 namespace dp {
 
@@ -77,194 +81,99 @@ inline void resetInvocationState() {
     g_bandSrcRows.clear();
     g_bandTrackCam = -1;
     g_bandTrackEnd = -1;
-    g_bandK = 0.0;
     g_slopeDbg = false;
-    g_slopeRelDbg = false;
     g_fxWatchT = -1;
-    g_fxWhy[0] = 0;
     g_vyWatchT = -1;
     g_vyWriter = 0;
     g_vyWrites = 0;
     g_yWriter = 0;
     g_yWrites = 0;
-    g_yIn = 0.f;
-    g_vyIn = 0.f;
-    g_seatGateSeen = 0;
-    g_seatImpulsedOff = g_seatTappedOff = g_seatOnSlope = g_seatTook = -1;
     g_impulseSite = 0;
-    g_vpWrites = 0;
     g_impCount = 0;
     g_vyWatchT2 = -1;
-    g_dcyDbg = false;
-    g_bandDbg = false;
-    g_spdDbg = false;
-    g_shipCeilSet = false;
-    g_playerCeils.clear();
 
     // clearance.hpp -- instrumentation. The tallies are per solve, so a second
     // in-process call must not read the first one's cells.
     g_clearProbe = false;
+    g_portAudit = false; g_portAuditStats = PortAuditStats{}; g_portAuditPending.clear();
+    g_capAudit = false; g_capAuditEvery = 10; g_capAuditStats = CapAuditStats{};
     g_clear.reset();
     g_goalDiv = GoalDiversity{};
 
     // constants.hpp -- the measured values, which --flags override per call
     g_hazDbgUid = -1;
-    g_hazDbgFrom = g_hazDbgTo = -1;
-    g_tpLatchExact = false;
-    g_fixGravDual = true;
-    g_expInZero = true;
-    g_bandOwnTrack = true;
-    g_boxOff = true;
+    g_camy = false;   // --camy (cam_y_obs.hpp): observation only
+    g_camyRest = -1e30; g_camyZoomSeed = -1.0; g_camyOffSeed = 0.0;
+    g_camyBand = false;   // --camyband (cam_y_obs.hpp)
+    dp::gdcam::g_camNoLive = false;   // --camynolive (cam_model.hpp)
+    g_camyObs.reset();
+    g_camyLevel.clear(); g_camyEv = CamyPortalEv{}; g_camyStart = -1e30; g_camyStaticSeed.clear();
     g_gravToggle = true;
-    g_portalStartY = true;
-    g_cubeMpush = true;
-    g_mPushArm = true;
-    g_modeSlopeOrder = true;
-    g_spiderPortalFirst = true;
-    g_spiderPortalCube = true;
-    g_padBandIn = true;
-    g_tpMove = true;
-    g_flipRidePast = true;
     g_portalObb = true;
-    g_portalRot = true;
-    g_sizeSeat = true;
-    g_sizeExit = true;
-    g_padWaveOld = true;
-    g_rideOverSpeed = true;
-    g_rideOverSpeedUnder = true;
-    g_ringSpeedFirst = true;
-    g_tpPortalForce = true;
-    g_forceMiniFly = true;
-    g_lawFromBelowShip = true;
-    g_tpSaveOff = true;
-    g_waveRampEnd = true;
-    g_ceilHeldNoLand = true;
-    g_ceilOwner = true;
-    g_ceilFarBox = true;
-    g_waveFlipCap = true;
-    g_ballSeatGround = true;
-    g_rideSupGrace = true;
-    g_robotSlopeNoHover = true;
-    g_waveFlipCapFloor = true;
-    g_waveFlipCeilUp = true;
-    g_wavePortalRotMini = true;
-    g_rampSeatAll = true;
     g_portalObbMode = true;
-    g_wavePortalRot = true;
-    g_modeSwitchKeep = false;
-    g_wavePortalSize = true;
-    g_obbFloat = false;
-    g_noColCeil = true;
-    g_slideUnderDir = true;
-    g_seedChain = true;
-    g_waveSeatHaz = true;
-    g_tpRampLaunch = true;
+    g_obbScale = true;
+    g_capHoldClass = false;
+    g_capHoldPair = false;
+    g_shadowSupply = true;
+    g_shadowSpiderJump = false;
+    g_shadowDual = true;
+    g_forceBoxOn = true;
     g_rotTouch = true;
-    g_rotQReplay = true;
-    g_rotQTouch = true;
-    g_waveRampRot = true;
-    g_portSlopePre = true;
-    g_growRampOrder = true;
-    g_spdTapWarp = true;
-    g_ballFreshEnd = true;
-    g_tapWarpNoCrush = true;
-    g_waveHoldDead = true;
-    g_touchFirstLat = true;
-    g_downDyRev = true;
-    g_waveBandZoom = true;
-    g_flyBandCentre = true;
     g_spiderNoExtCol = true;
-    g_autoLockMoves = true;
     g_followTouch = false;
-    g_chanMove = true;
     g_tap2Max = 4;
-    g_p2Born = true;
-    g_holdSeed2 = true;
-    g_wavePortalHalf = 0.0;
     g_chanSwitch.clear();
     g_areaAdd = true;
-    g_tpSkipFly = true;
-    g_portReRead = true;
     g_touchOwnOff = true;
     g_tapDisarm = true;
-    g_touchObb = true;
-    g_touchObbRect = true;
     g_nanSlopeDropped = 0;
-    g_recEndHeldRot = true;
-    g_rotParent = true;
-    g_areaUnrec = true;
     g_areas.clear();
-    g_flipBonk = true;
     g_bigSecObjs.clear();
     g_bigSecDyn.clear();
-    g_crushHead = true;
-    g_spiderSeatSolid = true;
-    g_spiderSlopeExit = true;
-    g_crushHitHead = true;
-    g_spiderRectAll = true;
     g_rotBoost = true;
-    g_rotSpeed = true;
-    g_bonkOuter = true;
-    g_flyFree = true;
-    g_camFree = true;
-    g_groundBandZoom = true;
-    g_lingerHold = true;
-    g_warpFly = true;
-    g_warpFlyUfo = true;
-    g_warpSlowOnly = true;
-    g_warpCap = true;
-    g_waveWarp = true;
-    g_bandHoldNow = false;
     g_teleportTrig = true;
     g_wideScan = true;
     g_startP2dx = 0.0;
-    g_gravSpawn = true;
-    g_gravChain = true;
-    g_tpTrigSpawn = true;
     g_gravTouch = true;
     g_tpTouch = true;
-    g_tpTrigForce = true;
     g_startGmod = std::nan("");
+    g_gravAnchorChan = -1;
+    g_gravAnchorRev = 0;
+    g_gravAnchorX = std::nan("");
     g_tpBack = true;
-    g_tpTrigOnce = true;
-    g_wavePortalSlope = true;
-    g_dashAway = true;
-    g_spiderOrbRot = true;
-    g_bandHoldZoom = true;
-    g_tpJumpNext = true;
-    g_tpTrigOff = true;
+    g_ctrlOpenT0 = -1;
+    g_ctrlOpenX0 = 0.0;
+    g_ctrlOpenEnd = std::nan("");
     g_startXhi = std::nan("");
-    g_groundForce = true;
-    g_forceBoost = true;
-    g_eventTrig = true;
-    g_spawnDelayChains = true;
     g_tpPush = true;
     g_tpExitRot = true;
     g_tpExitRots.clear();
     g_tpExitMove = true;
     g_tpExitMoves.clear();
-    g_tpKeepY = true;
     g_moverExtendVel = false;
-    g_recEndQuiet = true;
-    g_ufoDownFlap = true;
-    g_exitJumpSeat = true;
-    g_spiderHeadX = true;
-    g_lawCubeLaunch = true;
-    g_dualJumpBuf = true;
-    g_stickTie0 = true;
-    g_spiderTpTouch = true;
-    t_spiderFreshWarp = false;
+    g_shadowRotProbe = false;
+    g_canonOrder = 0;
+    g_canonShuffle = 0;
+    g_worldKey = 0;
+    g_bandPair.on = false;
+    g_worldTree.on = false;
+    g_togTrace = 0;
+    dp::gdtrig::g_togTable = dp::gdtrig::TogTable{};
+    g_layerDigest2Path.clear(); g_layerBytes2T.clear(); g_ld2LastT = -1; g_ld2Rung = 0;
+    if (g_layerDigest2File) { std::fclose(g_layerDigest2File); g_layerDigest2File = nullptr; }
+    g_layerDigestPath.clear();
+    if (g_layerDigestFile) { std::fclose(g_layerDigestFile); g_layerDigestFile = nullptr; }
+    g_ldLastT = -1; g_ldRung = 0;
     g_recAnchorXN = 0;
     g_rotLagN = 0;
-    g_rotTailMove = true;
     g_rotTailN = 0;
     g_recEndTailN = 0;
     g_recEndTailTried = 0;
     g_recEndTailOnN = 0;
-    g_spiderBandGround = true;
     g_noColOneWay = true;
     g_noColStatic = true;
     g_recTouchGiven = false;
+    g_statHoldRecBoxHits = 0;
     g_recTouch.clear();
     g_recTouchBit.fill(-1);
     g_inRecon = false;
@@ -285,15 +194,11 @@ inline void resetInvocationState() {
     g_resimObjY = 0.f;
     g_resimTrig = TouchMask{};
     g_resimFrame = -1;
-    g_halfNow = 0;
     g_groupsEndT = -1;
     g_groupHoldDeath = false;
-    g_noPadPlayerRot = false;
-    g_noSatRotRaw = false;
     kLandTol = 10.0;
     kStickGap = 4.034;
     kRotPerpWin = 150.0;
-    kCrushHalf = 4.5;
     kStepDepth = 3.15;
     // The mod calls the solver more than once per process, so a flag left set by
     // the previous level would silently put coin routing on for the next one
@@ -310,9 +215,6 @@ inline void resetInvocationState() {
     g_itemGiver.clear();
     g_coinUids.clear();
     kCoinMargin = 0.0;
-    g_shipCeil = 375.0;
-    g_flyFloor = 0.0;
-    g_ufoCeil = 0.0;
 
     // dynamics.hpp
     g_recPhase = TouchMask{};
@@ -321,32 +223,21 @@ inline void resetInvocationState() {
     g_autoStopBy.clear();
     g_autoDisarm.clear();
     g_dynObbRot = true;
-    g_recLagUp = true;
     g_autoTrigFrame = true;
-    g_recLag0 = true;
-    g_forceRaw = true;
-    g_movingWallUp = true;
-    g_stickUphill = true;
-    g_ballContRide = true;
-    g_waveCeilEnd = true;
-    g_dualOrbLate = true;
-    g_ringFlipRide = true;
-    g_landTapSpent = true;
-    g_flyFrameSup = true;
-    g_wavePadSink = true;
     g_rotated.clear();
     g_rotSpec.clear();
     g_rotTailParts.clear();
     g_trigRaw = false;
-    g_closedPast = true;
-    g_closedPastAll = true;
     g_xTrack.clear();
+    g_xTrackWalkPath.clear();
     g_xTrackW.clear();
+    g_xTrackCh.clear();
+    g_xTrackChan = false;
+    g_xTrackWorld = false;
     g_camRows.clear();
     g_camXtrackRaw.clear();
     g_camFromFile = false;
     g_recLeadsN = 0;
-    g_touchRecLeads = true;
     g_touchRecLeadsN = 0;
     g_lagFitDbg = false;
     g_touchEnteredGiven = false;
@@ -365,7 +256,6 @@ inline void resetInvocationState() {
     g_recTouchEnteredGiven = false;
     g_recTouchEnteredT.clear();
     g_recOwnEntry.fill(-1);
-    g_touchOnRec = true;
     g_formulaRecHit.store(0);
     g_formulaRecMiss.store(0);
     // The rotation router's counts (`rotplace:` prints them). The loader only adds to them, so
@@ -373,13 +263,9 @@ inline void resetInvocationState() {
     g_rotSeen = 0;
     g_rotRouted = 0;
     // ...and three flags the audit had been carrying as known defects. Two are
-    // diagnostics, but g_rotSplit is not: it is declared TRUE and --no-rotsplit
-    // (cli.hpp:152) turns it off with nothing to turn it back on, so ONE call
-    // passing that flag disables rotation-orbit splitting for every later solve
-    // in the process -- and rotation splitting is physics, not instrumentation
-    // (it is what lv21's 55 px y error turned out to be).
+    // diagnostics, but g_rotSplit was not (removed: rotation splitting is
+    // physics, not instrumentation, and is always on now).
     g_rotCheck = false;
-    g_rotSplit = true;
     g_shiftStat = false;
     // ...and the locked box, which the loader finds. Same trap as
     // g_touchMoveTicks: left behind, the next level in a one-session run reads
@@ -387,16 +273,27 @@ inline void resetInvocationState() {
     // arrangement the serial cold uses.
     g_lockBox = -1;
     g_lockTicks = 0.0;
-    g_lockX = true;
-    g_lockNegDur = true;
 
     // fixup.hpp -- --fixups appends, so without this the file is loaded once per call and the
     // records of every earlier call are still in the list
-    g_fixupConflictFilter = false;
     g_fixups.clear();
     g_fixupKills.clear();
     g_fixupDeltas.clear();
     g_fixupHits = 0;
+    g_fixKillWorld = false;   // constants.hpp
+    g_seamKeepOn = false;     // groups.hpp
+    g_touchReArm = true;           // constants.hpp
+    g_traceHold = false;           // constants.hpp
+    g_hsShadow = true;             // constants.hpp
+    g_ringSlots = true;            // constants.hpp
+    g_ringSlotsKey = true;         // constants.hpp
+    g_holdRecBox = true;           // constants.hpp
+    g_hsMergeAudit = false;        // constants.hpp
+    g_hsMergeDropped = 0; g_hsMergeDroppedDistinct = 0; g_hsMergeReplaced = 0; g_hsMergeReplacedDistinct = 0; g_hsMergeStored = 0;
+    g_hsP22 = 1;                   // constants.hpp
+    g_traceContact = false;        // constants.hpp
+    g_dynKillUids.clear();
+    g_fixKillStale = 0;
     for (FixupCensusRow& row : g_fixupCensus) row = FixupCensusRow{};
     g_fixupRotSeen = 0;
     g_fixupCallRotSeen = 0;
@@ -414,27 +311,22 @@ inline void resetInvocationState() {
     g_rotQueue = false;
     g_rotWatchLo = -1;
     g_rotWatchHi = -1;
-    // --coindbg / --supdbg are set only when passed (cli.hpp), so one call's printout carried into
+    // --coindbg / --supdbg (removed) are set only when passed (cli.hpp), so one call's printout carried into
     // the next in-process call (tools/reset_coverage.py, 2026-10-09)
     g_coinDbgT = -1;
-    g_supDbg = false;
     g_qfoldLo = -1;
     g_qfoldHi = -1;
     g_rotQToggle = false;
     g_rotQOff.clear();
+    g_rotQAutoTog.clear();
+    g_rotQUidSet.clear();
     g_rotQOn.clear();
     g_rotTrigOff.clear();
     g_rotTrigOn.clear();
     g_touchSeedArg.clear();
     g_touchCensus = false;
-    g_tcBranch = 0;
-    g_tcBranchP1 = 0;
     g_touchStops.clear();
-    g_ceilPush = false;
-    g_flipLandDbgLeft = 0;
-    g_dualSlide = true;
     g_anchorRide = true;
-    g_stripVetoOrder = false;
     g_gpHandoff.clear();
     g_vetoPhys = false;
     g_resimLadderPartial = false;
@@ -444,8 +336,6 @@ inline void resetInvocationState() {
     g_resimPX = 0.f;
     g_preBtnSet = false;
     g_preBtnY = 0.0;
-    g_ballTapped = false;
-    g_hitGRepel = 0;
     g_startRotChan = -1;
     g_startRotRev = 0;
     g_startRotSpent.clear();
@@ -471,92 +361,56 @@ inline void resetInvocationState() {
     g_ownsTouch = false;
     g_ownsPortal = false;
     g_ownsHist = false;
-    g_seedPartialOk = false;
-    g_seedPartial.clear();
+    g_ownsEver = false;
+    g_everPayloadOn = false;
+    g_everPayloadSet.clear();
+    g_everPayloadSet2.clear();
     g_spentRot.clear();
     g_spentPad.clear();
     g_spentPadSeed = true;
     g_ctrlWin.clear();
     g_ctrlWinLag = true;
     g_ctrlWin2.clear();
-    g_recStallWide = true;
     g_recInterpSize = true;
     g_recInterpSlow = true;
-    g_flipGraceDyn = true;
-    g_camLockX = true;
-    g_portSeenX = true;
-    g_p1SoloEnd = true;
-    g_flyDashRing = true;
-    g_flyPadHead = true;
-    g_dashFrame3 = true;
-    g_crossWorldX = true;
-    g_ringMemRot = true;
-    g_ringRotBox = true;
-    g_ringRectGate = true;
-    g_ringFlipUnturned = false;
-    g_ringHeldNow = true;
-    g_spiderPadAfter = true;
-    g_spiderOrbPass = true;
-    g_dashStopDead = true;
-    g_tpPinVy = true;
-    g_robotHoverWarp = true;
-    g_portalUnseat = true;
-    g_pinWarp = true;
-    g_dashWarp = true;
-    g_countActGrp = true;
-    g_swingHelDash = true;
-    g_ringRide = true;
-    g_snapFaceBelow = true;
-    g_ringTurn = true;
-    g_ringRotGround = true;
-    g_flyStepUp = true;
+    g_ballStakeSeed = false;
+    g_rotQ64 = true;
+    g_partialByX = false;
+    g_partialPhys = false;
+    g_skyPrune = false;
+    g_ladderByX = false;
+    g_ladderLevelCache = false;
+    g_shadowColDerive = false;
+    g_shadowSDiff = false; g_shadowSeedTol = 0.01;
+    g_shadowColDumpPath.clear();
+    g_shadowQuietDumpPath.clear();
+    g_shadowRotBook = false;
+    gdcol::g_slActCap = gdcol::kSlAct; gdcol::g_slPruneMargin = gdcol::kSlPruneMargin;
+    g_spinSeed = false; g_seedSpinKnown = false; g_seedSpin = 0; g_seedSpinT = -1;
+    g_seedHistT0 = -1;
+    g_shadowDashAge = false; g_seedDashAgeKnown = false; g_seedDashAge = -1; g_seedDashAgeT = -1; g_seedUnderUid = -1; g_seedUnderT = -1; g_seedUnderUid2 = -1; g_seedUnderT2 = -1;
+    g_shGpUid.clear();
+    g_startP2Left = 0;
+    g_startRHover2 = 0;
+    gdcol::g_spiderGrid = true;
+    gdcol::g_levelHasEventTrig = true;
+    gdev::evChainReset();   // the level's event record (State::evgate's chain) and the events its Event triggers listen for
+    gdev::g_supplyEventUids.clear();   // ...and the objects only an Event trigger's chain switches (dynamics.hpp applyTriggersImpl): a one-session run's next level must not meet the last one's uids
     g_sameTick = true;
-    g_forceCircle = true;
-    g_forceLive = true;
-    g_ringPressEat = true;
-    g_spawnRingOn = true;
     g_offAfter = true;
-    g_actHazOff = true;
-    g_actLookChain = true;
     g_unlinkTrigs.clear();
-    g_ctrlWinTrig = true;
-    g_ctrlWaveNow = true;
-    g_ctrlLiftLag = true;
     g_ctrlTrigs.clear();
     g_pcTrigs.clear();
     g_pcTouchBoxes.clear();
     g_revTrigs.clear();
+    g_revTouchBoxes.clear();
     g_ctrlTrigFrom = -1;
     g_holdTapSpans.clear();
     g_startHoldField = -1;
-    g_ringPobb = true;
-    g_tpOrbOwn = true;
-    g_dashRot = true;
-    g_dashSprite = true;
-    g_dashSpriteOnce = true;
-    g_robotRot = true;
-    g_spiderRot = true;
-    g_waveSlopeMini = 0.700;
     g_wsMiniR = 2.241; g_wsMiniL = 3.246; g_wsMiniY = 2.1;
-    g_waveRingMiniPobb = true;
-    g_sectionRound = false;
-    g_dropA1c = true;
-    g_sectionUid = true;
-    g_robotHeldMove = true;
-    g_robotBufJump = true;
-    g_robotHeldSpent = true;
-    g_ceilRobotJump = true;
-    g_p2TouchBox = true;
-    g_spiderPadLatch = true;
-    g_areaOutSame = true;
-    g_dualInLat = true;
-    g_slopeLagPlain = true;
     g_startRevOff = g_startRevCarry = std::nan("");
-    g_ballDashRot = true;
     g_stopJump = true;
     g_reverseTrig = true;
-    g_lawUnderFlip = true;
-    g_winRePushJump.clear();
 
     // level.hpp -- the rotated copies belong to the level that built them, and g_baseLv points
     // into cliMain's own frame
@@ -575,6 +429,10 @@ inline void resetInvocationState() {
     g_timeWarps.clear();
     g_tpTrigs.clear();
     g_gravTrigs.clear();
+    g_gravOff.clear();
+    g_gravTrigs2.clear();
+    g_seedGmod2Known = false; g_seedGmod2Milli = -1; g_seedGmod2X = 0.0;
+    g_seedSlope2 = false;
     g_gravSpawned.clear();
     g_tpSpawned.clear();
     g_gravTouchBoxes.clear();
@@ -595,21 +453,17 @@ inline void resetInvocationState() {
     g_trigGateCol = false;
     g_staticCamCol = false;
     g_staticCams.clear();
+    g_anchorBandB = AnchorBandB{};
     g_flipHeadBoxes.clear();
+    g_nojumpBoxes.clear();
     g_dashStopBoxes.clear();
     g_ctrlTouchBoxes.clear();
     g_armBoxes.clear();
     g_slideBoxes.clear();
     g_pressRings.clear();
-    g_slideLive = true;
-    g_slideOn = true;
-    g_waveFlipRamp = true;
-    g_tpMark = true;
-    g_tpMarkSeed = true;
 
     // search_key.hpp
     g_topAhead.clear();
-    g_bucketX0 = 0.0;
     g_topAheadDyn.clear();
     g_shipYq = 0.5;
     g_shipVq = 2.5;
@@ -624,7 +478,6 @@ inline void resetInvocationState() {
     g_startSpeedMul = 0.0;
     g_dynHazPad = 0.0;
     g_dynSeamGap = 30000;
-    g_dynSeamLen = true;
     g_dynSeamCut = 0;
     g_fixRadiusCollision = 0;
     g_fixGravityBug = 0;
@@ -633,18 +486,7 @@ inline void resetInvocationState() {
     g_dynamicLevelHeight = 0;
     g_platformerMode = 0;
     g_maxPlayY = 1e18;
-    g_fixNearReach = true;
-    g_goalSpare = kDefGoalSpare;
-    g_upsideCoyote = 1;
     g_rawValues = kRawValuesDefault;
-    g_portalUnpin = kPortalUnpinDefault;
-    g_hazEndpoint = kHazEndpointDefault;
-    g_portalPress = kPortalPressDefault;
-    g_padTable = kPadTableDefault;
-    g_flyRingNested = 0;
-    g_prePortalUid = -1;
-    g_ballTapNested = 0;
-    g_ballTapLaunch = 0;
     g_heldAll = 1;
     g_solidOrdDbgT0 = g_solidOrdDbgT1 = -1;
     g_spentOrb.clear();
@@ -656,19 +498,12 @@ inline void resetInvocationState() {
     g_heldCellTwins = 0;
     g_histStatOn = false;
     g_histStatPath.clear();
-    g_goalX = 1e18;
     g_goalGd = false;
     g_endPortalX = 0.0;
     g_endPortalFlipX = 0;
     g_reverseSync = -1;
+    g_enablePlayerSqueeze = 0;
     g_twoPlayer = 0;
-    g_dualBornLinked = true;
-    g_p2Held = true;
-    g_p2Shared = true;
-    g_seatPast = true;
-    g_flyRideDown = true;
-    g_p2SoloAfter = true;
-    g_ballOrbTap = true;
     g_portSeenOverflow = 0;
     g_ghostOn = false;
     g_ghostBase = 0;
@@ -677,14 +512,14 @@ inline void resetInvocationState() {
     g_bodyBit = 1;
     g_startAct2 = -1;
     g_twoBodyCall = false;
+    g_levelHasDualOn = false;
+    g_twoBodyBirthMode = false;
     g_pinRows.clear();
-    g_p2SecX = false;
     g_p2Taps = false;
     g_p2TapPress = false;
     g_mustPress.clear();
     g_p2ReplayLvl.clear();
     g_p2ReplayBase = 0;
-    g_offBoardMargin = 0.0;
     g_shiftDbgUid = -1;
     g_shiftDbgDone = false;
 
@@ -704,24 +539,19 @@ inline void resetInvocationState() {
     // and a per-invocation reset would silently undo both.
     g_gcNodes = 8000000;
     g_memLimitMiB = 6144;
-    g_portalDodgeMin = 0.1;
-    g_speedDodgeMin = 0.0;
-    g_glitchPortal = 0.0;
-    g_glitchWave = 0.0;
-    g_waveCentre = 0.0;
     g_waveTidy = 0.0;
     g_waveToggle = 0;
     g_startEdge = -1;
-    g_glitchEmbed = 0.0;
     g_glitchDeco = false;
     g_coinWinY = 0.0;
     g_coinWinVy = 0.0;
     g_coinWinLen = 0.0;
-    g_ladderOverCap = true;
-    g_ladderOverCapStop = false;
+    g_ladderOverCapStop = true;
+    g_ladderFirstHit = true;
     g_capEnvelope = false;
+    g_lossyStat = false;
+    g_lossy = LossyStat{};
     g_yBound = 700.0;
-    g_yBoundTurned = 1e9;
 
     // triggers.hpp
     g_touch.clear();
@@ -738,7 +568,7 @@ inline void resetInvocationState() {
     // kTouchBits, not 32: the array is std::array<int, kTouchBits>, so a cap of
     // 32 left slots 32.. holding the previous level's fire ticks in a
     // one-session run -- the leak this block exists to close.
-    for (int b = 0; b < kTouchBits; ++b) g_touchFireT[b] = -1;
+    for (int b = 0; b < kTouchBits; ++b) { g_touchFireT[b] = -1; g_touchFireEntryOnly[b] = 0; }
     // ...and the boxes' travel coordinates, the last of the touch family that
     // was not here. A level with 32 boxes followed by one with 5 leaves the
     // previous level's coordinates in slots 5..31, where the 400 px proximity
@@ -756,15 +586,18 @@ inline void resetInvocationState() {
     // ...and the search census and the twin skip (search_census.hpp). Their tallies live in
     // cliMain; only the switches are global.
     g_searchCensus = 0;
+    g_censusLayersOn = false;
+    g_censusLayersPath.clear();
     g_autoSpread = false;
     g_autoSpreadOpen.clear();
-    g_autoOwnPre = true;
     g_autoOwnT0 = -1;
     g_autoRun.clear();
     g_twinAudit = false;
     g_minPulse = 0;
     g_wavePulse = 0;
     g_inputGrid = 0;
+    g_gridGroundPress = false;
+    g_gridGroundPressCube = false;
     g_gridMap.clear();
     // ...and the per-coin closest approach, for the same reason: a second solve
     // in one process would otherwise report the first one's nearest miss.
@@ -793,11 +626,10 @@ inline void resetInvocationState() {
     g_bands.clear();
     g_needTrig = TouchMask{};
     g_needTrigUids.clear();
-    g_needTrigRev = true;
     g_needUnseen = false;
     g_airPress = kDefAirPress;
-    g_airPressNear = true;
     g_refAdopt = false;
+    g_refAdoptSl = false;
     g_refAdoptMem = false;
     g_traceState = false;
     g_refAdoptT = -1;
@@ -807,8 +639,6 @@ inline void resetInvocationState() {
     g_groupAutoPaths.clear();
     g_groupAutoTL.clear();
     g_needSkip = TouchMask{};
-    g_touchWinAhead = true;
-    g_anchorMove = true;
     g_spawnableX.clear();
     g_trigDump = false;
     g_trigEffect = false;
@@ -819,14 +649,17 @@ inline void resetInvocationState() {
     g_fbForceBox = -1;
     g_fbForceTick = 0;
     g_replayOn = false;
-    g_fgArmLive = false;
     // ...and the fireB tally. The three counters only ever `++` (cli.hpp:2748,
     // 2749, 2760) and nothing zeroes them, so the line printed at cli.hpp:3504
     // is the PROCESS's running total presented as this solve's -- a number that
     // grows every call and is read as if it did not.
     g_fireBCheck = false;
     g_groupFire = false;
-    g_groupXSplit = true;
+    g_dupBatchCheck = false;
+    g_dupBatchLayers = g_dupBatchLeaders = g_dupBatchFollowers = g_dupBatchParents = g_dupBatchChecked = g_dupBatchMismatch = 0;
+    for (long long& v : g_dupBatchFireKeyed) v = 0;
+    for (long long& v : g_dupBatchRead) v = 0;
+    g_supObs = false;
     g_searchMethod = 0;
     g_beamWidth = 2000;
     g_mcRollouts = 300;
@@ -879,3 +712,4 @@ inline void resetInvocationState() {
 }  // namespace dp
 
 #include "dp/defaults_profile.gen.hpp"
+namespace dp { inline std::string levelCacheProfile() { return defaultsProfile(); } }   // (cli.hpp's --levelcachecheck: defaults_profile.gen.hpp needs the globals reset.hpp is defined after)

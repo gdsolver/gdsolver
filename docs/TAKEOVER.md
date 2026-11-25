@@ -55,6 +55,10 @@ The worker is always named (`--worker-id`): which workers are free is the operat
 - **`F8`** (the setting *End the human takeover*, rebindable) ends the session; so does a clear.
   The worker closes, and `play` collects the records and runs `check`. A driver with no keyboard on
   the worker writes `takeoverend` to the data root's `cmd.txt`, which does what the key does.
+  `takeoverkey <code>` does the same for any other key: a press and release of that key code
+  (`Z` is 90, `X` is 88) through the game's own keyboard dispatcher, so the checkpoint keys can be
+  tried with nobody at the keyboard. (A key message posted to the worker's window does not reach the
+  game while another application has the foreground.)
 - `--slowmo N` plays at 1/N speed. It only divides the frame time: the physics steps and the tick
   numbers are unchanged, so a run played slowly replays as it is at full speed.
 - Once the input is yours, the seek, speed and replay keys do nothing (up is also the game's jump).

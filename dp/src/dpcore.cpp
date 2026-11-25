@@ -15,7 +15,14 @@
 
 namespace dpcore {
 
-int cliMain(int argc, char** argv) { return dp::cliMain(argc, argv); }
+int cliMain(int argc, char** argv) {
+    const int rc = dp::cliMain(argc, argv);
+    if (dp::g_phaseProf && !dp::g_callStages.empty()) {   // leveldp under --phaseprof: the call's stages (print only)
+        std::printf("stages: %s\n", dp::g_callStages.c_str());
+        std::fflush(stdout);
+    }
+    return rc;
+}
 
 LevelStats statsFromCsv(const std::string& csv) {
     std::istringstream in(csv);
@@ -68,6 +75,7 @@ int solveInProcess(const std::string& csv, const std::vector<std::string>& args)
 std::vector<double> prepMarks() {
     return std::vector<double>(std::begin(dp::g_prepMark), std::end(dp::g_prepMark));
 }
+std::string callStages() { return dp::g_callStages; }
 
 SolveProgress progress() {
     SolveProgress p;
@@ -106,6 +114,12 @@ void adoptOutcome(const SolveOutcome& s) {
     o.rejoinT = s.rejoinT;
     o.rejoinBadT = s.rejoinBadT;
     o.rejoinBadWhy = s.rejoinBadWhy;
+    o.rejoinRefusedT = s.rejoinRefusedT;
+    o.rejoinRefusedDieT = s.rejoinRefusedDieT;
+    o.rejoinRefusedN = s.rejoinRefusedN;
+    o.rejoinShortT = s.rejoinShortT;
+    o.rejoinShortEndT = s.rejoinShortEndT;
+    o.rejoinShortN = s.rejoinShortN;
     o.needTrigMask = dp::TouchMask{};
     o.needTrigMask.w[0] = s.needTrigMask;
     o.needTrigPassed = dp::TouchMask{};

@@ -50,7 +50,7 @@ flowchart TB
     subgraph loop["in the game — the loop is src/mod/repair.hpp"]
         direction TB
         MOD["src/ — Geode mod (gdsolver)<br/>level-data export · headless fast loop · input injection<br/>per-tick state dump · moving-geometry recording<br/>serve mode (file protocol) · section solver<br/>safety (stats blocked)"]
-        DP["dp/ — reachability DP (leveldp)<br/>layered search over ticks · exact states<br/>dedupe on a quantised (y, vy, x-phase, mode, ...) key<br/>per-mode physics rules measured against the game"]
+        DP["dp/ — reachability DP (leveldp)<br/>layered search over ticks · exact states<br/>dedupe on a quantised (y, vy, x-phase, mode, ...) key<br/>the tick is the trigger engine: a running copy of GD's<br/>player step, collision pass and triggers"]
         MOD -- "level model, re-anchor state, fixups" --> DP
         DP -- "plan + model trace" --> MOD
     end
@@ -68,8 +68,8 @@ plan and the model trace the next divergence is measured against.
 * `dp/src/dp/*.hpp` is one translation unit split into modules in dependency
   order, each header including the previous one: the speed tables and per-mode
   constants, then geometry (hitboxes, OBB/SAT tests, rotated gameplay frames),
-  then the world (moving geometry, triggers, level loading), then `step` — the
-  per-tick physics step — with `fixup` and `cli` on top. `dp/src/leveldp_main.cpp`
+  then the world (moving geometry, triggers, level loading), then the tick — the
+  trigger engine, below — with `fixup` and `cli` on top. `dp/src/leveldp_main.cpp`
   is a three-line `main` around `dp::cliMain`, and the mod calls that same
   function in-process: the CLI and the mod run one solver, not two.
 * The level comes in as an objrects CSV through `loadLevelFrom(std::istream&)`.
@@ -102,6 +102,45 @@ plan and the model trace the next divergence is measured against.
   bits are reserved and a reader that does not drive one refuses the plan),
   `<out>.trace.csv` (per-tick model state) and `<out>.bands.txt` (per-layer
   frontier width).
+
+#### The model's tick: the trigger engine
+
+The model has **one tick**, and it is a running copy of GD's own: the **trigger engine**.
+For every state it does what the game does in one physics tick, ported from the game's
+code and checked against the game on the calibration rigs — the clock and the buttons, the
+player's update, the collision pass over the objects around the player, the rotation, and
+the game's trigger handling. It works on a copy of the game's own state, the words the game
+carries from one tick to the next, kept as a fixed-size block in every search state, so a
+state stays exact and a path stays a replayable plan. Until v0.8.0 the model also had a
+hand-written step of its own beside it; the trigger engine became the default and then
+the only tick, the old step is gone from the source, and a call that asks for it or for
+one of its switches is refused by name. It steps single-player and two-player levels alike.
+A state it cannot step (a platformer level, for one) ends its branch; no other tick takes
+it over.
+
+* **Moving geometry: the supply and the timeline.** The engine is given the world it
+  steps through. The mod records where every moving object is, tick by tick, while the
+  game flies a plan, and the solver reads those recordings as a timeline. Where the engine
+  runs the triggers itself — Spawn chains with delays and order, Toggle (touch Toggle Blocks
+  and toggle rings too), Move and Direction-mode Move, Scale and Transform, Areas, Teleport,
+  Event, Item and Advanced Follow triggers, rotation-queue entries — it places the group
+  itself; elsewhere the recorded position is supplied. A recording of the game flying the
+  loop's own plan wins over the first one (made with no inputs) wherever it reaches, because
+  some triggers fire only when the player gets there; beyond the last recording an object
+  holds its last known place. A supplied mover enters the window by its supplied position,
+  and one outside the windows is parked at its load place.
+* **The camera.** The engine carries a model of the game's camera: its Y and zoom follow the
+  game's own camera step with its easing curves, with Static Camera and Camera Edge,
+  Moves locked to the camera and a follow camera taking its target live. The height band a
+  plan flies in on a tick with no recording is taken from the state's own camera.
+* **Two players.** A two-player level is stepped by the same engine: the second player takes
+  its own button (bit 1 of a plan's button mask), the second body is born with the gravity the
+  dual portal gives it, and a level searched from an anchor with one body searches the second
+  body from its birth inside the call.
+* **The same plan on any number of threads.** The search runs on several threads and returns
+  the plan the search on one thread returns. What a state reads from the supplied world does
+  not depend on which thread expanded its parent: a mover outside the windows is parked at
+  its load place and never keeps the place a thread last put it.
 
 ### 2.2 `src/` — the Geode mod
 
@@ -302,8 +341,8 @@ solver's command line:
 
 | area | on by default | turned off by |
 |---|---|---|
-| the model's rules (`leveldp`) | every measured ramp, dual, portal and kill rule. The 0.4.0 clean-up removed 276 switches, so the rules older than it mostly have no off arm (a few keep one); a rule added since keeps a `--no-` spelling until the rule is folded into the default and the switch removed (171 in v0.6.0, 53 in v0.7.0; dp/removed_flags.txt) | the older ones: `--no-portalpress`, `--no-portalunpin`, `--no-hazendpoint`, `--no-upsidecoyote`, `--no-padtable`, `--no-airpress`, `--no-anchorride`, `--no-rotsplit`; the newer: `--no-<flag>`, e.g. `--no-teleporttrig`, `--no-portreread`, `--no-flipbonk`, `--no-stopjump`, `--no-chanmove` |
-| the search (`leveldp`) | `--ladderovercap`, `--ladderprefix`, `--rejoinprobe 5`, `--statecross`, `--crossbehind`, `--incanchor`, `--rlbound 1500` | `--no-ladderovercap`, `--no-ladderprefix`, `--rejoinprobe 0`, `--no-statecross`, `--no-crossbehind`, `--no-incanchor`, `--rlbound 0` |
+| the model's rules (`leveldp`) | every measured ramp, dual, portal and kill rule. The 0.4.0 clean-up removed 276 switches, so the rules older than it mostly have no off arm (a few keep one); a rule added since keeps a `--no-` spelling until the rule is folded into the default and the switch removed (`dp/removed_flags.txt` lists every removed spelling: 850 at v0.7.0, 1,654 now) | the older ones: `--no-airpress`, `--no-anchorride`; the newer: `--no-<flag>`, e.g. `--no-teleporttrig`, `--no-stopjump`, `--no-tptouch`, `--no-reversetrig` |
+| the search (`leveldp`) | `--ladderprefix`, `--rejoinprobe 5`, `--statecross`, `--crossbehind`, `--incanchor`, `--rlbound 1500` | `--no-ladderprefix`, `--rejoinprobe 0`, `--no-statecross`, `--no-crossbehind`, `--no-incanchor`, `--rlbound 0` |
 | the repair loop | `cpflight=600`, `cpcarryparts=2`, `dplearnresets=1`, `dpmodelreanchor=3`, `dpcapenvrepeat=3`, `dpmissedportalrepeat=3`, `dpspeedfirst`, `camrand`, `vtime` (not given: the fast loop's dt while it runs), `offboardfree`, `offboardband`, `voidband`, `cpfollowsection`, `cpdisabled`, `cpfollowfloats`, `cprotnode`, `cppersistguard`, `dpseedpickups`, `snapnodesync`, `obbnolatch` | `cpflight=0`, `cpcarryparts=31`, `dplearnresets=-1`, `vtime=0`, the others `=0` |
 | coins ([COINS.md](COINS.md)) | `dpcoinwin=60,2,700`, `coinapproachreach`, `coinmissearly`, `routeprereq` | `=0` |
 | the section solver ([SECTION_SOLVE.md](SECTION_SOLVE.md)) | `dpsectierfirst`, `dpsecstate`, `dpsecrecaway`, `secsnapem`, `secjbkeep`, `secheaddash`, `secheadaccel`, `secgracedash`, `secrungcoinoff`, `secbookfirst`, `secredoreach`, `secwsnapauto`, `secwsnapgate`, `sectionhooklazy` | `=0` |
@@ -327,7 +366,7 @@ in `src/mod/config.hpp`, `src/solver/secsolve.hpp` or `src/solver/psnap.hpp`.
 
 ## 5. What the model covers
 
-The DP's rules are measured one at a time against what the official levels
+The DP's rules, and the trigger engine's code that stands behind them, are measured one at a time against what the official levels
 actually use — calibration rigs, traces out of the game, the disassembly. That
 measuring is also the boundary of what is supported.
 

@@ -69,9 +69,9 @@ the section solver searches the game itself, and a plan the game clears is a
 solution however it was found. Platformer levels are refused: the search has no
 steering input to choose.
 
-This version is for GD 2.209 on Windows, and for the Steam executable it was
-built for: on another one it stays off and says so on screen. There is no Android
-build of this version.
+This version is for GD 2.2091 on Windows with Geode 6.0.0 or newer, and for the Steam
+executable it was built for: on another one it stays off and says so on screen. There is
+no Android build of this version; it follows the Windows release.
 
 ## Nothing is recorded while it drives
 

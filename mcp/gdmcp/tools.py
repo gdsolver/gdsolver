@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import time
 from pathlib import Path
 
 from . import data as D
@@ -26,6 +27,21 @@ def _need():
     if _session is None or not _session.is_alive():
         raise W.WorkerError("no session is open. Call gd_session_open first.")
     return _session
+
+
+# A resident game does not keep growing (mcp/README.md, "Sweeps and the memory"): its private
+# bytes settle within ~10 runs at 0.8-1.2 GB and stay. This is the safety net for what that
+# measurement did not cover (a very long session, a level much larger than the ones measured), set
+# at three times the largest value seen; the batch runner's own floor is free memory < 3 GB.
+MAX_PRIVATE_MB = 4096.0
+
+
+def _over_memory(w) -> bool:
+    try:
+        import psutil
+        return psutil.Process(w.proc.pid).memory_info().private / 2**20 > MAX_PRIVATE_MB
+    except Exception:       # a process that is gone or a missing psutil is not a reason to refuse
+        return False
 
 
 def parse_plan_file(path: str | Path) -> list[tuple[int, int]]:
@@ -61,13 +77,35 @@ def parse_plan_file(path: str | Path) -> list[tuple[int, int]]:
 # ---------- session ----------
 
 def gd_session_open(level: int, worker_id: int = W.MCP_WORKER, cfg: dict | None = None,
-                    mod_file: str | None = None) -> dict:
+                    mod_file: str | None = None, fresh: bool = False) -> dict:
     """Launch one GD worker and hold it open (about 20 seconds).
 
     Every later gd_run only supplies a plan to this resident session, so it returns in
     a few seconds. cfg takes extra autorun.cfg keys (e.g. {"clearance": "1"}).
+
+    A session already open on the same worker, running the same .geode and the same cfg
+    (the level aside), is MOVED to the new level inside the running game instead of being
+    relaunched (`switched` in the result): the mod leaves the level and enters the next one
+    by the same path a multi-level cold run does. A run that reaches the end no longer costs
+    a relaunch either (serverearm). fresh=True forces a new process, which is the arm to
+    compare a result against; so does cfg {"serverearm": "0"}, the old behaviour.
     """
     global _session, _last
+    cfg = {"serverearm": "1", **(cfg or {})}
+    stale_objrects = None
+    if (not fresh and _session is not None and _session.worker_id == worker_id
+            and _session.is_alive()):
+        stale_objrects = _session.data / "objrects.txt"
+    elif _session is not None:
+        _session.close()
+    if stale_objrects is not None:
+        # same hazard as below: the previous level's table must not be read for this one
+        try:
+            stale_objrects.unlink(missing_ok=True)
+        except OSError:
+            pass
+        _last = {}
+        return _session.switch(level, cfg, Path(mod_file or W.BUILD_MOD))
     if _session is not None:
         _session.close()
     _session = W.Worker(worker_id)
@@ -84,7 +122,8 @@ def gd_session_open(level: int, worker_id: int = W.MCP_WORKER, cfg: dict | None 
             stale.unlink()
     except OSError:
         pass
-    return _session.open(level, cfg or {}, Path(mod_file or W.BUILD_MOD))
+    return dict(_session.open(level, cfg, Path(mod_file or W.BUILD_MOD)),
+                switched=False)
 
 
 def gd_session_close() -> dict:
@@ -106,7 +145,7 @@ def gd_session_info() -> dict:
 
 def gd_run(plan: list | None = None, plan_file: str | None = None,
            inject: list | None = None, stop_at: int | None = None,
-           timeout_s: float = 120.0) -> dict:
+           timeout_s: float = 120.0, in_place: bool = False) -> dict:
     """Run one plan and return ONLY A SUMMARY.
 
     plan is [[tick, 0|1], ...]; plan_file is a file in the `input=t,d` format.
@@ -124,12 +163,34 @@ def gd_run(plan: list | None = None, plan_file: str | None = None,
     stop_at reports the state at that tick and ends the attempt (outcome="stopped").
     It closes "what happens if I run N ticks from this state" in a single call.
 
+    in_place: by default a run on a level that has already run something first ENTERS THE
+    LEVEL AGAIN inside the running game (about 2 s; `entered` says which happened), because
+    that is the arrangement whose dump / trace / events / moving-geometry record were measured
+    equal, row for row, to a relaunch (python -m gdmcp.equiv: 66 of 66 official cases and 21 of
+    21 custom ones, against 64 and 13 for a reset in place). in_place=True resets the level where it stands instead (about 0.5 s). The
+    physics columns of the dump and the trace agree in nearly every case, but GD's reset leaves
+    some state as the last run had it: moving objects' cached rects at the first ticks (so the
+    grouptrace record can differ), the flight band's pmin/pmax and snapdist until their first
+    write, and in one measured case y by 2.5e-4. Use it for quick questions, not for a number
+    you will compare against a relaunch.
+
     Note: a state built by injection is not necessarily "a state reachable from the
     start". Feed what you learn here back into the model, and ALWAYS VERIFY THE
     SOLUTION WITH A COLD RUN (CLAUDE.md).
     """
     global _last
     w = _need()
+    entered = "as_opened"
+    if _over_memory(w):
+        w._reopen()
+        entered = "relaunched (memory)"
+    elif w.dirty:
+        if in_place and w.rearm:
+            entered = "reset_in_place"
+        else:
+            # The level has run something. Enter it afresh (~2 s, no relaunch) so this run starts
+            # from what a launch gives; see the in_place note above.
+            entered = "re-entered" if w.reenter().get("switched") else "relaunched"
     if plan_file:
         pairs = parse_plan_file(plan_file)
     elif plan:
@@ -139,7 +200,7 @@ def gd_run(plan: list | None = None, plan_file: str | None = None,
         pairs = []
     specs = [dict(s) for s in (inject or [])]
     r = w.run(pairs, timeout_s=timeout_s, injects=specs, stop_at=stop_at)
-    summary = dict(r.as_dict(), n_inputs=len(pairs))
+    summary = dict(r.as_dict(), n_inputs=len(pairs), entered=entered)
     if specs and len(r.injected) < len(specs):
         summary["warning"] = (f"{len(r.injected)} of {len(specs)} injections "
                               "fired. Some may have been dropped across a tick "
@@ -228,6 +289,100 @@ def gd_cmd(cmd: str, timeout_s: float = 10.0) -> dict:
     """Escape hatch to post a cmd.txt command directly (status / diag / pause / resume / step N)."""
     return {"cmd": cmd, "lines": _need().command(cmd, timeout_s)}
 
+# ---------- gd_call: GD's own function on a scratch object ----------
+
+_PACK = {"u8": "<B", "i8": "<b", "u16": "<H", "i16": "<h", "u32": "<I", "i32": "<i", "i64": "<q", "u64": "<Q", "f32": "<f", "f64": "<d"}
+
+
+def _encode(p: dict) -> bytes:
+    """A patch is {who: 'p'|'s', offset, hex} or {who, offset, type, value}."""
+    import struct
+    if "hex" in p:
+        return bytes.fromhex(p["hex"])
+    return struct.pack(_PACK[p["type"]], p["value"])
+
+
+def _decode(blob: bytes, offset: int, typ: str):
+    import struct
+    fmt = _PACK[typ]
+    return struct.unpack_from(fmt, blob, offset)[0]
+
+
+def gd_call(function: str, patches: list | None = None, args: dict | None = None,
+            read: list | None = None, timeout_s: float = 30.0) -> dict:
+    """Call one of GD's own functions on a scratch object and return the bytes it leaves.
+
+    The mod must run with cfg callverify=1 (gd_session_open(..., cfg={"callverify": "1"})).
+    A NEW scratch PlayerObject (and, for the slope functions, a scratch slope GameObject) is made
+    for every call; nothing a call leaves is read by the next, and nothing reaches the running
+    level (the scratch player has no game layer, and is on no node).
+
+    function:  one of "collidedWithSlopeInternal", "updateSlopeRotation".
+    patches:   [{"who": "p", "offset": 0x9a8, "type": "f64", "value": 0.0}, {"who": "s", "offset": 0x4c, "hex": "00000000"}, ...]
+               laid over the scratch player ("p") or slope object ("s") after they are made. Lay over
+               plain data only (positions, velocities, flags, counters); a pointer slot is the
+               scratch object's own and a patch over it is a crash.
+    args:      {"dt": 0.25, "forced": 0}
+    read:      [{"name": "launch", "who": "p", "offset": 0x9bc, "type": "f32"}, ...] decoded from the
+               bytes after the call. The full bytes are returned as hex as well.
+    """
+    w = _need()
+    lines = [f"fn {function}"]
+    for k, v in (args or {}).items():
+        if k == "rect":   # collidedWithObjectInternal: [x, y, w, h]
+            lines.append("rect " + " ".join(repr(float(x)) for x in v))
+        else:
+            lines.append(f"arg {k} {v}")
+    for p in (patches or []):
+        lines.append(f"patch {p['who']} {int(p['offset'])} {_encode(p).hex()}")
+    (w.data / "call_in.txt").write_text("\n".join(lines) + "\n", encoding="ascii")
+    out_path = w.data / "call_out.txt"
+    if out_path.exists():
+        out_path.unlink()
+    res = w.command("call", timeout_s)
+    out = {"result_lines": res}
+    # w.command returns on the first line any command adds to result.txt, which can be an earlier
+    # command's late line: the answer is the file, so wait for it
+    wait_until = time.time() + timeout_s
+    def _written() -> bool:
+        try:
+            s = out_path.read_text(encoding="ascii")
+        except OSError:
+            return False
+        return s.startswith("ok 0") or "sizes " in s
+
+    while not _written() and time.time() < wait_until:
+        time.sleep(0.1)
+    if not out_path.exists():
+        out["ok"] = False
+        out["error"] = "no call_out.txt"
+        return out
+    ret: dict = {}
+    for ln in out_path.read_text(encoding="ascii").splitlines():
+        k, _, rest = ln.partition(" ")
+        ret[k] = rest
+    out["ok"] = ret.get("ok", "").startswith("1")
+    for who in ("p", "s"):
+        if f"ptr_slots_{who}" in ret:   # the 8-aligned offsets of the scratch object's heap pointers: patches never change these words
+            out[f"ptr_slots_{who}"] = [int(x) for x in ret[f"ptr_slots_{who}"].split(",") if x]
+    if not out["ok"]:
+        out["error"] = ret.get("ok", "")
+        return out
+    blobs = {"p": bytes.fromhex(ret["player"]), "s": bytes.fromhex(ret["slope"]) if "slope" in ret else b""}
+    out["sizes"] = ret.get("sizes")
+    out["player_in_hex"] = ret.get("player_in")
+    if "slope_in" in ret:
+        out["slope_in_hex"] = ret["slope_in"]
+    if "slope_hazard_off" in ret:
+        out["slope_hazard_off"] = int(ret["slope_hazard_off"])
+    out["player_hex"] = ret["player"]
+    if "slope" in ret:
+        out["slope_hex"] = ret["slope"]
+    if "ret" in ret:
+        out["ret"] = ret["ret"]
+    if read:
+        out["read"] = {r.get("name", f"{r['who']}+{r['offset']:#x}"): _decode(blobs[r["who"]], int(r["offset"]), r["type"]) for r in read}
+    return out
 
 def gd_reload() -> dict:
     """Reload the gdmcp implementation (fix things without restarting Claude Code).
@@ -250,4 +405,4 @@ def gd_reload() -> dict:
 
 TOOLS = [gd_session_open, gd_session_close, gd_session_info, gd_run,
          gd_death_context, gd_trace, gd_events, gd_objects, gd_diff,
-         gd_cmd, gd_reload]
+         gd_cmd, gd_call, gd_reload]

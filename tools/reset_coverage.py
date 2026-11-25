@@ -759,17 +759,18 @@ B g_levelCsv        set unconditionally by dpcore::solveInProcess (dp/src/dpcore
 B g_progress        a live readout the mod polls from another thread; cliMain re-opens it with g_progress.begin() at cli.hpp:2398 and a ProgressGuard ends it (reset.hpp documents it)
 B g_outcome         cleared by cliMain itself at cli.hpp:41, deliberately ABOVE resetInvocationState so an early return leaves "FAILED, nothing measured" rather than the last verdict
 B g_plainElsewhere  the caller's hooks, not a solve's state: set unconditionally by dpbridge::plainBeside before every in-process call (src/mod/repair.hpp timedSolve), and never written by dp
+B g_callStages     one call's stage report (print only): cliMain clears it on entry, before any stage of the call adds to it; read only by the line cliMain prints on the way out
+B g_stageWalkMs    one stage's: cliMainBody stores 0 before the stage it times and reads it into that stage's entry of g_callStages; nothing else reads it
+B g_stagePostMs    one stage's, as g_stageWalkMs
+B g_stageWalks     one stage's, as g_stageWalkMs
+B g_stageOnce      one stage's, as g_stageWalkMs (the searches of the stage, counted in cliMainOnce)
 B g_ladderBestT     one ladder's: cliMain stores -1 at every ladder's start and its EndLadder guard stores -1 on every way out; outside a ladder nothing reads it
 B g_ladderStop      one ladder's: cliMain stores false at every ladder's start, after taking the plain search, and in its EndLadder guard on every way out
-B g_wrc             one ladder's walk-resume cache (--walkresume): cliMain stores an empty one at every ladder's start (cli.hpp:7513) and its EndLadder guard clears it (cli.hpp:7525); outside a ladder nothing reads it
-B g_walkResumeCheck stored false at the top of every cliMainOnce (cli.hpp:529), before the argument loop that may set it
-C g_walkResumeEvery the walk-resume checkpoint stride, 256 ticks; never written
 #
 # (B) per-tick step scratch, thread_local. cli.hpp:2218-2223 zeroes all six
 #     immediately before every stepBoth call, so nothing can read an older
 #     tick's value, let alone an older invocation's.
 B g_nearOrb         zeroed every tick at cli.hpp:2218 before stepBoth
-B g_dashVySet       zeroed every tick at cli.hpp:2219 before stepBoth
 B g_clampWhy        zeroed every tick at cli.hpp:2220 before stepBoth
 B g_clampUid        zeroed every tick at cli.hpp:2221 before stepBoth
 B g_deadWhy         zeroed every tick at cli.hpp:2222 before stepBoth
@@ -780,7 +781,6 @@ B g_deadObj         zeroed every tick at cli.hpp:2223 before stepBoth
 #     g_clampUid (the CLAMP0O macro, step.hpp:77-79), g_deadC* with g_deadWhy
 #     and g_deadObj (the DIE macro, step.hpp:84-86) -- and every reader tests
 #     the marker first, so a stale payload is unreachable.
-B g_dashVy          read only under `g_dashVySet ?` at cli.hpp:2307; written beside it at step.hpp:8836
 B g_clampCx         written only by the CLAMP0O macro, which sets the per-tick-cleared g_clampUid in the same statement (step.hpp:78-79)
 B g_clampCy         written only by the CLAMP0O macro, which sets the per-tick-cleared g_clampUid in the same statement (step.hpp:78-79)
 B g_deadCx          written only by the DIE macro, which sets the per-tick-cleared g_deadWhy/g_deadObj in the same statement (step.hpp:84-86)
@@ -789,18 +789,12 @@ B g_deadCy          written only by the DIE macro, which sets the per-tick-clear
 # (B) the spider press probe's result, thread_local: stepOne stores false at step.hpp:4031, immediately before
 #     the one nested probe step that can set it (the pad pass, step.hpp:15932), and reads it only after that
 #     step returns (step.hpp:4038), so no read can see an earlier probe's value.
-B g_probePadFired   stored false at step.hpp:4031 before the probe step that alone sets it (step.hpp:15932); read only after it, at step.hpp:4038
 #
 # ---- classified 2026-10-09: the globals that landed between the 09-04 audit and 10-08 ----------
 #
 # (B) the second dual half's signals, thread_local: stepBoth sets each one right before the
 #     second body's stepOne (fixup.hpp:400-403) and reads or clears it right after (407-410).
-B g_bandPortalWrote stored false at fixup.hpp:400 before the second half's stepOne, which alone sets it (step.hpp:14335/14338); read at fixup.hpp:410 right after
-B g_dualOtherMode   set for the second half only (fixup.hpp:401, under --dualband) and stored -1 at fixup.hpp:409 right after it; its reader (step.hpp:14312) takes s.mode2 at -1
-B g_p2SoloHalf      set at fixup.hpp:402 before the second half and stored false at fixup.hpp:407 right after it
-B g_p2SoloFired     stored false at fixup.hpp:403 before the second half, which alone sets it (step.hpp:14192); read at fixup.hpp:408 right after
 B g_fxBlockedUid    stored -1 at the top of every stepBoth (fixup.hpp:311), before the fixup lookup that sets it (fixup.hpp:344)
-B g_inPressProbe    true only between step.hpp:4030 and 4033, around the one nested probe step
 B g_deadKind        written with every `dead = true`: by DIE_AS in the same statement (step.hpp:230) and by the three direct deaths (deadband, maxplayy, offboard, which until 2026-10-09 left it alone); its one reader (--spiderpresslate's test after the probe step) runs only when that step died
 #
 # (B) set for the length of one call, a ladder or a replay, by the code that opens it.
@@ -814,18 +808,15 @@ B g_levelCacheCheck stored false at the top of every cliMainOnce (cli.hpp:426), 
 B g_prepMark        stored -1 at the top of every cliMainOnce (cli.hpp:424)
 B g_hist            cleared at the start of every replay (cli.hpp:5743); its only reader is that replay's summary (cli.hpp:6302-6305)
 B g_histFired       cleared at the start of every replay (cli.hpp:5744), beside g_hist
-B g_histPads        cleared at the start of every replay (cli.hpp:5745), beside g_hist
 B g_ladder          stored when a ladder starts (cli.hpp:7250) and 0 when it ends (cli.hpp:7255)
 B g_ladderLevel     one ladder's level cache, taken only under its own g_ladder (cli.hpp:2640) and cleared when the ladder ends (cli.hpp:7256)
 B g_lpc             one ladder's prefix cache, cleared when the ladder starts and when it ends (cli.hpp:7247/7257)
 B g_loadPrinted     points at a local only while the level loads (cli.hpp:2660) and is stored nullptr right after (cli.hpp:2664)
-B g_tpForceCol      stored at every level load from the objrects header (level_loader.hpp:363); a cached level is taken only when it was the last one loaded (the g_replayLevel / g_ladderLevel keys)
 #
 # (B) a payload read only below its own counter, which reset.hpp zeroes.
 B g_fixupRotX       the payload of g_fixupRotSeen (reset.hpp:309); the only reader prints indices below it (cli.hpp:6587)
 B g_fixupCallRotX   the payload of g_fixupCallRotSeen (reset.hpp:310); the only reader prints indices below it (cli.hpp:6581)
 B g_impTrail        the ring of g_impCount (reset.hpp:96, step.hpp:2060); the only reader prints the last min(g_impCount, 8) (cli.hpp:6238-6241)
-B g_vpTrail         the ring of g_vpWrites (reset.hpp:95, step.hpp:2059); the only reader prints the last min(g_vpWrites, 8) (cli.hpp:6233-6236)
 B g_rotWatchUid     written only under --rotwatch (g_rotWatchLo >= 0, which reset.hpp:326 stores -1; step.hpp:918/1108), and model.hpp:386 stores -1 before the read at model.hpp:392
 #
 # (C) constants held as globals.
@@ -839,6 +830,8 @@ S g_levelTextCache  a cross-call cache by design: taken only while the level tex
 S g_groupLayersCache a cross-call cache by design: taken only on the same files by signature or bytes and the same hold setting (cli.hpp:133-176), rebuilt and its generation bumped otherwise (cli.hpp:237); emptied by releaseCrossCallCaches (cli.hpp:416)
 S g_trigRowsCache   a cross-call cache by design: taken only while the file holds the bytes it was parsed from (triggers.hpp:805); emptied by releaseCrossCallCaches (cli.hpp:416)
 S g_groupMembersCache a cross-call cache by design: taken only while the file holds the bytes it was parsed from (triggers.hpp:827); emptied by releaseCrossCallCaches (cli.hpp:416)
+S g_movRings        heldRingInReach's moving-ring boxes (search_dp.hpp heldRingBoxesOf): taken only for the same Dynamics object, object count and rows, and emptied when a new call's g_shCallGen is seen
+S g_movRingMu       a mutex
 S g_replayLevel     a cross-call cache by design: taken only when the args, the groups generation, the csv and the files all match (cli.hpp:2645-2647), and cleared by any call that is not a replay (cli.hpp:2620)
 S g_run             a level's run spans many calls by design: the mod opens and closes it (runBegin / runEnd, search_dp.hpp:2874/2965)
 S g_threadSlot      a worker thread's identity, stored once when the pool's thread starts (thread_pool.hpp:15)
@@ -1203,7 +1196,7 @@ RATCHET = """
   g_secReqPending g_secReqStart g_secReqTarget g_secResetMs
   g_secRestMs g_secs g_secSearching g_secStoreMs
   g_seekBarTick g_seekForward g_seekRevive g_seq
-  g_serveMode g_serveReset g_serveWait g_settle
+  g_serveMode g_serveRearm g_serveReset g_serveWait g_settle
   g_shownAt g_showRequest g_shrinks g_silenced
   g_skipExtras g_sliceMs g_sliceStart g_slots
   g_slowmo g_snapCmp g_snapCollideObj g_snapMode

@@ -27,6 +27,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -125,7 +126,38 @@ inline long long g_stride = 1; // cfg `groupstride=<n>` (subsampling)
 // per attempt. This is how "what actually moves here" is measured before deciding
 // what the permanent tracking predicate should be.
 inline bool g_all = false;
-
+// cfg `grouptracksmart=1` (off): also track what the normal filter drops although it MOVES, found by measuring with grouptraceall on 20 levels (notes/mover-survey-1030.md): (a) [mode 2] a gameplay object
+// with no group (the robot portal of a custom level drifted 20 px under something that is not a group nor m_hasAreaParent, while the recording held the dump position, so the portal acted a step early),
+// (b) a decoration in the target group of a Teleport trigger / orb (an Advanced Follow carries such an exit with the player: the teleport lands at the exit's position NOW), (c) a trigger object with
+// Touch Triggered set (its touch rect moves with its group). Writes smart_tracked.txt (uid, rule) so the rules can be held against grouptraceall.
+// modes: 0 off, 1 rules (b) and (c) below, 2 rules (a), (b), (c) with (a) = every gameplay object that has no group; 3 = 2, but (a) also in grouptrace.txt; 4 = 3, but a row for (a) only from the first time it moves.
+// ON (4) by default since 2026-10-30 (user ruling, after the 6-level fidelity run: 68 -> 67 diverged sections, none worse); grouptracksmart=0 is the old behaviour.
+inline int g_smart = 4;
+// cfg `bootstrapgate` (ON by default; bootstrapgate=0 is the old behaviour): the bootstrap record (repair.hpp startBootstrapRecord, one
+// run of the whole level with no inputs and no dying) only on a level where something can move. Since g_smart=4 every ungrouped gameplay
+// object is tracked as smartQuiet (a row only once it moves), so every level had tracked objects and every level paid that run -- on a
+// level where nothing moves it recorded 0 samples and was discarded (lv5: 12 s -> 7 s a level, 2026-11-13). The gate runs it when a
+// tracked object is not smartQuiet, or when the level has an Area trigger that can move objects with no group (g_areaMovers).
+inline bool g_bootGate = true;
+inline int g_nonQuiet = 0;       // build(): tracked objects that are written to grouptrace.txt from their first reading (not smartQuiet, not smartOnly)
+inline int g_areaMovers = 0;     // build(): Area / Edit Area Move, Rotate, Scale triggers (3006-3008, 3011-3013)
+inline int g_rotGameplay = 0;    // build(): Rotate Gameplay triggers (2900)
+// WHEN THE SMARTQUIET OBJECTS ARE SCANNED. A smartQuiet object (rule (a): a gameplay object with no group) writes a row only once it
+// moves, and on 21 of the 22 official levels none does (a cold with grouptracksmart=0 and one with 4 write the same rows and the same
+// [fp], 2026-11-19), yet scanning them costs 18 ns an object a tick: 1,000-5,800 objects on every level, 17-50% of a verification
+// flight. What moves an object that no group holds (read from the 22091 binary, 2026-11-19: the only code that stores a game object's
+// position is the group actions -- moveObjects, rotateObjects, the follow actions, the loaded move actions --, the Area effects
+// (processAreaEffects -> moveAreaObject / rotate / transform, which take the target group's objects or an enter channel's), the
+// rotate-gameplay pair that turns an object around the player for one collision test and back (handleRotatedCollisionInternal), and
+// the start / reset / editor code): so a level with no Area trigger (3006-3008; 3011-3013 only edit a running one) and no Rotate
+// Gameplay trigger (2900) cannot move them, and after the baseline tick they are not read again. Every observation that wants every
+// object every tick (wtrace, wscale, gtscaleoff, grouptraceall) keeps scanning, and so does cfg grouptracksmartaudit, which also says
+// when one of them moves on a level where the premise says none can (`gt_premise:`).
+inline bool g_quietScan = true;      // build(): the smartQuiet objects are scanned every tick
+inline bool g_quietPremise = false;  // build(): no trigger on the level that can move an object without a group
+inline bool g_quietBase = false;     // this attempt's baseline of the smartQuiet objects has been taken (tick() reads them once)
+inline std::vector<uint32_t> g_activeIdx;   // build(): the indices (ascending, so the rows keep their order) of the objects that are not smartQuiet
+inline int g_premiseBreaks = 0;
 struct Tracked {
     GameObject* obj = nullptr;
     int uid = -1;
@@ -149,12 +181,34 @@ struct Tracked {
     // records the same bytes as before the column existed.
     int env = 0;
     bool emitted = false;
+    // cfg grouptracksmart: tracked only for wtrace.csv (the shadow's input). grouptrace.txt, which leveldp reads, is left byte-for-byte as the normal filter writes it: reading the extra rows changed the model's
+    // section divergences (6 levels: 68 -> 76 of 319 with mode 2, a custom level 20 -> 29/30), so the model does not take the new objects yet.
+    bool smartOnly = false;
+    // mode 4: an ungrouped gameplay object is written to grouptrace.txt only once it has MOVED: its first reading of an attempt is the baseline, not a row (the reader holds the dump position until a row says otherwise)
+    bool smartQuiet = false;
+    // cfg wtrace: the last exact reading written to wtrace.csv (position and rotation as GD holds them, the toggle byte), to write a row on any change at all
+    float wx = 0, wy = 0, wrot = 0, ww = 0, wh = 0;
+    int won = -1;
+    bool wValid = false;
+    // cfg wtlast: the last reading of the object's "last position" (+0x4d0, +0x4d4: GJBaseGameLayer::moveObjects sets it) and its stamp (+0x4dc: the layer counter at that move)
+    float wlx = 0, wly = 0;
+    int wstamp = 0;
+    // cfg wscale / gtscaleoff: the last readings written to wscale.csv (the node scale and skew) and scaleoff.csv (the Area Scale offsets)
+    float wsx = 0, wsy = 0, wrx = 0, wry = 0, sox = 0, soy = 0;
+    bool wsValid = false, soValid = false;
     // cfg gtrestrow: the previous tick's values as read (not as written), to see the object come to rest
     float pcx = 0, pcy = 0, pw = 0, ph = 0, prot = 0;
     bool pvalid = false;
 };
 
 inline std::vector<Tracked> g_objs;
+// cfg `wtrace=1` (with grouptrace=1; off by default): wtrace.csv, the tracked objects' state as GD's live objects hold it, at full precision and with no threshold -- a row (tick, uid, x, y, rotation, on, w, h: the rect size, which a Scale trigger changes)
+// whenever any of them differs from the last row written for that object, and the first reading of every object at the first tick of an attempt. An observation that the trigger shadow
+// (dp/src/dp/trigshadow.hpp) is compared with; grouptrace.txt's rows are a rect centre kept to 0.05 and cannot be.
+inline bool g_wtOn = false;
+// cfg `wtlast=1` (with wtrace=1; off by default): three more columns (lx, ly, stamp) on every wtrace.csv row -- the object's +0x4d0 / +0x4d4 / +0x4dc as GD's live object holds them -- and a row also when one of them changes.
+// Those are what the game's collision passes compare an object's position with ("has it moved since the last tick"); moveObjects writes them only for an object a Move action touches and only when the counter differs.
+inline bool g_wtLast = false;
 // The layer g_objs was built against. build() is only safe to skip (falling through to
 // restart(), which does not re-walk the object list) when the caller is the SAME layer that
 // populated it -- otherwise the vector is still non-empty but every GameObject* in it belongs to
@@ -234,6 +288,17 @@ private:
     size_t n_ = 0;
 };
 inline RowFile g_out;
+inline RowFile g_wt;   // wtrace.csv (cfg wtrace)
+// cfg `wscale=1` (with grouptrace=1; off by default): wscale.csv, the tracked objects' own scale and skew as the node holds them -- rows (tick, uid, scaleX, scaleY, rotationX, rotationY) written only when one of them differs from the object's last row,
+// and the first reading of every object at the first tick of an attempt. wtrace.csv has x, y, rot only: a Transform trigger that scales or skews an object (and rebuilds its rotation from the matrix) shows only here. Plain member reads
+// (GameObject::m_scaleX / m_scaleY, CCNode::getRotationX / getRotationY): nothing is called that can draw a random number or move the run. A copy is kept as wscale_last.csv like wtrace_last.csv.
+inline bool g_wsOn = false;
+inline RowFile g_ws;
+// cfg `gtscaleoff=1` (with grouptrace=1; off by default): scaleoff.csv, the objects' Area Scale offsets (GameObject::m_scaleXOffset / m_scaleYOffset) -- rows (tick, uid, offx, offy) written when either differs from the object's last row, and the first reading of every
+// object at the first tick of an attempt. A saw's collision radius is m_objectRadius * max(m_scaleX + offset, ...) and an Area Scale trigger (3008) moves the offset every tick; grouptrace.txt's columns are not extended (their bytes are hashed
+// into the loop's signatures), so the offsets get a file of their own. A copy is kept as scaleoff_last.csv.
+inline bool g_soOn = false;
+inline RowFile g_so;
 // The flights whose recording nothing reads (a check flight that is expected to clear, the showing of a
 // solution) set this at their reset (hooks_playlayer.cpp): tick() writes nothing, the roll publishes rows=0, and
 // grouptrace_last.txt stays what the last flight that did record left. See level_slice.hpp flightUnrecorded.
@@ -277,10 +342,14 @@ inline Roll g_lastRoll;
 
 // Jitter below 0.05px is not written. This is a threshold, not quantisation
 // (when writing, the measured value is written as-is, so no error accumulates)
-constexpr float kEps = 0.05f;
+constexpr float kEps = 0.05f;   // (the default of cfg gteps, config.hpp)
+// A move this small is not written: under the threshold, or -- with gteps 0 -- not a move at all.
+inline bool smallMove(float d) { const float eps = g_cfg.gtEps; return eps > 0.0f ? d < eps : d == 0.0f; }
 
 inline void reset() {
     g_objs.clear();
+    g_nonQuiet = 0; g_areaMovers = 0; g_rotGameplay = 0;   // (per level, like g_objs)
+    g_quietScan = true; g_quietPremise = false; g_quietBase = false; g_activeIdx.clear(); g_premiseBreaks = 0;
     areaenv::clear();   // keyed by GameObject*, which die with the level
     g_owner = nullptr;
     g_rows = 0;
@@ -289,6 +358,9 @@ inline void reset() {
     // at g_lastRoll: left standing it is a recording of the PREVIOUS LEVEL offered to this one.
     g_lastRoll = Roll{};
     if (g_out.is_open()) g_out.close();
+    if (g_wt.is_open()) g_wt.close();
+    if (g_ws.is_open()) g_ws.close();
+    if (g_so.is_open()) g_so.close();
 }
 
 // Whether g_objs already belongs to this layer, i.e. restart() is enough and a full build() would
@@ -303,8 +375,21 @@ inline void build(GJBaseGameLayer* l) {
     areaenv::resetTallies();
     if (!g_on || !l || !l->m_objects) return;
     g_owner = l;
+    std::set<int> exitGroups;   // cfg grouptracksmart: the target groups of the Teleport triggers (3022) and orbs (3027) and the 2902 portals
+    if (g_smart) {
+        for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+            if (!obj) continue;
+            const int oid = (int)obj->m_objectID;
+            if (oid != 3022 && oid != 3027 && oid != 2902) continue;
+            auto* e = static_cast<EffectGameObject*>(obj);
+            if (e->m_targetGroupID > 0) exitGroups.insert(e->m_targetGroupID);
+        }
+    }
+    std::ofstream smartOut;
+    if (g_smart) { smartOut.open(std::string(DATA_DIR) + "/smart_tracked.txt", std::ios::trunc); smartOut << "uid\trule\n"; }
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
         if (!obj) continue;
+        { const int oid = (int)obj->m_objectID; if ((oid >= 3006 && oid <= 3008) || (oid >= 3011 && oid <= 3013)) ++g_areaMovers; else if (oid == 2900) ++g_rotGameplay; }   // cfg bootstrapgate; g_quietScan
         const int t7 = (int)obj->m_objectType;
         // [2026-09-20] TYPES 22 AND 31 ARE THE COINS, not triggers -- secret and
         // user -- and they were skipped here under the heading "triggers never
@@ -317,7 +402,13 @@ inline void build(GJBaseGameLayer* l) {
         // costs nothing measurable.
         if ((t7 == 22 || t7 == 31) && !g_cfg.coinMode && !g_cfg.coinRoute)
             continue;
-        if (!g_all) {
+        int smartRule = 0;   // 1 area-moved gameplay object without a group, 2 a Teleport exit decoration, 3 a Touch Triggered trigger object
+        if (g_smart && !g_all) {
+            if (g_smart >= 2 && t7 != 7 && t7 != 20 && obj->m_groupCount <= 0) smartRule = 1;   // (m_hasAreaParent was tried as the test and is 0 on every object of the two levels that have such movers)
+            else if (t7 == 7 && obj->m_groupCount > 0 && obj->m_groups) { for (int gi = 0; gi < obj->m_groupCount && gi < 10; ++gi) if (exitGroups.count((int)(*obj->m_groups)[gi])) { smartRule = 2; break; } }
+            else if (t7 == 20 && static_cast<EffectGameObject*>(obj)->m_isTouchTriggered) smartRule = 3;
+        }
+        if (!g_all && smartRule == 0) {
             if (obj->m_groupCount <= 0) continue;
             // Decorations (7) are not tracked in the normal mode (the model only
             // reads things that collide; tracking them only inflates the row
@@ -337,20 +428,32 @@ inline void build(GJBaseGameLayer* l) {
         // The model's toggles are designed to take the `on` column from the
         // recording (the definition only gives the phase), so a toggle of an
         // object missing from the recording is unknowable in principle.
-        if (t7 == 20) {
+        if (t7 == 20 && smartRule != 3 && !g_all) {   // (grouptraceall tracks the modifier / trigger objects too: they were filtered here before 2026-10-30, so the survey saw none of them)
             const int oid = (int)obj->m_objectID;
             const bool wanted = oid == 200 || oid == 201 || oid == 202
                                 || oid == 203 || oid == 1334 || oid == 2900;
             if (!wanted) continue;
         }
+        if (smartRule && smartOut.is_open()) smartOut << obj->m_uniqueID << "\t" << smartRule << "\n";
         Tracked t;
         t.obj = obj;
+        if (smartRule) {
+            const bool wanted20 = t7 == 20 && ((int)obj->m_objectID == 200 || (int)obj->m_objectID == 201 || (int)obj->m_objectID == 202 || (int)obj->m_objectID == 203 || (int)obj->m_objectID == 1334 || (int)obj->m_objectID == 2900);
+            const bool normal = obj->m_groupCount > 0 && t7 != 7 && (t7 != 20 || wanted20);
+            t.smartOnly = !normal && !(g_smart >= 3 && smartRule == 1);   // mode 4 as 3, and see smartQuiet
+            t.smartQuiet = !normal && g_smart == 4 && smartRule == 1;   // mode 3: the ungrouped gameplay objects (a) are written to grouptrace.txt like any other tracked object, (b) and (c) to wtrace.csv only
+        }
         t.uid = obj->m_uniqueID;
+        if (!t.smartQuiet && !t.smartOnly) ++g_nonQuiet;   // (a smartOnly object never reaches grouptrace.txt, so it cannot make the bootstrap record worth a run: lv1 / 12 / 15 / 16 / 18 counted 2 / 16 / 2 / 5 / 12 of them, ran the whole level, and discarded "only 0 samples")
         g_objs.push_back(t);
     }
     g_out.open(std::string(DATA_DIR) + "/grouptrace.txt", std::ios::trunc);
     g_out.write(kHeader);
-    log::info("grouptrace: tracking {} grouped objects", g_objs.size());
+    g_quietPremise = g_areaMovers == 0 && g_rotGameplay == 0;
+    g_quietScan = !g_quietPremise || g_wtOn || g_wsOn || g_soOn || g_all || g_cfg.gtQuietAudit;
+    for (size_t oi = 0; oi < g_objs.size(); ++oi) if (!g_objs[oi].smartQuiet) g_activeIdx.push_back((uint32_t)oi);
+    log::info("grouptrace: tracking {} grouped objects ({} not smartQuiet, {} area movers, {} rotate gameplay; the smartQuiet ones are {})", g_objs.size(), g_nonQuiet, g_areaMovers, g_rotGameplay,
+              g_quietScan ? "scanned every tick" : "read once, at the baseline tick");
 }
 
 // Commit the current recording to grouptrace_last.txt and empty grouptrace.txt.
@@ -373,12 +476,52 @@ inline void build(GJBaseGameLayer* l) {
 // recording had dropped at t=20,711 back to where it started, and the model let
 // the player fall through a floor GD stands on. Written as a trailer line so an
 // older recording (no trailer) still loads.
+// cfg wtrace: the attempt that is over is committed to wtrace_last.csv (a copy through a temp file and a rename; wtrace.csv itself stays, as a capture reads it). GD resets the level about a second
+// after a death and restart() then truncates wtrace.csv for the new attempt: a worker stopped in that second -- the capture of a run that ends in a death -- was left with the header of an attempt
+// that never ran, 0 bytes, and the record of the attempt that died (the one a divergence is looked for in) gone. The reader of a dead attempt takes wtrace_last.csv, like grouptrace_last.txt.
+inline void commitWtrace() {
+    if (!g_wtOn || !g_wt.is_open()) return;
+    g_wt.flush();
+    const std::string cur = std::string(DATA_DIR) + "/wtrace.csv";
+    const std::string last = std::string(DATA_DIR) + "/wtrace_last.csv";
+    const std::string tmp = last + ".tmp";
+    {
+        std::ifstream src(cur, std::ios::binary);
+        std::ofstream dst(tmp, std::ios::binary | std::ios::trunc);
+        if (!src || !dst) { std::error_code ec0; std::filesystem::remove(tmp, ec0); return; }
+        dst << src.rdbuf();
+        dst.flush();
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, last, ec);
+    if (ec) { std::filesystem::remove(tmp, ec); log::warn("grouptrace: wtrace_last.csv could not be written ({})", ec.message()); }
+}
+// cfg wscale / gtscaleoff: the attempt that is over is kept as wscale_last.csv / scaleoff_last.csv (the same copy-and-rename as wtrace_last.csv).
+inline void commitSide(RowFile& rf, const char* cur, const char* last) {
+    if (!rf.is_open()) return;
+    rf.flush();
+    const std::string c = std::string(DATA_DIR) + "/" + cur, l = std::string(DATA_DIR) + "/" + last, tmp = l + ".tmp";
+    {
+        std::ifstream src(c, std::ios::binary);
+        std::ofstream dst(tmp, std::ios::binary | std::ios::trunc);
+        if (!src || !dst) { std::error_code ec0; std::filesystem::remove(tmp, ec0); return; }
+        dst << src.rdbuf();
+        dst.flush();
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, l, ec);
+    if (ec) { std::filesystem::remove(tmp, ec); log::warn("grouptrace: {} could not be written ({})", last, ec.message()); }
+}
 inline Roll roll(long long endTick = -1) {
     Roll r;
     // "Nothing was recorded" is an answer, and it is THIS attempt's answer -- publish it rather
     // than leaving the previous one standing for the reader to mistake for it (see g_lastRoll).
     if (!g_on || g_objs.empty()) { g_lastRoll = r; return r; }
     for (auto& t : g_objs) { t.emitted = false; t.pvalid = false; }
+    g_quietBase = false;
+    commitWtrace();   // cfg wtrace: the attempt is over; the rows since the last 600-tick flush are written, and the file is kept as wtrace_last.csv
+    if (g_wsOn) commitSide(g_ws, "wscale.csv", "wscale_last.csv");
+    if (g_soOn) commitSide(g_so, "scaleoff.csv", "scaleoff_last.csv");
     if (g_out.is_open()) {
         g_out.close();
         const std::string cur = std::string(DATA_DIR) + "/grouptrace.txt";
@@ -461,11 +604,27 @@ inline void restart() {
     // of 663/664. The driver's .groups.snap.txt takes that in as-is, so the
     // anchor started from a nearly empty world of "one row per uid".
     if (!g_on || g_objs.empty()) return;
-    for (auto& t : g_objs) { t.emitted = false; t.pvalid = false; }
+    for (auto& t : g_objs) { t.emitted = false; t.pvalid = false; t.wValid = false; t.wsValid = false; t.soValid = false; }
+    g_quietBase = false;
+    if (g_ws.is_open()) {   // cfg wscale: one wscale.csv per attempt, like wtrace.csv
+        g_ws.close();
+        g_ws.open(std::string(DATA_DIR) + "/wscale.csv", std::ios::trunc);
+        g_ws.write("tick,uid,scaleX,scaleY,rotationX,rotationY\n");
+    }
+    if (g_so.is_open()) {   // cfg gtscaleoff: one scaleoff.csv per attempt
+        g_so.close();
+        g_so.open(std::string(DATA_DIR) + "/scaleoff.csv", std::ios::trunc);
+        g_so.write("tick,uid,offx,offy\n");
+    }
     if (g_out.is_open()) {
         g_out.close();
         g_out.open(std::string(DATA_DIR) + "/grouptrace.txt", std::ios::trunc);
         g_out.write(kHeader);
+    }
+    if (g_wtOn && g_wt.is_open()) {   // one wtrace.csv per attempt, like grouptrace.txt
+        g_wt.close();
+        g_wt.open(std::string(DATA_DIR) + "/wtrace.csv", std::ios::trunc);
+        g_wt.write(g_wtLast ? "tick,uid,x,y,rot,on,w,h,lx,ly,stamp\n" : "tick,uid,x,y,rot,on,w,h\n");
     }
     g_rows = 0;
     g_lastTick = -1;
@@ -484,7 +643,7 @@ inline void restart() {
 inline void snapshotInit() {
     if (!g_on || g_hold || g_objs.empty() || !g_out.is_open()) return;
     for (const auto& tr : g_objs) {
-        if (!tr.obj) continue;
+        if (!tr.obj || tr.smartOnly || tr.smartQuiet) continue;
         const int on = (tr.obj->m_isGroupDisabled || tr.obj->m_isGroupDisabledTemp) ? 0 : 1;
         char b[160];
         size_t n = (size_t)snprintf(b, sizeof(b), "init,%d,%d\n", tr.uid, on);
@@ -526,10 +685,14 @@ inline void tick(long long t) {
             ++g_tickCalls;
         }
     } timer;
-    const size_t nObjs = g_objs.size();
-    for (size_t oi = 0; oi < nObjs; ++oi) {
+    // The smartQuiet objects are read on every tick, or (g_quietScan false: nothing on the level can move them) once per attempt, at the baseline.
+    const bool scanAll = g_quietScan || !g_quietBase;
+    if (!g_quietScan) g_quietBase = true;
+    const size_t nObjs = scanAll ? g_objs.size() : g_activeIdx.size();
+    for (size_t ki = 0; ki < nObjs; ++ki) {
+        const size_t oi = scanAll ? ki : (size_t)g_activeIdx[ki];
         auto& tr = g_objs[oi];
-        prefetchObject(oi + kPrefetchAhead < nObjs ? g_objs[oi + kPrefetchAhead].obj : nullptr);
+        if (ki + kPrefetchAhead < nObjs) prefetchObject(g_objs[scanAll ? ki + kPrefetchAhead : (size_t)g_activeIdx[ki + kPrefetchAhead]].obj);
         if (!tr.obj) continue;
         auto r = tr.obj->getObjectRect();
         const float cx = r.origin.x + r.size.width * 0.5f;
@@ -541,6 +704,58 @@ inline void tick(long long t) {
         // wall that does not move". The on column is its effective state
         const int on = (tr.obj->m_isGroupDisabled
                         || tr.obj->m_isGroupDisabledTemp) ? 0 : 1;
+        if (g_wtOn) {   // cfg wtrace: any change at all, at full precision
+            const float wx = tr.obj->m_positionX, wy = tr.obj->m_positionY;
+            float wlx = 0, wly = 0;
+            int wstamp = 0;
+            if (g_wtLast) {   // raw reads: the offsets are the 2.2091 layout (moveObjects 0x3369ab writes them)
+                const char* base = reinterpret_cast<const char*>(tr.obj);
+                wlx = *reinterpret_cast<const float*>(base + 0x4d0);
+                wly = *reinterpret_cast<const float*>(base + 0x4d4);
+                wstamp = *reinterpret_cast<const int*>(base + 0x4dc);
+            }
+            if (!tr.wValid || wx != tr.wx || wy != tr.wy || rot != tr.wrot || on != tr.won || w != tr.ww || h != tr.wh
+                || (g_wtLast && (wlx != tr.wlx || wly != tr.wly || wstamp != tr.wstamp))) {
+                if (!g_wt.is_open()) {
+                    g_wt.open(std::string(DATA_DIR) + "/wtrace.csv", std::ios::trunc);
+                    g_wt.write(g_wtLast ? "tick,uid,x,y,rot,on,w,h,lx,ly,stamp\n" : "tick,uid,x,y,rot,on,w,h\n");
+                }
+                char wb[220];
+                int wn = snprintf(wb, sizeof(wb), "%lld,%d,%.9g,%.9g,%.9g,%d,%.9g,%.9g", t, tr.uid, (double)wx, (double)wy, (double)rot, on, (double)w, (double)h);
+                if (g_wtLast) wn += snprintf(wb + wn, sizeof(wb) - (size_t)wn, ",%.9g,%.9g,%d", (double)wlx, (double)wly, wstamp);
+                wb[wn++] = '\n';
+                g_wt.write(wb, (size_t)wn);
+                tr.wx = wx; tr.wy = wy; tr.wrot = rot; tr.won = on; tr.ww = w; tr.wh = h; tr.wValid = true;
+                tr.wlx = wlx; tr.wly = wly; tr.wstamp = wstamp;
+            }
+        }
+        if (g_wsOn) {   // cfg wscale: the node scale and skew, any change at all, at full precision
+            const float sx = tr.obj->m_scaleX, sy = tr.obj->m_scaleY, rx = tr.obj->getRotationX(), ry = tr.obj->getRotationY();
+            if (!tr.wsValid || sx != tr.wsx || sy != tr.wsy || rx != tr.wrx || ry != tr.wry) {
+                if (!g_ws.is_open()) {
+                    g_ws.open(std::string(DATA_DIR) + "/wscale.csv", std::ios::trunc);
+                    g_ws.write("tick,uid,scaleX,scaleY,rotationX,rotationY\n");
+                }
+                char sb[200];
+                const int sn = snprintf(sb, sizeof(sb), "%lld,%d,%.9g,%.9g,%.9g,%.9g\n", t, tr.uid, (double)sx, (double)sy, (double)rx, (double)ry);
+                g_ws.write(sb, (size_t)sn);
+                tr.wsx = sx; tr.wsy = sy; tr.wrx = rx; tr.wry = ry; tr.wsValid = true;
+            }
+        }
+        if (g_soOn) {   // cfg gtscaleoff: the Area Scale offsets, any change at all
+            const float ox = tr.obj->m_scaleXOffset, oy = tr.obj->m_scaleYOffset;
+            if (!tr.soValid || ox != tr.sox || oy != tr.soy) {
+                if (!g_so.is_open()) {
+                    g_so.open(std::string(DATA_DIR) + "/scaleoff.csv", std::ios::trunc);
+                    g_so.write("tick,uid,offx,offy\n");
+                }
+                char ob[120];
+                const int on2 = snprintf(ob, sizeof(ob), "%lld,%d,%.9g,%.9g\n", t, tr.uid, (double)ox, (double)oy);
+                g_so.write(ob, (size_t)on2);
+                tr.sox = ox; tr.soy = oy; tr.soValid = true;
+            }
+        }
+        if (tr.smartOnly) continue;   // (cfg grouptracksmart) wtrace.csv only
         // Placed by an Area Move with a variance: the rect depends on GD's random numbers, so
         // write the box of every place it can be instead (areaenv.hpp). The rect itself must
         // not reach the file -- it is the one thing that differs between two games.
@@ -556,10 +771,17 @@ inline void tick(long long t) {
             && (std::fabs(ex - tr.cx) >= 0.0005f || std::fabs(ey - tr.cy) >= 0.0005f
                 || std::fabs(ew - tr.w) >= 0.0005f || std::fabs(eh - tr.h) >= 0.0005f
                 || std::fabs(rot - tr.rot) >= 0.0005f);
-        if (!restRow && tr.emitted && on == tr.on && env == tr.env && std::fabs(ex - tr.cx) < kEps
-            && std::fabs(ey - tr.cy) < kEps && std::fabs(ew - tr.w) < kEps
-            && std::fabs(eh - tr.h) < kEps && std::fabs(rot - tr.rot) < kEps)
+        if (tr.smartQuiet && !tr.emitted) { tr.cx = ex; tr.cy = ey; tr.w = ew; tr.h = eh; tr.rot = rot; tr.on = on; tr.env = env; tr.emitted = true; continue; }   // mode 4: the baseline
+        if (!restRow && tr.emitted && on == tr.on && env == tr.env && smallMove(std::fabs(ex - tr.cx))
+            && smallMove(std::fabs(ey - tr.cy)) && smallMove(std::fabs(ew - tr.w))
+            && smallMove(std::fabs(eh - tr.h)) && smallMove(std::fabs(rot - tr.rot)))
             continue;
+        if (g_cfg.gtQuietAudit && tr.smartQuiet && g_quietPremise) {   // the premise says this cannot happen (see g_quietScan)
+            if (++g_premiseBreaks <= 20) {
+                log::warn("grouptrace: smartQuiet object uid {} moved at tick {} on a level with no Area / Rotate Gameplay trigger", tr.uid, (long long)t);
+                writeResult("gt_premise: uid=" + std::to_string(tr.uid) + " t=" + std::to_string((long long)t));
+            }
+        }
         tr.cx = ex; tr.cy = ey; tr.w = ew; tr.h = eh; tr.rot = rot; tr.on = on; tr.env = env;
         tr.emitted = true;
         char b[160];
@@ -578,7 +800,7 @@ inline void tick(long long t) {
     // Always flush: workers are force-killed with Stop-Process, so whatever is
     // left in the buffer is lost (on levels with little motion the file would
     // stay at 0 bytes and invite misreading)
-    if ((t % 600) == 0) g_out.flush();
+    if ((t % 600) == 0) { g_out.flush(); if (g_wt.is_open()) g_wt.flush(); if (g_ws.is_open()) g_ws.flush(); if (g_so.is_open()) g_so.flush(); }
     // grouptrace_last.txt is not touched here. The contract with the reader is
     // that ONLY finished runs go in; mixing in the attempt in progress would make
     // the harvest depend on polling timing, and runs with the same input would
@@ -596,7 +818,7 @@ inline std::string captureRows(long long t) {
     std::string out;
     if (!g_on || g_hold || g_objs.empty() || !g_out.is_open()) return out;
     for (const auto& tr : g_objs) {
-        if (!tr.obj) continue;
+        if (!tr.obj || tr.smartOnly || (tr.smartQuiet && !tr.emitted)) continue;
         auto r = tr.obj->getObjectRect();
         const float cx = r.origin.x + r.size.width * 0.5f;
         const float cy = r.origin.y + r.size.height * 0.5f;
@@ -605,9 +827,9 @@ inline std::string captureRows(long long t) {
         const int on = (tr.obj->m_isGroupDisabled || tr.obj->m_isGroupDisabledTemp) ? 0 : 1;
         float ex = cx, ey = cy, ew = w, eh = h;
         const int env = areaenv::envelope(tr.obj, ex, ey, ew, eh) ? 1 : 0;
-        if (tr.emitted && on == tr.on && env == tr.env && std::fabs(ex - tr.cx) < kEps
-            && std::fabs(ey - tr.cy) < kEps && std::fabs(ew - tr.w) < kEps
-            && std::fabs(eh - tr.h) < kEps && std::fabs(rot - tr.rot) < kEps)
+        if (tr.emitted && on == tr.on && env == tr.env && smallMove(std::fabs(ex - tr.cx))
+            && smallMove(std::fabs(ey - tr.cy)) && smallMove(std::fabs(ew - tr.w))
+            && smallMove(std::fabs(eh - tr.h)) && smallMove(std::fabs(rot - tr.rot)))
             continue;
         char b[160];
         size_t n = env ? formatRow(b, t, tr.uid, ex, ey, ew, eh, on, rot, true)

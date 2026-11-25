@@ -113,6 +113,8 @@ struct NoRecordGuard {
         if (layer) {
             layer->m_isTestMode = true;
             time.take(layer);
+            static int s_said = 0;   // an original (destroyPlayer, levelComplete ...) run for an attempt the bot flew after its session was torn down: named, the first few times (config.hpp, recordsHeld)
+            if (g_botAttempt && !g_started && ++s_said <= 10) writeResult("held attempt: GD's record block is skipped (test mode raised around the original)");
         }
     }
     ~NoRecordGuard() {

@@ -85,6 +85,8 @@ inline std::array<std::unique_ptr<Level>, 4> g_frameLv;
 // load; needed by applyRotation, which has to see the NEW frame's geometry on
 // the tick it turns (see the re-tap there) and only knows the frame index.
 inline Level* g_baseLv = nullptr;
+// Counts the levels cliMainOnce has set as g_baseLv: a cache keyed by a Level's address alone cannot tell this attempt's Level from the last one's (a stack object at the same address).
+inline unsigned long long g_levelGen = 0;
 inline Level* levelOfFrame(int f) {
     f &= 3;
     return f == 0 ? g_baseLv : g_frameLv[(size_t)f].get();
@@ -139,7 +141,7 @@ inline Level& frameLevel(Level& L0, int f) {
                     p->topAhead[i] = std::max(p->topAhead[i], p->topAhead[i + 1]);
             }
         }
-        std::printf("rotation: built frame %d (%zu colliders, %zu portals, "
+        lprintf("rotation: built frame %d (%zu colliders, %zu portals, "
                     "%zu moving)\n",
                     f, p->objs.size(), p->portals.size(), p->dyn.size());
         slot = std::move(p);
@@ -161,53 +163,7 @@ inline Level& frameLevel(Level& L0, int f) {
 // measurements at exact tick x: GD fires at |dx| = 27.21 and 28.22 but not at
 // 28.51, so the threshold lies in (28.22, 28.51] where hw+15 alone gives 27.5.
 constexpr double kPadReach = 0.0;
-constexpr double kPadYellow = 16.0;
-// Pink pad (type 9), first needed by lv12. Measured on the real game through
-// the gd MCP: injected onto lv12's pad at cx=491 twice, with incoming vy of
-// -1.000 and -9.432, and GD came out at 10.400 both times. So it is a SET like
-// every other pad, and 10.4 / 16.0 = 0.650 -- neither the orbs' 0.700 nor the
-// mini 0.800, which is the usual story with these constants.
-constexpr double kPadPink = 10.4;
-// RED pad (id 1332, GameObjectType 34). lv22 is the only level in the suite
-// that has one (uid 2841 at (3765,242.5), 29x7) and the model had no type 34 at
-// all, so it simply walked past it. Measured there directly: the MINI cube is
-// launched to vy = 16.000 exactly, and mini scales an impulse by 0.8
-// (kMiniImpulse), so the base is 20. GD's t=2,724 -- the model stayed grounded
-// at y=249 while GD rose, and that one missing pad is the whole x=3,956 wall.
-constexpr double kPadRed = 20.0;
-// ...and like the orbs, the pad is weaker in ball mode. Measured on lv9 t=9126:
-// a flipped ball riding a ceiling touches the yellow pad under it and GD gives
-// vy = -9.600, not -16. That is 0.600x, close to the orbs' 0.700x but NOT the
-// same number, so there is no single ball ratio -- each one has to be measured.
-constexpr double kPadYellowBall = 9.6;
-// ...and the pink pad has no single ball ratio either. padtrace measurement at
-// lv22 t=6,738 (uid6143, a gravity-flipped ball touching a ceiling-facing pink
-// pad): vy 8.586 -> -6.720. 6.72 / 9.6 = 0.700 -- the same value as the orbs'
-// 0.700, and distinct from the cube's 0.650. The old implementation produced
-// kPadPink * (9.6/16) = 6.24, and that 0.48 difference changed the arc after
-// the bounce and stalled the cold run at t=7,831 for 26 iterations (the DP was
-// drawn to a plan that exploited this grazing bounce and drew a different arc
-// from GD's).
-constexpr double kPadPinkBall = 6.72;
 constexpr double kOrbYellow = 11.18;  // yellow orb (id 36): same as a cube jump
-// Pink orb (type 12), first needed by lv12 -- the cold DP died at x=988, right
-// after the pair at 879/969, because the model did not load type 12 at all.
-// Measured through the gd MCP: injected at (862,245) with vy = 0, pressed two
-// ticks later, and GD set vy = 8.050 from an incoming -0.432.
-// 8.05 / 11.18 = 0.720.
-constexpr double kOrbPink = 8.05;
-// ...and ball mode has its own value, not a ratio. Measured on lv12 t=9603:
-// a ball at vy = -12.5130 hits the pink orb at (12435,225) and GD sets 6.0263.
-// The yellow orb's ball ratio (0.700) would have given 8.05 * 0.7 = 5.635, and
-// that guess put the model 0.391 low for the rest of the level. 6.0263/8.05 is
-// 0.7486 -- no shared ball ratio exists, exactly as the yellow pad (0.600) and
-// yellow orb (0.700) already showed. Measure each one.
-constexpr double kOrbPinkBall = 6.0263;
-// ...but the boost is PER MODE. Measured on lv10 t=2249: the same yellow orb
-// gives a ball vy = 7.826, not 11.18. The model used the cube value and ended
-// up 6 px above GD within eight ticks, which is why its ball route survived to
-// x=3,244 while GD died at x=3,057.
-constexpr double kOrbYellowBall = 7.826;
 // Gravity ring (type 13, objectID 84). It does NOT boost -- it FLIPS gravity
 // and starts the player moving toward the new floor at 4.472, the same shape as
 // the ball's tap. Measured on lv20's first one (x=419) with orbtrace=1:
@@ -216,11 +172,6 @@ constexpr double kOrbYellowBall = 7.826;
 // Both are 4.472 toward the new floor, and the incoming vy does not matter --
 // same "set, don't add" behaviour as the yellow orb.
 constexpr double kOrbGravity = 4.472;
-// ...and like the yellow orb it is weaker in ball mode. Measured on lv10
-// t=15465 (mode = ball): 4.472 becomes 3.130. That is exactly 0.7x, the same
-// ratio the yellow orb has (7.826 / 11.18 = 0.7), so ball orbs look like a
-// flat 70% of the cube values -- but only these two are measured.
-constexpr double kOrbGravityBall = 3.130;
 // The orb hitbox is a CIRCLE, not the object's box: the test is circle-vs-
 // player-box (clamp the orb centre to the box, then compare the distance).
 // A plain 33x33 box test fires in the corners where GD does not -- measured on
@@ -262,39 +213,10 @@ constexpr double kOrbRadius = 19.5;
 // two constants, and the shape left OPEN until the non-firing side can be
 // instrumented in the MOD.
 constexpr double kOrbRadiusMini = 17.8;
-// ---- the ring table, read out of PlayerObject::ringJump (win RVA 0x398c00) --
-//
-// Every ring starts from the SAME number the cube's jump uses (the double at
-// this+0x7c0), multiplies it by a per-type, per-mode ratio, and then applies
-// the mini factor. After the velocity is set, three modes scale it again:
-// ball x0.700, spider x0.700, swing x0.600.
-//
-// That structure is not a guess -- it reproduces every value in this file that
-// WAS measured one at a time, which is the reason to trust the entries that
-// have not been:
-//   yellow (11) cube  : 11.18 * 1.00          = 11.18   = kOrbYellow
-//   yellow (11) ball  : 11.18 * 1.00 * 0.70   =  7.826  = kOrbYellowBall
-//   pink   (12) cube  : 11.18 * 0.72          =  8.0496 = kOrbPink (8.05)
-//   pink   (12) ball  : 11.18 * 0.77 * 0.70   =  6.0255 = kOrbPinkBall (6.0263)
-//   gravity(13) cube  : 11.18 * 0.80 * 0.5    =  4.472  = kOrbGravity
-//                       (the 0.5 is the gravity flip, which ringJump does
-//                        AFTER setting vy for this type -- see below)
-//   gravity(13) ball  : 4.472 * 0.70          =  3.130  = kOrbGravityBall
-// Four independent measurements, four exact hits, including the two that the
-// comments above say have "no shared ball ratio" -- there IS one (0.700), and
-// the pink orb only looked different because its own ratio changes with the
-// mode (0.72 as a cube, 0.77 as a ball).
-//
-// RED ring (35, id 1333). lv22 x=375 is the first one in the game and there is
-// no way past its spike carpet without it.
-constexpr double kRingRedCube = 1.38;
 constexpr double kRingRedShip = 1.00;      // mini ship: 1.40
 constexpr double kRingRedShipMini = 1.40;
 constexpr double kRingRedUfo = 1.02;       // mini UFO: 1.36
 constexpr double kRingRedUfoMini = 1.36;
-constexpr double kRingRedBall = 1.34;
-constexpr double kRingRedRobot = 1.28;
-constexpr double kRingRedSpider = 1.34;
 // GREEN ring (29). Ratio 1.00 (0.70 for a ship), and it FLIPS GRAVITY -- but
 // unlike the blue gravity ring it flips FIRST and sets vy afterwards, so the
 // value is NOT halved. That ordering is visible in the function: type 29's
@@ -302,36 +224,7 @@ constexpr double kRingRedSpider = 1.34;
 // 13's is at 0x399608, after it.
 constexpr double kRingGreen = 1.00;
 constexpr double kRingGreenShip = 0.70;
-// ...and a ROBOT scales every ring that has no entry of its own by 0.9
-// (the `else if (m_isRobot) *= 0.9` that closes the table).
-constexpr double kRingRobotDefault = 0.9;
-// DROP ring (32, the black orb). It does not boost at all -- it SLAMS the
-// player at its own floor at a fixed speed, ignoring the incoming velocity and
-// ignoring the mini factor (its branch at 0x399886 goes straight to
-// setYVelocity without touching either the size scale or the ball/spider/swing
-// post-multipliers that every other ring passes through).
-//   cube / ball / robot  15.0
-//   spider               15.0 * 1.10 = 16.5
-//   ship / wave / swing  14.0
-//   UFO                  14.0 * 0.80 = 11.2
-// lv21 x=1,583 is the first one in the game and the cold DP dies 45 px past it.
-constexpr double kRingDrop = 15.0;
-constexpr double kRingDropSpider = 16.5;
 constexpr double kRingDropFly = 14.0;
 constexpr double kRingDropUfo = 11.2;
-// The three post-multipliers applied after the velocity is set.
-constexpr double kRingBallPost = 0.700;
-constexpr double kRingSpiderPost = 0.700;
-constexpr double kRingSwingPost = 0.600;
-constexpr double kPadBlueVy = 6.4;
-// ...and ball mode weakens it, which this branch was missing entirely.
-// Measured on lv12 t=18838: a MINI ball hits the gravity pad at (24481,1003)
-// and GD gives -3.0720 where the model produced -5.1200 (the mini factor and
-// nothing else). Dividing out the established mini 0.800 leaves 3.84 for a
-// full-size ball, i.e. 0.600 of 6.4 -- the same ball ratio the yellow pad has.
-// The full-size value is therefore inferred from one mini measurement, not
-// measured directly; re-check when a plan first hits a full-size ball pad.
-constexpr double kPadBlueBall = 3.84;
-constexpr double kGravPortalScale = 0.5;
 
 }  // namespace dp

@@ -1,0 +1,44 @@
+# tools/check_getenv.py: getenv calls that run once per process, per solver call or per layer, never per step.
+# file<TAB>the stripped line. An edit of the line drops it from here (the check then fails and asks again).
+# Before adding a line: the call must not sit on the per-step path (shadowAdvanceImpl, stepOne, the collision code).
+# dp/src/dp/cli.hpp: once per solver call (argument / input setup)
+dp/src/dp/cli.hpp	if (std::getenv("DP_GROUPCHECK") && allRead) {
+dp/src/dp/cli.hpp	if (std::getenv("TSEV_BOXES"))   // diagnosis (env, off): the touch boxes the model loaded (the latch's bits, in order)
+# dp/src/dp/field_check.hpp: once per process (the FIELDCHECK_LOG summary)
+dp/src/dp/field_check.hpp	if (const char* lp = std::getenv("FIELDCHECK_LOG")) {   // one tab-separated block per process (a harness that discards the stdout sums them): C field moved written covered / F family field diffs / T family ticks
+# dp/src/dp/groups.hpp: once per UndoSpill (a spill file is made rarely, never per step)
+dp/src/dp/groups.hpp	const char* e = std::getenv("TEMP");
+dp/src/dp/groups.hpp	if (!e || !*e) e = std::getenv("TMP");
+# dp/src/dp/prof_sample.hpp: the sampler's start / flush, once per call
+dp/src/dp/prof_sample.hpp	const char* f = std::getenv("DPSAMPLE");
+dp/src/dp/prof_sample.hpp	if (const char* m = std::getenv("DPSAMPLE_MS")) ms = std::max(1, std::atoi(m));
+dp/src/dp/prof_sample.hpp	const char* f = std::getenv("DPSAMPLE");
+# dp/src/dp/selfshadow.hpp: member initialiser of SsProf, whose one instance is a function static (ssProf())
+dp/src/dp/selfshadow.hpp	struct SsProf { bool on = std::getenv("SSPROF") != nullptr; };
+# dp/src/dp/shadow_step.hpp: set-up once per thread / per call, a static guard on the line, or the end-of-call summaries (GDSOLVER_*_LOG)
+dp/src/dp/shadow_step.hpp	T.sh.setNbReuse(std::getenv("SHSTEP_NONB") == nullptr);   // (shadowPlaceMovers says worldChanged whenever it places the movers)
+dp/src/dp/shadow_step.hpp	if (!fr) { fr = true; if (const char* e = std::getenv("SHSTEP_FORCEMOVE")) std::sscanf(e, "%d,%lld,%lf,%lf", &fu, &ft, &fcy, &fpcy); }
+dp/src/dp/shadow_step.hpp	bool on = std::getenv("SHSTEP_PROF") != nullptr;
+dp/src/dp/shadow_step.hpp	static const std::pair<long long, long long> r = [] { long long lo = -1, hi = -2; if (const char* e = std::getenv("SHSTEP_DEBUG")) std::sscanf(e, "%lld,%lld", &lo, &hi); return std::make_pair(lo, hi); }();
+dp/src/dp/shadow_step.hpp	if (!dbgRead) { dbgRead = true; if (const char* e = std::getenv("SHSTEP_DEBUG")) std::sscanf(e, "%lld,%lld", &dbgLo, &dbgHi); }
+dp/src/dp/shadow_step.hpp	if (const char* fp = std::getenv("SHSTEP_MODELDEATHS"); fp && fp[0] && std::strcmp(fp, "1") != 0) {
+dp/src/dp/shadow_step.hpp	if (const char* lp = std::getenv("GDSOLVER_SHSDIFF_LOG"))
+dp/src/dp/shadow_step.hpp	if (const char* lp = std::getenv("GDSOLVER_SHSDIFF2_LOG"))
+dp/src/dp/shadow_step.hpp	if (const char* lp = std::getenv("GDSOLVER_SHSEEDSLOPE_LOG"))
+dp/src/dp/shadow_step.hpp	if (const char* lp = std::getenv("GDSOLVER_SHCOWN_LOG"))   // one line per call, for a tool that discards the stdout
+dp/src/dp/shadow_step.hpp	if (const char* lp = std::getenv("GDSOLVER_SHCOL_LOG"))   // a tool that discards the stdout (quick_regress) still gets the counts: one line per call is appended
+dp/src/dp/shadow_step.hpp	if (const char* dp = std::getenv("GDSOLVER_SHDECL_LOG"))
+dp/src/dp/shadow_step.hpp	if (const char* lp = std::getenv("GDSOLVER_SHSUPPLY_LOG"))
+# dp/src/dp/trigshadow_live.hpp: --trigshadowgd / --trigsupply calibration against the game's rows: once per call or per layer, never per step
+dp/src/dp/trigshadow_live.hpp	const char* g = std::getenv("TSGD_GROUP"); if (!g) return;
+dp/src/dp/trigshadow_live.hpp	if (const char* lf = std::getenv("TSGD_LATCHFILE")) { std::ifstream f(lf); long long bb, tt; while (f >> bb >> tt) fileTick[(size_t)bb] = tt; }
+dp/src/dp/trigshadow_live.hpp	{ static int dbg = 0; if (dbg < 5 && std::getenv("TSGD_DBG")) { ++dbg; std::printf("trigshadowgd: debug layer %lld groupX %.4f gd x %s %.4f (rows %zu, traces %zu)\n", lastT, groupX, xi == gdX.end() ? "none" : "row", xi == gdX.end() ? 0.0 : xi->second, gdX.size(), gdTr.size()); } }
+dp/src/dp/trigshadow_live.hpp	if (const char* ra = std::getenv("TSGD_RECALL")) {   // TSGD_RECALL=uid:fromLayer:count -- every layer of that uid from fromLayer, whatever its class (diagnosis)
+dp/src/dp/trigshadow_live.hpp	if (const char* ru = std::getenv("TSGD_RECUID")) {
+dp/src/dp/trigshadow_live.hpp	if (const char* rf = std::getenv("TSGD_RECFAR")) {   // TSGD_RECFAR=uid[:count]: the first layers of that uid where the shadow is more than 0.05 from row t (diagnosis)
+dp/src/dp/trigshadow_live.hpp	if (const char* da = envAllUid) { static long long shownA = 0; static const long long lo = [] { const char* e = std::getenv("TSGD_ALLLO"); return e ? std::atoll(e) : 0LL; }(), hi = [] { const char* e = std::getenv("TSGD_ALLHI"); return e ? std::atoll(e) : (1LL << 60); }(); if (o.uid == std::atoi(da) && lastT >= lo && lastT <= hi && shownA < 4000) { ++shownA; std::printf("tsgdall: uid %d layer %lld shadow (%.3f, %.3f) game (%.3f, %.3f)\n", o.uid, lastT, S.x, S.y, gx, gy); } }
+dp/src/dp/trigshadow_live.hpp	long long fbTol = [] { const char* e = std::getenv("TSGD_FBTOL"); return e ? std::atoll(e) : 0LL; }();   // the box-entry ticks may differ by this much (calibration)   // why a supplied mover was not held against the game's rows
+dp/src/dp/trigshadow_live.hpp	const char* dbgUid = std::getenv("TSEV_UID");   // diagnosis: the first tick the replay moves this uid
+dp/src/dp/trigshadow_live.hpp	if (const char* tp = std::getenv("TSGD_TYPEOUT")) { std::ofstream tf(tp); tf << "uid,A,B,C,S,N,n1,n2,n3,m1,m2,m3,max_d0_milli,sum_d0_milli,covered,shadow_far,shadow_far_max_milli,both_far\n"; for (const auto& kv : tyUid) { tf << kv.first; for (int k = 0; k < 17; ++k) tf << ',' << kv.second[(size_t)k]; tf << '\n'; } }
+# dp/src/dp/shadow_step.hpp: EVDUMP is read in a static initializer (once per process)
+dp/src/dp/shadow_step.hpp	const char* e = std::getenv("EVDUMP");

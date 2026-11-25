@@ -25,6 +25,7 @@
 //   kLayerSpawnChannel1: 0x388 -> 0x388 (weak)
 //   kLayerInShaderObjectLayer: 0xff0 -> 0x1110 (weak)
 //   kLayerRandomSeed: 0x32e0 -> 0x3420 (weak)
+//   kLayerGateMap: 0x4f0 -> 0x4f0 (weak; read off 2.209b only)
 //   kPlayerSpriteWidthScale: 0x394 -> 0x394 (weak)
 //   kPlayerSpriteHeightScale: 0x398 -> 0x398 (weak)
 //   kPlayerOutOfBounds: 0xc38 -> 0xc40 (inferred)
@@ -55,7 +56,7 @@
 //   kInstGameObject: 0xa0 -> 0xa0 (unverified)
 //   kInstTargetGroupIndex: 0xc0 -> 0xc0 (unverified)
 // ============================================================
-#include <Geode/platform/cplatform.h>
+#include <Geode/Geode.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -101,145 +102,166 @@
 
 namespace gdoff {
 
+// Named members: the offset is the bindings' own (Geode 6's bindings for GD 2.2091), not a number of ours.
+inline constexpr std::size_t kGameState = offsetof(GJBaseGameLayer, m_gameState);
+#define GDOFF_STATE(m) (kGameState + offsetof(GJGameState, m))
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winvalid-offsetof"
+#endif
+
 // ---- GJBaseGameLayer (m_gameState is embedded at +0x1a8 on both) ----
-inline constexpr std::size_t kLayerCameraZoom = GDOFF(0x1a8, 0x1a8, 0x1a8);        // m_gameState.m_cameraZoom
-inline constexpr std::size_t kLayerCameraOffsetY = GDOFF(0x1b4, 0x1b4, 0x1b4);     // m_gameState.m_cameraOffset.y
+inline constexpr std::size_t kLayerCameraZoom = GDOFF_STATE(m_cameraZoom);        // m_gameState.m_cameraZoom
+inline constexpr std::size_t kLayerCameraOffsetY = GDOFF_STATE(m_cameraOffset) + offsetof(cocos2d::CCPoint, y);     // m_gameState.m_cameraOffset.y
 inline constexpr std::size_t kLayerUnkPoint17Y = GDOFF(0x23c, 0x23c, 0x23c);       // m_gameState.m_unkPoint17.y
-inline constexpr std::size_t kLayerUnkBool1 = GDOFF(0x2a0, 0x2a0, 0x2a0);          // m_gameState.m_unkBool1
-inline constexpr std::size_t kLayerFreeMode = GDOFF(0x311, 0x311, 0x311);          // m_gameState.m_isFreeMode
-inline constexpr std::size_t kLayerCurrentChannel = GDOFF(0x33c, 0x33c, 0x33c);    // m_gameState.m_currentChannel
-inline constexpr std::size_t kLayerSpawnChannel0 = GDOFF(0x348, 0x348, 0x348);     // m_gameState.m_spawnChannelRelated0
-inline constexpr std::size_t kLayerSpawnChannel1 = GDOFF(0x388, 0x388, 0x380);     // m_gameState.m_spawnChannelRelated1
-inline constexpr std::size_t kLayerUnkBool10 = GDOFF(0x418, 0x418, 0x408);         // m_gameState.m_unkBool10
-inline constexpr std::size_t kLayerLevelFlipping = GDOFF(0x41c, 0x41c, 0x40c);     // m_gameState.m_levelFlipping
-inline constexpr std::size_t kLayerDualMode = GDOFF(0x422, 0x422, 0x412);          // m_gameState.m_isDualMode
-inline constexpr std::size_t kLayerTargetGroupsArray = GDOFF(0xf78, GD209(0x1098, 0x1058), 0xfc8); // m_targetGroupsArray
-inline constexpr std::size_t kLayerObjectParent = GDOFF(0xfd0, GD209(0x10f0, 0x10b0), 0x1018);     // m_objectParent
-inline constexpr std::size_t kLayerAboveShaderParent = GDOFF(0xfe0, GD209(0x1100, 0x10c0), 0x1028); // m_aboveShaderParent
-inline constexpr std::size_t kLayerObjectLayer = GDOFF(0xfe8, GD209(0x1108, 0x10c8), 0x1030);      // m_objectLayer
-inline constexpr std::size_t kLayerInShaderObjectLayer = GDOFF(0xff0, GD209(0x1110, 0x10d0), 0x1038);    // m_inShaderObjectLayer
-inline constexpr std::size_t kLayerAboveShaderObjectLayer = GDOFF(0xff8, GD209(0x1118, 0x10d8), 0x1040); // m_aboveShaderObjectLayer
-inline constexpr std::size_t kLayerBatchNodes = GDOFF(0x1028, GD209(0x1148, 0x1108), 0x1070);      // m_batchNodes
-inline constexpr std::size_t kLayerVarianceValues = GDOFF(0x10cc, GD209(0x11ec, 0x11ac), 0x1124);  // m_varianceValues
-inline constexpr std::size_t kLayerEnterEasingValues = GDOFF(0x3020, GD209(0x3140, 0x3100), 0x3098); // m_enterEasingValues
-inline constexpr std::size_t kLayerShaderLayer = GDOFF(0x3178, GD209(0x32a0, 0x3260), 0x31d8);     // m_shaderLayer
-inline constexpr std::size_t kLayerRandomSeed = GDOFF(0x32e0, GD209(0x3420, 0x33e0), 0x3328);      // m_randomSeed
-inline constexpr std::size_t kLayerNonEffectObjects = GDOFF(0x35b0, GD209(0x36f0, 0x36b0), 0x3598);       // m_nonEffectObjects
-inline constexpr std::size_t kLayerCollisionBlockSections = GDOFF(0x35c8, GD209(0x3708, 0x36c8), 0x35b0); // m_collisionBlockSections
-inline constexpr std::size_t kLayerNonEffectObjectsSizes = GDOFF(0x3658, GD209(0x3798, 0x3758), 0x3640);  // m_nonEffectObjectsSizes
+inline constexpr std::size_t kLayerUnkBool1 = GDOFF_STATE(m_dualStaticCamera);          // m_gameState.m_unkBool1
+inline constexpr std::size_t kLayerFreeMode = GDOFF_STATE(m_isFreeMode);          // m_gameState.m_isFreeMode
+inline constexpr std::size_t kLayerCurrentChannel = GDOFF_STATE(m_currentChannel);    // m_gameState.m_currentChannel
+inline constexpr std::size_t kLayerSpawnChannel0 = GDOFF_STATE(m_spawnChannelRelated0);     // m_gameState.m_spawnChannelRelated0
+inline constexpr std::size_t kLayerSpawnChannel1 = GDOFF_STATE(m_spawnChannelRelated1);     // m_gameState.m_spawnChannelRelated1
+inline constexpr std::size_t kLayerUnkBool10 = GDOFF_STATE(m_isFlipped);         // m_gameState.m_unkBool10
+inline constexpr std::size_t kLayerLevelFlipping = GDOFF_STATE(m_levelFlipProgress);     // m_gameState.m_levelFlipping
+inline constexpr std::size_t kLayerDualMode = GDOFF_STATE(m_isDualMode);          // m_gameState.m_isDualMode
+inline constexpr std::size_t kLayerTargetGroupsArray = offsetof(GJBaseGameLayer, m_targetGroupsArray); // m_targetGroupsArray
+inline constexpr std::size_t kLayerObjectParent = offsetof(GJBaseGameLayer, m_objectParent);     // m_objectParent
+inline constexpr std::size_t kLayerAboveShaderParent = offsetof(GJBaseGameLayer, m_aboveShaderParent); // m_aboveShaderParent
+inline constexpr std::size_t kLayerObjectLayer = offsetof(GJBaseGameLayer, m_objectLayer);      // m_objectLayer
+inline constexpr std::size_t kLayerInShaderObjectLayer = offsetof(GJBaseGameLayer, m_inShaderObjectLayer);    // m_inShaderObjectLayer
+inline constexpr std::size_t kLayerAboveShaderObjectLayer = offsetof(GJBaseGameLayer, m_aboveShaderObjectLayer); // m_aboveShaderObjectLayer
+inline constexpr std::size_t kLayerBatchNodes = offsetof(GJBaseGameLayer, m_batchNodes);      // m_batchNodes
+inline constexpr std::size_t kLayerVarianceValues = offsetof(GJBaseGameLayer, m_varianceValues);  // m_varianceValues
+inline constexpr std::size_t kLayerEnterEasingValues = offsetof(GJBaseGameLayer, m_enterEasingValues); // m_enterEasingValues
+inline constexpr std::size_t kLayerShaderLayer = offsetof(GJBaseGameLayer, m_shaderLayer);     // m_shaderLayer
+// The once-per-contact gate's std::map<std::pair<int,int>, int> (key: the object's m_uniqueID and the player's, value: the layer's +0x3e0 counter when the pair was last seen), which FUN_14031ef50 reads at layer+0x4f0:
+// read off the 2.209b decompilation (11-14); the other builds carry the value over (weak: no named member to assert it against).
+inline constexpr std::size_t kLayerGateMap = GDOFF(0x4f0, 0x4f0, 0x4f0);
+inline constexpr std::size_t kLayerRandomSeed = offsetof(GJBaseGameLayer, m_randomSeed);      // m_randomSeed
+inline constexpr std::size_t kLayerNonEffectObjects = offsetof(GJBaseGameLayer, m_nonEffectObjects);       // m_nonEffectObjects
+inline constexpr std::size_t kLayerCollisionBlockSections = offsetof(GJBaseGameLayer, m_collisionBlockSections); // m_collisionBlockSections
+inline constexpr std::size_t kLayerNonEffectObjectsSizes = offsetof(GJBaseGameLayer, m_nonEffectObjectsSizes);  // m_nonEffectObjectsSizes
 inline constexpr std::size_t kLayerCollisionBlockSectionSizes = GDOFF(0x3670, GD209(0x37b0, 0x3770), 0x3658); // m_collisionBlockSectionSizes
-inline constexpr std::size_t kLayerMaxGameplayY = GDOFF(0x36a8, GD209(0x37e8, 0x37a8), 0x3690);    // m_maxGameplayY
+inline constexpr std::size_t kLayerMaxGameplayY = offsetof(GJBaseGameLayer, m_maxGameplayY);    // m_maxGameplayY
 
 // ---- PlayerObject ----
-inline constexpr std::size_t kPlayerSpriteWidthScale = GDOFF(0x394, 0x394, 0x37c);   // m_spriteWidthScale
-inline constexpr std::size_t kPlayerSpriteHeightScale = GDOFF(0x398, 0x398, 0x380);  // m_spriteHeightScale
-inline constexpr std::size_t kPlayerSlopeStartTime = GDOFF(0x598, 0x598, 0x580);     // m_slopeStartTime
-inline constexpr std::size_t kPlayerCollisionLogBottom = GDOFF(0x5b8, 0x5b8, 0x5a0); // m_collisionLogBottom
-inline constexpr std::size_t kPlayerCollisionLogLeft = GDOFF(0x5c0, 0x5c0, 0x5a8);   // m_collisionLogLeft
-inline constexpr std::size_t kPlayerCurrentSlope2 = GDOFF(0x5e8, 0x5e8, 0x5d0);      // m_currentSlope2
-inline constexpr std::size_t kPlayerCollidedObject = GDOFF(0x600, 0x600, 0x5e8);     // m_collidedObject
-inline constexpr std::size_t kPlayerLastGroundObject = GDOFF(0x608, 0x608, 0x5f0);   // m_lastGroundObject
-inline constexpr std::size_t kPlayerCollidingWithSlope = GDOFF(0x658, 0x660, 0x648); // m_isCollidingWithSlope
-inline constexpr std::size_t kPlayerCurrentSlope = GDOFF(0x678, 0x680, 0x668);       // m_currentSlope
-inline constexpr std::size_t kPlayerSlopeFlipGravity = GDOFF(0x68c, 0x694, 0x67c);   // m_slopeFlipGravityRelated
-inline constexpr std::size_t kPlayerRotationSpeed = GDOFF(0x720, 0x728, 0x700);      // m_rotationSpeed
-inline constexpr std::size_t kPlayerLastSpiderFlipTime = GDOFF(0x820, 0x828, 0x800); // m_lastSpiderFlipTime
-inline constexpr std::size_t kPlayerAccelerating = GDOFF(0x952, 0x95a, 0x92a);       // m_isAccelerating
-inline constexpr std::size_t kPlayerCollidedBottomMaxY = GDOFF(0x960, 0x968, 0x938); // m_collidedBottomMaxY
-inline constexpr std::size_t kPlayerCollidedLeftMaxX = GDOFF(0x968, 0x970, 0x940);   // m_collidedLeftMaxX
-inline constexpr std::size_t kPlayerJumpBuffered = GDOFF(0x985, 0x98d, 0x95d);       // m_jumpBuffered
-inline constexpr std::size_t kPlayerStateRingJump = GDOFF(0x986, 0x98e, 0x95e);      // m_stateRingJump
-inline constexpr std::size_t kPlayerStateJumpBuffered = GDOFF(0x989, 0x991, 0x961);  // m_stateJumpBuffered
-inline constexpr std::size_t kPlayerStateRingJump2 = GDOFF(0x98a, 0x992, 0x962);     // m_stateRingJump2
-inline constexpr std::size_t kPlayerTouchedRing = GDOFF(0x98b, 0x993, 0x963);        // m_touchedRing, then
+inline constexpr std::size_t kPlayerSpriteWidthScale = offsetof(PlayerObject, m_spriteWidthScale);   // m_spriteWidthScale
+inline constexpr std::size_t kPlayerSpriteHeightScale = offsetof(PlayerObject, m_spriteHeightScale);  // m_spriteHeightScale
+inline constexpr std::size_t kPlayerSlopeStartTime = offsetof(PlayerObject, m_slopeStartTime);     // m_slopeStartTime
+inline constexpr std::size_t kPlayerCollisionLogBottom = offsetof(PlayerObject, m_collisionLogBottom); // m_collisionLogBottom
+inline constexpr std::size_t kPlayerCollisionLogLeft = offsetof(PlayerObject, m_collisionLogLeft);   // m_collisionLogLeft
+inline constexpr std::size_t kPlayerCurrentSlope2 = offsetof(PlayerObject, m_currentSlope2);      // m_currentSlope2
+inline constexpr std::size_t kPlayerCollidedObject = offsetof(PlayerObject, m_collidedObject);     // m_collidedObject
+inline constexpr std::size_t kPlayerLastGroundObject = offsetof(PlayerObject, m_lastGroundObject);   // m_lastGroundObject
+inline constexpr std::size_t kPlayerCollidingWithSlope = offsetof(PlayerObject, m_isCollidingWithSlope); // m_isCollidingWithSlope
+inline constexpr std::size_t kPlayerCurrentSlope = offsetof(PlayerObject, m_currentSlope);       // m_currentSlope
+inline constexpr std::size_t kPlayerSlopeFlipGravity = offsetof(PlayerObject, m_slopeIsDownhill);   // m_slopeFlipGravityRelated
+inline constexpr std::size_t kPlayerRotationSpeed = offsetof(PlayerObject, m_rotationSpeed);      // m_rotationSpeed
+// The ball's ground-stake byte, the one right after m_rotationSpeed (the double above): runBallRotation raises it, toggleRollMode
+// clears it, togglePlayerScale re-stakes the ball only while it is up (dp State::ball728). No bindings name; the 2.209 and Android
+// values follow m_rotationSpeed's shift and are checked against the dump's b728 column.
+inline constexpr std::size_t kPlayerBallStake = GDOFF(0x728, 0x730, 0x708);
+inline constexpr std::size_t kPlayerLastSpiderFlipTime = offsetof(PlayerObject, m_lastSpiderFlipTime); // m_lastSpiderFlipTime
+inline constexpr std::size_t kPlayerAccelerating = offsetof(PlayerObject, m_isAccelerating);       // m_isAccelerating
+inline constexpr std::size_t kPlayerCollidedBottomMaxY = offsetof(PlayerObject, m_collidedBottomMaxY); // m_collidedBottomMaxY
+inline constexpr std::size_t kPlayerCollidedLeftMaxX = offsetof(PlayerObject, m_collidedLeftMaxX);   // m_collidedLeftMaxX
+inline constexpr std::size_t kPlayerJumpBuffered = offsetof(PlayerObject, m_jumpBuffered);       // m_jumpBuffered
+inline constexpr std::size_t kPlayerStateRingJump = offsetof(PlayerObject, m_stateRingJump);      // m_stateRingJump
+inline constexpr std::size_t kPlayerStateJumpBuffered = offsetof(PlayerObject, m_stateJumpBuffered);  // m_stateJumpBuffered
+inline constexpr std::size_t kPlayerStateRingJump2 = offsetof(PlayerObject, m_statePreJump);     // m_stateRingJump2
+inline constexpr std::size_t kPlayerTouchedRing = offsetof(PlayerObject, m_touchedRing);        // m_touchedRing, then
                                                                                // m_touchedCustomRing,
                                                                                // m_touchedGravityPortal
-inline constexpr std::size_t kPlayerOnSlope = GDOFF(0x9b0, 0x9b8, 0x988);            // m_isOnSlope
-inline constexpr std::size_t kPlayerUpsideDownSlope = GDOFF(0x9b8, 0x9c0, 0x990);    // m_maybeUpsideDownSlope
-inline constexpr std::size_t kPlayerUpsideDown = GDOFF(0x9bf, 0x9c7, 0x997);         // m_isUpsideDown
-inline constexpr std::size_t kPlayerOnGround = GDOFF(0x9c1, 0x9c9, 0x999);           // m_isOnGround
-inline constexpr std::size_t kPlayerGoingLeft = GDOFF(0x9c2, 0x9ca, 0x99a);          // m_isGoingLeft
-inline constexpr std::size_t kPlayerSideways = GDOFF(0x9c3, 0x9cb, 0x99b);           // m_isSideways
-inline constexpr std::size_t kPlayerDashing = GDOFF(0x9e4, 0x9ec, 0x9bc);            // m_isDashing
+inline constexpr std::size_t kPlayerOnSlope = offsetof(PlayerObject, m_isOnSlope);            // m_isOnSlope
+inline constexpr std::size_t kPlayerUpsideDownSlope = offsetof(PlayerObject, m_slopeResnapped);    // m_maybeUpsideDownSlope
+inline constexpr std::size_t kPlayerUpsideDown = offsetof(PlayerObject, m_isUpsideDown);         // m_isUpsideDown
+inline constexpr std::size_t kPlayerOnGround = offsetof(PlayerObject, m_isOnGround);           // m_isOnGround
+inline constexpr std::size_t kPlayerGoingLeft = offsetof(PlayerObject, m_isGoingLeft);          // m_isGoingLeft
+inline constexpr std::size_t kPlayerSideways = offsetof(PlayerObject, m_isSideways);           // m_isSideways
+inline constexpr std::size_t kPlayerDashing = offsetof(PlayerObject, m_isDashing);            // m_isDashing
 // The raw byte dump cfg `pflags` prints runs from m_collidedObject to m_scaleXRelatedTime.
-inline constexpr std::size_t kPlayerFlagsDumpBegin = GDOFF(0x600, 0x600, 0x5e8);     // m_collidedObject
-inline constexpr std::size_t kPlayerFlagsDumpEnd = GDOFF(0xa20, 0xa28, 0x9f8);       // m_scaleXRelatedTime
-inline constexpr std::size_t kPlayerLocked = GDOFF(0xa2a, 0xa32, 0xa02);             // m_isLocked
-inline constexpr std::size_t kPlayerPosition = GDOFF(0xa90, 0xa98, 0xa60);           // m_position
-inline constexpr std::size_t kPlayerTotalTime = GDOFF(0xaa0, 0xaa8, 0xa70);          // m_totalTime
-inline constexpr std::size_t kPlayerPlatformer = GDOFF(0xb70, 0xb78, 0xb40);         // m_isPlatformer
-inline constexpr std::size_t kPlayerStateNoAutoJump = GDOFF(0xb74, 0xb7c, 0xb44);    // m_stateNoAutoJump
-inline constexpr std::size_t kPlayerStateDartSlide = GDOFF(0xb78, 0xb80, 0xb48);     // m_stateDartSlide
-inline constexpr std::size_t kPlayerStateHitHead = GDOFF(0xb7c, 0xb84, 0xb4c);       // m_stateHitHead
-inline constexpr std::size_t kPlayerStateFlipGravity = GDOFF(0xb80, 0xb88, 0xb50);   // m_stateFlipGravity
-inline constexpr std::size_t kPlayerGravityMod = GDOFF(0xb84, 0xb8c, 0xb54);         // m_gravityMod
-inline constexpr std::size_t kPlayerStateForce = GDOFF(0xb88, 0xb90, 0xb58);         // m_stateForce
-inline constexpr std::size_t kPlayerOutOfBounds = GDOFF(0xc38, 0xc40, 0xc30);        // m_isOutOfBounds
-inline constexpr std::size_t kPlayerIgnoreDamage = GDOFF(0xc44, 0xc4c, 0xc3c);       // m_ignoreDamage
+inline constexpr std::size_t kPlayerFlagsDumpBegin = offsetof(PlayerObject, m_collidedObject);     // m_collidedObject
+inline constexpr std::size_t kPlayerFlagsDumpEnd = offsetof(PlayerObject, m_lastGroundXDeltaTime);       // m_scaleXRelatedTime
+inline constexpr std::size_t kPlayerLocked = offsetof(PlayerObject, m_isLocked);             // m_isLocked
+inline constexpr std::size_t kPlayerPosition = offsetof(PlayerObject, m_position);           // m_position
+inline constexpr std::size_t kPlayerTotalTime = offsetof(PlayerObject, m_totalTime);          // m_totalTime
+inline constexpr std::size_t kPlayerPlatformer = offsetof(PlayerObject, m_isPlatformer);         // m_isPlatformer
+inline constexpr std::size_t kPlayerStateNoAutoJump = offsetof(PlayerObject, m_stateNoAutoJump);    // m_stateNoAutoJump
+inline constexpr std::size_t kPlayerStateDartSlide = offsetof(PlayerObject, m_stateDartSlide);     // m_stateDartSlide
+inline constexpr std::size_t kPlayerStateHitHead = offsetof(PlayerObject, m_stateHitHead);       // m_stateHitHead
+inline constexpr std::size_t kPlayerStateFlipGravity = offsetof(PlayerObject, m_stateFlipGravity);   // m_stateFlipGravity
+inline constexpr std::size_t kPlayerGravityMod = offsetof(PlayerObject, m_gravityMod);         // m_gravityMod
+inline constexpr std::size_t kPlayerStateForce = offsetof(PlayerObject, m_stateForce);         // m_stateForce
+inline constexpr std::size_t kPlayerOutOfBounds = offsetof(PlayerObject, m_isOutOfBounds);        // m_isOutOfBounds
+inline constexpr std::size_t kPlayerIgnoreDamage = offsetof(PlayerObject, m_ignoreDamage);       // m_ignoreDamage
 
 // ---- GameObject and subclasses ----
 // Android's GameObject members start 4 bytes earlier (0x26c, not 0x270): the Itanium ABI puts
 // the first int into CCSpritePlus's tail padding, MSVC does not. Fields up to the first
 // 8-aligned pointer keep that shift; later ones re-align (m_glowSprite is +0x2f0 on both).
-inline constexpr std::size_t kObjOuterSectionIndex = GDOFF(0x278, 0x278, 0x274);   // m_outerSectionIndex
-inline constexpr std::size_t kObjGroupDisabled = GDOFF(0x28e, 0x28e, 0x28a);       // m_isGroupDisabled
-inline constexpr std::size_t kObjPositionXOffset = GDOFF(0x2a0, 0x2a0, 0x29c);     // m_positionXOffset
-inline constexpr std::size_t kObjPositionYOffset = GDOFF(0x2a4, 0x2a4, 0x2a0);     // m_positionYOffset
-inline constexpr std::size_t kObjTempOffsetXRelated = GDOFF(0x2c8, 0x2c8, 0x2c4);  // m_tempOffsetXRelated
-inline constexpr std::size_t kObjGlowSprite = GDOFF(0x2f0, 0x2f0, 0x2f0);          // m_glowSprite
-inline constexpr std::size_t kObjUniqueID = GDOFF(0x39c, 0x39c, 0x384);            // m_uniqueID
-inline constexpr std::size_t kObjVarianceIndex = GDOFF(0x3f4, 0x3f4, 0x3dc);       // m_varianceIndex
-inline constexpr std::size_t kObjAreaStamp = GDOFF(0x4e0, 0x4e0, 0x4c8);           // m_unk4C8
-inline constexpr std::size_t kObjPassable = GDOFF(0x515, 0x515, 0x4fd);            // m_isPassable
-inline constexpr std::size_t kObjAreaMoveSkip = GDOFF(0x520, 0x520, 0x508);        // m_unk508
-inline constexpr std::size_t kRingClaimTouch = GDOFF(0x740, 0x740, 0x71c);         // RingObject::m_claimTouch
-inline constexpr std::size_t kCheckpointObject = GDOFF(0xe58, 0xe60, 0xe68);       // CheckpointObject::m_physicalCheckpointObject
+inline constexpr std::size_t kObjOuterSectionIndex = offsetof(GameObject, m_outerSectionIndex);   // m_outerSectionIndex
+inline constexpr std::size_t kObjGroupDisabled = offsetof(GameObject, m_isGroupDisabled);       // m_isGroupDisabled
+inline constexpr std::size_t kObjPositionXOffset = offsetof(GameObject, m_positionXOffset);     // m_positionXOffset
+inline constexpr std::size_t kObjPositionYOffset = offsetof(GameObject, m_positionYOffset);     // m_positionYOffset
+inline constexpr std::size_t kObjTempOffsetXRelated = offsetof(GameObject, m_tempOffsetXRelated);  // m_tempOffsetXRelated
+inline constexpr std::size_t kObjGlowSprite = offsetof(GameObject, m_glowSprite);          // m_glowSprite
+inline constexpr std::size_t kObjUniqueID = offsetof(GameObject, m_uniqueID);            // m_uniqueID
+inline constexpr std::size_t kObjVarianceIndex = offsetof(GameObject, m_varianceIndex);       // m_varianceIndex
+inline constexpr std::size_t kObjAreaStamp = offsetof(GameObject, m_unk4C8);           // m_unk4C8
+inline constexpr std::size_t kObjPassable = offsetof(GameObject, m_isPassable);            // m_isPassable
+inline constexpr std::size_t kObjAreaMoveSkip = offsetof(GameObject, m_unk508);        // m_unk508
+inline constexpr std::size_t kRingClaimTouch = offsetof(RingObject, m_claimTouch);         // RingObject::m_claimTouch
+inline constexpr std::size_t kCheckpointObject = offsetof(CheckpointObject, m_physicalCheckpointObject);       // CheckpointObject::m_physicalCheckpointObject
 
 // EnterEffectObject (the area trigger)
-inline constexpr std::size_t kEnterStartAngle = GDOFF(0x77c, 0x77c, 0x758);        // m_startAngle
-inline constexpr std::size_t kEnterAnglePosition = GDOFF(0x780, 0x780, 0x75c);     // m_anglePosition
-inline constexpr std::size_t kEnterRelative = GDOFF(0x788, 0x788, 0x764);          // m_relative
-inline constexpr std::size_t kEnterRelativeFade = GDOFF(0x78c, 0x78c, 0x768);      // m_relativeFade
-inline constexpr std::size_t kEnterEasingInType = GDOFF(0x790, 0x790, 0x76c);      // m_easingInType
-inline constexpr std::size_t kEnterEasingInRate = GDOFF(0x794, 0x794, 0x770);      // m_easingInRate
-inline constexpr std::size_t kEnterEasingInBuffer = GDOFF(0x798, 0x798, 0x774);    // m_easingInBuffer
-inline constexpr std::size_t kEnterEasingOutType = GDOFF(0x79c, 0x79c, 0x778);     // m_easingOutType
-inline constexpr std::size_t kEnterEasingOutRate = GDOFF(0x7a0, 0x7a0, 0x77c);     // m_easingOutRate
-inline constexpr std::size_t kEnterEasingOutBuffer = GDOFF(0x7a4, 0x7a4, 0x780);   // m_easingOutBuffer
-inline constexpr std::size_t kEnterDirectionType = GDOFF(0x7c0, 0x7c0, 0x79c);     // m_directionType
-inline constexpr std::size_t kEnterXYMode = GDOFF(0x7c4, 0x7c4, 0x7a0);            // m_xyMode
-inline constexpr std::size_t kEnterEaseOutEnabled = GDOFF(0x7c5, 0x7c5, 0x7a1);    // m_easeOutEnabled
-inline constexpr std::size_t kEnterInbound = GDOFF(0x7ec, 0x7ec, 0x7c8);           // m_inbound
-inline constexpr std::size_t kEnterDontEditAreaParent = GDOFF(0x7f5, 0x7f5, 0x7d1); // m_dontEditAreaParent
+inline constexpr std::size_t kEnterStartAngle = offsetof(EnterEffectObject, m_startAngle);        // m_startAngle
+inline constexpr std::size_t kEnterAnglePosition = offsetof(EnterEffectObject, m_anglePosition);     // m_anglePosition
+inline constexpr std::size_t kEnterRelative = offsetof(EnterEffectObject, m_relative);          // m_relative
+inline constexpr std::size_t kEnterRelativeFade = offsetof(EnterEffectObject, m_relativeFade);      // m_relativeFade
+inline constexpr std::size_t kEnterEasingInType = offsetof(EnterEffectObject, m_easingInType);      // m_easingInType
+inline constexpr std::size_t kEnterEasingInRate = offsetof(EnterEffectObject, m_easingInRate);      // m_easingInRate
+inline constexpr std::size_t kEnterEasingInBuffer = offsetof(EnterEffectObject, m_easingInBuffer);    // m_easingInBuffer
+inline constexpr std::size_t kEnterEasingOutType = offsetof(EnterEffectObject, m_easingOutType);     // m_easingOutType
+inline constexpr std::size_t kEnterEasingOutRate = offsetof(EnterEffectObject, m_easingOutRate);     // m_easingOutRate
+inline constexpr std::size_t kEnterEasingOutBuffer = offsetof(EnterEffectObject, m_easingOutBuffer);   // m_easingOutBuffer
+inline constexpr std::size_t kEnterDirectionType = offsetof(EnterEffectObject, m_directionType);     // m_directionType
+inline constexpr std::size_t kEnterXYMode = offsetof(EnterEffectObject, m_xyMode);            // m_xyMode
+inline constexpr std::size_t kEnterEaseOutEnabled = offsetof(EnterEffectObject, m_easeOutEnabled);    // m_easeOutEnabled
+inline constexpr std::size_t kEnterInbound = offsetof(EnterEffectObject, m_inbound);           // m_inbound
+inline constexpr std::size_t kEnterDontEditAreaParent = offsetof(EnterEffectObject, m_dontEditAreaParent); // m_dontEditAreaParent
 
 // EnterEffectInstance (not a node; Android's copy is 0x20 longer before these fields)
-inline constexpr std::size_t kInstLength = GDOFF(0x10, 0x10, 0x30);               // m_length
-inline constexpr std::size_t kInstLengthVariance = GDOFF(0x14, 0x14, 0x34);       // m_lengthVariance
-inline constexpr std::size_t kInstOffsetVariance = GDOFF(0x1c, 0x1c, 0x3c);       // m_offsetVariance
-inline constexpr std::size_t kInstOffsetYVariance = GDOFF(0x24, 0x24, 0x44);      // m_offsetYVariance
-inline constexpr std::size_t kInstModFront = GDOFF(0x28, 0x28, 0x48);             // m_modFront
-inline constexpr std::size_t kInstModBack = GDOFF(0x2c, 0x2c, 0x4c);              // m_modBack
-inline constexpr std::size_t kInstDeadzone = GDOFF(0x30, 0x30, 0x50);             // m_deadzone
-inline constexpr std::size_t kInstMoveDistance = GDOFF(0x34, 0x34, 0x54);         // m_moveDistance
-inline constexpr std::size_t kInstMoveDistanceVariance = GDOFF(0x38, 0x38, 0x58); // m_moveDistanceVariance
-inline constexpr std::size_t kInstMoveAngle = GDOFF(0x3c, 0x3c, 0x5c);            // m_moveAngle
-inline constexpr std::size_t kInstMoveAngleVariance = GDOFF(0x40, 0x40, 0x60);    // m_moveAngleVariance
-inline constexpr std::size_t kInstMoveX = GDOFF(0x44, 0x44, 0x64);                // m_moveX
-inline constexpr std::size_t kInstMoveXVariance = GDOFF(0x48, 0x48, 0x68);        // m_moveXVariance
-inline constexpr std::size_t kInstMoveY = GDOFF(0x4c, 0x4c, 0x6c);                // m_moveY
-inline constexpr std::size_t kInstMoveYVariance = GDOFF(0x50, 0x50, 0x70);        // m_moveYVariance
-inline constexpr std::size_t kInstScaleXVariance = GDOFF(0x5c, 0x5c, 0x7c);       // m_scaleXVariance
-inline constexpr std::size_t kInstScaleYVariance = GDOFF(0x64, 0x64, 0x84);       // m_scaleYVariance
-inline constexpr std::size_t kInstRotateVariance = GDOFF(0x74, 0x74, 0x94);       // m_unk074
-inline constexpr std::size_t kInstGameObject = GDOFF(0xa0, 0xa0, 0xc0);           // m_gameObject
-inline constexpr std::size_t kInstTargetGroupIndex = GDOFF(0xc0, 0xc0, 0xe0);     // m_targetGroupIndex
+inline constexpr std::size_t kInstLength = offsetof(EnterEffectInstance, m_length);               // m_length
+inline constexpr std::size_t kInstLengthVariance = offsetof(EnterEffectInstance, m_lengthVariance);       // m_lengthVariance
+inline constexpr std::size_t kInstOffsetVariance = offsetof(EnterEffectInstance, m_offsetVariance);       // m_offsetVariance
+inline constexpr std::size_t kInstOffsetYVariance = offsetof(EnterEffectInstance, m_offsetYVariance);      // m_offsetYVariance
+inline constexpr std::size_t kInstModFront = offsetof(EnterEffectInstance, m_modFront);             // m_modFront
+inline constexpr std::size_t kInstModBack = offsetof(EnterEffectInstance, m_modBack);              // m_modBack
+inline constexpr std::size_t kInstDeadzone = offsetof(EnterEffectInstance, m_deadzone);             // m_deadzone
+inline constexpr std::size_t kInstMoveDistance = offsetof(EnterEffectInstance, m_moveDistance);         // m_moveDistance
+inline constexpr std::size_t kInstMoveDistanceVariance = offsetof(EnterEffectInstance, m_moveDistanceVariance); // m_moveDistanceVariance
+inline constexpr std::size_t kInstMoveAngle = offsetof(EnterEffectInstance, m_moveAngle);            // m_moveAngle
+inline constexpr std::size_t kInstMoveAngleVariance = offsetof(EnterEffectInstance, m_moveAngleVariance);    // m_moveAngleVariance
+inline constexpr std::size_t kInstMoveX = offsetof(EnterEffectInstance, m_moveX);                // m_moveX
+inline constexpr std::size_t kInstMoveXVariance = offsetof(EnterEffectInstance, m_moveXVariance);        // m_moveXVariance
+inline constexpr std::size_t kInstMoveY = offsetof(EnterEffectInstance, m_moveY);                // m_moveY
+inline constexpr std::size_t kInstMoveYVariance = offsetof(EnterEffectInstance, m_moveYVariance);        // m_moveYVariance
+inline constexpr std::size_t kInstScaleXVariance = offsetof(EnterEffectInstance, m_scaleXVariance);       // m_scaleXVariance
+inline constexpr std::size_t kInstScaleYVariance = offsetof(EnterEffectInstance, m_scaleYVariance);       // m_scaleYVariance
+inline constexpr std::size_t kInstRotateVariance = offsetof(EnterEffectInstance, m_unusedKey285);       // m_unk074
+inline constexpr std::size_t kInstGameObject = offsetof(EnterEffectInstance, m_gameObject);           // m_gameObject
+inline constexpr std::size_t kInstTargetGroupIndex = offsetof(EnterEffectInstance, m_targetGroupIndex);     // m_targetGroupIndex
 
 // ---- Menu layers (hooks_playmenu.cpp's early-out asserts) ----
-inline constexpr std::size_t kLevelInfoBusy = GDOFF(0x1e0, 0x1e8, 0x1e0);          // LevelInfoLayer::m_isBusy
-inline constexpr std::size_t kLevelInfoTransitionDone = GDOFF(0x275, GD209(0x27d, 0x285), 0x275); // LevelInfoLayer::m_enterTransitionFinished
-inline constexpr std::size_t kLevelPageBusy = GDOFF(0x1a0, 0x1a0, 0x1a0);          // LevelPage::m_isBusy
-inline constexpr std::size_t kEditLevelExiting = GDOFF(0x1e0, 0x1f0, 0x1e0);       // EditLevelLayer::m_exiting
-inline constexpr std::size_t kLevelRequiredCoins = GDOFF(0x434, 0x4a4, 0x344);     // GJGameLevel::m_requiredCoins
+inline constexpr std::size_t kLevelInfoBusy = offsetof(LevelInfoLayer, m_isBusy);          // LevelInfoLayer::m_isBusy
+inline constexpr std::size_t kLevelInfoTransitionDone = offsetof(LevelInfoLayer, m_enterTransitionFinished); // LevelInfoLayer::m_enterTransitionFinished
+inline constexpr std::size_t kLevelPageBusy = offsetof(LevelPage, m_isBusy);          // LevelPage::m_isBusy
+inline constexpr std::size_t kEditLevelExiting = offsetof(EditLevelLayer, m_exiting);       // EditLevelLayer::m_exiting
+inline constexpr std::size_t kLevelRequiredCoins = offsetof(GJGameLevel, m_requiredCoins);     // GJGameLevel::m_requiredCoins
+#if defined(GEODE_IS_WINDOWS) && GEODE_COMP_GD_VERSION >= 22090
+// GJGameLevel's practice-mode attempt counter, which 2.209 added and the bindings do not name. Read off the 2.209 hotfix executable (22091): PlayLayer::resetLevel
+// (0x518c00) increments it inline while practice mode is on (0x519970: `inc dword ptr [rax+0x6ac]`, rax = m_level, gated on PlayLayer+0x32e0), and
+// GJGameLevel::encodeWithCoder (0x2690c0) saves it as key k154 only when it is above zero (0x26916a), so it is part of the level's record. 2.2081 has no such field.
+inline constexpr std::size_t kLevelPracticeAttempts = 0x6ac;
+#endif
 
 // ---- Static data, as offsets from geode::base::get() ----
 // The three 64-bit LCG states (x * 214013 + 2531011) GD never reseeds per attempt except the
@@ -247,9 +269,6 @@ inline constexpr std::size_t kLevelRequiredCoins = GDOFF(0x434, 0x4a4, 0x344);  
 // GameObject::resetObject and commonSetup draw the variance index from; the third is the
 // one GJBaseGameLayer::init fills m_varianceValues from. geode::base::get() is
 // libcocos2dcpp.so's load base on Android, whose first segment has vaddr 0.
-inline constexpr std::uintptr_t kSeedTriggerRva = GDOFF(0x6c2e90, GD209(0x906f68, 0x90bf68), 0x1241830);
-inline constexpr std::uintptr_t kSeedVarIndexRva = GDOFF(0x6c2ee0, GD209(0x906fd8, 0x90bfd8), 0x1242080);
-inline constexpr std::uintptr_t kSeedVarTableRva = GDOFF(0x6c2ef8, GD209(0x906ff0, 0x90bff0), 0x1242da0);
 
 // ---- raw literals that were in the code, not in this header (Windows; the same literal everywhere else) ----
 // GD_WIN_LITERAL(2.2081, 2.209). The sites keep the value they had on every platform but Windows 2.209.
@@ -260,4 +279,28 @@ inline constexpr std::size_t kLayerSectionSizeY = GD_WIN_LITERAL(0x36a4, GD209(0
 inline constexpr std::size_t kPlayerPendingCheckpoint = GD_WIN_LITERAL(0x890, 0x898);        // PlayerObject::m_pendingCheckpoint
 inline constexpr std::size_t kObjPositionVtblSlot = GD_WIN_LITERAL(0x4a8, 0x4b8);            // GameObject's vtable slot of getRealPosition (CCNode gained two virtuals)
 
+// ---- 22091, Windows only: what GJBaseGameLayer::processFollowActions (22091 base+0x339100) reads and writes (cfg follow=1, hooks_area.cpp; read only, nothing is written back) ----------------------------------
+// Offsets from that function's decompile, none of them named by the pinned bindings; no value for another platform or version (the follow rows are not written there). The node is a CCMoveCNode.
+#if defined(GEODE_IS_WINDOWS) && GEODE_COMP_GD_VERSION >= 22091
+inline constexpr std::size_t kEffMgrFollowNodes = 0x7b0;   // GJEffectManager: begin pointer of a vector<CCMoveCNode*> (end pointer at +8)
+inline constexpr std::size_t kNodeDeltaX = 0x38;           // double: (leader x - its last x) * xmod, the function's output; kNodeDeltaY = 0x40
+inline constexpr std::size_t kNodeDeltaY = 0x40;
+inline constexpr std::size_t kNodeCenter = 0x74;           // int: the centre group the leader comes from
+inline constexpr std::size_t kNodeFlag = 0x78;             // byte the function tests to take the move branch when both deltas are zero
+inline constexpr std::size_t kNodeXMod = 0x80;             // double; kNodeYMod = 0x88
+inline constexpr std::size_t kNodeYMod = 0x88;
+inline constexpr std::size_t kNodeCommand = 0xc8;          // GroupCommandObject2* (m_groupObject)
+inline constexpr std::size_t kObjRealX = 0x3b8;            // GameObject double: the x the function reads for the leader; kObjRealY = 0x3c0
+inline constexpr std::size_t kObjRealY = 0x3c0;
+inline constexpr std::size_t kObjLastX = 0x4d0;            // GameObject float: the x it subtracts (set from kObjRealX once per frame); kObjLastY = 0x4d4
+inline constexpr std::size_t kObjLastY = 0x4d4;
+inline constexpr std::size_t kObjLastFrame = 0x4dc;        // int: the frame counter value kObjLastX / Y were taken at
+inline constexpr std::size_t kLayerFrameCounter = 0x3e0;   // GJBaseGameLayer int (param_1[0x7c]): the counter kObjLastFrame is compared with
+#endif
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+#undef GDOFF_STATE
+
+#include "mod/gd_globals.hpp"
 }  // namespace gdoff

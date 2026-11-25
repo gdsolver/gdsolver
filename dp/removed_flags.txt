@@ -873,3 +873,807 @@
 --waveunderflip 222360b9 27a054c1 on spelling of a switch folded into the default, a no-op by then
 --no-zerosaw 222360b9 fc93bf08 off arm of a switch folded into the default
 --zerosaw 222360b9 fc93bf08 on spelling of a switch folded into the default, a no-op by then
+--no-robotbufjump fe995902 ced1f7d0 off arm of a switch folded into the default
+--robotbufjump fe995902 ced1f7d0 on spelling of a switch folded into the default, a no-op by then
+--no-robotheldspent fe995902 cf8071ca off arm of a switch folded into the default
+--robotheldspent fe995902 cf8071ca on spelling of a switch folded into the default, a no-op by then
+--no-landtapspent 6d0c683a cf8071ca off arm of a switch whose logic the press-bytes shadow made redundant; it is gone
+--landtapspent 6d0c683a cf8071ca on spelling of a switch whose logic the press-bytes shadow made redundant; it is gone
+--no-dualjumpbuf 6d0c683a 00ac55df off arm of a switch whose logic the press-bytes shadow made redundant; it is gone
+--dualjumpbuf 6d0c683a 00ac55df on spelling of a switch whose logic the press-bytes shadow made redundant; it is gone
+--no-robotheldmove 49082c3f ced1f7d0 off arm of a switch folded into the default
+--robotheldmove 49082c3f ced1f7d0 on spelling of a switch folded into the default, a no-op by then
+--no-waveholddead 3a80de70 2a6bcf2c off arm of a switch folded into the default
+--waveholddead 3a80de70 2a6bcf2c on spelling of a switch folded into the default, a no-op by then
+--no-spawnringkeephold 73d0936f 107bb508 off arm of a default-off switch whose case the shadow readers follow; it is gone
+--spawnringkeephold 73d0936f 107bb508 on spelling of a default-off switch whose case the shadow readers follow; it is gone
+--no-robotslopenohover b8842cf7 e8409a5c off arm of a switch whose rule GD contradicts; it is gone
+--robotslopenohover b8842cf7 e8409a5c on spelling of a switch whose rule GD contradicts; it is gone
+--no-robotdownhover b8842cf7 9adaecc8 off arm of a switch that only refined --robotslopenohover; it is gone
+--robotdownhover b8842cf7 9adaecc8 on spelling of a switch that only refined --robotslopenohover; it is gone
+--shadowtouchev 2be6003c 3a232db5 the collision pass's touch calls add 2 of 111 mover-kind calls over the latch; it is gone
+--no-shadowtouchev 2be6003c 3a232db5 off arm of a switch that added 2 of 111 mover-kind touch calls over the latch; it is gone
+--shadowtouchevkey 2be6003c 3a232db5 only refined --shadowtouchev; it is gone
+--no-shadowtouchevkey 2be6003c 3a232db5 off arm of a switch that only refined --shadowtouchev; it is gone
+--shadowbandtrack e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowbandtrack e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowbandw764 e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowbandw764 e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowband e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowband e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowframeband e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowframeband e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowportal e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowportal e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowportal2 e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowportal2 e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowportalseed e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowportalseed e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--portalobbtoggle e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-portalobbtoggle e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowgatemulti e961935b 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowgatemulti e961935b 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowobbcorners 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowobbcorners 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--obbfloat 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-obbfloat 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--slopewallswap 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-slopewallswap 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowgcfirst 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowgcfirst 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowgchazard 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowgchazard 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowdcx 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowdcx 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--dcxfinal 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-dcxfinal 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--padspiderrect 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-padspiderrect 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowspiderrect 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowspiderrect 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowprevcy 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowprevcy 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrepelscale 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrepelscale 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowridebox 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowridebox 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrideage 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrideage 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrecon 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrecon 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowonnew 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowonnew 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowboxon 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowboxon 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadownajbox 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadownajbox 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowcolown 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowcolown 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowcolbook 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowcolbook 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowdashrot 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowdashrot 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowdualendrot 0e1fb4ab 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowdualendrot 0e1fb4ab 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowctrlgate a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowctrlgate a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--ctrltouchlower a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-ctrltouchlower a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--ctrltouchdual a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-ctrltouchdual a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowdualctrl a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowdualctrl a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowctrllift a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowctrllift a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowctrlahead a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowctrlahead a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowholddead a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowholddead a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowpadgate a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowpadgate a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowinput a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowinput a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowa1c a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowa1c a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowhs a0b72238 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowhs a0b72238 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowp2dx 3a6bdce0 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowp2dx 3a6bdce0 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowp2dir 3a6bdce0 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowp2dir 3a6bdce0 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowp2fixgrav 3a6bdce0 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowp2fixgrav 3a6bdce0 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowp2grav 3a6bdce0 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowp2grav 3a6bdce0 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowringp2 3a6bdce0 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowringp2 3a6bdce0 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowframe da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowframe da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--rottouchpad da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-rottouchpad da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrotapply da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrotapply da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--warpchan da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-warpchan da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--rotkeepground da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-rotkeepground da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrotbody da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrotbody da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--revframesign da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-revframesign da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrevseed da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrevseed da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrevoff da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrevoff da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowtprev da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowtprev da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--gravtrigchan da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-gravtrigchan da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowgravbox da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowgravbox da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowturnedorb da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowturnedorb da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowturnedever da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowturnedever da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--anchorriderot da1cfaef 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-anchorriderot da1cfaef 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrev da1cfaef 55461a9a the shadow's reverse-travel step (and the pads' reversePlayer port) is the only behaviour now
+--shadowseedvy fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedvy fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseeddash fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseeddash fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedrev fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedrev fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedmirror fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedmirror fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedcomplete fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedcomplete fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--seedspiderpass fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-seedspiderpass fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedslope fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedslope fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedrobot fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedrobot fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedforce fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedforce fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedring fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedring fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseeddashfr fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseeddashfr fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedslopefr fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedslopefr fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowseedsnap fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowseedsnap fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--seedtporb fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-seedtporb fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowtporbbit fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowtporbbit fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowspentpad fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowspentpad fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowspinseed fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowspinseed fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--tptouchseed fba845ed 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-tptouchseed fba845ed 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--tpforceonly 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-tpforceonly 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--forceboxlive 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-forceboxlive 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--forcecuberaw 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-forcecuberaw 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowtouchfinal 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowtouchfinal 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowfollow 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowfollow 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowdashsched 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowdashsched 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowtpmove 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowtpmove 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowrhover 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowrhover 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowfireorder 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowfireorder 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowbigsecpost 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowbigsecpost 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--sectionpos 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-sectionpos 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--shadowevercap 3130d58d 55461a9a the shadow / model behaviour of the default bundle is the only one now
+--no-shadowevercap 3130d58d 55461a9a off arm of a bundle flag whose behaviour is the only one now
+--no-bundle 1e656e4c 55461a9a the default bundle is seven flags (the seed check and the key width) and a caller that wants none of them names them: --no-<flag>
+--shadowdualband 1afec2bf 1afec2bf a switch folded into the default
+--shadowlockoff 1afec2bf 1afec2bf a switch folded into the default
+--ctrlwinchan 1afec2bf 1afec2bf a switch folded into the default
+--no-ctrlwinchan 1afec2bf 1afec2bf off arm of a switch folded into the default
+--slkeynoevents 81d8dbf1 55461a9a a switch folded into the default
+--no-slkeynoevents 81d8dbf1 55461a9a off arm of a switch folded into the default
+--slkeydeadcopies 81d8dbf1 55461a9a a switch folded into the default
+--no-slkeydeadcopies 81d8dbf1 55461a9a off arm of a switch folded into the default
+--shadowfroms2 e1b47acb 55461a9a a switch folded into the default
+--no-shadowfroms2 e1b47acb 55461a9a off arm of a switch folded into the default
+--shadowfroms 7e8d9175 55461a9a a switch folded into the default
+--no-shadowfroms 7e8d9175 55461a9a off arm of a switch folded into the default
+--shadowfromseed af82777e 55461a9a a switch folded into the default
+--no-shadowfromseed af82777e 55461a9a off arm of a switch folded into the default
+--shadowfromseedlate af82777e 0a874693 a switch folded into the default
+--worldkey-dedupe 4cabc207 55461a9a a switch folded into the default
+--no-worldkey-dedupe 4cabc207 55461a9a off arm of a switch folded into the default
+--worldkeydedupe 4cabc207 55461a9a a switch folded into the default
+--worldkeydedupe2 4cabc207 55461a9a a switch folded into the default
+--worldkeydedupe3 4cabc207 55461a9a a switch folded into the default
+--worldtog 4cabc207 55461a9a a switch folded into the default
+--nooldtick c7558322 55461a9a a switch folded into the default
+--no-nooldtick c7558322 55461a9a off arm of a switch folded into the default
+--dupbatch e95941b7 e95941b7 a switch folded into the default
+--pressparent d1c83df4 d1c83df4 a switch folded into the default
+--no-pressparent d1c83df4 d1c83df4 off arm of a switch folded into the default
+--ballband 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ballcontride 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--balldashrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ballfreshend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ballorbtap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ballseatground 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--banddbg 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--bandholdzoom 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--bonkouter 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--bonkseq 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--bonksnap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ceilfarbox 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ceilheldnoland 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ceilowner 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ceilpush 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ceilrobotjump 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--crossworldx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--crushhead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--crushhithead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--cubempush 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dashaway 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dashrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dashsprite 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dashspriteonce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dashstopdead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dashwarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dcydbg 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--downdyrev 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dropa1c 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dualbandportal 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--dualbornlinked 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--exitjumpseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--fixgravdual 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flapgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flipbonk 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flipgracedyn 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flippair 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flipridepast 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flyframesup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flypadhead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flyridedown 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--flystepup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--forceboost 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--forcelive 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--forceminifly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--forceminiswing 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--forceraw 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--gdbornseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--gdsnapsecy 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--glitchembed 4cd56d74 4cd56d74 switch of the old tick, removed with it; takes 1 value
+--glitchportal 4cd56d74 4cd56d74 switch of the old tick, removed with it; takes 1 value
+--glitchwave 4cd56d74 4cd56d74 switch of the old tick, removed with it; takes 1 value
+--goalspare 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--groundbandzoom 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--groundforce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--growramporder 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--hazdbgwin 4cd56d74 4cd56d74 switch of the old tick, removed with it; takes 2 values
+--hazendpoint 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--jumpgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--lawcubelaunch 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--lawfrombelowship 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--lawunderflip 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--lingerhold 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--modeslopeorder 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--modeswitchkeep 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--movingwallup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--mpusharm 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ballband 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ballcontride 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-balldashrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ballfreshend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ballorbtap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ballseatground 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-bandholdzoom 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-bonkouter 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-bonkseq 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-bonksnap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ceilfarbox 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ceilheldnoland 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ceilowner 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ceilrobotjump 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-crossworldx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-crushhead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-crushhithead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-cubempush 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dashaway 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dashrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dashsprite 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dashspriteonce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dashstopdead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dashwarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-downdyrev 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dropa1c 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dualbandportal 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-dualbornlinked 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-exitjumpseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-fixgravdual 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flapgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flipbonk 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flipgracedyn 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flippair 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flipridepast 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flyframesup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flypadhead 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flyridedown 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-flystepup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-forceboost 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-forcelive 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-forceminifly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-forceminiswing 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-forceraw 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-gdbornseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-gdsnapsecy 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-goalspare 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-groundbandzoom 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-groundforce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-growramporder 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-hazendpoint 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-jumpgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-lawcubelaunch 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-lawfrombelowship 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-lawunderflip 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-lingerhold 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-modeslopeorder 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-modeswitchkeep 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-movingwallup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-mpusharm 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-nocolceil 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-p1soloend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-p2held 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-p2soloafter 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-padbandin 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-padnosnap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-padtable 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-padwaveold 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-pinwarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-portalpress 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-portalstarty 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-portalunpin 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-portalunseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-portreread 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-portseenx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-portslopepre 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-rampseatall 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ridesupgrace 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringflipride 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringflipunturned 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringheldnow 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringpobb 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringrectgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringride 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringrotbox 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringrotground 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringrotlate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ringspeedfirst 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-robotctrloff 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-robotrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-satrotraw 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-seatpast 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-sectionuid 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-shadowondeath 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-shipgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-sizeexit 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-sizeseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-slidelive 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-slideon 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-slideunderdir 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-slopeband 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-slopeexitgrav 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-slopelagplain 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-snapfacebelow 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spdtapwarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderbandground 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderheadx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderorbpass 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderorbrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderpadafter 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderpadlatch 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderportalcube 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderportalfirst 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderseatsolid 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spidersizehalf 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderslopeexit 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spidertapsize 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-spiderturnedfreshx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-sticktie0 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-stickuphill 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-stripvetoorder 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-swingheldash 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-tapwarpnocrush 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-tporbown 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-tppinvy 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-tpportalforce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-tpramplaunch 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-tpskipfly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-tptrigforce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-ufodownflap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-upsidecoyote 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-warpfly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-warpflyufo 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-warpslowonly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-wavebandzoom 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveceilend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveflipcap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveflipcapfloor 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveflipceilup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveflipramp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-wavegate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-wavepadsink 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveportalrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveportalrotmini 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveportalsize 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveportalslope 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waverampend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveramprot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveringminipobb 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-waveseathaz 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--no-wavewarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--nocolceil 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--p1soloend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--p2held 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--p2soloafter 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--padbandin 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--padnosnap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--padtable 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--padwaveold 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--pinwarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--portalpress 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--portalstarty 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--portalunpin 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--portalunseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--portreread 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--portseenx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--portslopepre 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--rampseatall 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ridesupgrace 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringflipride 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringflipunturned 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringheldnow 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringpobb 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringrectgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringride 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringrotbox 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringrotground 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringrotlate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ringspeedfirst 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--robotctrloff 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--robotrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--seatpast 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--sectionuid 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--shadowondeath 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--shipgate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--sizeexit 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--sizeseat 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--slidelive 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--slideon 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--slideunderdir 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--slopeband 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--slopeexitgrav 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--slopelagplain 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--slopereldbg 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--snapfacebelow 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spddbg 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spdtapwarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderbandground 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderheadx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderorbpass 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderorbrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderpadafter 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderpadlatch 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderportalcube 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderportalfirst 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderseatsolid 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spidersizehalf 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderslopeexit 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spidertapsize 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--spiderturnedfreshx 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--sticktie0 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--stickuphill 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--stripvetoorder 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--supdbg 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--swingheldash 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tapwarpnocrush 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tplatchexact 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tporbown 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tppinvy 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tpportalforce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tpramplaunch 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tpskipfly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--tptrigforce 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--ufodownflap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--upsidecoyote 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--warpfly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--warpflyufo 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--warpslowonly 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--wavebandzoom 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveceilend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--wavecentre 4cd56d74 4cd56d74 switch of the old tick, removed with it; takes 1 value
+--waveflipcap 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveflipcapfloor 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveflipceilup 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveflipramp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--wavegate 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--wavepadsink 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveportalrot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveportalrotmini 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveportalsize 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveportalslope 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waverampend 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveramprot 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveringminipobb 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveseathaz 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--waveslopemini 4cd56d74 4cd56d74 switch of the old tick, removed with it; takes 1 value
+--wavewarp 4cd56d74 4cd56d74 switch of the old tick, removed with it
+--noprune f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left
+--shadowmini f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left
+--no-shadowmini f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left
+--shadowwarp f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left
+--no-shadowwarp f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left
+--flipcldbg f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left; takes 1 value
+--dodgemin f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left; takes 1 value
+--speeddodge f19057a2 f19057a2 switch of the old tick, accepted and doing nothing since it left; takes 1 value
+--fgarmlive f7b74d50 f7b74d50 switch of the old tick, accepted and doing nothing since it left
+--wavepdbg f7b74d50 f7b74d50 switch of the old tick, accepted and doing nothing since it left; takes 1 value
+--offboard 141666af 141666af switch of the old tick, accepted and doing nothing since it left; takes 1 value
+--ringonce f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--portalonce f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ringorder f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--holdlatch f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ringfirst f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--padfirst f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--portalflap f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ringpresspin f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ballbuffer f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ringbuffer f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--groundcubejump f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--gravlandtap f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--gravpadchain f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--onewayceil f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--padsection f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--solidorder f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ballceil f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ballceilflip f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--snaponeway f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--flyreland f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--padthenland f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--faceclass f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--portalceil f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--flipgrace f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--padflipland f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--flyrings f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--sawexact f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--snaptable f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--sawexactship f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--groundgrow f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ringeither f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--growaway f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--sizepress f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--ballgrowlag f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--bonkarm f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--dualorblate f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--no-dualorblate f2227624 f2227624 accepted and doing nothing since it went into the default (2026-09-26 / 2026-10-24), removed now
+--gdcollideshadow 8018f61d 8018f61d observer fed by the old tick, accepted and doing nothing since it left
+--no-gdcollideshadow 8018f61d 8018f61d observer fed by the old tick, accepted and doing nothing since it left
+--shadowseed 8018f61d 8018f61d seed of the old tick's observer, read by nothing since it left; takes 1 value
+--p2secx 8349ee94 8349ee94 the second body's section cell of the follow pass: the branch ran only for a half no tick sets any more (the old tick's second stepOne), so it did nothing; was in the loop's pinned-rows arguments
+--no-p2secx 8349ee94 8349ee94 the off arm of --p2secx, removed with it
+--shadowsupply= 17a637f4 17a637f4 its only valued form, =check, compared the supply with the old tick's result: nothing to compare with since it left
+--walkresume 8aa5714b 8aa5714b a ladder attempt's witness walk taken up from an earlier attempt's checkpoint: never taken up since the resim ladder keeps every tick from t0, so it did nothing
+--walkresumecheck 8aa5714b 8aa5714b the fingerprint that compared a walk with --walkresume and one without, removed with it
+--togarm 11446850 11446850 followed the toggle-ring chain (a ring switching on a group whose x-crossing Toggle was switched off): always followed now
+--no-togarm 11446850 11446850 the off arm of --togarm, removed with it
+--acthazoff 4d0cbfae 4d0cbfae a spawn ring whose Toggles switch hazards off is an activator: always so now
+--no-acthazoff 4d0cbfae 4d0cbfae the off arm of --acthazoff, removed with it
+--actlookchain 4d0cbfae 4d0cbfae a toggle block whose target holds only look-only triggers is followed: always so now
+--no-actlookchain 4d0cbfae 4d0cbfae the off arm of --actlookchain, removed with it
+--airpressnear 4d0cbfae 4d0cbfae the air press child only where a landing is near: always so now
+--no-airpressnear 4d0cbfae 4d0cbfae the off arm of --airpressnear, removed with it
+--areaoutsame 4d0cbfae 4d0cbfae an Area effect whose out curve equals its in curve is covered: always so now
+--no-areaoutsame 4d0cbfae 4d0cbfae the off arm of --areaoutsame, removed with it
+--areaunrec 4d0cbfae 4d0cbfae an object recorded only at its base is armed for its Area action: always so now
+--no-areaunrec 4d0cbfae 4d0cbfae the off arm of --areaunrec, removed with it
+--autolockmoves 4d0cbfae 4d0cbfae an object a Move locks to the player counts as moved by its controller: always so now
+--no-autolockmoves 4d0cbfae 4d0cbfae the off arm of --autolockmoves, removed with it
+--bandowntrack 4d0cbfae 4d0cbfae an anchor whose start band the recording does not hold starts with its own band: always so now
+--no-bandowntrack 4d0cbfae 4d0cbfae the off arm of --bandowntrack, removed with it
+--boxoff 4d0cbfae 4d0cbfae a toggle block or touch Toggle that switches its group off is modelled: always so now
+--no-boxoff 4d0cbfae 4d0cbfae the off arm of --boxoff, removed with it
+--camfree a1ccab78 a1ccab78 a Camera Mode trigger with Free Mode is read where the dump has the column: always so now
+--no-camfree a1ccab78 a1ccab78 the off arm of --camfree, removed with it
+--capdashclass a1ccab78 a1ccab78 a dashing state is its own class of the cap: always so now
+--no-capdashclass a1ccab78 a1ccab78 the off arm of --capdashclass, removed with it
+--closedpast a1ccab78 a1ccab78 a closed-form mover that misses its recorded row at the anchor reads its recording: always so now
+--no-closedpast a1ccab78 a1ccab78 the off arm of --closedpast, removed with it
+--closedpastall a1ccab78 a1ccab78 the same on every level, not only one that can reverse: always so now
+--no-closedpastall a1ccab78 a1ccab78 the off arm of --closedpastall, removed with it
+--countactgrp a1ccab78 a1ccab78 a Count trigger with Activate Group switches its group: always so now
+--no-countactgrp a1ccab78 a1ccab78 the off arm of --countactgrp, removed with it
+--ctrlwavenow a1ccab78 a1ccab78 a wave takes a control change on the tick it happens: always so now
+--no-ctrlwavenow a1ccab78 a1ccab78 the off arm of --ctrlwavenow, removed with it
+--dualinlat a1ccab78 a1ccab78 the second body of a dual takes its own vehicle's input latency: always so now
+--no-dualinlat a1ccab78 a1ccab78 the off arm of --dualinlat, removed with it
+--dualslide 258c033f 258c033f each dual body keeps its own dart-slide arm: always so now
+--no-dualslide 258c033f 258c033f off arm of a switch folded into the default
+--eventtrig 258c033f 258c033f spawned gravity / teleport triggers are read from the event rows: always so now
+--no-eventtrig 258c033f 258c033f off arm of a switch folded into the default
+--expinzero 258c033f 258c033f exponential ease-in is exactly 0 at u = 0: always so now
+--no-expinzero 258c033f 258c033f off arm of a switch folded into the default
+--fixreach 258c033f 258c033f the gate holds a record back only for a moving object that meets the box the player sweeps over the step: always so now
+--no-fixreach 258c033f 258c033f off arm of a switch folded into the default
+--flyfree 258c033f 258c033f a flier in Free Mode is not held by its band: always so now
+--no-flyfree 258c033f 258c033f off arm of a switch folded into the default
+--forcecircle 258c033f 258c033f the force-circle census line is always printed: always so now
+--no-forcecircle 258c033f 258c033f off arm of a switch folded into the default
+--gravchain 258c033f 258c033f a spawned gravity trigger is followed through its Spawn chain: always so now
+--no-gravchain 258c033f 258c033f off arm of a switch folded into the default
+--gravorb 258c033f 258c033f a spawn ring whose target group holds a spawned gravity trigger sets it when the ring fires: always so now
+--no-gravorb 258c033f 258c033f off arm of a switch folded into the default
+--holdseed2 258c033f 258c033f a two-player anchor seeds the second body's held button from the hist payload: always so now
+--no-holdseed2 258c033f 258c033f off arm of a switch folded into the default
+--locknegdur 258c033f 258c033f a lock Move with a negative duration holds for ever: always so now
+--no-locknegdur 258c033f 258c033f off arm of a switch folded into the default
+--lockx 258c033f 258c033f an object locked to the player's x alone follows it in closed form: always so now
+--no-lockx 258c033f 258c033f off arm of a switch folded into the default
+--no-padplayerrot f15183a8 f15183a8 a pad leaves the player's rotation alone: the switch that zeroed it never ran in the loop
+--objscale f15183a8 f15183a8 object scale columns are read where the dump has them: always so now
+--no-objscale f15183a8 f15183a8 off arm of a switch folded into the default
+--p2born f15183a8 f15183a8 a second body's birth input is part of the key: always so now
+--no-p2born f15183a8 f15183a8 off arm of a switch folded into the default
+--p2shared f15183a8 f15183a8 two bodies of one level share their button where the level is not two-player: always so now
+--no-p2shared f15183a8 f15183a8 off arm of a switch folded into the default
+--p2touchbox f15183a8 f15183a8 a touch box is read for the second body as well: always so now
+--no-p2touchbox f15183a8 f15183a8 off arm of a switch folded into the default
+--padturn f15183a8 f15183a8 a turned pad is read as turned: always so now
+--no-padturn f15183a8 f15183a8 off arm of a switch folded into the default
+--portalrot f15183a8 f15183a8 a portal / speed / pad / orb takes its rotation: always so now
+--no-portalrot f15183a8 f15183a8 off arm of a switch folded into the default
+--recendheldrot f15183a8 f15183a8 a recording that ends held in a rotated frame is told apart: always so now
+--no-recendheldrot f15183a8 f15183a8 off arm of a switch folded into the default
+--reclag0 f15183a8 f15183a8 a recording's lag search starts at 0: always so now
+--no-reclag0 f15183a8 f15183a8 off arm of a switch folded into the default
+--reclagup f15183a8 f15183a8 a recording's lag is refined upward: always so now
+--no-reclagup f15183a8 f15183a8 off arm of a switch folded into the default
+--recstallmin f15183a8 f15183a8 a stall is judged by the shorter side: always so now
+--no-recstallmin f15183a8 f15183a8 off arm of a switch folded into the default
+--recstallwide f15183a8 f15183a8 a stall may span two samples: always so now
+--no-recstallwide f15183a8 f15183a8 off arm of a switch folded into the default
+--revframes f15183a8 f15183a8 a reverse offset is kept in every frame: always so now
+--no-revframes f15183a8 f15183a8 off arm of a switch folded into the default
+--ringmemrot f15183a8 f15183a8 the ring memory is read in the rotated frame: always so now
+--no-ringmemrot f15183a8 f15183a8 off arm of a switch folded into the default
+--ringpresseat f15183a8 f15183a8 a fresh press inside a toggle ring goes to the ring: always so now
+--no-ringpresseat f15183a8 f15183a8 off arm of a switch folded into the default
+--ringturn f15183a8 f15183a8 a turned ring is read as turned: always so now
+--no-ringturn f15183a8 f15183a8 off arm of a switch folded into the default
+--robotflipnohover f15183a8 f15183a8 flipGravity ends a robot's hover: always so now
+--no-robotflipnohover f15183a8 f15183a8 off arm of a switch folded into the default
+--robothoverwarp f15183a8 f15183a8 a robot's hover scales with the time warp: always so now
+--no-robothoverwarp f15183a8 f15183a8 off arm of a switch folded into the default
+--rideoverspeed f15183a8 f15183a8 a ride over the player's speed lands the body: always so now
+--no-rideoverspeed f15183a8 f15183a8 off arm of a switch folded into the default
+--rideoverspeedunder f15183a8 f15183a8 the same for a ride under the player: always so now
+--no-rideoverspeedunder f15183a8 f15183a8 off arm of a switch folded into the default
+--rotgmod f696c18d f696c18d the rotation seed takes the game-mode word where the payload has none: always so now
+--no-rotgmod f696c18d f696c18d off arm of a switch folded into the default
+--rotparent f696c18d f696c18d a rotation trigger's parent centre is followed: always so now
+--no-rotparent f696c18d f696c18d off arm of a switch folded into the default
+--rotqreplay f696c18d f696c18d the rotation queue is replayed with the plan: always so now
+--no-rotqreplay f696c18d f696c18d off arm of a switch folded into the default
+--rotretapfresh f696c18d f696c18d a ground re-tap needs no fresh press: the switch that asked for one never ran in the loop
+--rotspeed f696c18d f696c18d a speed portal takes its rotation: always so now
+--no-rotspeed f696c18d f696c18d off arm of a switch folded into the default
+--no-rotsplit f696c18d f696c18d off arm of a switch folded into the default
+--rottailmove f696c18d f696c18d a rotation's tail Move part is kept: always so now
+--no-rottailmove f696c18d f696c18d off arm of a switch folded into the default
+--sectionround f696c18d f696c18d a section cell is the floor of v / 100: the switch that rounded to nearest never ran in the loop
+--no-sectionround f696c18d f696c18d a section cell is the floor of v / 100: the switch that rounded to nearest never ran in the loop
+--seed-partial-ok f696c18d f696c18d a seed payload that omits a key a claimed subsystem needs is refused: the switch that ran anyway never ran in the loop
+--shadowkeepprune f696c18d f696c18d the prunes are not counted as kept deaths: the switch that counted them never ran in the loop
+--no-shadowkeepprune f696c18d f696c18d the prunes are not counted as kept deaths: the switch that counted them never ran in the loop
+--shadowpreyframe f696c18d f696c18d the supply's pre-y stays on the world's axis: the switch that turned it into the frame's never ran in the loop
+--shadowfreshwarp f696c18d f696c18d a spider's fresh-press teleport is not read from the shadow: the switch that did never ran in the loop
+--spidertptouch f696c18d f696c18d the touch boxes of a spider's fresh-press teleport are met at the pre-teleport y: nothing sets the tick it needs, so the rule never ran in the loop
+--no-spidertptouch f696c18d f696c18d off arm of a switch folded into the default
+--sdelaychains f696c18d f696c18d a Spawn chain's delay moves the x it takes effect at: always so now
+--no-sdelaychains f696c18d f696c18d off arm of a switch folded into the default
+--spawnringon f696c18d f696c18d a spawn ring turns its target group on: always so now
+--no-spawnringon f696c18d f696c18d off arm of a switch folded into the default
+--touchfirstlat f696c18d f696c18d a touch trigger's first fire is one tick late: always so now
+--no-touchfirstlat f696c18d f696c18d off arm of a switch folded into the default
+--touchobb f696c18d f696c18d a turned touch box is tested as turned: always so now
+--no-touchobb f696c18d f696c18d off arm of a switch folded into the default
+--touchobbrect f696c18d f696c18d the turned box only past the rect test: always so now
+--no-touchobbrect f696c18d f696c18d off arm of a switch folded into the default
+--tpkeepy b3fe72e2 b3fe72e2 a teleport that ignores y keeps the recorded y: always so now
+--no-tpkeepy b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tpmark b3fe72e2 b3fe72e2 the teleport trigger marks are read: always so now
+--no-tpmark b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tpmarkseed b3fe72e2 b3fe72e2 the teleport marks seed the anchor: always so now
+--no-tpmarkseed b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tpmove b3fe72e2 b3fe72e2 a moved teleport object follows its base y: always so now
+--no-tpmove b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tprev b3fe72e2 b3fe72e2 the shadow takes a reversed teleport: always so now
+--no-tprev b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tpsaveoff b3fe72e2 b3fe72e2 a saved teleport offset is read: always so now
+--no-tpsaveoff b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tptrigoff b3fe72e2 b3fe72e2 teleport triggers with an offset are loaded: always so now
+--no-tptrigoff b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tptrigonce b3fe72e2 b3fe72e2 every crossing teleport trigger fires once: always so now
+--no-tptrigonce b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--tptrigspawn b3fe72e2 b3fe72e2 spawned teleport triggers are loaded: always so now
+--no-tptrigspawn b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--warpcap b3fe72e2 b3fe72e2 a time warp above 1 is capped at 1: always so now
+--no-warpcap b3fe72e2 b3fe72e2 off arm of a switch folded into the default
+--autoownpre b9531aa3 b9531aa3 a fire before the anchor is owned by the seed: always so now
+--no-autoownpre b9531aa3 b9531aa3 off arm of a switch folded into the default
+--chanmove b9531aa3 b9531aa3 a Move channel is read per tick: always so now
+--no-chanmove b9531aa3 b9531aa3 off arm of a switch folded into the default
+--ctrlwinx b9531aa3 b9531aa3 a control window is judged on the body's x: always so now
+--no-ctrlwinx b9531aa3 b9531aa3 off arm of a switch folded into the default
+--dynseamlen b9531aa3 b9531aa3 the seam gap is the level length in ticks: always so now
+--no-dynseamlen b9531aa3 b9531aa3 off arm of a switch folded into the default
+--flybandcentre b9531aa3 b9531aa3 a fly band is centred on the zoom: always so now
+--no-flybandcentre b9531aa3 b9531aa3 off arm of a switch folded into the default
+--flydashring b9531aa3 b9531aa3 a dash ring counts for a fly body: always so now
+--no-flydashring b9531aa3 b9531aa3 off arm of a switch folded into the default
+--gravspawn b9531aa3 b9531aa3 a spawned gravity trigger is read from its chain: always so now
+--no-gravspawn b9531aa3 b9531aa3 off arm of a switch folded into the default
+--groupxsplit b9531aa3 b9531aa3 a group window splits at an x gap: always so now
+--no-groupxsplit b9531aa3 b9531aa3 off arm of a switch folded into the default
+--ladderovercap b9531aa3 b9531aa3 a ladder rung over its cap is kept: always so now
+--no-ladderovercap b9531aa3 b9531aa3 off arm of a switch folded into the default
+--lpbestany b9531aa3 b9531aa3 a resumed attempt keeps the best of any layer: always so now
+--no-lpbestany b9531aa3 b9531aa3 off arm of a switch folded into the default
+--needtrigrev b9531aa3 b9531aa3 a trigger behind a reversed body is judged by the reversed side: always so now
+--no-needtrigrev b9531aa3 b9531aa3 off arm of a switch folded into the default
+--padonlate b9531aa3 b9531aa3 the row that switches a pad on lands a tick after it: always so now
+--no-padonlate b9531aa3 b9531aa3 off arm of a switch folded into the default
+--recendquiet 5899c77e 5899c77e a recording that ends quiet is judged at its groups' end: always so now
+--no-recendquiet 5899c77e 5899c77e off arm of a switch folded into the default
+--rotqtouch 5899c77e 5899c77e a touch-activated rotation holds its channel until the touch spends it: always so now
+--no-rotqtouch 5899c77e 5899c77e off arm of a switch folded into the default
+--seedchain 5899c77e 5899c77e a counted or tapped touch box seeds its chain: always so now
+--no-seedchain 5899c77e 5899c77e off arm of a switch folded into the default
+--spiderrectall 5899c77e 5899c77e a spider reads the rect lists of every object: always so now
+--no-spiderrectall 5899c77e 5899c77e off arm of a switch folded into the default
+--touchonrec 5899c77e 5899c77e a touch box the recording entered reads the recording's tick: always so now
+--no-touchonrec 5899c77e 5899c77e off arm of a switch folded into the default
+--touchrecleads 5899c77e 5899c77e a touch box leads by the recording's own lead: always so now
+--no-touchrecleads 5899c77e 5899c77e off arm of a switch folded into the default
+--touchwinahead 5899c77e 5899c77e the touch window keeps a box this call can reach: always so now
+--no-touchwinahead 5899c77e 5899c77e off arm of a switch folded into the default
+--tpexittouch 5899c77e 5899c77e a teleport's exit meets the touch boxes: always so now
+--no-tpexittouch 5899c77e 5899c77e off arm of a switch folded into the default
+--tptrigchan 5899c77e 5899c77e a teleport trigger fires on its own rotation channel: always so now
+--no-tptrigchan 5899c77e 5899c77e off arm of a switch folded into the default
+--trigqueue 5899c77e 5899c77e a queued trigger fires at the x its queue reaches: always so now
+--no-trigqueue 5899c77e 5899c77e off arm of a switch folded into the default
+--ctrlliftlag 79457fe7 79457fe7 a control lift takes effect a tick late when the window has lag: always so now
+--no-ctrlliftlag 79457fe7 79457fe7 off arm of a switch folded into the default
+--ctrlwintrig 79457fe7 79457fe7 a control window opened by a trigger is read: always so now
+--no-ctrlwintrig 79457fe7 79457fe7 off arm of a switch folded into the default
+--dashframe3 79457fe7 79457fe7 a dash going on as the frame turns to 3 takes the ring's slope: always so now
+--no-dashframe3 79457fe7 79457fe7 off arm of a switch folded into the default
+--tpjumpnext 79457fe7 79457fe7 the x crossings a teleport jump passed fire on the next tick: always so now
+--no-tpjumpnext 79457fe7 79457fe7 off arm of a switch folded into the default
+--anchormove 79457fe7 79457fe7 an anchor takes the moving trigger's place: always so now
+--no-anchormove 79457fe7 79457fe7 off arm of a switch folded into the default
+--camlockx 79457fe7 79457fe7 a Move locked to the camera's x is read as locked to the player's x: always so now
+--no-camlockx 79457fe7 79457fe7 off arm of a switch folded into the default

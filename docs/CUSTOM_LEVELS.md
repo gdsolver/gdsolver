@@ -78,6 +78,8 @@ release's model fixes, which gave each level 25 minutes.
 
 The median is over the levels this survey ran itself.
 
+For v0.8.0, two measurements over the same lists of Daily, Weekly and Event levels (the 50 Daily levels as before, the current last 50 Weekly levels and all 29 Event levels, read on 2026-11-23: 129 levels) are put together here, and they are not one measurement. **(a) The re-measurement of 2026-11-23**: every level solved cold on the development trunk of that day, each given up to 1,200 s: 82 of the 129 cleared (Daily 43 of 50, Weekly 27 of 50, Event 12 of 29). **(b) Individual re-runs afterwards**: of the 12 levels that had cleared on an earlier build and did not in (a) (4 Daily, 4 Weekly, 4 Event), 8 were fixed and re-run on the v0.8.0-rc2 build, one game per level, each given up to 1,901 s (a longer limit than (a)'s 1,200 s, because these re-runs were measured on a slower machine than the re-measurement); all 8 cleared (4 Daily, 3 Weekly, 1 Event). **90 of 129** is (a) plus (b): no level was run again as a whole on one build with one limit, and the 4 not re-run in (b) are counted as not cleared.
+
 These lists are chosen by the game's developer, and the Weekly ones are demons,
 so the two surveys draw from different pools and their rates are not comparable.
 

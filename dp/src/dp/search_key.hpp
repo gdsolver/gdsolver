@@ -1,7 +1,13 @@
 #pragma once
 #include "dp/thread_pool.hpp"
+#include "dp/worldkey.hpp"
 
 namespace dp {
+
+// The key's term for a dual's second velocity-limit exemption (State::boost2, below); named because --phaseprof's `boost2obs:` count takes it out of a key again (search_dp.hpp).
+constexpr uint64_t kKeyBoost2 = 0x7B7D159C79E2A32Full;
+// ...and the first body's (State::boost), for the `boostobs:` count.
+constexpr uint64_t kKeyBoost = 0xA0761D6478BD642Full;
 
 // Suffix maximum of every surface top at or ahead of an x bucket. A player that
 // is airborne, upside down, and already above everything left in the level can
@@ -11,50 +17,7 @@ namespace dp {
 // in the actual corridor had died. g_yBound only caught them 120 px above the
 // level, far too late to keep the corridor branches alive.
 inline std::vector<double> g_topAhead;   // per 30 px bucket
-inline double g_bucketX0 = 0.0;
-inline double topAheadAt(double x) {
-    if (g_topAhead.empty()) return 1e9;
-    long long i = (long long)((x - g_bucketX0) / 30.0);
-    if (i < 0) i = 0;
-    if (i >= (long long)g_topAhead.size()) return -1e9;
-    return g_topAhead[(size_t)i];
-}
 inline std::vector<double> g_topAheadDyn;   // per 30 px bucket, on g_topAhead's grid
-inline double topAheadDynAt(double x) {
-    if (g_topAheadDyn.empty()) return -1e18;
-    long long i = (long long)((x - g_bucketX0) / 30.0);
-    if (i < 0) i = 0;
-    if (i >= (long long)g_topAheadDyn.size()) return -1e18;
-    return g_topAheadDyn[(size_t)i];
-}
-// Rotated-frame version. frame 0 is the same as above. The right thing is to
-// DO THE SAME TEST IN THE FRAME'S COORDINATES, not to disable it: disabled, the
-// "can never come back" branches were left unpruned and squeezed the frontier
-// at lv22's cold entry (measured 2026-08-15).
-inline double topAheadAtF(int f, double x) {
-    if ((f & 3) == 0) return topAheadAt(x);
-    const auto& slot = g_frameLv[(size_t)(f & 3)];
-    if (!slot || slot->topAhead.empty()) return 1e9;
-    long long i = (long long)((x - slot->bucketX0) / 30.0);
-    if (i < 0) i = 0;
-    if (i >= (long long)slot->topAhead.size()) return -1e9;
-    return slot->topAhead[(size_t)i];
-}
-// For the --slopedbg `escapee:` print: the bucket topAheadAtF reads and the
-// table's length (i >= n: it answered -1e9 from past the end; n == 0: no table).
-inline void topAheadIndex(int f, double x, long long& i, long long& n) {
-    const std::vector<double>* t = nullptr;
-    double x0 = 0.0;
-    if ((f & 3) == 0) {
-        t = &g_topAhead;
-        x0 = g_bucketX0;
-    } else {
-        const auto& slot = g_frameLv[(size_t)(f & 3)];
-        if (slot) { t = &slot->topAhead; x0 = slot->bucketX0; }
-    }
-    n = t ? (long long)t->size() : 0;
-    i = (t && n) ? std::max(0LL, (long long)((x - x0) / 30.0)) : -1;
-}
 // ship dedupe granularity (cube is always 0.5px / 0.1). Ship layers are the
 // only ones that saturate the cap, so these two knobs set the runtime.
 inline double g_shipYq = 0.5;   // multiplier: 0.5 -> 2px bins
@@ -171,6 +134,19 @@ inline bool bandClamps(const State& s) {
 inline uint64_t coinKeyBits(const State& s) {
     return s.coins ? ((uint64_t)s.coins * 0x2545F4914F6CDD1Dull) : 0;
 }
+// The Tap chain's part (game_event.hpp g_tapWinTicks): the presses heard per chain Tap (saturating at what the chain reads) and the edges of the last effect window, as one value; 0 = none heard, as on every level with
+// no Tap chain. The window is what keeps states that pressed at other ticks long ago in one group: older presses are only counted (the timeline is told every tick through State::evgate's chain all the same).
+inline uint64_t tapKeyBits(const State& s) {
+    uint64_t n = 0, a = 0;
+    for (int i = 0; i < 8; ++i) {
+        if ((double)s.xAbs > gdev::g_tapPastX[i]) continue;   // the player is past everything this Tap's count can move (game_event.hpp g_tapPastX): the count is no part of the world any more
+        n |= (uint64_t)s.tapN[i] << (8 * i); a |= (uint64_t)s.tapAge[i] << (8 * i);
+    }
+    const uint32_t w = (s.tapWin != 0 && gdev::tapNearXY((double)s.xAbs, (double)s.y)) ? s.tapWin : 0;   // the window only while the player is near what the chains move (game_event.hpp g_tapNear)
+    return (n | a | w) == 0 ? 0 : gdtrig::wkMix(gdtrig::wkMix(n, a), (uint64_t)w + 1);
+}
+// the 0.25 px bucket of State::revOff the dedupe key reads (half away from zero, so +-0.125 are different buckets); the fieldcheck family stale_revoff_key and the dptest fixture compare what the key compares
+inline int32_t revOffBucket(float r) { return (int32_t)std::lround((double)r * 4.0); }
 inline uint64_t modelKeyOf(const State& s, long long t) {
     // dedupe key: exact enough to keep distinct behaviours, coarse enough to
     // saturate. cube y 0.5px / vy 0.1; ship coarser (y 1px / vy 0.2) or the
@@ -289,6 +265,9 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // lv22 itself wherever the mode holds the band.
            // WHAT THIS COSTS IS NOT MEASURED. A new key dimension fragments
            // the arena, and the only instrument for that is a cold run.
+           // ...and whether the band is still the anchor's branch A reading, which the next Static Camera exit replaces by the portal's band (bands.hpp
+           // kBandAnchorA). Gated on the bit, so every key without it stays bit-identical.
+           ^ ((s.bandBranch & kBandAnchorA) ? 0x5851F42D4C957F2Dull : 0ull)
            ^ (((s.bandBranch & 3) == 1 && bandClamps(s))
                   ? ((uint64_t)(uint32_t)(int32_t)std::lround(
                         kBandRetracted
@@ -329,18 +308,30 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // --dualdash: ...and the second body's dash, which its own step now keeps (0 off)
            ^ ((s.dual && s.dashing2)
                   ? (0x5B2E7A1D93C4F086ull ^ ((uint64_t)s.action << 31)) : 0)
-           // --p2born: ...and a second body born holding nothing whose plan level has not yet shown a release
-           ^ ((g_p2Born && s.dual && s.action2 == 3) ? 0x6E3B95C1A7D204F8ull : 0)
-           // --dualinlat: ...and in a dual whose second body takes the button a tick after the first
+           // --p2born (removed): ...and a second body born holding nothing whose plan level has not yet shown a release
+           // (always on: the switch --p2born is removed)
+           // --p2born (removed): the second body a dual portal makes is born holding nothing, and the plan's level 1 for its button (held since before it existed) does not hold it:
+           // the game gets an input only where the mask changes, so the body takes a held button only after a release and a press the plan makes. A custom level: the plan holds the second player's button from t=27,763 and the
+           // dual starts at 27,796; the game's second body lands on the ceiling at 27,870 and does not jump again while the model's re-jumped, and the plan replayed from the start died at 27,897 there.
+           ^ ((s.dual && s.action2 == 3) ? 0x6E3B95C1A7D204F8ull : 0)
+           // --dualinlat (removed): ...and in a dual whose second body takes the button a tick after the first
            // (ship or UFO against anything else), the two buttons it has just seen are part of the state
-           ^ ((g_dualInLat && s.dual && (s.mode2 == 1 || s.mode2 == 3) && !(s.mode == 1 || s.mode == 3))
+           // (always on: the switch --dualinlat is removed)
+           // --dualinlat (removed): in a dual whose second body is a ship or a UFO (input latency 2) and whose first is not (latency 1), the second body takes the button one tick
+           // later than the first, as GD gives each body its own vehicle's latency. The plan's press is converted to an effect tick by the first body's mode (the walk's
+           // scheduler and the search's emitter), so the first body is right by construction; the second one now reads the first one's input of the tick before (State::action)
+           // and its own tick before that (State::action2). A weekly custom level, t=11,157..11,159: a cube and a UFO hung on the ceiling, one press at 11,157; GD's cube jumps
+           // on 11,158 (vy 10.62) and the UFO on 11,159 (vy -6.871), the model jumped both on 11,158; the UFO was a tick early for the rest of the section and the pair died
+           // at GD's tick only after the loop had fixed the same state 17 times. The opposite pairing (the first body slower) would need the second body to read the first
+           // one's NEXT tick, which a forward step does not have, and stays as it was.
+           ^ ((s.dual && (s.mode2 == 1 || s.mode2 == 3) && !(s.mode == 1 || s.mode == 3))
                   ? (0x3C79AC492BA7B653ull ^ ((uint64_t)s.action << 29)
                      ^ ((uint64_t)(s.action2 >= 2 ? (s.action2 == 3 ? 0 : s.action) : s.action2) << 30))
                   : 0)
            // --revcarry: ...and the correction a reverse ring still owes (State::revOff), in 0.25 px buckets: two states alike
            // in everything else run to different x. 0 for every state that never met such a ring, so those keys stay as they were.
            ^ (s.revOff != 0.f
-                  ? ((uint64_t)(uint32_t)(int32_t)std::lround((double)s.revOff * 4.0) * 0xA24BAED4963EE407ull)
+                  ? ((uint64_t)(uint32_t)revOffBucket(s.revOff) * 0xA24BAED4963EE407ull)
                   : 0)
            // --p2xoff: ...and how far the second body runs ahead of the first (State::dx2), in
            // 0.25 px buckets. Two pairs alike in everything else meet different objects with
@@ -350,6 +341,8 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
                   ? ((uint64_t)(uint32_t)(int32_t)std::lround((double)s.dx2 * 4.0)
                      * 0xD6E8FEB86659FD93ull)
                   : 0)
+           // --shadowp2dir: the second body's direction (State::rev2), while dual: equal offsets with opposite directions are different states. 0 without the flag.
+           ^ ((s.dual && s.rev2) ? 0x8F3A91C27D5E6B41ull : 0)
            // ...and near a TOGGLE BLOCK it has not fired (g_pressWin), for the
            // same reason: the block fires on the parent's button, so the held
            // child and the released one of an airborne cube -- same y, same vy
@@ -404,7 +397,7 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // (y,vy), but whether the swing's terminal clamp applies differs
            // (a boosted state passes 8 and keeps accelerating; an unboosted
            // one sits pinned there).
-           ^ (s.boost ? 0xA0761D6478BD642Full : 0)
+           ^ (s.boost ? kKeyBoost : 0)
            // ...and the second body's (State::boost2, per-half since
            // 2026-09-06). Gated on `dual` so that every single-player key is
            // bit-identical; a dual pair whose halves differ in the exemption
@@ -412,7 +405,7 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // world lines from the next tick onward. The corpus reaches it on
            // lv16 t=8,913 only, where BOTH halves carry it, so the term costs
            // that level nothing and every other level zero.
-           ^ ((s.dual && s.boost2) ? 0x7B7D159C79E2A32Full : 0)
+           ^ ((s.dual && s.boost2) ? kKeyBoost2 : 0)
            // --a1clatch: GD's +0xa1c (State::a1cLatch). Same (y,vy), but whether the next
            // ramp exit launches or releases differs. 0 without the flag, so every key is
            // bit-identical there; the second body's bit only counts in a dual.
@@ -445,7 +438,7 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // depending on it, so the dedupe must not merge them. 0 in every
            // level without an id-2866 object, so every existing key is
            // bit-identical.
-           // --fgarmlive turns fgArm into GD's countdown (0..kArmTicks), and
+           // --fgarmlive (removed) turns fgArm into GD's countdown (0..kArmTicks), and
            // `<< 63` throws away everything above 1: two armed cubes with 1 and
            // 2 ticks left would get the same key while answering a ceiling two
            // ticks from now differently. So the flag switches the term to a
@@ -454,13 +447,18 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // The riding box's renewal uses the same countdown (and reads its fresh value),
            // so the term is always the multiply.
            ^ ((uint64_t)s.fgArm * 0xBF58476D1CE4E5B9ull)
-           // --upsidecoyote: a cube whose og is still set can jump from mid-air next tick and
+           // --upsidecoyote (removed): a cube whose og is still set can jump from mid-air next tick and
            // one at the same (y, vy) without it cannot. Set only under the flag, so every
            // other key is bit-identical.
            ^ (s.ogLinger ? 0x3C6EF372FE94F82Bull : 0)
-           // --holdlatch: a held button a ball's tap has spent does not thrust a ship, and one
+           // --holdlatch (removed): a held button a ball's tap has spent does not thrust a ship, and one
            // that is still live does. Set only under the flag.
            ^ (s.holdDead ? 0x1F83D9ABFB41BD6Bull : 0)
+           // --ringslots: the next step's ring gate reads the shadow's H and S (its tail copies them into the mirrors; the slots go down there) and the two press-step
+           // consumers a step carries (State::gdAux bits 1, 2 of the body's nibble), so two states that differ in those answer the next ring differently -- and the rest of the byte (the
+           // mirrors, the slots, RF) is rewritten before anything reads it. Only under the flag; otherwise bit-identical.
+           ^ ((g_ringSlots && g_ringSlotsKey) ? (((uint64_t)(s.gdHS & 3) | ((uint64_t)(s.gdAux & 6) << 1)) + 1) * 0xD6E8FEB86659FD93ull : 0)
+           ^ ((g_ringSlots && g_ringSlotsKey && s.dual) ? (((uint64_t)(s.gdHS2 & 3) | ((uint64_t)((s.gdAux >> 4) & 6) << 1)) + 1) * 0xA24BAED4963EE407ull : 0)
            // ...and the id-1859 ceiling arm WOULD be the same kind of world
            // state, for the same reason: two cubes at the same (y, vy) answer
            // the ceiling above them with a bonk or with a death depending on
@@ -472,12 +470,17 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
            // Only the ARMED/not bit, never the counter -- the two ticks it
            // holds behave alike -- and 0 in every level without an id-1859, so
            // every existing key stays bit-identical.
-           // --bonkarm puts the gate back, so it puts the bit back with it.
+           // --bonkarm (removed) puts the gate back, so it puts the bit back with it.
            ^ ((s.armT < kArmTicks) ? 0xFF51AFD7ED558CCDull : 0)
            // --ridebox: inside a riding 1859's ride the two armed ticks do NOT behave
            // alike -- a fresh arm (armT 0) is renewed on the next tick and a decaying one
            // lapses -- so the fresh value gets its own term. Set only under the flag.
            ^ ((s.armT == 0) ? 0x2545F4914F6CDD1Dull : 0)
+           // ...and the dart-slide arm (id 1755, State::slideT; the shadow writes it back from +0xb80, shadow_step.hpp portalStateDerive). The seed of a body turns it into the counter again
+           // (kArmTicks - slideT while it is up), so two states at the same (y, vy) whose arms have 2 and 1 ticks left, or none, seat a wave on a solid's top differently on the next ticks; both
+           // armed values are keyed for that. 0 for an arm that is not up (255, or the clock run out), so every key of a level without an id-1755 is bit-identical. The second body's
+           // (slideT2) has no writer and stays 255.
+           ^ ((s.slideT < kArmTicks) ? ((uint64_t)(s.slideT + 1) * 0xC13FA9A902A6328Full) : 0)
            // The spider's teleport age while it still spares a side kill (State::spiderJumpT):
            // two spiders at the same (y, vy) answer a wall inside their box differently for the
            // ticks that are left. 0 outside the window, so every other key is bit-identical.
@@ -601,10 +604,39 @@ inline uint64_t modelKeyOf(const State& s, long long t) {
     // (State::pcRel), and one whose last touched box will not fire again (State::pcTouch)
     if (s.pcRel) k ^= 0x6C8E9CF570932BD5ull;
     if (s.pcTouch) k ^= (uint64_t)s.pcTouch * 0xA24BAED4963EE407ull;
+    // --reversetrig (touch-started): a branch that fired a Reverse box will not fire it again; one that has not will fire it where the other does not
+    if (s.revFired) k ^= (uint64_t)s.revFired * 0x9E3779B97F4A7C15ull;
+    // --shadowstep: what the shadow's buttons wrote (shadow_lite.hpp slKeyBits; 0 for a state the shadow did not step, so every key without the flag is as it was)
+    k ^= gdcol::slKeyBitsOf(s.slRef);
+    // The world's small state parts (trigevent_togstate.hpp) -- only a non-zero value is mixed in, so a state nothing has switched or gated keeps its key
+    if (s.tog.w[0] | s.tog.w[1] | s.xgate) k ^= gdtrig::wkMix(gdtrig::wkMix(gdtrig::wkMix(0x57544b59ULL, s.tog.w[0]), s.tog.w[1]), s.xgate);
+    if (s.evKey) k ^= gdtrig::wkMix(0x45564741ULL, s.evKey);   // the game events the lineage raised that an Event trigger listens for (State::evKey, the events alone: State::evgate's chain also carries the Taps' presses): two states that raised them at other ticks are other worlds
+    if (const uint64_t tb = tapKeyBits(s)) k ^= gdtrig::wkMix(0x54415047ULL, tb);   // a Tap chain's presses as far as they can still change the world: the count per Tap and the last effect window
+    // ...and the WHOLE world key (worldkey.hpp worldKeyOf without the camera summary, with tog / xgate): the full touch history (trig mask, fireB), items, the Rotate queue (rotSpent / rotChan / rotRev) -- finer than what
+    // the key above keeps, so states that differ only in history nothing reads any more stop merging (restructure draft section 7.11 P5-2).
+    k ^= worldKeyOf(s, false, true);
     return k;
 }
 inline uint64_t keyOf(const State& s, long long t) { return modelKeyOf(s, t) ^ coinKeyBits(s); }
 
+// --layerdigest v1's per-state fingerprint: a PROJECTION of the state, not the state. `key` is modelKeyOf ^ rules.keyBits, which keeps only what the search tells apart
+// (positions in bins, the second body's y2 / vy2 rounded to a bin, ...); to it the fingerprint adds y, vy, xAbs at full float precision and the hidden fields bandAnim, tight and portSeen.
+// Two states that differ only in a field this leaves out -- y2 / vy2 inside one bin, the lineage `parent`, pointers -- have the SAME fingerprint, and a layer made of them has the same layer
+// digest. A matching layer digest therefore means "the sets of projections agree" (and, being a 64-bit hash, agrees with probability 1 - 2^-64 per difference, not with certainty); it is not
+// a bit-for-bit match of the states. The canonical serializer of the restructure's P7 is the instrument for that claim.
+inline uint64_t layerStateFingerprint(const State& s, uint64_t key) {
+    auto mix = [](uint64_t h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); return h * 0xff51afd7ed558ccdULL; };
+    uint32_t yb, vb;
+    uint64_t xb = 0;
+    std::memcpy(&yb, &s.y, 4);
+    std::memcpy(&vb, &s.vy, 4);
+    std::memcpy(&xb, &s.xAbs, sizeof s.xAbs < 8 ? sizeof s.xAbs : 8);
+    uint64_t h = mix(key, yb);
+    h = mix(h, vb); h = mix(h, xb); h = mix(h, s.bandAnim); h = mix(h, s.tight);
+    const unsigned char* ps = (const unsigned char*)&s.portSeen;
+    for (size_t b = 0; b < sizeof s.portSeen; ++b) h = mix(h, ps[b]);
+    return h;
+}
 // --groupfire (off): the search's speed groups are split by WHEN each box whose chain is still
 // moving was entered, not only by which boxes were.
 //
@@ -621,28 +653,30 @@ inline uint64_t keyOf(const State& s, long long t) { return modelKeyOf(s, t) ^ c
 // which would leave up to three ticks of the same error. A box at rest drops out, as it does from
 // the key: its chain has finished the same way for everyone.
 inline bool g_groupFire = false;
-// --groupxsplit (on by default since 2026-10-07, together with --rampendclick; --no-groupxsplit is
-// the off arm): a speed group is also split where its members' x leave a gap across which
-// the two parts' object windows cannot meet, so each part builds its windows from its own x span.
-// The widest window margin is the speed portals' 80 px (cli.hpp, the group's windows), so the
-// windows [lo - 80, hi + dx + 80] of two parts are disjoint exactly when the gap between them is
-// wider than 2 * 80 + |dx| (kGroupWinMargin). Nothing narrower is split: members that could still
-// share an object stay one group, as before.
+// dupbatch (E8; the default since the 22-level cold of 2026-11-18, once the switch --dupbatch, now in dp/removed_flags.txt): the groups of a layer that are one tick of the world are prepared once and stepped together (search_dp.hpp).
 //
-// The group key holds dx but not x, on the reasoning that members of one speed differ only by
-// stair snaps. That stops holding once two populations have taken different speed histories and
-// then come back to the same dx: they share the key, one window spans both, and every step walks
-// the objects of the whole gap. Measured on lv16's heavy call (--start 3961, all flags): a lineage
-// that the --ufolawflap flap kept alive ran at 1.30 while the rest ran at 1.61, both then took the
-// 1.05 portal, and from t=19,500 one group spanned 1,700 px (x 31,374, xlo 29,663); those 1,500
-// ticks cost 74 s against 5 s without the flag, with 4.8% more steps in the whole call.
+// The group key splits the states by WHEN each touch box whose chain is still running was entered (the fire signature), because the model places such a chain's movers from the entry tick. With the trigger
+// shadow supplying the movers that is often a difference nothing reads: on lv22's heavy call 149,248 of the plain pass's 217,036 groups had the shadow timeline (content and track), the x, the window, the
+// touch mask, the lock offset, the autonomous triggers' fire ticks and the shadow step's events of an earlier group of their layer, and in every one of them the objects in the windows and the place of
+// each moving one were that group's too (DUPOBS_OUT). Each of those groups still paid a whole prepareGroup (the model's own placement of every mover, twice) and, being three or four states, a step on one thread.
 //
-// Each part's window still covers every member (it is built from that part's own lo..hi), so no
-// state loses an object it could reach. What changes when a split happens is the group-level
-// bookkeeping that is per part now: the latest fire tick and lock offset each part places its
-// geometry from, the order the parts are emitted in, and their separate dedupe maps. Off, or on
-// with no gap over the threshold, every state is part 0 and the layer is processed as before.
-inline bool g_groupXSplit = true;
+// The layer's groups are all given to the trigger shadow first; a group whose key below is an earlier group's (a follower) is not prepared: its states are stepped with that group's (the
+// leader's) tick, in the leader's parallel pass, and kept until the follower's turn, where its dedupe runs as it always did. Nothing else moves: the groups, their order, their dedupe maps and the order of
+// the survivors are as without the batching, so the search is the same search wherever the key is complete:
+//   the key holds everything prepareGroup and the step are given -- the shadow timeline after the step (content, track) AND its objects before it (the supply's previous place and on / off), x, the
+//   members' x span, the window, the speed, frame, direction, the second body's spread, the touch mask, the lock offset, the autonomous triggers as this group dates them, the shadow step's
+//   Teleports / Gravity triggers -- except the boxes' fire ticks (gFire / gFireB), which are keyed where the model's own placement can stand (named groups only, a blind timeline, a ground-clamped
+//   mover) and otherwise asked of a follower only where the leader's build read them (a turned frame, a mover with no supply slot: dynamics.hpp FireReadSet).
+//   What is taken on trust: nothing the step reads of a SUPPLIED mover hangs on the fire ticks.
+// --dupbatchcheck (an instrument): every follower is prepared and stepped for itself as well and its children are held against the ones the leader's tick made (flag, key and the state's bytes); the
+// follower's own are used, so the search is the one without the batching, and the mismatches are counted (g_dupBatchMismatch). A level set is checked only where its groups are batched: the 22
+// official levels had 201,549 followers and no mismatch (7b970f71); a [fp] comparison does not see a mismatch (it was identical on 22 of 22 with 29 of them, e3eb678d).
+// Off for a layer where something reads or prints a group's own tick per group: --needtrig, the instruments of a layer (--dbg, --refwatch, --clearprobe, --portaudit, --qfoldwatch, --rotwatch,
+// --searchcensus, --placetable, --trigshadowcheck, DUPOBS_OUT); and with one group in the layer or no supply there is nothing to batch.
+inline bool g_dupBatchCheck = false;
+inline long long g_dupBatchLayers = 0, g_dupBatchLeaders = 0, g_dupBatchFollowers = 0, g_dupBatchParents = 0, g_dupBatchChecked = 0, g_dupBatchMismatch = 0;
+inline long long g_dupBatchFireKeyed[6] = {};   // groups where the model's own placement can stand, by why (search_dp.hpp): 1 named groups only, 2 a turned frame, 3 a blind timeline, 4 a mover with no supply slot, 5 a ground-clamped mover. 1, 3 and 5 are keyed with their touch fire ticks; 2 and 4 note the ticks their build reads
+inline long long g_dupBatchRead[4] = {};        // the builds that noted their tick reads (why 4): 0 every tick counted as read (the previous place was carried over), 1 some tick read, 2 none; 3 = candidates with a leader's key that it did not take (a tick its build read is another in them)
 // --search dp|beam|montecarlo: the search a call's answer comes from (search_dp.hpp). 0 = the layer
 // DP (searchLayers, the default), 1 = the plain beam (searchBeam, a prototype for the yardstick),
 // 2 = Monte Carlo rollouts (searchMontecarlo, the reference search that draws random numbers).
@@ -704,7 +738,7 @@ inline uint64_t groupFireSig(const State& s, long long t) {
 // per group (autoOwnApply) while the children of that group are stepped.
 inline bool g_stateCross = true;   // (on since 2026-10-21; --no-statecross is the off arm)
 inline int g_crossMinLag = 3;     // --crossminlag: ticks late below which a crossing reads the leader's date
-inline int g_crossLagUnit = 4;     // --crosslagunit: the unit of a record (State::xcLag), and so the grain of the group split
+inline int g_crossLagUnit = 1;     // --crosslagunit: the unit of a record (State::xcLag), and so the grain of the group split. 1 since 2026-11-15 (it was 4; --crosslagunit 4 is the old arm): at 4 a crossing the game dates a tick or three off a multiple of 4 from the leader only reaches the world of the nearest date, 2 ticks either way, so a state at the game's own x had no timeline dated as the game's (lv21 anchor 4510: a descending thorn 1-2 ticks early at every state, and no pass of a wall the game passes)
 inline std::vector<double> g_crossCx;      // g_autoTrig[i].cx (g_autoTrig is sorted by it)
 inline std::vector<uint8_t> g_crossMoves;  // does trigger i move anything
 inline std::vector<int> g_crossFire;       // g_autoTrig[i].fireT as the leader dated it, this layer
@@ -769,6 +803,9 @@ inline bool xcLive(const State& s, int k, long long t) {
     if (id >= g_crossRun.size() || id >= g_crossFire.size() || g_crossFire[id] < 0) return false;
     return (double)(t - (long long)xcOwn(s, k)) <= g_crossRun[id] + 2.0;
 }
+// the signature that splits groups by the game events their members raised that an Event trigger listens for (State::evgate: the digest of the chain of (step, events); 0 for a state with none): the group's timeline
+// is told those events, so members that raised other ones are other groups. (Not cut by a window yet: a lineage keeps its digest for good, so groups raised at other ticks do not merge again.)
+inline uint64_t evSig(const State& s) { return (s.evKey ? gdtrig::wkMix(0x45564747ULL, s.evKey) : 0) ^ (tapKeyBits(s) ? gdtrig::wkMix(0x54415347ULL, tapKeyBits(s)) : 0); }
 // the signature that splits groups by what their members dated themselves (0 for a state with no live record)
 inline uint64_t xcSig(const State& s, long long t) {
     uint64_t k = s.xcOver ? 0x9E3779B97F4A7C15ull : 0;
@@ -836,7 +873,7 @@ inline void autoOwnApplyCross(AutoOwnGuard& G, double gx, double gdx, long long 
             const long long k = (long long)std::floor((gx - A.cx) / gdx);
             own = std::min((int)(t - 1 - k) + A.delay, A.fireT + A.fireSpreadT);
         } else if (g_crossBehind && gx < A.cx) {
-            if (g_autoOwnPre && g_autoOwnT0 >= 0 && (long long)A.fireT <= g_autoOwnT0) continue;   // --autoownpre (dynamics.hpp)
+            if (g_autoOwnT0 >= 0 && (long long)A.fireT <= g_autoOwnT0) continue;   // (dynamics.hpp)
             G.saved.push_back({i, A.fireT});
             A.fireT = -1;   // this group has not reached it
             continue;

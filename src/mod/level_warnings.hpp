@@ -33,11 +33,14 @@ enum : uint32_t {
     // one behind as well (--tpback, which reads the crossing triggers at the farthest x reached, as
     // GD's crossing queue does: checkSpawnObjects 0x21a8f0). The bit keeps its place so the others do.
     kSidewaysTeleport = 1u << 0,
-    // A teleport orb (3027) with a static force (key 345) or a redirected one (key 347): it sets the
-    // player's velocity, which dp reads for a portal (--tppush, on) but not for an orb (its loader
-    // line: "sets a velocity - NOT modelled"). A portal's ignoreY (353) is modelled too
-    // (--tpkeepy, on); a portal's force or keep met in a turned frame or by a second player is not
-    // measured.
+    // RETIRED (never set): a teleport orb (3027) with a static force (key 345) or a redirected one (key
+    // 347). The orb goes through the same teleportPlayer as a portal (PlayerObject::ringJump, type 46),
+    // and the shadow step (--shadowstep=all, the body of every run) sets its velocity as GD does: on the
+    // calib_tporbforce rig (static force along a marker's or an orb's direction, added, 0, redirected,
+    // ignoreY, forced gravity, every mode, mini) the shadow's vy / y / x match GD's per tick on 18 of 20
+    // units, the other two (ship, ufo) off by the one-tick lag their no-force units already have. The old
+    // step's loader line "sets a velocity - NOT modelled" is the old model's. A portal's force or keep
+    // met in a turned frame or by a second player is not measured. The bit keeps its place so the others do.
     kOrbPush = 1u << 1,
     // A 2902, a teleport orb (3027) or a teleport trigger (3022) whose target group holds more than
     // one object: teleportPlayer (0x20fdb0) draws one of them from the seed at 0x6c2ef8. The export
@@ -45,17 +48,22 @@ enum : uint32_t {
     kTeleportSeveralExits = 1u << 2,
     // A teleport trigger (3022) dp leaves out: one that keeps the player's offset from it
     // (m_saveOffset, key 351), which the export does not carry, or one set off by a spawn (key 62)
-    // that no chain reaches from an x crossing or a touch (spawnChainReach). The trigger is modelled
+    // that no chain reaches from an x crossing or a touch (spawnChainReach, through delayed and ordered
+    // Spawns: the trigger shadow runs them) and whose group some object names as a target
+    // (targetedGroups: a group nothing names is never fired). The trigger is modelled
     // otherwise -- by its x (dp --teleporttrig), by its own touch (--tptouch), from a chain's root
-    // (--tptrigspawn, --tptouch) -- as the teleport orb (3027) is (--teleportorb) apart from the
+    // (--tptrigspawn (removed), --tptouch) -- as the teleport orb (3027) is (--teleportorb) apart from the
     // shapes above; a second player or a turned frame meeting either is not measured, which the
     // yellow note and dp's load lines cover.
     kTeleportTrigger = 1u << 3,
-    // A gravity trigger (2066) dp leaves out: one for player 2 only (key 200) in a level that has a
-    // second player at all (a dual portal, 286, or two-player mode), or one set off by a spawn that
-    // no chain reaches from an x crossing or a touch (spawnChainReach). dp models the trigger by its
-    // x (--gravtrig), by its own touch (--gravtouch) and from a chain's root (--gravspawn,
-    // --gravchain, --gravtouch).
+    // A gravity trigger (2066) dp leaves out: one for player 2 only (key 200) that a touch or a spawn
+    // sets off, in a level that has a second player at all (a dual portal, 286, or two-player mode; one on
+    // the x-crossing queue is the shadow's second body's, --shadowp2grav), or one set off by a spawn that
+    // no chain reaches from an x crossing or a touch (spawnChainReach; a delayed or ordered chain from an
+    // x crossing counts too where dp does not refuse its delay: spawnChainReachDelayed) and whose group some object
+    // does name as a target (targetedGroups; a group nothing names is never fired). dp models the trigger by its
+    // x (--gravtrig), by its own touch (--gravtouch) and from a chain's root (--gravspawn (removed),
+    // --gravchain (removed), --gravtouch).
     kGravityTrigger = 1u << 4,
     // A level the dp loader refuses for its gravity portals ("gravity portals: N (limit 128, ...)"
     // in level_loader.hpp), the gravity toggle portal (2926) counted with the two kinds of gravity
@@ -109,7 +117,7 @@ inline const char* const kUnmodelledNames[] = {
     "teleports that move you back",
     "teleport orbs that push you",
     "teleports with several exits",
-    "teleport triggers keeping an offset or set off by an item, a delayed spawn or an event no pad or orb raises",
+    "teleport triggers keeping an offset or set off by an item, a collision, a touch or an event no pad or orb raises",
     "gravity triggers for player 2 or set off by an item, a delayed spawn or an event no pad or orb raises",
     "too many gravity portals",
     "triggers that count attempts",
@@ -180,6 +188,11 @@ struct Findings {
     // Reads the attempt count or keeps items across attempts, but nothing it sets off reaches play
     // (attemptReachesPlay), so kAttemptDependent is not set. For the log.
     bool attemptShown = false;
+    // With kAttemptDependent set: do the items Item Persistence keeps reach play on their own (attemptReachesPlay with the
+    // attempt count left out)? The attempt pin (cfg attemptauto, level_entry.hpp) answers the count and leaves the kept items alone,
+    // so a level where only the count reaches play is one fixed level while the bot drives it; the play menu shows it as a
+    // yellow note, not a red one. Unset when kAttemptDependent is.
+    bool attemptKeeps = false;
 };
 
 // The key's value in one object's "k,v,k,v" run, or empty.
@@ -391,7 +404,9 @@ inline void forEachListed(std::string_view list, F&& f, int step = 1) {
 //     group holding anything but triggers and decoration (objtypes, or No Touch, key 121), or when
 //     such a trigger outside kLookOnly acts by itself -- a teleport, a gravity change, an end, the
 //     camera, an area move, or anything this does not know.
-inline bool attemptReachesPlay(std::string_view all) {
+//   `sources` says what may start a taint: bit 0 the attempt count, bit 1 the items a 3641 keeps (both by default;
+//   2 asks whether the kept items reach play with the count answered by the attempt pin).
+inline bool attemptReachesPlay(std::string_view all, int sources = 3) {
     struct Obj {
         std::string_view kv;
         int id;
@@ -459,9 +474,9 @@ inline bool attemptReachesPlay(std::string_view all) {
             default: break;
         }
     }
-    tainted.insert(key(kAttempts, 0));
+    if (sources & 1) tainted.insert(key(kAttempts, 0));
     for (const Obj& o : objs) {
-        if (o.id != 3641) continue;
+        if (o.id != 3641 || !(sources & 2)) continue;
         const int n = toInt(field(o.kv, "80"));
         if (n <= 0 || !isOn(field(o.kv, "491")) || isOn(field(o.kv, "492"))) continue;
         const uint64_t k = key(isOn(field(o.kv, "494")) ? kTimer : kItem, n);
@@ -545,12 +560,18 @@ inline bool attemptReachesPlay(std::string_view all) {
 }
 
 // The objects (by index in the level string) a spawn chain with no delay reaches from a root dp
-// follows (--tptrigspawn, --gravchain, --tptouch, --gravtouch: triggers.hpp spawnFiresOf): a Spawn
+// follows (--tptrigspawn (removed), --gravchain (removed), --tptouch, --gravtouch: triggers.hpp spawnFiresOf): a Spawn
 // (1268) or a Toggle that turns its group on (1049, key 56), not itself spawn-triggered (key 62),
 // fires its target group (key 51), and a spawn-triggered one of the same kinds in that group goes
-// on. A Spawn with a delay (key 63) or an ordered one (key 441) ends the walk: dp takes a delayed
-// chain only from an x crossing and only where the speed holds, which this does not ask.
-inline std::vector<char> spawnChainReach(std::string_view all) {
+// on. A Spawn with a delay (key 63) or an ordered one (key 441) ends the walk: the old model takes a
+// delayed chain only from an x crossing and only where the speed holds, which this does not ask.
+// `throughDelay` (the teleport triggers' walk): the trigger shadow (dp trigshadow.hpp, on by default,
+// cfg `trigshadow`) runs a delayed or ordered Spawn on its own timeline and hands the Teleport it fires
+// to the player (shadow_step.hpp, TrigLive::tpFiresAt), so such a Spawn does not end the walk. Measured
+// on a custom level: the ordered chain from the crossing Spawn uid 2354 (delay 10.254 s) fires the
+// Teleport trigger uid 2355, GD puts the cube at (28770, 135) at t=20,738, and the 402-tick replay window
+// from t=20,601 with the cfg's trigshadow arguments is empty. The gravity triggers keep the strict walk.
+inline std::vector<char> spawnChainReach(std::string_view all, bool throughDelay = false) {
     std::vector<std::string_view> objs;
     std::unordered_map<int, std::vector<int>> members;   // group -> objects in it
     forEachObject(all, [&](std::string_view obj) {
@@ -562,11 +583,11 @@ inline std::vector<char> spawnChainReach(std::string_view all) {
         const int id = toInt(field(o, "1"));
         const bool spawner = id == 1268 || (id == 1049 && isOn(field(o, "56")));
         if (!spawner) return 0;
-        if (id == 1268 && (toNum(field(o, "63")) != 0.0 || isOn(field(o, "441")))) return 0;
+        if (id == 1268 && !throughDelay && (toNum(field(o, "63")) != 0.0 || isOn(field(o, "441")))) return 0;
         return std::max(0, toInt(field(o, "51")));
     };
     // ...and an Event trigger (3604) on the crossing queue whose events are all a pad's or an orb's (dp
-    // --eventtrig takes those off the state's own pads and orbs: PadActivated / OrbActivated and YellowOrb 34 ..
+    // --eventtrig (removed) takes those off the state's own pads and orbs: PadActivated / OrbActivated and YellowOrb 34 ..
     // SpiderPad 49), with no extra ID (447 / 525)
     auto eventRoot = [&](std::string_view o) {
         if (toInt(field(o, "1")) != 3604 || isOn(field(o, "11"))) return 0;
@@ -600,6 +621,89 @@ inline std::vector<char> spawnChainReach(std::string_view all) {
     return reach;
 }
 
+// The objects a DELAYED or ORDERED chain from an x crossing reaches where dp places them (the gravity triggers' walk: --gravspawn (removed)
+// with --gravchain (removed), cli.hpp spawnFireX). The walk is triggers.hpp spawnFiresFromRoots from the roots that are not touch-triggered
+// (a touch's or an Event's root with a delay is left out by the loader): a group is fired `delayS` behind its root -- each
+// Spawn's own (key 63), and an ordered Spawn's (key 441) (x - xFirst) / 311.58 s behind the group's first spawn-triggered trigger
+// -- with the loader's own bound of 4096 steps per root. An object it reaches by a delay counts only where dp does not refuse
+// the fire: a speed portal, a time warp or a teleport trigger on the crossing queue, or a teleport portal between the root and
+// the x the delay carries the fire to (the loader asks the speed in force at the root; here the fastest, 576 px/s, and a margin of
+// 60 px for the portal's width and the player's: a window never narrower, so a level dp would refuse keeps its warning).
+inline std::vector<char> spawnChainReachDelayed(std::string_view all) {
+    struct Ob {
+        int id = 0, target = 0;
+        double x = 0.0, delay = 0.0;
+        bool spawned = false, ordered = false, touch = false, spawner = false, trig = false;
+    };
+    std::vector<Ob> ob;
+    std::vector<double> stops;   // x of every object that makes dp refuse a delayed fire across it
+    std::unordered_map<int, std::vector<int>> members;
+    forEachObject(all, [&](std::string_view obj) {
+        const int j = (int)ob.size();
+        Ob o;
+        o.id = toInt(field(obj, "1"));
+        o.x = toNum(field(obj, "2"));
+        o.spawned = isOn(field(obj, "62"));
+        o.touch = isOn(field(obj, "11"));
+        o.target = std::max(0, toInt(field(obj, "51")));
+        o.trig = objtypes::isTrigger(o.id);
+        o.spawner = o.id == 1268 || (o.id == 1049 && isOn(field(obj, "56")));
+        if (o.id == 1268) { o.delay = std::max(0.0, toNum(field(obj, "63"))); o.ordered = isOn(field(obj, "441")); }
+        switch (o.id) {
+            case 200: case 201: case 202: case 203: case 1334: case 747: stops.push_back(o.x); break;
+            case 1935: if (!o.spawned && !o.touch) stops.push_back(o.x); break;
+            case 3022: if (!o.spawned && !o.touch && !isOn(field(obj, "352"))) stops.push_back(o.x); break;   // key 352: ignoreX
+            default: break;
+        }
+        ob.push_back(o);
+        forEachListed(field(obj, "57"), [&](int g) { members[g].push_back(j); });
+    });
+    auto refused = [&](double rootX, double delayS) {
+        const double lag = std::max(0.0, std::ceil(delayS * 240.0 - 1e-9) - 1.0);
+        const double to = rootX + lag * (576.0 / 240.0) + 60.0;
+        for (const double s : stops) if (s > rootX - 60.0 && s <= to) return true;
+        return false;
+    };
+    std::vector<char> reach(ob.size(), 0);
+    struct Item { int group; double delayS; bool ordered; };
+    std::vector<Item> stack;
+    for (const Ob& root : ob) {
+        if (root.spawned || root.touch || !root.spawner || root.target <= 0) continue;
+        stack.assign(1, Item{root.target, root.delay, root.ordered});
+        int guard = 0;
+        while (!stack.empty() && guard++ < 4096) {
+            const Item it = stack.back();
+            stack.pop_back();
+            const auto gi = members.find(it.group);
+            if (gi == members.end()) continue;
+            double xFirst = 1e18;
+            if (it.ordered)
+                for (const int m : gi->second)
+                    if (ob[(size_t)m].spawned && ob[(size_t)m].trig) xFirst = std::min(xFirst, ob[(size_t)m].x);
+            for (const int m : gi->second) {
+                const Ob& o = ob[(size_t)m];
+                const double d = it.delayS + ((it.ordered && xFirst < 1e17) ? std::max(0.0, (o.x - xFirst) / 311.5801086425781) : 0.0);
+                if (!reach[(size_t)m] && (d <= 0.0 || !refused(root.x, d))) reach[(size_t)m] = 1;
+                if (o.spawned && !o.touch && o.spawner && o.target > 0) stack.push_back({o.target, d + o.delay, o.ordered});
+            }
+        }
+    }
+    return reach;
+}
+
+// Every group number some object names as a target: a trigger's target (51) and centre group (71), an
+// Advanced Random's (152) and a Sequence's (435) lists, a Spawn's remap pairs (442, either side of a
+// pair). Over-inclusive on purpose (a list's chances and counts are taken too): it answers "can anything
+// fire a spawn-triggered object of this group?", and a group named nowhere cannot be fired.
+inline std::unordered_set<int> targetedGroups(std::string_view all) {
+    std::unordered_set<int> t;
+    forEachObject(all, [&](std::string_view obj) {
+        for (const char* key : {"51", "71", "152", "435", "442"})
+            forEachListed(field(obj, key), [&](int g) { if (g > 0) t.insert(g); });
+    });
+    return t;
+}
+
 // The groups (key 57; a follow trigger's key 51 names one) that hold an object with a body. A trigger
 // does not count, nor does a No Touch copy (key 121) or an ID the game builds as decoration. An object of
 // an ID the table does not know counts, as everywhere in this file. One pass over the level: ask it
@@ -609,6 +713,7 @@ inline std::unordered_set<int> groupsWithBody(std::string_view all) {
     forEachObject(all, [&](std::string_view obj) {
         const int id = toInt(field(obj, "1"));
         if (isOn(field(obj, "121")) || objtypes::isDecoration(id)
+            || id == 1816   // a Collision Block (export type 39) is in none of the loader's collision buckets: dp says "its group holds nothing the model collides with" (a custom level: groups 151, 152, 173 = a 1816 and a decoration)
             || (objtypes::isTrigger(id) && id != 200 && id != 201 && id != 202 && id != 203 && id != 1334))   // a speed portal has a body
             return;
         forEachListed(field(obj, "57"), [&](int g) { has.insert(g); });
@@ -621,7 +726,7 @@ inline Findings scan(std::string_view all, bool platformer) {
     if (platformer) r.unmodelled |= kPlatformer;
     const std::string_view head = all.substr(0, all.find(';'));
     if (field(head, "kA10") == "1") r.unmodelled |= kTwoPlayer;
-    struct Portal { double x; int group; bool keepX; };
+    struct Portal { double x; int group; bool keepX; bool spawnedOnly = false; std::vector<int> own; };   // spawnedOnly / own: a spawn-triggered 3022 and its groups (never fired when no object names one)
     std::vector<Portal> portals;
     std::vector<GravPortal> gravity;
     bool reversal = false;
@@ -634,6 +739,8 @@ inline Findings scan(std::string_view all, bool platformer) {
     // spawned teleport / gravity triggers (by object index), asked of spawnChainReach after the pass;
     // a gravity trigger for player 2, which counts only where there is a second player
     std::vector<int> spawnedTp, spawnedGrav;
+    std::vector<std::vector<int>> spawnedGravGroups;   // key 57 of each spawnedGrav entry, for the "nothing names its group" test
+    std::vector<std::vector<int>> spawnedTpGroups;     // ...and of each spawnedTp entry
     bool gravP2 = false, dualPortal = false;
     int idx = -1;
     double dxMax = speedDx(201);
@@ -662,17 +769,18 @@ inline Findings scan(std::string_view all, bool platformer) {
                     gravity.push_back({toNum(field(obj, "2")), gravPortalHalfWidth(obj, id)});
                 break;
             case 747: case 2902:
-                // a force (345 / 347) and ignoreY (353) are modelled (dp --tppush, --tpkeepy)
+                // a force (345 / 347) and ignoreY (353) are modelled (dp --tppush, --tpkeepy (removed))
+                if (isOn(field(obj, "121"))) break;   // No Touch: a decoration to the game, it teleports nobody
                 if (id == 2902) {
                     const int g = toInt(field(obj, "51"));
                     if (g > 0) portals.push_back({toNum(field(obj, "2")), g, isOn(field(obj, "352"))});
                 }
                 break;
             case 3027: {
-                // dp models the orb (--teleportorb) but not its force, and has no draw for a
-                // group of several; it moves x to the exit as the game does, so a sideways orb is
-                // modelled (the keepX below only keeps it out of that test)
-                if (isOn(field(obj, "345")) || isOn(field(obj, "347"))) r.unmodelled |= kOrbPush;
+                // dp models the orb (--teleportorb) and, in the shadow step, its force (kOrbPush, retired);
+                // it has no draw for a group of several; it moves x to the exit as the game does, so a
+                // sideways orb is modelled (the keepX below only keeps it out of that test)
+                if (isOn(field(obj, "121"))) break;   // No Touch: a decoration to the game, nobody touches it
                 const int g = toInt(field(obj, "51"));
                 if (g > 0) portals.push_back({toNum(field(obj, "2")), g, true});
                 break;
@@ -682,9 +790,21 @@ inline Findings scan(std::string_view all, bool platformer) {
                 // sets it off, or a chain's root does (spawnChainReach, after the pass); one with a
                 // target goes through the exits test like a 2902 (sideways, several exits)
                 if (isOn(field(obj, "351"))) r.unmodelled |= kTeleportTrigger;
-                else if (isOn(field(obj, "62")) && !isOn(field(obj, "11"))) spawnedTp.push_back(idx);
+                else if (isOn(field(obj, "62")) && !isOn(field(obj, "11"))) {
+                    spawnedTp.push_back(idx);
+                    std::vector<int> gs;
+                    forEachListed(field(obj, "57"), [&](int g) { gs.push_back(g); });
+                    spawnedTpGroups.push_back(std::move(gs));
+                }
                 const int g = toInt(field(obj, "51"));
-                if (g > 0) portals.push_back({toNum(field(obj, "2")), g, isOn(field(obj, "352"))});
+                if (g > 0) {
+                    Portal p{toNum(field(obj, "2")), g, isOn(field(obj, "352"))};
+                    if (isOn(field(obj, "62")) && !isOn(field(obj, "11"))) {
+                        p.spawnedOnly = true;
+                        forEachListed(field(obj, "57"), [&](int og) { p.own.push_back(og); });
+                    }
+                    portals.push_back(std::move(p));
+                }
                 break;
             }
             case 200: case 201: case 202: case 203: case 1334:
@@ -712,8 +832,16 @@ inline Findings scan(std::string_view all, bool platformer) {
                 // export's touch / spawn / gpl columns on 457 triggers: no disagreement). dp leaves out
                 // one for player 2 (gpl bit 1) and takes a touched one (--gravtouch); a spawned one is
                 // asked of spawnChainReach after the pass
-                if (isOn(field(obj, "200"))) gravP2 = true;
-                else if (isOn(field(obj, "62")) && !isOn(field(obj, "11"))) spawnedGrav.push_back(idx);
+                // for player 2: one on the x-crossing queue is in the loader's second-body list
+                // (--shadowp2grav, in the shadow's second body); one a touch or a spawn sets off is not
+                if (isOn(field(obj, "200"))) {
+                    if (isOn(field(obj, "11")) || isOn(field(obj, "62"))) gravP2 = true;
+                } else if (isOn(field(obj, "62")) && !isOn(field(obj, "11"))) {
+                    spawnedGrav.push_back(idx);
+                    std::vector<int> gs;
+                    forEachListed(field(obj, "57"), [&](int g) { gs.push_back(g); });
+                    spawnedGravGroups.push_back(std::move(gs));
+                }
                 break;
             // what changes by attempt; whether it reaches play is asked after the pass
             case 3641: attempts = true; break;
@@ -724,15 +852,37 @@ inline Findings scan(std::string_view all, bool platformer) {
         }
     });
     if (attempts) {
-        if (attemptReachesPlay(all)) r.unmodelled |= kAttemptDependent;
-        else r.attemptShown = true;
+        if (attemptReachesPlay(all)) {
+            r.unmodelled |= kAttemptDependent;
+            r.attemptKeeps = attemptReachesPlay(all, 2);
+        } else r.attemptShown = true;
     }
     if (!spawnedTp.empty() || !spawnedGrav.empty()) {
         const std::vector<char> reach = spawnChainReach(all);
-        for (const int i : spawnedTp)
-            if (!reach[(size_t)i]) r.unmodelled |= kTeleportTrigger;
-        for (const int i : spawnedGrav)
-            if (!reach[(size_t)i]) r.unmodelled |= kGravityTrigger;
+        // an unreached one whose groups no object names as a target is never set off (in the game
+        // either): nothing to leave out
+        std::unordered_set<int> named = targetedGroups(all);
+        if (!spawnedTp.empty()) {
+            // the teleport triggers' walk goes through a delayed or an ordered Spawn (the trigger shadow runs them)
+            const std::vector<char> reachTp = spawnChainReach(all, true);
+            for (size_t k = 0; k < spawnedTp.size(); ++k) {
+                if (reachTp[(size_t)spawnedTp[k]]) continue;
+                bool fired = false;
+                for (const int g : spawnedTpGroups[k]) fired = fired || named.count(g) != 0;
+                if (fired) r.unmodelled |= kTeleportTrigger;
+            }
+        }
+        // a gravity trigger a delayed or ordered chain reaches from an x crossing is placed by dp as well (--gravchain (removed)), unless the delay
+        // crosses a speed change, a warp or a teleport (spawnChainReachDelayed)
+        std::vector<char> reachD;
+        for (size_t k = 0; k < spawnedGrav.size(); ++k) {
+            if (reach[(size_t)spawnedGrav[k]]) continue;
+            if (reachD.empty()) reachD = spawnChainReachDelayed(all);
+            if (reachD[(size_t)spawnedGrav[k]]) continue;
+            bool fired = false;
+            for (const int g : spawnedGravGroups[k]) fired = fired || named.count(g) != 0;
+            if (fired) r.unmodelled |= kGravityTrigger;
+        }
     }
     // a trigger for player 2 moves nobody the solver plans without a second player
     if (gravP2 && (dualPortal || (r.unmodelled & kTwoPlayer))) r.unmodelled |= kGravityTrigger;
@@ -754,25 +904,49 @@ inline Findings scan(std::string_view all, bool platformer) {
     }
     if (portals.empty()) return r;
     // The exits: every object in a portal's target group (key 57, '.'-separated).
-    struct Exits { int n = 0; double x = 0.0; };
+    // teleportPlayer (0x315f20) draws the exit at random from the C runtime's generator when the group holds several objects (dp takes the
+    // first; the shadow's draw, SelfShadow::doTeleport, has no seed or exit table behind it). The draw decides nothing when every object
+    // stands on one spot with one turn (x, y, key 6 rotation, keys 4 / 5 flips: the force's angle reads the exit's turn) and nothing moves
+    // it: a Move, Rotate, Follow, ... (any trigger but a Spawn, Toggle, Teleport, Event or touch Toggle) that names one of the groups the
+    // object is in. A teleport trigger set off by a spawn that no object names (nobody can fire it) draws nothing either.
+    struct Exits { int n = 0; bool same = true, moves = false; std::string sig; };
     std::unordered_map<int, Exits> exits;
     for (const auto& p : portals) exits.emplace(p.group, Exits{});
+    std::unordered_set<int> movedGroups;
+    forEachObject(all, [&](std::string_view obj) {
+        const int id = toInt(field(obj, "1"));
+        if (!objtypes::isTrigger(id) || id == 1268 || id == 1049 || id == 3022 || id == 3604 || id == 1595) return;
+        for (const char* key : {"51", "71"})
+            forEachListed(field(obj, key), [&](int g) { if (g > 0) movedGroups.insert(g); });
+    });
     forEachObject(all, [&](std::string_view obj) {
         const auto groups = field(obj, "57");
-        size_t p = 0;
-        while (!groups.empty() && p <= groups.size()) {
-            const size_t d = groups.find('.', p);
-            const auto one = groups.substr(p, d == std::string_view::npos ? std::string_view::npos
-                                                                          : d - p);
-            if (auto it = exits.find(toInt(one)); it != exits.end() && it->second.n++ == 0)
-                it->second.x = toNum(field(obj, "2"));
-            if (d == std::string_view::npos) break;
-            p = d + 1;
-        }
+        if (groups.empty()) return;
+        std::string sig;
+        bool movesIt = false;
+        for (std::string_view part : {field(obj, "2"), field(obj, "3"), field(obj, "6"), field(obj, "4"), field(obj, "5")}) { sig += part; sig += '|'; }
+        forEachListed(groups, [&](int g) { movesIt = movesIt || movedGroups.count(g) != 0; });
+        forEachListed(groups, [&](int g) {
+            const auto it = exits.find(g);
+            if (it == exits.end()) return;
+            Exits& e = it->second;
+            if (e.n++ == 0) e.sig = sig;
+            else if (e.sig != sig) e.same = false;
+            e.moves = e.moves || movesIt;
+        });
     });
+    std::unordered_set<int> named;
     for (const auto& p : portals) {
         const Exits& e = exits[p.group];
-        if (e.n > 1) r.unmodelled |= kTeleportSeveralExits;
+        if (e.n <= 1) continue;
+        if (e.same && !e.moves) continue;   // one exit wherever the draw falls
+        if (p.spawnedOnly) {
+            if (named.empty()) named = targetedGroups(all);
+            bool fired = false;
+            for (const int g : p.own) fired = fired || named.count(g) != 0;
+            if (!fired) continue;
+        }
+        r.unmodelled |= kTeleportSeveralExits;
     }
     return r;
 }

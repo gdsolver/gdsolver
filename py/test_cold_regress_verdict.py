@@ -78,6 +78,13 @@ def main():
     check(rc == 0 and "over the iteration cap (not a failure" in out,
           "40 iterations against a cap of 30 is printed and the run passes")
 
+    # a record key the mod's counters do not list, found by its save-string audit, is a leak whatever the counters say
+    leaked = suite([1, 2]).replace("level record changed: none (restored 3)",
+                                   "level record changed: memaudit=1 key(s) (/GLM_01/1/k154 (absent)->i:3) (restored 3)", 1)
+    rc, out = run(C.report, results_of(leaked), base, ns())
+    check(rc != 0 and "RECORD GATE LEAKED (memaudit=1 key(s)" in out,
+          "a `level record changed:` line that names a memaudit key fails the run")
+
     # a bless needs a known resolution
     rc, out = run(C.report, results_of(suite([1, 2])), base, ns(bless=True, resolution=None))
     check(rc == 1 and not C.BASELINE.exists(), "a bless with an unknown resolution is refused")

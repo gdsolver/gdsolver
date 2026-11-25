@@ -55,6 +55,54 @@ struct RefRow {
     bool have = false;
 };
 
+// What differs between two shadow blocks, by name (design v4 / Orch 11-13: the dedupe gate merged two states of one key, and the State's own bytes differ only in the handle `slRef`). The carried words by their
+// image offset (+0x...: the GD object the shadow images, PlayerObject unless the number is past 0xc40's neighbours), the lists and scalars by member name. Only for --refwatch's print.
+inline std::string slDiffNames(const gdcol::ShadowLite& a, const gdcol::ShadowLite& b) {
+    std::string s;
+    char buf[48];
+    int k = 0;
+    for (const gdcol::SlRange& r : gdcol::kSlRanges)
+        for (size_t o = r.lo; o < r.hi; o += 4, ++k)
+            if (a.w[k] != b.w[k]) { std::snprintf(buf, sizeof buf, " +0x%zx(%08x>%08x)", o, a.w[k], b.w[k]); s += buf; }
+    auto list = [&](const char* name, const int32_t* x, const int32_t* y, int nx, int ny) {
+        if (nx != ny || std::memcmp(x, y, sizeof(int32_t) * (size_t)std::max(0, std::min(nx, ny))) != 0) { s += " "; s += name; }
+    };
+    list("gate", a.gate, b.gate, a.nGate, b.nGate); list("used", a.used, b.used, a.nUsed, b.nUsed); list("arr", a.arr, b.arr, a.nArr, b.nArr);
+    list("now", a.now, b.now, a.nNow, b.nNow); list("ever", a.ever, b.ever, a.nEver, b.nEver); list("act", a.act, b.act, a.nAct, b.nAct);
+    list("fired", a.fired, b.fired, a.nFired, b.nFired);
+#define SLD(m) if (std::memcmp(&a.m, &b.m, sizeof a.m) != 0) { s += " "; s += #m; }
+    SLD(layerTime) SLD(everW) SLD(pruneW) SLD(dashRot) SLD(dashElapsed) SLD(pendingSpeed) SLD(rng) SLD(lyCentre) SLD(lyHeight) SLD(lyLastPortalY) SLD(lyW764) SLD(lyFlipAmt) SLD(lyFlipFrom) SLD(lyFlipTo)
+    SLD(lyFlipEl) SLD(lyLastMode) SLD(lyLastPortalUid) SLD(flags) SLD(flags2) SLD(hold) SLD(frameSteps) SLD(prevFrameSteps) SLD(ly) SLD(ly2) SLD(seedId0) SLD(seedId1)
+#undef SLD
+    return s.empty() ? " (none)" : s;
+}
+
+// --refadoptsl (with --refadopt; refwatch's own, observation only): a cell-mate whose shadow block differs from the reference's only in the words below is taken as the reference's stand-in (the watch goes on with
+// it), so the watch ends at the first difference that is NOT one of these -- the question "which merge is the first that changes anything" instead of "which is the first merge". The words are the ones the
+// first census saw (lv5 / lv14 / lv16 / lv19, design v4): the sprite's rotation pair (+0x38, +0x3c), the previous position (+0x4d4, +0xa9c) and three words that move with the rotation (+0xa10, +0xabc, +0xb40),
+// and the press-state copies the key leaves out (the high byte of +0x98c: Hp; +0x990: Rp, Hm, Sm, slot A). Whether they are really harmless is what the stand-in's later ticks say (the reference trace keeps matching or not).
+inline bool g_refAdoptSl = false;
+inline bool slDiffBenign(const gdcol::ShadowLite& a, const gdcol::ShadowLite& b, std::string& names) {
+    int k = 0;
+    bool ok = true;
+    char buf[40];
+    for (const gdcol::SlRange& r : gdcol::kSlRanges)
+        for (size_t o = r.lo; o < r.hi; o += 4, ++k) {
+            if (a.w[k] == b.w[k]) continue;
+            const bool benign = o == 0x38 || o == 0x3c || o == 0x4d4 || o == 0xa9c || o == 0xa10 || o == 0xabc || o == 0xb40 || o == 0x990 || (o == 0x98c && ((a.w[k] ^ b.w[k]) & 0x00ffffffu) == 0);
+            std::snprintf(buf, sizeof buf, " +0x%zx", o);
+            names += buf;
+            if (!benign) ok = false;
+        }
+    // everything else must be equal: the lists, the scalars, the flags
+    auto same = [&](const int32_t* x, const int32_t* y, int nx, int ny) { return nx == ny && std::memcmp(x, y, sizeof(int32_t) * (size_t)std::max(0, nx)) == 0; };
+    if (!same(a.gate, b.gate, a.nGate, b.nGate) || !same(a.used, b.used, a.nUsed, b.nUsed) || !same(a.arr, b.arr, a.nArr, b.nArr) || !same(a.now, b.now, a.nNow, b.nNow)
+        || !same(a.ever, b.ever, a.nEver, b.nEver) || !same(a.act, b.act, a.nAct, b.nAct) || !same(a.fired, b.fired, a.nFired, b.nFired)) ok = false;
+    if (std::memcmp(&a.layerTime, &b.layerTime, sizeof a.layerTime) != 0 || a.flags != b.flags || a.flags2 != b.flags2 || a.hold != b.hold || a.frameSteps != b.frameSteps || a.ly != b.ly || a.ly2 != b.ly2
+        || a.rng != b.rng || a.dashRot != b.dashRot || a.dashElapsed != b.dashElapsed || a.pendingSpeed != b.pendingSpeed || a.everW != b.everW || a.pruneW != b.pruneW) ok = false;
+    return ok;
+}
+
 inline bool g_refWatch = false;
 inline std::map<long long, RefRow> g_refRows;
 // Matching tolerance. The reference comes out of the same stepOne as the
@@ -128,10 +176,26 @@ inline bool g_rjUse = false;
 // and the refusals cost a second search each; this refuses only the joins that die at once.
 // A walk that dies before it reaches the join is not the join's doing (the search and its own walk
 // disagree on that stretch, and a search without the join meets the same stretch): it is left alone.
+// [2026-11-19] N is now only on / off (N > 0): a join whose walk dies at or past the join is refused at
+// whatever distance, and it is refused right after the walk, before the resim ladder is spent on a tail
+// whose premise the walk has just refuted. "Within 5 ticks" was a count nobody could derive: on a heavy
+// two-player custom a join's walk left the old one 1 tick past the join and died 42 ticks past it, stayed
+// dead for 1,592 ticks, and the call then paid four probes, a re-search and three re-anchor rounds of the
+// loop (441-512 s) for a plan the walk had refuted. In that level's cold 3 of 8 joins had a walk that left
+// the old one, and exactly those 3 died in their own walk; the 5 that retraced it were clean. The
+// 2026-09-19 measurement above (every refusal a second search; lv22 249 -> 462 s) was of an older model
+// and of a loop that flew the dying plan instead; it is the reason to watch the cold's time, not a proof
+// that this loses: the official 22 flew no join at all in the cold of 2026-11-19 (trunk 38736ad9's code).
 inline long long g_rejoinProbe = 5;
 inline thread_local bool t_rejoinRetry = false;   // the retry's own call (not reset per invocation)
 inline bool g_rjFull = false;   // --rejoinfull: an exact rejoin also needs the dedupe key to match
 inline long long g_rjJoinT = -1;
+// What --rejoinprobe refused and what rejoinTailReaches declined, over the whole CALL. cliMain clears this and writes it into the outcome it returns:
+// cliMainOnce resets the outcome for every attempt of the cap ladder, so a note made inside an attempt the ladder did not return was lost (a cold of a
+// heavy custom lost every one of its refusals that way: two dying joins gone, no line). refusedT / refusedDieT = the last refusal, shortT / shortEndT =
+// the first join not taken.
+struct RejoinCallNote { long long refusedN = 0, refusedT = -1, refusedDieT = -1, shortN = 0, shortT = -1, shortEndT = -1; };
+inline RejoinCallNote g_rjCall;
 
 // Read the model's own trace of the reference replay.
 inline bool loadTraceInto(const char* path, std::map<long long, RefRow>& rows);
@@ -241,7 +305,20 @@ inline bool refMatches(const State& s, const RefRow& r) {
 // kRjWindow ticks of the death, to bound that walk.
 constexpr long long kRjWindow = 3000;
 constexpr int kRjWalks = 4;
-constexpr long long kRjMinTail = 600;   // --rejoinuse: ticks the old plan must go on past a join
+// --rejoinuse: does the old plan's tail, taken from the tick after `join`, reach where a plan of this call has to end -- the goal, or the call's own
+// last planned tick (t0 + horizon; 0 = the call has no horizon and only the goal counts)? The tail is what cli.hpp appends: the rows join + 1 .. while each
+// exists and carries an input. `endT` / `endX` = its last row. An old plan that was a PARTIAL, or was itself cut short, ends before either: joining it
+// turns the place the old search stopped at into this call's SOLVED. (This was `the trace goes on for 600 ticks past the join`, kRjMinTail: a count that
+// let a 3,742-tick tail ending at the old plan's own end through, on a heavy two-player custom -- the plan ended there, its walk had no death to find,
+// the game died one tick on, and every anchor after it was a PARTIAL at that tick until the budget ran out.)
+inline bool rejoinTailReaches(long long join, double goalX, long long callEndT, long long* endT = nullptr, double* endX = nullptr) {
+    long long k = join;
+    const RefRow* last = nullptr;
+    for (auto it = g_rjRows.find(join + 1); it != g_rjRows.end() && it->first == k + 1 && it->second.act >= 0; ++it) { k = it->first; last = &it->second; }
+    if (endT) *endT = k;
+    if (endX) *endX = last ? last->x : 0.0;
+    return last && (last->x >= goalX || (callEndT > 0 && k >= callEndT));
+}
 // Returns the index in `v` of the first exact rejoin found on this layer, -1 if none.
 template <class FromOld, class SameKey>
 inline int rejoinLayer(const std::vector<State>& v, long long t, FromOld fromOld, SameKey sameKey) {

@@ -53,7 +53,10 @@ inline bool g_solveMemHeld = false;
 namespace dpsolve {
 inline void releaseSolveMemory(const char* where);
 inline void memCensus(const char* where);   // cfg memcensus (print only), repair.hpp
+inline void printWallSiteCounts();           // stage S2b-2: how often each place the wall key replaced was passed (print only), repair.hpp
 }
+
+inline void clearPlanExtras();   // defined with the directives, below
 
 inline void resetSessionState() {
     g_solveMemHeld = false;   // (onQuit releases first, then calls this)
@@ -64,6 +67,11 @@ inline void resetSessionState() {
     g_started = false; g_sessionOver = false; g_uiSession = false;
     g_attempt = 0; g_finishedAttempts = 0;
     g_nextInput = 0; g_nextToggle = 0;
+    // A resident serve session that switches levels: the next one starts as a fresh game does, not
+    // paused at the death/clear the last one stopped at, and without that run's analysis directives
+    // (a rerun re-reads them, but the first attempt of the new level runs before any rerun).
+    g_serveWait = false; g_serveReset = false; g_switchPending = false;
+    clearPlanExtras();
     g_frame = 0; g_tick = 0; g_traceLines = 0; g_gameFrame = 0;
     g_endzoneBurn = false;   // carried into the next session, rendering would stay stopped
     g_endzoneLockStart = {};
@@ -192,6 +200,21 @@ inline void resetSessionState() {
     if (g_dump.is_open()) g_dump.close();
 }
 
+// Warnings a plan's load raises. A cfg `planfile=` is read while the cfg is parsed, before the session truncates the result log (`session_start`), so a line written then is gone: it is kept here too and
+// written again at the session's start (hooks_menu.cpp). A load after the start only writes it.
+inline std::vector<std::string> g_planWarnings;
+inline void warnPlan(const std::string& text) { writeResult(text); g_planWarnings.push_back(text); }
+// The platform this mod runs on, for a plan's header line (plan_edges.hpp planHeader) and for the reader to compare with the plan's own.
+inline std::string currentPlatform() {
+#if defined(GEODE_IS_WINDOWS)
+    return "windows";
+#elif defined(GEODE_IS_ANDROID)
+    return "android";
+#else
+    return "other";
+#endif
+}
+inline std::string currentPlanHeader() { return planHeader(currentPlatform(), std::to_string((long long)GEODE_COMP_GD_VERSION), Mod::get()->getVersion().toVString()); }
 // initialMask: the buttons held at the first line of the file. A solver's tail is the buttons held from each tick, starting from the state the anchor left, so
 // its first line is read against that state: a tail that begins by releasing player 2's button, which the anchor holds, is a release only if the reader knows the button
 // is down. Read against 0 the release was no edge, and the tail's later press became a press of a button still held.
@@ -212,6 +235,12 @@ inline bool loadInputsFile(const std::string& path, std::vector<InputCmd>& out, 
             if (line.size() >= 3 && (unsigned char)line[0] == 0xEF
                 && (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF)
                 line.erase(0, 3);
+        }
+        if (line.rfind("# platform=", 0) == 0) {   // where the plan was solved: another platform draws other rand() numbers (the camera shake), so say so once and replay it anyway
+            std::string pl, gdv, mv;
+            if (parsePlanHeader(line, pl, gdv, mv) && pl != currentPlatform())
+                warnPlan("plan: " + path + " was solved on " + pl + " (gd=" + gdv + ", mod=" + mv + ") and this is " + currentPlatform() + ": the camera shake and anything else that draws from the C library's rand() differ, so the replay may leave the line it was solved on (replayed anyway)");
+            continue;
         }
         if (line.rfind("attempt=", 0) == 0) {
             blocks.emplace_back();
@@ -256,6 +285,7 @@ inline bool loadInputsFile(const std::string& path, std::vector<InputCmd>& out, 
 inline bool writeInputsFile(const std::string& path, const std::vector<InputCmd>& plan) {
     std::ofstream f(path, std::ios::trunc);
     if (!f) return false;
+    f << currentPlanHeader() << "\n";
     writeInputLines(f, plan);
     return true;
 }
@@ -266,6 +296,7 @@ inline bool writeAttemptSequence(const std::string& path, const std::vector<Prel
                                  const std::vector<InputCmd>& clearing, const std::string& lineage = "") {
     std::ofstream f(path, std::ios::trunc);
     if (!f) return false;
+    f << currentPlanHeader() << "\n";
     int n = 0;
     auto block = [&](const std::vector<InputCmd>& in, long long until) {
         f << "attempt=" << ++n << "\n";
@@ -297,7 +328,8 @@ inline std::string readSolvedWith(const std::string& solutionPath) {
 // ============================================================
 // Analysis directives that piggyback on the plan (`inject=` / `stopat=` lines in plan_in.txt)
 //
-//   inject=<tick>[,x=<v>][,y=<v>][,vy=<v>]  overwrite the state after that tick's physics update
+//   inject=<tick>[,x=<v>][,y=<v>][,vy=<v>][,rot=<deg>][,x2=][,y2=][,rot2=][,fix=1]  overwrite the state after that tick's physics update (rot: the node rotation, +0x38; fix=1 marks a line as a macro
+//                                           frame fix and logs `injfix:` with the values it replaced - xdBot's playback writes position and rotation back like this)
 //   stopat=<tick>                           report the state at that tick and end the attempt
 //
 // They piggyback on plan_in.txt because cmd.txt (~5Hz polling) cannot name a physics tick.
@@ -308,13 +340,21 @@ inline std::string readSolvedWith(const std::string& solutionPath) {
 // ============================================================
 struct InjectSpec {
     long long tick = -1;
-    bool hasX = false, hasY = false, hasVy = false;
-    double x = 0, y = 0, vy = 0;
+    bool hasX = false, hasY = false, hasVy = false, hasRot = false, fix = false;
+    double x = 0, y = 0, vy = 0, rot = 0;
+    bool hasP2 = false, hasRot2 = false;   // x2 / y2 / rot2: player 2 (a dual's second body), put back with the same fix
+    double x2 = 0, y2 = 0, rot2 = 0;
 };
 inline std::vector<InjectSpec> g_injects;
 inline size_t g_injectNext = 0;
 inline long long g_stopAt = -1;
 inline bool g_stopFired = false;   // once per attempt (reset to false at the attempt head)
+inline void clearPlanExtras() {
+    g_injects.clear();
+    g_injectNext = 0;
+    g_stopAt = -1;
+    g_stopFired = false;
+}
 
 inline void loadPlanExtras(const std::string& path) {
     // Clear every time. A leftover injection from last time shows up as "same plan, different
@@ -354,10 +394,15 @@ inline void loadPlanExtras(const std::string& path) {
                 if (key == "x")  { s.hasX = true;  s.x = val; }
                 else if (key == "y")  { s.hasY = true;  s.y = val; }
                 else if (key == "vy") { s.hasVy = true; s.vy = val; }
+                else if (key == "rot") { s.hasRot = true; s.rot = val; }
+                else if (key == "fix") { s.fix = val != 0.0; }
+                else if (key == "x2") { s.hasP2 = true; s.x2 = val; }
+                else if (key == "y2") { s.hasP2 = true; s.y2 = val; }
+                else if (key == "rot2") { s.hasRot2 = true; s.rot2 = val; }
             }
             pos = next;
         }
-        if (s.tick >= 0 && (s.hasX || s.hasY || s.hasVy)) g_injects.push_back(s);
+        if (s.tick >= 0 && (s.hasX || s.hasY || s.hasVy || s.hasRot || s.fix || s.hasP2 || s.hasRot2)) g_injects.push_back(s);
     }
     std::sort(g_injects.begin(), g_injects.end(),
               [](const InjectSpec& a, const InjectSpec& b) { return a.tick < b.tick; });

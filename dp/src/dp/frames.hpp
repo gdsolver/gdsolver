@@ -1,6 +1,8 @@
 #pragma once
+#include "dp/ever_payload.hpp"
 #include "dp/object.hpp"
 #include <atomic>
+#include <unordered_set>
 
 namespace dp {
 
@@ -126,76 +128,12 @@ inline std::vector<RotTrig> g_rotTrig;
 // sets forward travel; GD moves right from the next tick, the model only once the cube had walked
 // back across the trigger's x four ticks later.
 inline bool g_rotTouch = true;
-// --rotqreplay: the plan replay (cli.hpp) asks the rotation queue every tick, as the search does.
-// It used to call applyRotation only on a tick its own crossing scan found a trigger within
-// kRotPerpWin, so a queue element the player reaches from far away on the perpendicular axis
-// never fired there. lv22 t=1817: the spider warps from world x 2143.5 to 2926.5 in frame 1 and
-// crosses world y 225, where GD fires uid 1215 (2143.5, 225) back to frame 0; the replay stayed
-// in frame 1 and parted from GD the next tick.
-inline bool g_rotQReplay = true;
-// --rotqtouch: a touch-activated 2900 in the queue does not fire on the crossing; it holds its
-// channel until the player touches it, and once touched the walk passes it without firing it again.
-// GJBaseGameLayer::checkSpawnObjects (0x21a8f0): an element with m_isTouchTriggered (+0x5d0) set
-// stops the walk unless its activated-by-player flag (+0x5b3) is set, and then is skipped with the
-// cursor moved on. The model fired it when the player's x passed it: a custom level's reversed cube
-// at x 2,324 under touch 2900 uid 314 (2,325, 105), 180 px below the player, turned forward where GD
-// kept reversing. The cursor is the channel's first element not yet spent.
-inline bool g_rotQTouch = true;
-// --waveramprot: a wave riding a ramp (a dart slide) turns toward the ramp's angle by the cube's
-// --sloperot law -- two steps of the half-angle slerp, w = 0.04375 x the speed, toward
-// convertToClosestRotation(-atan(m)) -- instead of easing toward its travel angle. updateRotation
-// (0x391020) takes its on-ramp branch (+0x9b0) before the mode test, so the wave never reaches
-// updateShipRotation there, and collidedWithSlopeInternal has already run updateSlopeRotation for
-// the contact; updateRotation's weight is m_playerSpeed * 0.175 * dt, halved for the ship only.
-// SubZero 4003 t=10,960..10,993 (Worker 99, pobb): on ramp uid 8922 (m 1) the sprite closes on
-// -45 by 0.1105 of the gap a tick, and from ramp uid 8892 (m 2) on -63.43, the same ratio:
-// 1 - (1 - 0.056875)^2 at speed 1.3. The model eased at 0.0625 toward +45 and its rotated box
-// met the tilted block uid 8882 two ticks early.
-inline bool g_waveRampRot = true;
-// --portslopepre: a turned portal whose uid is below the ramp the body rides this tick is judged at
-// the y the update left (yFree), not at the y the ramp then pushed the body to. Portals and ramps
-// share collisionCheckObjects' one ascending-uid loop (--portalslopeorder's note at the end of
-// stepOne), so the game reaches such a portal before the ramp moves the body. SubZero 4003
-// t=10,993: an unheld wave climbs ramp uid 9044 (m 2) into teleport uid 8882 (747, 50 x 180 at
-// -45); at the free y 431.754 the boxes stay 0.58 px apart (SAT with GD's own pobb corners),
-// at the pushed y 437.604 they overlap by 3.55, and GD teleports a tick later, from 437.604.
-// The turned portals only: the axis-aligned test already reads yFree.
-inline bool g_portSlopePre = true;
-// --growramporder: a mode portal that grows a body riding a ramp does not lift it on the portal's
-// tick when the ramp's uid is below the portal's: the loop seated the old body on that ramp before it
-// reached the portal, and the new body is seated on the next tick (the ramp branch's uid gate after
-// the lift says the same for a body in the air). SubZero 4002 t=11,695: a wave riding ramp uid 8633
-// (m 2) takes ball portal uid 8646; GD keeps y 813.165 on the portal tick and seats the ball at
-// 839.424 the next, where the model lifted it to 818.165 (--wavegrowclamp's +5).
-inline bool g_growRampOrder = true;
-// --spdtapwarp: on the tick a spider's tap warps it, the speed portals are judged at the y the
-// warp left (g_preBtnY). The tap is the button pass's, after collisionCheckObjects, so a speed
-// portal at the landing is met on the next tick -- the rule the portal pass already keeps for
-// mode, gravity and teleport portals (the spiderWarpedThisTick break). SubZero 4002 coin
-// t=23,770: a flipped spider taps from the ceiling 1,753.5 down to 1,543.5, inside 1.1x portal
-// uid 17380; GD's next step is still 1.298 and the speed changes on 23,771, where the model's
-// next step was already 1.614 and it ran 0.316 px ahead of GD from there.
-inline bool g_spdTapWarp = true;
-// --ballfreshend: an upright ball whose first contact with a ceiling ramp's underside comes just
-// past the ramp's low end is pushed to the corner flat (line(x1) - half), as the flight modes and
-// the spider are (step.hpp freshEndU); --ballunderv3 had added the ball to the continuing window
-// only. SubZero 4002 coin t=20,987: a ball rising at vy -0.87 meets uid 15998 (sdir 5, m -2) with
-// its contact point 0.23 px past x1; GD puts it at 1,635.000 = 1,650 - 15 and releases it the
-// next tick at -4.734, where the model flew on and was 2.36 px above GD from there.
-inline bool g_ballFreshEnd = true;
-// --tapwarpnocrush: the inner-box (crush) test is not run at the landing on the tick a spider's tap
-// warps it. The tap is the button pass's, after collisionCheckObjects, so that tick's inner-box test
-// saw the body where the warp found it, and the landing is first tested on the next tick, one step
-// further on. SubZero 4002 coin t=23,015: a reversed spider taps up to 1,696.5 with the 3 x 30 wall
-// uid 18167 (31,560..31,563) 0.17 px inside its inner box's right edge; GD lives (the next tick's
-// inner box ends at 31,558.9), the model killed it on `crush`.
-inline bool g_tapWarpNoCrush = true;
 // The test is the player's centre inside the trigger's box, not the two boxes overlapping. The
 // overlap fired a custom level's touch 2900 (15,645, 1,755) at x 15,625 with the player 23 px above
 // its centre, where GD never fires along that pass (dy 23..34); the 4003 landing fires at (4.9, 8.0).
 // So the bracket for the perpendicular reach is (8, 23), and the trigger's own half (15) sits in it.
-inline bool rotTouchHit(const RotTrig& r, double wx, double wy) {
-    return r.touch && std::fabs(wx - r.cx) <= r.hw && std::fabs(wy - r.cy) <= r.hh;
+inline bool rotTouchHit(const RotTrig& r, double wx, double wy, double pad = 0.0) {
+    return r.touch && std::fabs(wx - r.cx) <= r.hw + pad && std::fabs(wy - r.cy) <= r.hh + pad;
 }
 // --rotwatch <lo>,<hi>: print, per search tick in [lo, hi], the rotations the
 // search's stepKid actually applied (uid, frame before/after, children). Print
@@ -222,6 +160,17 @@ inline bool g_rotQToggle = false;
 // entry counts as disabled for a state when it has entered more "off" boxes
 // than "on" ones -- GD's per-object toggle counter below zero.
 inline std::vector<uint32_t> g_rotQOff, g_rotQOn, g_rotTrigOff, g_rotTrigOn;
+// ...and the AUTONOMOUS Toggles' part of the same rule (an x-crossing Toggle, 1049 with touch = 0 and spawn = 0, is not a touch box, so it has no bit in
+// State::trig): for queue entry k, the g_autoTrig entries whose Toggle chain switches that object, which way, and how many ticks after the entry's fireT.
+// GD's counter is the same one (toggleGroup, +0x4c0): an off counts one against, an on one for, and the entry is skipped while the count is negative. The date
+// is the autonomous trigger's own (AutoTrig::fireT, dated by the crossing as every other autonomous Toggle is), so the skip reads the same clock as the
+// objects the Toggle switches. a custom level:16601, queue entry uid 32481 (group 568, switched off by the Toggle uid 32480 at x 22290): GD's cursor passed it at 16607
+// (the dump's rotidx 0 -> 1, rotch and gframe unchanged) and fired the next entry, uid 1995, at 16625; without this the model fires 32481 at 16607 and turns the wrong way.
+struct RotQAutoTog { int autoIdx; uint8_t on; double delay; };
+inline std::vector<std::vector<RotQAutoTog>> g_rotQAutoTog;
+// the uids of the level's 2899 / 2900 objects (rotgameplay.txt), read before the autonomous triggers are loaded: an x-crossing Toggle that switches ONLY such objects
+// moves nothing the model places, so loadAutoTriggers would drop it (no ctl) -- it is kept (triggers.hpp keepForRotQ) so that g_rotQAutoTog has its fireT to read.
+inline std::unordered_set<int> g_rotQUidSet;
 // --touchseed uid:tick,...: touch boxes the anchored attempt had already
 // entered by t0, from the mod's geometric test on its own recorded positions.
 // OR-ed into the anchor state's trig/fireB without claiming ownership, so the
@@ -234,363 +183,12 @@ inline std::string g_touchSeedArg;
 // "before this tick's button effects"). For --replay: a search would print once
 // per child, from the worker threads. Print only. Off by default.
 inline bool g_touchCensus = false;
-// ...and which of stepOne's y-moving branches this tick took, so the census can
-// name an entry by the model's own path instead of a threshold on dy: 1 = the
-// spider's tap warp, 2 = a spider orb, 4 = a teleport portal. Written only under
-// --touchcensus; thread_local because phase 1 steps the layer in parallel.
-// g_tcBranchP1 is p1's value, saved by stepBoth before p2's stepOne overwrites it.
-inline thread_local int g_tcBranch = 0;
-inline thread_local int g_tcBranchP1 = 0;
-// --touchprey=button: the y markTouched's preY test reads is p1's y before this
-// tick's button effects, carried out of stepOne -- the spider tap warp's
-// pre-warp y -- or this tick's own y when no button effect moved it
-// (g_preBtnSet/g_preBtnY, written by the warp branch). The old reading, the
-// parent state's y (--touchprey=parent), is a tick too early: the cross of
-// "this tick's x" with "last tick's y" fired lv20's uid5625 on a position the
-// player never occupied, moving a saw 113.7 px onto a lane GD leaves open.
-// On since 2026-09-21; always on since the flag
-// clean-up, which removed --touchprey.
-// --rotpretap: the same tick order for a 2900. GD fires a rotation
-// in the collision pass, BEFORE the tick's button, so the trigger's
-// perpendicular-window test (applyRotation, step.hpp) sees the spider where it
-// stood before its tap warp. The model ran the tap first and tested the warped
-// position. Measured on lv22 (2026-09-21), a plan both sides replay alike up to
-// t=1,816: GD fires uid1215 (2143.5,225) with the player at (2143.5, 224.3) and
-// then warps it in frame 0 to y=316.5; the model had already warped it in frame
-// 1 to world x=2,926.5, read |dv| = 783 > kRotPerpWin, dropped the rotation and
-// planned on in a frame GD had left. applyRotation already restores the pre-tap
-// y once a rotation has fired (its re-tap); this makes the DECISION use it too.
-// ON by default since 2026-09-21, as ONE unit with
-// --spiderstrip: this alone still left a wrong landing, the pair made the
-// target plan match the game for 400 ticks. Both always on since the flag
-// clean-up.
-// --spiderstrip: the spider's teleport search in frame 0 uses
-// GD's own rects instead of a window centred on the player. Read off
-// spiderTestJumpInternal's two queries (cfg hitboxtrace=1, `srect:`/`drect:`)
-// on lv22, both frame-0 taps of one replay (t=1,816 on the rotation tick and
-// t=1,854), with x the player's position on the tap's tick:
-//   srect o.x = x        s.x = 14.5   -> solids  [x, x + 14.5]
-//   drect o.x = x - 4    s.x = 8.0    -> hazards [x - 4, x + 4]
-// The centred window was |x - cx| <= hw + 14.5 for solids (lv21's seven
-// injections pin 29.5 -- on the LEADING side, where the two agree) and
-// hw + 13.5 for hazards. Behind the player it reached 14.5 px too far: at
-// t=1,816 it took uid1212 (x 2,100..2,130, the player at 2,143.5) and landed
-// the spider at 226.5 where GD, which never looks behind, lands at 316.5.
-// Forward travel at normal size only: reverse travel and the mini are not
-// measured, and keep the old window.
-// ON by default since 2026-09-21, paired with
-// --rotpretap (see there).
-// --ceilpush (default off): seat a body that overlaps a ceiling ramp's rect at
-// GD's ceiling seat even where the ramp window has dropped the ramp. See the
-// branch beside the push-out gate in step.hpp.
-inline bool g_ceilPush = false;
-// ...its two per-step channels, thread_local because phase 1 steps the layer in parallel.
-// g_bandPortalWrote: set by the portal band write in stepOne (step.hpp), so stepBoth can tell a
-// band the second half WROTE from the one it only carried -- the band's tween (bandAnim) moves
-// every tick, so comparing fields cannot. g_dualOtherMode: the first body's FINISHED mode, handed
-// to the second half's height (GD runs p1's collisions first); -1 = read s.mode2 as before.
-inline thread_local bool g_bandPortalWrote = false;
-inline thread_local int g_dualOtherMode = -1;
-// --p2solo's two per-step channels, thread_local for the same reason.
-// g_p2SoloHalf: stepBoth is running the SECOND body's step. g_p2SoloFired: that step's portal pass
-// took a solo portal, so stepBoth hands player 1 the second body's attributes.
-inline thread_local bool g_p2SoloHalf = false;
-inline thread_local bool g_p2SoloFired = false;
-// --dualslide (on by default since 2026-10-07; --no-dualslide is the off arm): each dual body keeps its own DART SLIDE arm (State::slideT2 beside
-// slideT; modifiers.hpp slideBoxTouch). GD's is per player: collisionCheckObjects sets THAT body's
-// +0xb78 to 2 when it touches an id-1755 box (0x215ab7), PlayerObject::update steps it down, and
-// collidedWithObjectInternal gives a wave the solid push-out only while it is >= 1. The model had one
-// arm for the pair, so the second body's step read the first's. Measured on custom level C
-// t=10,677-10,680 (hitboxtrace): p1, inside the lower lane's 1755 boxes, is pushed out of block
-// 56076's top at 0.01 px; p2, in the upper lane with no 1755, sinks 0.25-3.48 px into block 56066's
-// top with collidedWithObject returning 0 and dies at 5.1 px -- where the model, on p1's arm, seated
-// p2 at 575 (step.hpp swapHalves, fixup.hpp stepBoth, the dual entry).
-// Acceptance for the default: kitref on 69 kits (the 13 levels with a dual portal and 1755 boxes, plus
-// one more dual-ball level), 1,028 episodes: no change; lv16/21/22 one-session [fp] identical; no positive replay of the
-// scene above (its level is not in the lab).
-inline bool g_dualSlide = true;
-// --dualdash: each dual body keeps its own dash (State::dashing2 / dashSlope2): GD's m_isDashing is
-// per player, and with one shared field the second body ran the first body's dash (step.hpp
-// swapHalves, fixup.hpp stepBoth, the dual entry, search_key.hpp).
-// On by default since 2026-10 (--no-dualdash turns it off).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --hangseatrepeat (always on since 2026-10): a flipped cube's or robot's hang ends on the tick
-// its seat repeats, as a floor ride does under --rideseatrepeat (step.hpp, the hang branch of
-// sampleAt).
-// --sloperot (always on since 2026-10): a cube seated on a ramp turns toward the ramp's own
-// angle, and the ramp's launch spins it the other way at half the take-off size (step.hpp, the
-// cube's spin).
-// --portalpressorder (always on since 2026-10): a mode portal met while a ramp presses the body
-// keeps the press when the ramp comes first in uid order (step.hpp, the free step after a mode
-// portal).
-// --ceilreleaseball (always on since 2026-10): a ball leaving a ceiling ramp's press gets the
-// release's launch as the flying modes do (step.hpp, ceil/release).
-// --undercrush (always on since 2026-10): a cube, robot or spider that takes a ramp's underside
-// outside the 0.1 s grace is not seated -- it dies if it is more than 2 px past the seat, and is
-// left where it is otherwise (step.hpp, the upright ceiling push and the --slopelaw seat).
-// --crushhithead: ...except while the id-1859 arm is up (State::armT < kArmTicks). The underside path
-// in collidedWithSlopeInternal is entered only with m_stateHitHead (+0xb7c) < 1, the counter an id-1859
-// touch sets to 2 (0x215ac6); with it up the body goes on to the seat. lv22 coin t=8790: an upright
-// spider inside 1859 box uid 17791 (hitHead pinned at 1 from t=8753) rises into ceiling ramp uid 17789
-// 1.85 px past the seat; GD puts it on the seat (441.866, vy 0) and slides it down the underside, where
-// the model left it and killed it 2 px past the next tick's seat.
-inline bool g_crushHitHead = true;
-// --ufoslopekill (always on since 2026-10): a UFO dies on the ship's measured outline around a
-// spiked ramp (the sloped side at ph, and with --shipslopecap its caps and flat side), instead of
-// by the box overlap the unmeasured modes keep (step.hpp, the spiked-ramp kill).
-// --spikebottom (always on since 2026-10): a spiked ramp's flat-edge
-// strip and wall are the same 1-px solid a plain ramp's are (preSlopeCollision does not read
-// m_slopeIsHazard); the ramp still never seats the body (step.hpp, the preslopegate block and the
-// support scan).
-// --balltapexit (always on since 2026-10): a ball's fresh press on the tick it leaves a ramp
-// with the uphill launch does not tap -- the launch has taken the body off the ground before the
-// buttons run, so it keeps its gravity and the launch's velocity (step.hpp, the top of stepOne).
-// --extseatrepeat (always on since 2026-10): an upright cube riding a downhill ramp's line past
-// its low end keeps the ride while the seat moves and leaves on the tick the clamped seat repeats,
-// the --rideseatrepeat test, instead of on the first tick past the extC window (step.hpp, the extC
-// branch of sampleAt).
-// --tponce (on by default since 2026-10): a teleport portal fires once per contact -- not again
-// while the body is still inside the box it was inside at the previous tick (GD's activatedByPlayer
-// mark; step.hpp, the portal pass).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --tplatch (on by default since 2026-10): ...and once per ATTEMPT, as GD's mark is: a teleport
-// portal takes a bit of State::portalLatch beside the gravity portals (level_loader.hpp numbers
-// them, static and dyn) and does not fire again once set, however the body comes back into its box
-// (step.hpp, the portal pass).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --teleoldpos: on a teleport tick, a portal with a smaller uid than the teleport is judged (and
-// fires) at the position the teleport found the player, as GD's ascending-uid pass reaches it first,
-// instead of being skipped (step.hpp, the portal pass).
-// On by default since 2026-10 (--no-teleoldpos turns it off).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --stripvetoorder (OFF by default): a ramp's 1-px top / bottom strip (--preslopesolid) is vetoed
-// only by the ramps GD's slope map holds at that point -- the one last ridden and those with a
-// smaller uid -- not by every ramp in the level (step.hpp, thinSolid). Off because its model-only check A/B is
-// negative: on its own it broke ten custom level A episodes (a ramp that takes the body must veto its own
-// strip, --stripownacq), and with --stripownacq it still breaks two of custom level F (t=6,513, a falling
-// ball GD puts on a ceiling ramp's top strip) that nothing told apart from the witness; with it off
-// the rest of the branch fixes the same 22 and breaks none, the witness (custom level B, iteration 33) included.
-inline bool g_stripVetoOrder = false;
-// --ballungroundramp (on by default; --no-ballungroundramp is the off arm): a ship / UFO that a ramp
-// with a smaller uid than the ball portal seated is not on the ground on the tick it becomes a ball
-// (step.hpp, the mode change in the portal pass).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --contseatclamp (on by default; --no-contseatclamp is the off arm): a ship's CONTINUING ride along a
-// ceiling ramp sits one tick on the corner where it passes onto the next same-sign ramp, as the old
-// ramp's clamped seat puts it in GD (step.hpp, the flipped ceiling pin).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --bandfloorunstick (on by default; --no-bandfloorunstick is the off arm): a grounded ship the flying
-// band's floor puts back on it is off the ramp it was riding -- the slope stick does not pull it
-// back down the line on the same tick (step.hpp, fly/bandcarry and stickHere).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --ceilgracerider (on by default; --no-ceilgracerider is the off arm): the flipped ceiling push's
-// exit-side grace (|dx| past the ramp's end) is for a body that rode the ramp last tick only
-// (step.hpp, the flipped ceiling pin).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --lawuplaunch (on by default; --no-lawuplaunch is the off arm): a --slopelaw seat dropped as a
-// repeat on a ramp that rises in the travel launches the body as a ride's uphill exit does
-// (step.hpp, the --lawcontact release).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --dualseatt (on by default; --no-dualseatt is the off arm): each body of a dual keeps its own law-
-// seat count (State::seatT2, swapHalves, the merge in fixup.hpp); shared, the first body's step wrote
-// it over the second's.
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --ceilfreshrect (on by default; --no-ceilfreshrect is the off arm): the flipped ceiling push takes
-// a fresh contact only through GD's inset-rect test, as the ramp window does (step.hpp, the flipped
-// ceiling pin).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --ceilpushreach (on by default; --no-ceilpushreach is the off arm): a fresh flipped ceiling push
-// reaches a ramp by box overlap, as GD's acquisition does, not by the rotated contact point
-// (step.hpp, the flipped ceiling pin).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --stripownacq (on by default; --no-stripownacq is the off arm): under --stripvetoorder a ramp's
-// strip is also vetoed by its own ramp when that ramp takes the body on this tick (step.hpp,
-// thinSolid's veto).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --escufo (on by default since 2026-10): escapee-prune leaves the UFO alone, as it does the ship
-// and the wave (step.hpp, where the measurement is).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --spentdyn (on by default since 2026-10): --spentorb also names rings in dyn (cli.hpp, the
-// seeding).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --radreach (on by default since 2026-10): the cube branch's hazard x window reaches a circle's
-// radius when it is wider than the object's rect (step.hpp, the hazard walk).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --uforot (on by default since 2026-10): the UFO's tilt follows GD's updateShipRotation UFO branch
-// (step.hpp, the rotation update, where the constants and the measurement are).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --spdonce (on by default since 2026-10): a speed portal does not fire again while the body stays
-// in its box (step.hpp, the speed portal pass).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --dualorbflip (on by default since 2026-10): a ring that flips a dual body's gravity couples to
-// the partner the way a gravity portal does (step.hpp, after the ring pass; fixup.hpp stepBoth).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --ufolawflap (always on since 2026-10): a UFO the --slopelaw seat held on a ramp rising in
-// its travel the tick before flaps at GD's ramp flap, min(flap + v/2, 1.4 x flap), v the ramp's
-// exit velocity (step.hpp, the seat and the UFO flap; State::lawSv; UfoModel::stepVy).
-// --spiderminigd (on by default since 2026-10): a MINI spider's teleport search in frame 0 is GD's
-// own too (spiderTargetGd), with the strip hung off the centre at the mini's half + 1 and the
-// hazard strip at +-4 x 0.6 (step.hpp, spiderTargetY).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --spawnringjump (on by default since 2026-10, with --orbspawn): the spawn ring's own jump, given
-// on the move of the tick after the press (step.hpp, the end of stepOne).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --ballstake (on by default since 2026-10): the ball's spin rate is also written where GD writes
-// it -- 0 on entering the ball (toggleRollMode), the ground rate off a pad (propellPlayer), on a
-// speed portal (updateTimeMod) and on a size portal over a ground stake (togglePlayerScale), the
-// air rate on a gravity portal (flipGravity), airborne or not -- and a ring's stake turns from the
-// next tick (step.hpp, the ball branch and the portal pass).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --boostcarry (on by default since 2026-10): the velocity-limit exemption (State::boost) is kept
-// through every mode and set by its writers in every mode, as GD's byte is, and a pad other than
-// the red one clears it (step.hpp, where the per-tick drop was).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --dualflyring (on by default since 2026-10): a dual ship or UFO takes its fly-ring on the press's
-// tick through the early path, as a single one does (step.hpp, the head of stepOne).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --dyngravseen (on by default since 2026-10): a gravity portal without a latch bit (a grouped one)
-// does not fire again while the body stays in its box, through the mode portals' portSeen slots
-// (step.hpp, the portal pass).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --dropfall (on by default since 2026-10): a drop ring skips the next tick's terminal clamp when
-// GD's playerIsFallingBugged says "not falling" on the firing tick, flipped arm and all (step.hpp,
-// the late ring loop's drop ring).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --repelland (on by default since 2026-10): the dual balls' repel is also decided after BOTH
-// bodies' collisions and before either tap, as GD's checkRepellPlayer is -- which a body that lands
-// on the tick its partner closes in needs (fixup.hpp stepBoth, after the second half).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --repela0c (on by default since 2026-10): the dual balls' repel decided once per tick in stepBoth
-// with GD's own choice of body -- p1's +0xa0c up flips p2, else p2's up flips p1 -- from
-// State::hitG, in place of the rule inside each half (and of --repelland's one case).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --spentaction (on by default since 2026-10): an --start anchor whose hist payload says the press
-// is held and spent seeds action = 1 for a UFO or swing, so the first tick does not read a consumed
-// press as a fresh edge (cli.hpp, the hist seeding).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --rot2 (on by default since 2026-10): each dual body keeps its own sprite angle and spin
-// (State::rot2 / rotStep2 / rotNeg2), so the second body's tests against turned objects read its
-// own angle (step.hpp swapHalves, fixup.hpp stepBoth).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --cubeentryspin: a cube entered in the air from the robot or the spider does not turn until a
-// spin is staked (updateJump's fall stake or the usual ones); see the cube's spin block in step.hpp.
-// On by default since 2026-10 (--no-cubeentryspin turns it off).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --ringrotsign: a rotated ring's firing box is tested at the ring's own angle (-rot in the math
-// sense), not its mirror; see the late ring loop in step.hpp.
-// On by default since 2026-10 (--no-ringrotsign turns it off).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --a1clatch (on by default since 2026-10): GD's +0xa1c per body (State::a1cLatch) -- raised by the
-// jump, a ring, a pad, a ramp's launch, the head-hit flip and a gameplay rotation, lowered by
-// updateJump the first tick playerIsFallingBugged holds -- and a ramp's exit does not launch a
-// cube, robot or spider, nor release any mode, while it is up (step.hpp, the ramp exit and the
-// ceiling release).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --lawcontact (always on since 2026-10): the tick after the slope law seats an upright body on
-// a floor ramp is GD's continuing contact (m_wasOnSlope): no solid's face the ramp vetoes holds the
-// body, the law re-seats it within the 4 px band and drops a target equal to the last one, and a
-// dropped downhill contact releases at the face's velocity (step.hpp, the law seat and the ramp
-// exit).
-// --padentry (on by default since 2026-10): with all four pad slots taken, a pad the body did not
-// overlap at the previous tick's position fires instead of being skipped (step.hpp, the pad loop).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --forceboxdir (on by default since 2026-10): a force box (2069) pushes along its own direction --
-// rotation and flipY, from calculateForceToTarget -- instead of always up (level_loader.hpp).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --ceilwallnopush (always on since 2026-10): an upright ship on a rising ceiling ramp's wall
-// side (dirs {2,3,4,6} with the centre left of the box; the others travelling left, right of it) is
-// not pushed by that ramp -- preSlopeCollision returns the wall first -- so neither the V-valley
-// corner (ceilLimSeat's min with the neighbour) nor cornerReg applies there (step.hpp).
-// --heldtolhead (always on since 2026-10): the spiked-ramp kill's head-side band. A flight mode
-// holding the button, against a ramp bVar22 leaves clear and while not on a slope, dies 1 px (2
-// when it was on a slope last tick) short of the line and cap (step.hpp, the spiked-ramp kill;
-// 0x38ff71..).
-// --heldnodown (always on since 2026-10): the descending floor ramp's +1 of the spiked-ramp
-// kill is the feet side's band, which a ship holding the button does not get (step.hpp;
-// 0x38fe6b-0x38fe7d).
-// --capinsetgate (always on since 2026-10): the spiked-ramp kill's caps sit at the box's edge
-// plus ph; the pixel the rigs measured short of that is the fresh-contact 1-px inset, which a body
-// that was on a slope last tick does not face (step.hpp; 0x38fc0e-0x38fc7b).
-// --ballslopekill (always on since 2026-10): a ball dies on the ship's
-// outline around a spiked ramp instead of by the box overlap (step.hpp, the spiked-ramp kill).
-// --flipcldbg N: print the first N states where the --flipceilland rule acts (print
-// only; it says where in a search the rule takes effect).
-inline std::atomic<int> g_flipLandDbgLeft{0};
-// slope law: the acquisition GD actually performs, in place of --ceilpush's
-// one-sided push-out. See step.hpp's site for what is measured and what is not.
-// On since v0.1.4; always on since the flag clean-up.
-// ship slope kill: the ship's spiked/plain ramp kill on the measured outline
-// (perpendicular d = playerHalf, flat side +kCubeInner) instead of the interval
-// overlap. See the note at the ramp kill in step.hpp. On since v0.1.4; always on
-// since the flag clean-up.
-// --killslopeside: the slope KILL test decides which half of the
-// box is solid with GD's own set, {1,3,5,6} (slopeIsCeiling, read off
-// collidedWithObjectInternal at 0x3921B5), for every mode -- not just the ship.
-// The kill test is the last place in the tree still on the {1,3} subset: the
-// ride path dropped the mode whitelist in r63 (step.hpp, 2026-08-21) on the
-// grounds that "the reason was the same every time and has nothing to do with
-// the player's mode", and step.hpp's ceiling-ramp branch reads ceilRampSide.
-// 447 of the corpus's 3,091 type-25 slopes sit in the difference set {5,6}, so
-// this is NOT a one-object change and it moves kills in BOTH directions -- a
-// slope GD calls ceiling is currently judged as floor, which empties one
-// interval and fills the other.
-// ON by default since 2026-09-21. The enumeration came
-// back with one row changed -- lv21's t=14,999 over-kill, the same rule and the
-// same direction as lv20's -- and nothing moved the other way over 22 whole-run
-// replays. deathref 41/47 -> 42/47 with nothing lost, cold 22/22. Always on
-// since the flag clean-up.
-// flipped wave slope kill: a flipped wave's ceiling-type spiked ramp kill at the
-// measured perpendicular distance kWaveFlipSlopeKillD instead of playerHalf. See
-// the note at the ramp kill in step.hpp. On since v0.1.4; always on since the
-// flag clean-up.
-// --latgap: the search does not change the input on a tick no button edge can reach --
-// the tick after a mode portal from a latency-1 mode (cube/ball/wave/...) into a
-// latency-2 one (ship/UFO). The emitter maps such an edge to the press one tick earlier
-// (cli.hpp, the plan writer's two-pass latency), which GD and --replay apply one tick
-// LATE. Measured in cold runs: lv12 t=19,034 (ball -> ship at 19,033) and lv14 t=19,638
-// (cube -> ship at 19,637), both SOLVED plans whose own witness lived while --replay of
-// the emitted plan followed GD to its death. On by default since 2026-10 (was opt-in).
-// (The switch is gone since the 0.4.0 clean-up; its on behaviour is fixed.)
-// --waveslopeside: the wave's floor-ramp kill with the two things the plain rig
-// measured on 2026-09-17 (calib_slopespike_wave and _wave_mini, bisected to 0.006 px,
-// positions converted to the kill tick): a MINI wave's perpendicular distance is 3.0
-// (its rect's half), not the 2.0 the model used, and on a DESCENDING floor ramp the
-// boundary sits exactly 1.0 px higher than on an ascending one, for both sizes and both
-// slopes (normal 5.000 up / +1.000 down, mini 3.000 up / +1.000 down, on m=1 and m=0.5).
-// lv21 t=14,674 is the cold run's case: a mini wave 3.54 px (perpendicular) above
-// descending plain ramp 1338, killed by GD and not by the model.
-// On since 2026-09-20, always on since the flag clean-up. The high-end cap was
-// re-confirmed on a third object -- id1339 rotated 90, m=2 -- by a coin route on lv21 that GD
-// kills at t=16,725 and the model flew 95 ticks past; with the flag the model kills on the same
-// uid at the same place. Gates: the replay suite moves 38 of 1,116 traces with the reference
-// tracking unchanged, a cold run clears 22/22 for +8 on lv20 and +1 on lv17, deathref keeps
-// 41/47 with no reference lost, and refaudit adds no over-kill (lv19 improves from 153
-// differing rows to 3).
-constexpr double kWaveSlopeDescendDy = 1.0;
-// ...and past the high end the kill is flat at objMaxY + half - 1.0 (both directions).
-// The downhill +1.0 is the source's tolerance xmm10 = (m_slopeUphill == 0), x4 while
-// m_wasOnSlope, plus a velocity term for a moving ramp (0x38fab3-0x38fb94); only the
-// static, not-sliding case is modelled here. (That 1.0 was kWaveSlopeCapInset; since
-// --waveslopecap and --capinsetgate lost their switches the upright wave's cap is the
-// capped outline's, whose inset is the fresh contact's 1 px -- insetK in step.hpp.)
-// The overlap of the two flipped-wave brackets (m=0.5: 5.83-5.97, m=1: 5.69-5.86).
-constexpr double kWaveFlipSlopeKillD = 5.845;
 // (--nofreeside, which dropped --slopelaw's one empirical conjunct, is gone since the flag clean-up.)
 // --escrotahead: do not escapee-prune a body in a turned frame while a rotation
 // is still ahead on the active queue channel. See the prune in step.hpp. Always
 // on; the switch is gone since the flag clean-up.
 inline thread_local bool g_preBtnSet = false;
 inline thread_local double g_preBtnY = 0.0;
-// --spidertptouch (constants.hpp): this tick's spider teleport came from a fresh press (the buttons phase,
-// after the collision pass), so the touch boxes met this tick are the pre-teleport body's (step.hpp,
-// markTouched). Set by stepOne's tap branch; cleared and restored with g_preBtnSet.
-inline thread_local bool t_spiderFreshWarp = false;
-// Did the last stepOne's ball tap? Written by stepOne (cleared on entry, set from its own
-// ballFlippedThisTick near the end), read by stepBoth right after each half (--repelland).
-inline thread_local bool g_ballTapped = false;
-// ...and the body's +0xa0c as the repel reads it: after this tick's collisions, before its tap
-// (--repela0c; stepOne writes it next to g_ballTapped).
-inline thread_local uint8_t g_hitGRepel = 0;
 
 // ---- THE 2.2 TRIGGER QUEUE (channel / ord) ---------------------------------
 //
@@ -653,7 +251,7 @@ inline std::array<int, 16> g_rotQBeg{};
 inline std::array<int, 16> g_rotQEnd{};
 // Bits of State::rotSpent that belong to each channel, so "how many of this
 // channel have been consumed" is one popcount.
-inline std::array<uint32_t, 16> g_rotQChanMask{};
+inline std::array<uint64_t, 16> g_rotQChanMask{};
 // --rotqueue: consume rotations from the queue instead of the pre-queue
 // selection (the travel-axis crossing, the perpendicular window, the
 // last/nearest rule). OPT-IN, and the reason is measured rather than cautious:
@@ -757,7 +355,8 @@ inline std::string g_anchorState;
 // says. Declaring ownership keeps "replaces wholesale" true WITHIN a
 // subsystem and leaves the others honestly alone.
 inline const char* const kAnchorKeys[] = {"owns", "touch", "portal", "portal2",
-                                          "hist"};
+                                          "hist", "ever", "ever2"};
+// `owns=ever` -> `ever=<uid>,<uid>,...` (player 1) and `ever2=<uid>,...` (player 2): the uids whose activated-by-player flag GD had set at the anchor's tick (`-1` for none); ever_payload.hpp.
 // `owns=hist` -> the per-body history values that --start does not carry, as
 // ONE versioned value: `hist=<version>|<count>|name:value,name:value`. The
 // version and the count are checked, and a name this build does not know is
@@ -791,27 +390,95 @@ inline const char* const kHistNames[] = {"pressSpent", "pressSpent2"};
 // +0x985 && !+0x986, which cannot tell "the button is up" from "the button is down
 // and a ball's tap cleared +0x985", and the second is State::holdDead (the hold
 // latch): a ship entered on that hold does not thrust. Seeded under --holdseed.
-inline std::array<const char*, 13> histNamesFor(int version) {
+// Version 7 adds `ball728`: GD's ground-stake byte for the ball (player+0x728 on 2.2081, 0x730 on 2.209), seeded into
+// State::ball728 under --ballstakeseed. Written by the mod under cfg `histball728`.
+inline std::array<const char*, 14> histNamesFor7(int version) {
+    if (version == 7)
+        return {"pressSpent", "pressSpent2", "freeMode", "spiderJumpT", "slopeOn",
+                "slopeUnder", "slopeUid", "slopeAge", "slopeLanded", "dashing2", "dashRing2",
+                "jumpBuf", "jumpBuf2", "ball728"};
     if (version == 6)
         return {"pressSpent", "pressSpent2", "freeMode", "spiderJumpT", "slopeOn",
                 "slopeUnder", "slopeUid", "slopeAge", "slopeLanded", "dashing2", "dashRing2",
-                "jumpBuf", "jumpBuf2"};
+                "jumpBuf", "jumpBuf2", nullptr};
     if (version == 5)
         return {"pressSpent", "pressSpent2", "freeMode", "spiderJumpT", "slopeOn",
                 "slopeUnder", "slopeUid", "slopeAge", "slopeLanded", "dashing2", "dashRing2",
-                nullptr, nullptr};
+                nullptr, nullptr, nullptr};
     if (version == 4)
         return {"pressSpent", "pressSpent2", "freeMode", "spiderJumpT", "slopeOn",
                 "slopeUnder", "slopeUid", "slopeAge", "slopeLanded", nullptr, nullptr,
-                nullptr, nullptr};
+                nullptr, nullptr, nullptr};
     if (version == 3)
         return {"pressSpent", "pressSpent2", "freeMode", "spiderJumpT", nullptr,
-                nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+                nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     if (version == 2)
         return {"pressSpent", "pressSpent2", "freeMode", nullptr, nullptr,
-                nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+                nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     return {kHistNames[0], kHistNames[1], nullptr, nullptr, nullptr,
-            nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+            nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+}
+// Version 8 adds `spin`: player 1's rotation rate (m_rotationSpeed, player+0x728 on 2.209) in 1/1000 degree a second, with its switch byte (+0x730, the `ball728` byte). The seed of an airborne cube runs runNormalRotation, a
+// standard spin (+1.73 a tick); after a ramp exit GD turns the cube the other way and slower (-207.692 = -0.865 a tick), and the wrong rotation turns its OBB off a thin rotated portal (a custom level t=7000). Seeded under --spinseed. Written by the mod under cfg
+// `histseed2` (version 8 also carries `ball728`, -1 when cfg `histball728` is off: not said).
+// Version 9 adds `dashAge`: the ticks since the first row of the dash player 1 is in (0 = the anchor's own tick is that row, -1 = not dashing / not said), see --shadowdashage. Written by the mod under cfg `histseed2`.
+// Version 10 adds `gmod2`: the second body's m_gravityMod in 1/1000 (-1 = no second body), seeded into player 2's +0xb8c under --shadowp2grav (a gravity trigger for player 2 only that was touched before the anchor). Written by the mod under cfg `histseed2`.
+// Version 11 adds the second body's slope ride, the words version 4 carries for player 1: `slopeOn2`, `slopeUnder2`, `slopeUid2`, `slopeAge2`, `slopeLanded2` (-1 = no second body / not said), seeded into player 2's ride fields and the shadow's
+// second body under --seedslope2 (16:7800: both bodies of a dual cube leave their ramps together). Written by the mod under cfg `histslope2` (with `histseed2`).
+// Version 12 adds `ctrlOff` and `ctrlOff2`: GD's m_controlsDisabled of player 1 and of the second body at the anchor's tick (0 / 1; -1 = no second body / not said). dp starts the run with State::ctrlT = ctrlOff when the run starts in frame 0 with one body
+// (the window a rotation-gameplay level's Options trigger opens used to be learnt from the recording: --ctrlwin). Written by the mod under cfg `histctrl` (with `histseed2`, `histslope2`).
+// Version 13 adds `rng`: the low 32 bits of the game's trigger LCG (22091: the global at base+0x90bf68) at the anchor's tick as a signed int. dp compares it with the trigger shadow's own stream after the replay up to the anchor
+// (trigshadow_live.hpp anchorRngCheck) and, with --trigshadowopts random*, takes it in. Written by the mod under cfg `histrng` (with `histctrl`).
+inline bool g_anchorRngKnown = false;
+inline uint32_t g_anchorRng = 0;
+inline std::vector<const char*> histNamesFor(int version) {
+    if (version == 13) {
+        std::vector<const char*> v = histNamesFor(12);
+        v.push_back("rng");
+        return v;
+    }
+    if (version == 12) {
+        std::vector<const char*> v = histNamesFor(11);
+        v.push_back("ctrlOff");
+        v.push_back("ctrlOff2");
+        return v;
+    }
+    if (version == 11) {
+        const auto v7 = histNamesFor7(7);
+        std::vector<const char*> v(v7.begin(), v7.end());
+        v.push_back("spin");
+        v.push_back("dashAge");
+        v.push_back("gmod2");
+        v.push_back("slopeOn2");
+        v.push_back("slopeUnder2");
+        v.push_back("slopeUid2");
+        v.push_back("slopeAge2");
+        v.push_back("slopeLanded2");
+        return v;
+    }
+    if (version == 10) {
+        const auto v7 = histNamesFor7(7);
+        std::vector<const char*> v(v7.begin(), v7.end());
+        v.push_back("spin");
+        v.push_back("dashAge");
+        v.push_back("gmod2");
+        return v;
+    }
+    if (version == 9) {
+        const auto v7 = histNamesFor7(7);
+        std::vector<const char*> v(v7.begin(), v7.end());
+        v.push_back("spin");
+        v.push_back("dashAge");
+        return v;
+    }
+    if (version == 8) {
+        const auto v7 = histNamesFor7(7);
+        std::vector<const char*> v(v7.begin(), v7.end());
+        v.push_back("spin");
+        return v;
+    }
+    const auto a = histNamesFor7(version);
+    return std::vector<const char*>(a.begin(), a.end());
 }
 // --anchorride / --no-anchorride (default on since 2026-09-30): seed the anchor's
 // slope-ride fields from the hist payload's version-4 values (cli.hpp, after the
@@ -830,11 +497,6 @@ inline bool g_ownsTouch = false;
 // accident. Uids rather than bit indices, for the reason the touch payload
 // gives -- a bit index is this build's ordinal and a uid is the level's.
 inline bool g_ownsPortal = false;
-// --seed-partial-ok: run anyway when a key this build wants is absent, and
-// stamp the outcome so the result carries it. A warning on stderr does not
-// survive into the place results are compared.
-inline bool g_seedPartialOk = false;
-inline std::string g_seedPartial;   // what was missing, for the outcome line
 
 // Split `a=1;b=2` into pairs, rejecting a key this build does not know. The
 // rejection is the point: a payload naming an unknown key was written by a
@@ -892,6 +554,11 @@ inline std::vector<int> parseUidList(const std::string& v) {
 }
 // std::popcount is C++20 and this tree builds as C++17.
 inline int popCount32(uint32_t v) {
+    int n = 0;
+    while (v) { v &= v - 1; ++n; }
+    return n;
+}
+inline int popCount64(uint64_t v) {
     int n = 0;
     while (v) { v &= v - 1; ++n; }
     return n;
@@ -977,8 +644,8 @@ inline void buildRotQueue() {
             // obeys. A queue longer than that is REFUSED before it is used
             // (cli.hpp, right after loadRotQueue), so the truncation here is
             // unreachable rather than merely unlikely.
-            uint32_t m = 0;
-            for (size_t k = i; k < j && k < 32; ++k) m |= (uint32_t)1 << k;
+            uint64_t m = 0;
+            for (size_t k = i; k < j && k < 64; ++k) m |= (uint64_t)1 << k;
             g_rotQChanMask[(size_t)ch] = m;
             ++g_rotQChans;
         }
@@ -1117,15 +784,15 @@ inline bool ctrlOffAt(long long t) {
 // `heldBefore` is kept for the callers; the measurement does not need it.
 // On by default since 2026-10-06; --no-ctrlwinlag is the off arm.
 inline bool g_ctrlWinLag = true;
-// --ctrlliftlag (default on): ...and the lift lags the same tick: the button the model's input at t stands for is
-// GD's at the end of t - 1, which a flag still raised then refuses, so t is refused while t - 1 is in the window,
-// whatever t is. The custom level of --ctrlwintrig: a ship held across its window's lift (window 13,404..13,551)
-// thrusts from 13,553 in GD (vy -4.732 on 13,552, -4.624 on 13,553); the model, refusing only inside the window,
-// thrust from 13,552.
-inline bool g_ctrlLiftLag = true;
 inline bool ctrlInputOffAt(long long t, bool heldBefore) {
     (void)heldBefore;
-    if (g_ctrlLiftLag && g_ctrlWinLag) return ctrlOffAt(t - 1);
+    // (always on: the switch --ctrlliftlag is removed)
+    // --ctrlliftlag (removed): ...and the lift lags the same tick: the button the model's input at t stands for is
+    // GD's at the end of t - 1, which a flag still raised then refuses, so t is refused while t - 1 is in the window,
+    // whatever t is. The custom level of --ctrlwintrig (removed): a ship held across its window's lift (window 13,404..13,551)
+    // thrusts from 13,553 in GD (vy -4.732 on 13,552, -4.624 on 13,553); the model, refusing only inside the window,
+    // thrust from 13,552.
+    if (g_ctrlWinLag) return ctrlOffAt(t - 1);
     if (!ctrlOffAt(t)) return false;
     return !g_ctrlWinLag || ctrlOffAt(t - 1);
 }
@@ -1135,7 +802,7 @@ inline bool ctrlInputOffAt(long long t, bool heldBefore) {
 // body's own windows (the dump's p2ctrlOff). A custom level's dual robot: an Options trigger with
 // only the player-1 box set raises ctrlOff at 7,012, and on the plan's press at 7,035 GD's second
 // body jumps (vy +5.615) while the first, held on its band, does not; the model held both. With the
-// flag the second half of a dual tick (stepBoth's second stepOne) reads --ctrlwin2 instead of
+// flag the second half of a dual tick (the removed old tick's stepBoth's second stepOne) read --ctrlwin2 instead of
 // --ctrlwin. The replay's window re-push (cli.hpp) is still built from --ctrlwin alone: a second-body
 // window that lifts under a held button is not measured.
 inline std::vector<std::pair<long long, long long>> g_ctrlWin2;
@@ -1148,11 +815,11 @@ inline bool ctrlOff2At(long long t) {
 // under --ctrlwinp2.
 inline bool ctrlBodyInputOffAt(long long t, bool secondHalf) {
     if (!secondHalf) return !g_ctrlWin.empty() && ctrlInputOffAt(t, false);
-    if (g_ctrlLiftLag && g_ctrlWinLag) return ctrlOff2At(t - 1);   // --ctrlliftlag
+    if (g_ctrlWinLag) return ctrlOff2At(t - 1);
     if (!ctrlOff2At(t)) return false;
     return !g_ctrlWinLag || ctrlOff2At(t - 1);
 }
-// --ctrlwintrig (default on): past what the recorded windows cover (g_ctrlTrigFrom, the recording's reach), player
+// --ctrlwintrig (removed): past what the recorded windows cover (g_ctrlTrigFrom, the recording's reach), player
 // 1's controls follow the Options triggers the player's x has crossed, on a level with no gameplay rotation (lv22's
 // rotated crossings are the unresolved gate above). A custom level's five windows all come out of its ten optp1
 // 2899s that way: from the tick x reaches a raising one's cx to the tick before it reaches the lowering one's
@@ -1164,9 +831,35 @@ struct CtrlTrig {
     double cx;      // world x
     int8_t v;       // 1 disables player 1's controls, -1 enables them
     uint8_t gated;  // touch- or spawn-triggered: not fired by the crossing
+    int chan = 0;   // --ctrlwinx (removed): the rotation channel whose bucket holds it (the objrects `chan` column)
 };
-inline bool g_ctrlWinTrig = true;
 inline std::vector<CtrlTrig> g_ctrlTrigs;   // sorted by cx at load
+// The Options triggers of the body's own rotation channel (always on since F8): on a level that turns its gameplay (lv22) an Options trigger fires from the rotation channel's queue, not from the player's x alone
+// (ctrlWinXOffNow stands aside there). Measured on lv22's ten optp1 2899s over every attempt of one cold: every tick GD's ctrlOff changed is a tick whose x crossing took a trigger whose `chan` is the channel the player
+// is in (the dump's rotch; the same x crossed in another channel changes nothing), 9 of 9 events, 2 channel-matching crossings left the flag as it was (already raised). So the rule is the x crossing AND chan == the
+// body's channel, and what it leaves is a STATE (a trigger of another channel does not undo it): the crossing a tick takes raises / lowers State::ctrlT -- the same "the controls are refused from the next tick on"
+// that a touched Options trigger sets (--ctrltouch), read by the same gates (step.hpp's no-control gate, the shadow's head). Without it the window's start past the recording's reach (lv22 t=18206, uid 18084) is
+// unknown, and the model jumps on a button GD ignores (iterations 12 and 13 of the 14-iteration cold).
+// the last non-gated Options trigger the x moving from xp to xn crosses in channel `chan`: 1 raises, 0 lowers, -1 none. A reversed run (State::rev: x falls) crosses leftward, trigger by trigger from the
+// right (lv22 t=19098: a window opens at x 21434.4 on the crossing of 21435 from the right, and closes at 19521 on the way right through 21465 -- both tick's channel matches the trigger's)
+inline int ctrlChanCrossed(double xp, double xn, int chan, bool back) {
+    int r = -1;
+    if (!back) {
+        for (const CtrlTrig& t : g_ctrlTrigs) {
+            if (t.cx > xn) break;
+            if (t.cx <= xp || t.gated || t.chan != chan) continue;
+            r = t.v == 1 ? 1 : 0;
+        }
+    } else {
+        for (size_t i = g_ctrlTrigs.size(); i-- > 0;) {
+            const CtrlTrig& t = g_ctrlTrigs[i];
+            if (t.cx < xn) break;
+            if (t.cx >= xp || t.gated || t.chan != chan) continue;
+            r = t.v == 1 ? 1 : 0;
+        }
+    }
+    return r;
+}
 inline long long g_ctrlTrigFrom = -1;        // the tick past which they answer (cli.hpp)
 // 1 off, 0 on, -1 unknown (the last trigger at or behind x is gated)
 inline int ctrlTrigStateAt(double x) {
@@ -1178,36 +871,59 @@ inline int ctrlTrigStateAt(double x) {
     return st;
 }
 inline bool ctrlTrigInputOff(long long t, double x, double xPrev) {
-    if (!g_ctrlWinTrig || g_ctrlTrigs.empty() || t <= g_ctrlTrigFrom) return false;
-    if (g_ctrlLiftLag && g_ctrlWinLag) return ctrlTrigStateAt(xPrev) == 1;   // --ctrlliftlag
+    if (g_ctrlTrigs.empty() || t <= g_ctrlTrigFrom) return false;
+    if (g_ctrlWinLag) return ctrlTrigStateAt(xPrev) == 1;
     return ctrlTrigStateAt(x) == 1 && (!g_ctrlWinLag || ctrlTrigStateAt(xPrev) == 1);
 }
-// --ctrlwavenow (default on): ...and a wave's button with no lag. A tick in GD runs update, collisions, the crossing
-// queue (where an Options trigger raises the flag) and then the buttons, so a button on the tick the flag goes up
-// finds it raised. The model's wave turns on the button the state came in with (the tick after), i.e. its input at
-// t is GD's button at the end of t; the ship's thrust, which --ctrlwinlag measured, takes this tick's input and so
-// GD's button of the tick before. The custom level of --ctrlwintrig, its window raised at 13,404: a wave pressed
-// on 13,404 does not climb on 13,405 in GD, where the model climbed with the recorded window passed as well.
-inline bool g_ctrlWaveNow = true;
+inline long long g_ctrlOpenT0 = -1;
+inline double g_ctrlOpenX0 = 0.0;
+inline double g_ctrlOpenEnd = std::nan("");   // NaN: not resolved yet; -1e18: the level names no end
+inline double ctrlOpenEndX() {
+    if (!std::isnan(g_ctrlOpenEnd)) return g_ctrlOpenEnd;
+    g_ctrlOpenEnd = -1e18;
+    int raise = -1;
+    for (size_t i = 0; i < g_ctrlTrigs.size(); ++i)
+        if (g_ctrlTrigs[i].v == 1 && !g_ctrlTrigs[i].gated && g_ctrlTrigs[i].cx <= g_ctrlOpenX0 + 0.5) raise = (int)i;
+    if (raise < 0) return g_ctrlOpenEnd;
+    for (size_t i = (size_t)raise + 1; i < g_ctrlTrigs.size(); ++i)
+        if (g_ctrlTrigs[i].v == -1 && !g_ctrlTrigs[i].gated && g_ctrlTrigs[i].chan == g_ctrlTrigs[(size_t)raise].chan
+            && g_ctrlTrigs[i].cx > g_ctrlTrigs[(size_t)raise].cx) {
+            g_ctrlOpenEnd = g_ctrlTrigs[i].cx;
+            break;
+        }
+    return g_ctrlOpenEnd;
+}
+// the button at t is refused: the window was open at the end of t - 1 and the body had not reached the lowering trigger by then
+inline bool ctrlWinXInputOff(long long t, double xPrev) {
+    // (always on: the switch --ctrlwinx is removed)
+    // --ctrlwinx (removed), with the caller's --ctrlwinopen t0:x0: a window GD's recording left OPEN at its last tick closes at the Options trigger that
+    // lowers it. --ctrlwin carries only what the recorded attempt saw, and an attempt that dies inside a window ends it there (repair.hpp windows()), so the
+    // model owned the tick the window began and not where it ends: past the recording it let the button through again, planned a turn GD ignores, and died
+    // at the next zig-zag of the same corridor a few ticks later, once per iteration -- a custom level's 30 px wave corridor, window 18,097..18,319, died
+    // at 18,098, 18,100, 18,104, 18,108, 18,110, ... and every iteration's death was recorded as one more tick of the window. The level says where it ends: the
+    // raising trigger is the last optp1 2899 behind x0 (the player's x on the tick the window opened), and the lowering one is the next trigger of the same
+    // channel that lowers it. This is the rotated-level answer to --ctrlwintrig (removed), which stands aside whenever the level turns its gameplay (its gate, which
+    // crossing raises a trigger, is the rotation queue's cursor there); the window's START stays the recording's, and only its END is taken from the level.
+    // One body in a plain frame moving right, the lag as --ctrlwin's own (the button at t is refused when t - 1 is inside the window).
+    // On since 2026-10-27: the custom level with the corridor goes from 7 handoffs to 0, every other level unchanged.
+    if (g_ctrlOpenT0 < 0 || t - 1 < g_ctrlOpenT0) return false;
+    const double e = ctrlOpenEndX();
+    return e > -1e17 && xPrev < e;
+}
+// a wave's button with no lag (--ctrlwavenow (removed)): the window is open on t itself
+inline bool ctrlWinXOffNow(long long t, double x) {
+    if (g_ctrlOpenT0 < 0 || t < g_ctrlOpenT0) return false;
+    const double e = ctrlOpenEndX();
+    return e > -1e17 && x < e;
+}
 inline bool ctrlOffNowAt(long long t, bool secondHalf, double x) {
     if (secondHalf) {
         if (ctrlOff2At(t)) return true;
     } else if (!g_ctrlWin.empty() && ctrlOffAt(t)) {
         return true;
     }
-    return !secondHalf && g_ctrlWinTrig && !g_ctrlTrigs.empty() && t > g_ctrlTrigFrom && g_rotTrig.empty()
+    return !secondHalf && !g_ctrlTrigs.empty() && t > g_ctrlTrigFrom && g_rotTrig.empty()
            && ctrlTrigStateAt(x) == 1;
-}
-// Jump ticks that come from a window's re-push (= w1+1). GD's buffered jump has
-// holding already at 0 when it fires, so **no hover starts** -- the model side,
-// which mirrors it with a synthetic press, would create s.action=1, so the jump
-// on exactly this tick does not accumulate rHover. Filled only when a replay is
-// loaded (always empty during the search).
-inline std::vector<long long> g_winRePushJump;
-inline bool rePushNoHoverAt(long long t) {
-    for (long long v : g_winRePushJump)
-        if (t == v) return true;
-    return false;
 }
 
 inline void toFrame(int f, double X, double Y, double& u, double& v) {
@@ -1235,11 +951,6 @@ inline std::vector<UnlinkTrig> g_unlinkTrigs;   // sorted by cx at load
 // player of its own with a button of its own (a plan's input bit 1), and no gravity portal either one crosses flips
 // the other -- the link a dual portal makes does not exist. 0 on every level without the key.
 inline int g_twoPlayer = 0;
-// --dualbornlinked (default on since 2026-10-23; --no-dualbornlinked is the off arm): a dual portal of a two-player level gives the new body the INVERSE gravity and the negated vy of the first, as the game does
-// unless the layer's +0x860 is up (an Options trigger's Unlink Dual Gravity, g_unlinkTrigs). The model took every two-player level for unlinked at birth (the second body born with the
-// first's own gravity and vy). Birth only: after it a two-player level stays unlinked (a gravity portal of one body flips the other body only on a level without twoPlayer=1; the game's
-// own dump of a two-player level shows lone flips of the second body, t=150 and t=9,217 on the 59 KB lab level, with the pair in the same mode).
-inline bool g_dualBornLinked = true;
 // Solving ONE body of a two-player level against the other's plan. `--ghostlevels <file>` (lines `tick,level`) names the button the OTHER body
 // (the second slot of the State) takes at each tick -- the effect level, as a `--replay` of its plan writes in the `act`/`act2` column -- and makes
 // that body a ghost: it is stepped with its plan (its speed portals still count) but its death ends nothing. The search then branches the first
@@ -1255,27 +966,26 @@ inline int g_startAct2 = -1;   // --startact2 <0|1>: the second player's button 
 // Set by a SEARCH call on a two-player level that has both bodies (cli.hpp, before the search): the call searched the first body against a ghost that holds
 // nothing, and cliMain then searches the second against the first's plan (cliMain's second pass) and writes the two as one mask plan.
 inline bool g_twoBodyCall = false;
+// The level has a dual-ON portal (objrects type 23: GJBaseGameLayer::toggleDualMode can birth the second body inside a call). Set by the loader, cleared by the reset
+// with every other level-derived global, so a second level in one process does not read the last one's.
+inline bool g_levelHasDualOn = false;
+// ...and this call is a two-player level's search from an anchor that has ONE body (init.dual = 0) in such a level: the first body is searched against an idle
+// ghost, and cliMain starts the second body's pass at the first body's BIRTH (the first tick of its walk with the second body present), from the walk's State
+// there. Plan masks stay shared (bit 0 and 1 together) until a birth is found.
+inline bool g_twoBodyBirthMode = false;
 // --pinrows <file> (lines `tick,x,y`): the ticks where GD holds PLAYER 1 on a spot the physics does not give it -- a Teleport trigger (3022) that a Spawn
 // loop fires again every tick, onto a target a Move trigger is carrying, with the controls off: x stays where the teleport put it, y follows the target, and
 // vy reads 0 (measured on a custom two-player level, t=3..168: x 644.5 throughout, y 2085 -> 2055, the button of either player doing nothing). The model
 // fires a teleport trigger once, at the crossing, so from the next tick it lets the body fall and run on. With the rows the caller recorded (the pinned ticks
 // of GD's own attempt: x did not move), the first player's body is put at the recorded (x, y) at the end of each such tick, vy 0, off the ground.
 // Player 1 only: in a two-player level's swapped pass that is the second slot. Empty (every call that was not given the file) changes nothing.
+// A row with only `tick,x` (y = NaN) pins x alone: GD re-sets the player's x every tick (a Spawn/Item Compare loop firing an ignore-Y
+// teleport -- custom level, x 435.000 for 3,000 ticks while y fell and landed under the physics), and the body's y, vy and contacts stay the model's own.
 struct PinRow {
     long long t;
     float x, y;
 };
 inline std::vector<PinRow> g_pinRows;   // sorted by t
-inline const PinRow* pinRowAt(long long t) {
-    if (g_pinRows.empty()) return nullptr;
-    size_t lo = 0, hi = g_pinRows.size();
-    while (lo < hi) {
-        const size_t m = (lo + hi) / 2;
-        if (g_pinRows[m].t < t) lo = m + 1;
-        else hi = m;
-    }
-    return (lo < g_pinRows.size() && g_pinRows[lo].t == t) ? &g_pinRows[lo] : nullptr;
-}
 inline int ghostLevelAt(long long t) {
     const long long i = t - g_ghostBase;
     return (i >= 0 && i < (long long)g_ghostLvl.size()) ? (int)g_ghostLvl[(size_t)i] : 0;
@@ -1310,7 +1020,7 @@ inline int secondLevelAt(long long t) {
     return (i >= 0 && i < (long long)g_p2ReplayLvl.size()) ? (int)g_p2ReplayLvl[(size_t)i] : 0;
 }
 // Whether the pair is unlinked during a tick that starts at (u, v) in `frame`: a gravity portal of one body flips the other
-// (step 5's partner call) only while it is not. A two-player level is unlinked throughout, with or without --dualbornlinked.
+// (step 5's partner call) only while it is not. A two-player level is unlinked throughout, with or without --dualbornlinked (removed).
 inline bool unlinkTrigAt(int frame, double u, double v) {
     if (g_unlinkTrigs.empty()) return false;
     double X = u, Y = v;
@@ -1324,12 +1034,6 @@ inline bool unlinkTrigAt(int frame, double u, double v) {
 }
 inline bool dualUnlinkedAt(int frame, double u, double v) {
     if (g_twoPlayer) return true;
-    return unlinkTrigAt(frame, u, v);
-}
-// Whether the body a dual portal gives birth to takes the first body's own gravity and vy (unlinked) rather than the inverse and the negation. --dualbornlinked reads it from the
-// Options triggers alone, also on a two-player level; otherwise a two-player level is unlinked at birth as it always was.
-inline bool dualBornUnlinkedAt(int frame, double u, double v) {
-    if (g_twoPlayer && !g_dualBornLinked) return true;
     return unlinkTrigAt(frame, u, v);
 }
 // The travel coordinate of a world point in this frame (what `cx` becomes).

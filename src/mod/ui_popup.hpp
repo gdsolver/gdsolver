@@ -28,7 +28,7 @@
 // On 2.2081 these are forwards to Geode's own members, so that build behaves exactly as before.
 #include <Geode/Geode.hpp>
 #include <Geode/ui/Layout.hpp>
-#if GEODE_COMP_GD_VERSION < 22090
+#if GEODE_COMP_GD_VERSION < 22090 || defined(GDSOLVER_GEODE6)
 #include <Geode/ui/ScrollLayer.hpp>
 #include <Geode/ui/Scrollbar.hpp>
 #endif
@@ -37,7 +37,7 @@
 
 namespace gdsolver::ui {
 
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && !defined(GDSOLVER_GEODE6)
 
 inline cocos2d::CCPoint anchorFraction(geode::Anchor a) {
     using geode::Anchor;

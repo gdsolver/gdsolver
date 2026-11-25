@@ -87,6 +87,12 @@ struct SolveOutcome {
     long long rejoinT = -1;       // --rejoinuse: where the search joined, -1 = no
     long long rejoinBadT = -1;    // ...and where the joined walk left the old plan's, -1 = never
     const char* rejoinBadWhy = nullptr;
+    long long rejoinRefusedT = -1;      // --rejoinprobe: the join this call refused (its walk died at or past it) before the search whose answer this is, -1 = none
+    long long rejoinRefusedDieT = -1;   // ...and the tick that walk died on
+    long long rejoinRefusedN = 0;       // ...and the joins the call refused in all
+    long long rejoinShortT = -1;        // --rejoinuse: the first join not taken because the old plan's inputs end short of the goal and of the call's end, -1 = none
+    long long rejoinShortEndT = -1;     // ...the tick those inputs end at
+    long long rejoinShortN = 0;         // ...and the layers that declined one
     // Touch boxes the call required, and those the anchor already sits past. A required box
     // behind the anchor can never be entered, so the frontier is empty before the first tick --
     // which looks exactly like an impassable level unless you can see this.
@@ -127,6 +133,7 @@ struct SolveOutcome {
     // attempts, how many never bound their cap, the plain search's plan hash and the chosen
     // plan's. Empty for a call that was not a ladder.
     std::string ladder;
+    std::string camy;   // --camy: the call's camera counters (dp/cam_y_obs.hpp camySummary)
     // --dumpstate / --start-state (dp statefile.hpp, progress.hpp has the fields' meaning).
     long long dumpT = -1;
     std::string dumpStart;
@@ -160,6 +167,7 @@ void setFileSigHints(const std::unordered_map<std::string, std::string>& hints);
 // argv[0] and the level path are supplied here, as in dpbridge::solveInProcess.
 int solveInProcess(const std::string& csv, const std::vector<std::string>& args);
 std::vector<double> prepMarks();
+std::string callStages();
 SolveProgress progress();
 SolveOutcome outcome();
 // The reverse of outcome(): an outcome from the second copy written into this copy's, so that

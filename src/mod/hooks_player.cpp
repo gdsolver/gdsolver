@@ -1,6 +1,20 @@
 // EnhancedGameObject (pad trace) and PlayerObject hooks: state dump, physics tracing.
+#include "mod/gd_raw.hpp"
 #include "mod/playlayer_helpers.hpp"
 #include <Geode/modify/EndTriggerGameObject.hpp>
+#include <Geode/modify/EffectGameObject.hpp>
+#include <Geode/modify/SpawnTriggerGameObject.hpp>
+#include <Geode/modify/TriggerControlGameObject.hpp>
+#include <Geode/modify/TransformTriggerGameObject.hpp>
+#include <Geode/modify/CountTriggerGameObject.hpp>
+#include <Geode/modify/ItemTriggerGameObject.hpp>
+#include <Geode/modify/RandTriggerGameObject.hpp>
+#include <Geode/modify/SequenceTriggerGameObject.hpp>
+#include <Geode/modify/TimerTriggerGameObject.hpp>
+#include <Geode/modify/EventLinkTrigger.hpp>
+#include <Geode/modify/ArtTriggerGameObject.hpp>
+#include <Geode/modify/CameraTriggerGameObject.hpp>
+#include <fstream>
 
 using namespace p1;
 
@@ -43,7 +57,10 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
             // ...and teleport portals (28): the payload is the same `portal=` list, and the solver
             // latches a teleport as it does a gravity portal (fixed since the 0.4.0 clean-up removed
             // --tplatch).
-            if (ty == 3 || ty == 4 || ty == 28) {
+            // ...and the gravity TOGGLE portal (42, id 2926; the solver numbers it with the gravity portals under --gravtoggle,
+            // on by default). Without it an anchor inside a toggle's box re-fires it: a custom level t=12200, the cube still inside
+            // uid 1722 (latched at ~12171), vy halved a tick later where GD's cube falls on.
+            if (ty == 3 || ty == 4 || ty == 28 || ty == 42) {
                 ++portalseed::g_calls;
                 auto* l = GJBaseGameLayer::get();
                 auto& m = (l && p == l->m_player1) ? portalseed::g_first
@@ -93,8 +110,8 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
                     // one at vtable +0x490) or it is not a box question at all.
                     // Printing the rect GD actually hands the call decides it
                     // instead of bracketing it.
-                    auto r = this->getObjectRect();
-                    auto pr = p->getObjectRect();
+                    auto r = peekObjectRect(this);
+                    auto pr = peekObjectRect(p);
                     char buf[384];
                     snprintf(buf, sizeof(buf),
                         "padact: t=%lld id=%d uid=%d ty=%d o=(%.3f,%.3f) "
@@ -125,6 +142,140 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
     }
 };
 
+// cfg `btraw=t0,t1`: the buttons phase as the game runs it (notes/pushbutton-state-table-2091-1027.md; dp/src/dp/buttons.hpp is its port). One row per call of pushButton / releaseButton / releaseAllButtons /
+// enablePlayerControls / resetTouchedRings on player 1 (player 2 with btrawp2=1): the call's arguments, its return value, and a snapshot at entry and at exit -- the player's bytes [0, 0xc80) in hex, then the
+// array m_touchingRings (uid:type:reverse:byte740 per ring, in order), the set m_ringRelatedSet (+0x850), the set m_touchedRings (+0xa48) and m_holdingButtons[1..3]. Observation only.
+// (the set at +0x850 is reached by gdraw::ringRelatedSet: Geode 6's bindings do not name it)
+static_assert(offsetof(PlayerObject, m_touchingRings) == 0xa40, "btraw: the array pushButton scans");
+static_assert(offsetof(PlayerObject, m_touchedRings) == 0xa48, "btraw: the set resetTouchedRings reads");
+// cfg btslots=1: the pointer slots of the image (+0x5e8 slope, +0x5f0 slope B, +0x600 collided, +0x608 ground, +0x610 left, +0x618 right, +0x680 Cd0, +0x890 snapped-to) hold heap addresses; "off:uid" for each
+// that is non-null and reads as a GameObject (m_uniqueID, +0x39c), in hex offsets. A guarded read: a slot can outlive the object it named.
+static int btSlotUid(const void* ptr) {
+    int uid = -2;
+    __try { uid = *reinterpret_cast<const int*>(reinterpret_cast<const char*>(ptr) + 0x39c); } __except (EXCEPTION_EXECUTE_HANDLER) { uid = -2; }
+    return uid;
+}
+static std::string btSlotsText(PlayerObject* p) {
+    static const size_t offs[] = {0x5e8, 0x5f0, 0x600, 0x608, 0x610, 0x618, 0x680, 0x890};
+    std::string s;
+    for (size_t off : offs) {
+        const void* ptr = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(p) + off);
+        if (!ptr || reinterpret_cast<uintptr_t>(ptr) < 0x10000) continue;
+        char b[40];
+        snprintf(b, sizeof(b), "%zx:%d ", off, btSlotUid(ptr));
+        s += b;
+    }
+    return s;
+}
+static std::string btRawSnapshot(PlayerObject* p) {
+    static const char* H = "0123456789abcdef";
+    const auto* pb = reinterpret_cast<const unsigned char*>(p);
+    std::string s;
+    s.reserve(2 * 0xc80 + 400);
+    for (size_t i = 0; i < 0xc80; ++i) { s.push_back(H[pb[i] >> 4]); s.push_back(H[pb[i] & 15]); }
+    s.push_back(';');
+    if (p->m_touchingRings) {
+        for (auto* o : CCArrayExt<GameObject*>(p->m_touchingRings)) {
+            if (!o) continue;
+            const auto* ob = reinterpret_cast<const unsigned char*>(o);
+            char b[64];
+            snprintf(b, sizeof(b), "%d:%d:%d:%d ", (int)o->m_uniqueID, (int)o->m_objectType, (int)ob[0x704], (int)ob[0x740]);
+            s += b;
+        }
+    }
+    s.push_back(';');
+    auto setText = [&](const std::unordered_set<int>& st) {
+        std::vector<int> v(st.begin(), st.end());
+        std::sort(v.begin(), v.end());
+        for (int u : v) { s += std::to_string(u); s.push_back(' '); }
+    };
+    setText(gdraw::ringRelatedSet(p));
+    s.push_back(';');
+    setText(p->m_touchedRings);
+    s.push_back(';');
+    for (int btn = 1; btn <= 3; ++btn) {
+        auto it = p->m_holdingButtons.find(btn);
+        s.push_back(it == p->m_holdingButtons.end() ? '-' : it->second ? '1' : '0');
+    }
+    if (g_cfg.btSlots) { s.push_back(';'); s += btSlotsText(p); }
+    return s;
+}
+static bool btRingsIdle(PlayerObject* p) {
+    return (!p->m_touchingRings || p->m_touchingRings->count() == 0) && p->m_touchedRings.empty();
+}
+struct BtScope {
+    PlayerObject* p;
+    int fn, arg;
+    bool on = false;
+    bool preIdle = false;
+    int ret = -1;
+    std::string pre;
+    BtScope(PlayerObject* player, int f, int a) : p(player), fn(f), arg(a) {
+        auto* l = GJBaseGameLayer::get();
+        on = l && g_cfg.btRawT1 >= g_cfg.btRawT0 && g_started && !g_sessionOver && !secsolve::g_active
+             && (long long)g_tick >= g_cfg.btRawT0 && (long long)g_tick <= g_cfg.btRawT1
+             && (p == l->m_player1 || (g_cfg.btRawP2 && p == l->m_player2));
+        if (on) { preIdle = btRingsIdle(p); pre = btRawSnapshot(p); }
+    }
+    ~BtScope() {
+        if (!on) return;
+        // resetTouchedRings runs on every step: a call that found nothing in the array or the set and left nothing is not written (the file would be most of its rows)
+        if (fn == 5 && preIdle && btRingsIdle(p)) return;
+        auto* l = GJBaseGameLayer::get();
+        if (!g_bt_raw.is_open()) {
+            g_bt_raw.open(std::string(DATA_DIR) + "/btraw.csv", std::ios::trunc);
+            g_bt_raw << "attempt,tick,who,fn,arg,ret,pre,post\n";
+        }
+        g_bt_raw << g_attempt << ',' << g_tick << ',' << ((l && p == l->m_player1) ? 1 : 2) << ',' << fn << ',' << arg << ',' << ret << ',' << pre << ',' << btRawSnapshot(p) << '\n';
+    }
+};
+
+// cfg trigfire=1: orbfire.csv = tick,uid,player,via -- one row for each PlayerObject::ringJump call that fires (the call sets one of the fire latches 0x98b / 0x98c / 0x98d, the rule the ringseed
+// code uses), player 1 / 2, via 0 when the call comes out of GJBaseGameLayer::playerTouchedRing (the contact), 1 otherwise (the button). Observation only.
+static bool g_inTouchedRing = false;
+static void orbFireRow(PlayerObject* p, GJBaseGameLayer* l, int uid) {
+    if (!(g_cfg.trigFire && g_started && !g_sessionOver && l)) return;
+    static std::ofstream f;
+    static int s_level = -1;
+    const int level = suite::active() ? suite::current() : 0;
+    if (!f.is_open() || level != s_level) {
+        if (f.is_open()) f.close();
+        f.open(std::string(DATA_DIR) + (level ? "/orbfire_" + std::to_string(level) + ".csv" : std::string("/orbfire.csv")), std::ios::trunc);
+        f << "tick,uid,player,via\n";
+        s_level = level;
+    }
+    f << g_tick << ',' << uid << ',' << (p == l->m_player1 ? 1 : 2) << ',' << (g_inTouchedRing ? 0 : 1) << '\n';
+    f.flush();
+}
+class $modify(OrbTouchLayer, GJBaseGameLayer) {
+    GDSOLVER_HOOK_GUARD()
+    void playerTouchedRing(PlayerObject* player, RingObject* object) {
+        g_inTouchedRing = true;
+        GJBaseGameLayer::playerTouchedRing(player, object);
+        g_inTouchedRing = false;
+    }
+};
+// cfg `postcol=t0,t1`: what PlayerObject::postCollision (the slope transition, boostPlayer, the `m_isAccelerating = 1` tail) leaves behind, one row per call in the tick window, both players:
+// postcol.csv = attempt,tick,who,dt,between,onSlope,wasSlope,accel,f9bc (+0x9bc as a float), read after the original returns. Observation only: plain byte reads of the player.
+static void postColRow(PlayerObject* p, GJBaseGameLayer* l, float dt, bool betweenSteps) {
+    if (!(g_cfg.postColT1 >= g_cfg.postColT0 && g_started && !g_sessionOver && !secsolve::g_active
+          && (long long)g_tick >= g_cfg.postColT0 && (long long)g_tick <= g_cfg.postColT1)) return;
+    if (!l || (p != l->m_player1 && p != l->m_player2)) return;
+    static std::ofstream f;
+    static int s_level = -1;
+    const int level = suite::active() ? suite::current() : 0;
+    if (!f.is_open() || level != s_level) {
+        if (f.is_open()) f.close();
+        f.open(std::string(DATA_DIR) + (level ? "/postcol_" + std::to_string(level) + ".csv" : std::string("/postcol.csv")), std::ios::trunc);
+        f << "attempt,tick,who,dt,between,onSlope,wasSlope,accel,f9bc\n";
+        s_level = level;
+    }
+    const unsigned char* b = reinterpret_cast<const unsigned char*>(p);
+    f.precision(10);
+    f << g_attempt << ',' << g_tick << ',' << (p == l->m_player1 ? 1 : 2) << ',' << dt << ',' << (betweenSteps ? 1 : 0) << ',' << (int)b[gdoff::kPlayerOnSlope] << ',' << (int)b[gdoff::kPlayerOnSlope + 1] << ','
+      << (int)b[gdoff::kPlayerAccelerating] << ',' << *reinterpret_cast<const float*>(b + 0x9bc) << '\n';
+    f.flush();
+}
 class $modify(PlayerObject) {
     GDSOLVER_HOOK_GUARD()
     // Death visual effects are not created during fast mode (cfg `deathfx=1` restores the old
@@ -152,7 +303,29 @@ class $modify(PlayerObject) {
         bool isP1 = l && this == l->m_player1;
         if (isP1) ev("PO_update_pre", dt);
         if (isP1) pressLine("update-in");
+        // cfg `ctupd=t0,t1`: the player's bytes [0, 0xc80) in hex at the entry and at the exit of PlayerObject::update (ctupd.csv), for porting the update phase as a pure
+        // function of the image and dt. Read-only: nothing here writes the player.
+        const bool rawUpd = g_cfg.ctUpdT1 >= g_cfg.ctUpdT0 && g_started && !g_sessionOver && !secsolve::g_active
+                            && (long long)g_tick >= g_cfg.ctUpdT0 && (long long)g_tick <= g_cfg.ctUpdT1
+                            && l && (this == l->m_player1 || (g_cfg.ctRawP2 && this == l->m_player2));
+        std::string updPre;
+        auto updSnap = [this]() {
+            static const char* H = "0123456789abcdef";
+            const auto* pb = reinterpret_cast<const unsigned char*>(this);
+            std::string s;
+            s.reserve(2 * 0xc80);
+            for (size_t i = 0; i < 0xc80; ++i) { s.push_back(H[pb[i] >> 4]); s.push_back(H[pb[i] & 15]); }
+            return s;
+        };
+        if (rawUpd) updPre = updSnap();
         PlayerObject::update(dt);
+        if (rawUpd) {
+            if (!g_ct_upd.is_open()) {
+                g_ct_upd.open(std::string(DATA_DIR) + "/ctupd.csv", std::ios::trunc);
+                g_ct_upd << "attempt,tick,who,dt,pre,post\n";
+            }
+            g_ct_upd << g_attempt << ',' << g_tick << ',' << (this == l->m_player1 ? 1 : 2) << ',' << dt << ',' << updPre << ',' << updSnap() << '\n';
+        }
         if (isP1) pressLine("update-out");
         if (isP1) traceModifierCounters(this);
         // cfg nodedbg=t0,t1 (print only): the node stopDashing (0x4f4cc7 in the 2.2091 exe) reads its rotation from, this+0x740.
@@ -189,15 +362,22 @@ class $modify(PlayerObject) {
         };
         const long long q0 = *reinterpret_cast<const long long*>(raw + gdoff::kPlayerCollisionLogBottom);
         const long long q1 = *reinterpret_cast<const long long*>(raw + gdoff::kPlayerCollisionLogLeft);
-        char b[288];
+        // The ground object's stored last position (GameObject::m_lastPosition, +0x4d0 on 2.209) against its position, the two values postCollision's "ground moved" branch compares (GD 0x4eb830 L1288-1400): lx / ly / gx / gy.
+        // Observation only, in the same line; -1e9 without a ground object. Added 11-04 for a custom level:11800 (a mover's previous position read per move action or per frame?).
+        float lxg = -1e9f, lyg = -1e9f, pxg = -1e9f, pyg = -1e9f;
+        if (auto* go = *reinterpret_cast<GameObject* const*>(raw + gdoff::kPlayerLastGroundObject)) {
+            lxg = go->m_lastPosition.x; lyg = go->m_lastPosition.y; pxg = (float)go->m_positionX; pyg = (float)go->m_positionY;
+        }
+        char b[384];
         snprintf(b, sizeof(b),
                  "stick: t=%lld dt=%lld at=%s g608=%d s600=%d f658=%d slope=%d q5b8=%lld "
-                 "ax=%d og=%d x=%.4f y=%.4f vy=%.4f",
+                 "ax=%d og=%d x=%.4f y=%.4f vy=%.4f lx=%.4f ly=%.4f gx=%.4f gy=%.4f",
                  (long long)g_tick, (long long)g_tick + 1, where, uidAt(gdoff::kPlayerLastGroundObject),
                  uidAt(gdoff::kPlayerCollidedObject), (int)raw[gdoff::kPlayerCollidingWithSlope],
                  uidAt(gdoff::kPlayerCurrentSlope2), q1 - q0, (int)raw[gdoff::kPlayerSideways],
                  (int)raw[gdoff::kPlayerOnGround],
-                 this->getPositionX(), this->getPositionY(), (double)this->m_yVelocity);
+                 this->getPositionX(), this->getPositionY(), (double)this->m_yVelocity,
+                 (double)lxg, (double)lyg, (double)pxg, (double)pyg);
         writeResult(b);
     }
 
@@ -207,6 +387,7 @@ class $modify(PlayerObject) {
         if (isP1) { stickLine("post-in"); g_inPostCollP1 = true; }
         PlayerObject::postCollision(dt, betweenSteps);
         if (isP1) { g_inPostCollP1 = false; stickLine("post-out"); }
+        postColRow(this, l, dt, betweenSteps);
     }
 
     // Name the spider's teleport target ON THE SPOT (cfg `standtrace=1`).
@@ -236,7 +417,7 @@ class $modify(PlayerObject) {
         char tb[192] = "-";
         if (tg) {
             auto q = tg->getPosition();
-            auto r = tg->getObjectRect();
+            auto r = peekObjectRect(tg);
             snprintf(tb, sizeof(tb),
                      "uid%d id%d type%d @%.2f,%.2f %.2fx%.2f",
                      tg->m_uniqueID, tg->m_objectID, (int)tg->m_objectType,
@@ -546,6 +727,7 @@ class $modify(PlayerObject) {
             PlayerObject::ringJump(object, skipCheck);
             if (subst) *spentMirror = savedSpent;
             noteRingFire();
+            if ((isP1 || isP2) && (latchBits() & ~latchBefore)) orbFireRow(this, l, object->m_uniqueID);
             return;
         }
         // This function is a test path called every tick for the whole contact, not the
@@ -590,6 +772,7 @@ class $modify(PlayerObject) {
         PlayerObject::ringJump(object, skipCheck);
         if (subst) *spentMirror = savedSpent;
         noteRingFire();
+        if ((isP1 || isP2) && (latchBits() & ~latchBefore)) orbFireRow(this, l, object->m_uniqueID);
         float vyAfter = (float)this->m_yVelocity;
         if (std::abs(vyAfter - vyBefore) < 1e-4f) return; // did not fire
         // Log-flood guard: only near the targeted x + a total cap
@@ -628,7 +811,7 @@ class $modify(PlayerObject) {
         // The pad family was measured this way on 2026-09-05 and came back
         // EXACTLY equal to the dump (25x4), so this is a real question, not a
         // foregone one.
-        auto rr = object->getObjectRect();
+        auto rr = peekObjectRect(object);
         // ...and the PLAYER's rect, because `dxx` above is a difference of
         // getPositionX() and the gate compares RECT CENTRES. getObjectRect runs
         // the size through getBoxOffset(), so the two need not coincide, and
@@ -636,7 +819,7 @@ class $modify(PlayerObject) {
         // against a gate of 18+15=33 and should be touched, yet GD fires only
         // the gravity orb. If the rect centre is offset from the position, that
         // gap is arithmetic rather than a missing rule.
-        auto pr = this->getObjectRect();
+        auto pr = peekObjectRect(this);
         char buf[352];
         snprintf(buf, sizeof(buf),
             "orb: id=%d uid=%d mode=%d size=%.2f flip=%d spd=%.1f "
@@ -711,8 +894,23 @@ class $modify(PlayerObject) {
         const bool hbWatch = g_cfg.hitboxTrace && who && obj
                              && g_tick >= g_cfg.hbFrom
                              && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo);
-        CCRect prePr = hbWatch ? this->getObjectRect() : CCRect();
-        // cfg `sticktrace`: a dt = 0 collision inside P1's postCollision is the stick
+        CCRect prePr = hbWatch ? peekObjectRect(this) : CCRect();
+        // cfg `hbstate=1`: the gates' inputs at the call, read before the function can change them (see config.hpp hbState).
+        char stBuf[200] = "";
+        if (hbWatch && g_cfg.hbState) {
+            const char* me = reinterpret_cast<const char*>(this);
+            const char* ob = reinterpret_cast<const char*>(obj);
+            snprintf(stBuf, sizeof(stBuf),
+                     " st=(b84=%d b88=%d s9b9=%d up=%d plat=%d fly=%d%d%d%d%d pass=%d inact=%d vy=%.4f)",
+                     *reinterpret_cast<const int*>(me + 0xb84), *reinterpret_cast<const int*>(me + 0xb88),
+                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9b9), (int)*reinterpret_cast<const unsigned char*>(me + 0x9c7),
+                     (int)*reinterpret_cast<const unsigned char*>(me + 0x16f * 8),
+                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9c1), (int)*reinterpret_cast<const unsigned char*>(me + 0x9c2),
+                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9c4), (int)*reinterpret_cast<const unsigned char*>(me + 0x9cc),
+                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9c3),
+                     (int)*reinterpret_cast<const unsigned char*>(ob + 0x515), (int)*reinterpret_cast<const unsigned char*>(ob + 0x28e),
+                     (double)this->m_yVelocity);
+        }        // cfg `sticktrace`: a dt = 0 collision inside P1's postCollision is the stick
         // re-land (see g_stickT0).
         if (g_inPostCollP1 && dt == 0.f && obj && g_tick >= g_stickT0 && g_tick <= g_stickT1) {
             char sb[160];
@@ -728,8 +926,8 @@ class $modify(PlayerObject) {
         if (hbWatch) {
             static int lines = 0;
             if (++lines <= 40000) {
-                CCRect pr = this->getObjectRect();
-                CCRect orr = obj->getObjectRect();
+                CCRect pr = peekObjectRect(this);
+                CCRect orr = peekObjectRect(obj);
                 // The slope state AT THE SOLID PASS, which is the only place it
                 // can be read honestly: checkCollisions zeroes m_isOnSlope at the
                 // top of every tick and the slope pass sets it again, so the
@@ -738,7 +936,7 @@ class $modify(PlayerObject) {
                 // bypass is `m_isOnSlope || m_wasOnSlope || partner == NULL ||
                 // ramp == m_currentSlope`, so these three are what decides it.
                 GameObject* cs = static_cast<GameObject*>(this->m_currentSlope);
-                char b[416];
+                char b[640];
                 snprintf(b, sizeof(b),
                     // dt is the DUMP tick this row belongs to. The hooks run in
                     // the collision pass and the recorder writes a tick later,
@@ -750,7 +948,7 @@ class $modify(PlayerObject) {
                     "hbox: t=%lld dt=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
                     "arg=(%.2f,%.2f,%.2f,%.2f) objrect=(%.2f,%.2f,%.2f,%.2f) "
                     "player=(%.2f,%.2f,%.2f,%.2f) ppre=(%.2f,%.2f,%.2f,%.2f) "
-                    "onslp=%d wasslp=%d curslp=%d",
+                    "onslp=%d wasslp=%d curslp=%d%s",
                     (long long)g_tick, (long long)g_tick + 1, who,
                     obj->m_uniqueID, (int)obj->getType(),
                     r ? 1 : 0, this->m_vehicleSize,
@@ -760,7 +958,7 @@ class $modify(PlayerObject) {
                     prePr.origin.x, prePr.origin.y,
                     prePr.size.width, prePr.size.height,
                     (int)this->m_isOnSlope, (int)this->m_wasOnSlope,
-                    cs ? cs->m_uniqueID : -1);
+                    cs ? cs->m_uniqueID : -1, stBuf);
                 writeResult(b);
             }
         }
@@ -802,13 +1000,13 @@ class $modify(PlayerObject) {
         const int jb0 = watch ? (int)this->m_jumpBuffered : 0;
         const int ud0 = watch ? (int)this->m_maybeUpsideDownSlope : 0;
         const double st0 = watch ? this->m_slopeStartTime : 0.0;
-        CCRect prr = watch ? this->getObjectRect() : CCRect();
+        CCRect prr = watch ? peekObjectRect(this) : CCRect();
         const double syAtX0 = watch ? obj->slopeYPos(this->getPositionX()) : 0.0;
         PlayerObject::collidedWithSlopeInternal(dt, obj, forced);
         if (!watch) return;
         static int lines = 0;
         if (++lines > 4000) return;
-        CCRect orr = obj->getObjectRect();
+        CCRect orr = peekObjectRect(obj);
         // THREE press-ish quantities, because they are not the same thing and a
         // gate written against the wrong one is inverted rather than merely off:
         //   held  -- the raw button, from the handleButton hook (g_btnDown)
@@ -866,9 +1064,9 @@ class $modify(PlayerObject) {
             && (g_cfg.hbTo <= 0 || g_tick <= g_cfg.hbTo)) {
             static int lines = 0;
             if (++lines <= 40000) {
-                CCRect pr = this->getObjectRect();
-                CCRect orr = obj->getObjectRect();
-                char b[416];
+                CCRect pr = peekObjectRect(this);
+                CCRect orr = peekObjectRect(obj);
+                char b[640];
                 snprintf(b, sizeof(b),
                     "hbin: t=%lld who=%s obj=%d type=%d hit=%d size=%.2f "
                     "arg=(%.2f,%.2f,%.2f,%.2f) objrect=(%.2f,%.2f,%.2f,%.2f) "
@@ -956,7 +1154,9 @@ class $modify(PlayerObject) {
     bool pushButton(PlayerButton button) {
         auto* l = GJBaseGameLayer::get();
         if (l && this == l->m_player1) ev("PO_pushButton", (int)button);
+        BtScope bt(this, 1, (int)button);
         const bool r = PlayerObject::pushButton(button);
+        bt.ret = r ? 1 : 0;
         if (l && this == l->m_player1) pressLine("pushButton-out");
         return r;
     }
@@ -964,16 +1164,124 @@ class $modify(PlayerObject) {
     bool releaseButton(PlayerButton button) {
         auto* l = GJBaseGameLayer::get();
         if (l && this == l->m_player1) ev("PO_releaseButton", (int)button);
-        return PlayerObject::releaseButton(button);
+        BtScope bt(this, 2, (int)button);
+        const bool r = PlayerObject::releaseButton(button);
+        bt.ret = r ? 1 : 0;
+        return r;
+    }
+
+    // cfg btraw: the other calls of the buttons phase (the window lifting, every button let go, the ring array trimmed)
+    void releaseAllButtons() {
+        BtScope bt(this, 3, 0);
+        PlayerObject::releaseAllButtons();
+    }
+    void enablePlayerControls() {
+        BtScope bt(this, 4, 0);
+        PlayerObject::enablePlayerControls();
+    }
+    void resetTouchedRings(bool removeAll) {
+        BtScope bt(this, 5, removeAll ? 1 : 0);
+        PlayerObject::resetTouchedRings(removeAll);
     }
 };
 
+// cfg trigfire=1: when GD calls a trigger's triggerObject (checkSpawnObjects for the ones the player's x reaches, a Spawn / Count / touch chain for the others), with the tick the mod is on and the
+// player's x at that moment. The reader that dates a trigger's fire (the shadow's `c`) from this instead of from the dump's x. Observation only; the call is made unchanged.
+// The base class's triggerObject is hooked (via 0); a class that overrides it is NOT called through that hook, so each override is hooked and logged here too (via = the class: 1 Spawn, 2 TriggerControl
+// (Stop), 3 Transform (Scale), 4 Count, 5 Item, 6 Rand, 7 Sequence, 8 Timer, 9 EventLink, 10 Art, 11 Camera, 12 End). Before this the record held none of them (0 of 571,155 rows were a Spawn or a Stop).
+// cfg trigfirestack=<uid>: who calls that trigger's triggerObject. One `trigstack:` line per call (the first 60) with the tick, the player's x and the values on the stack that lie inside the game module,
+// in stack order (candidates, not a call chain: Geode's trampoline has no unwind info, so the stack is scanned the way the `killsite:` line does). Observation only.
+static void trigStackLine(EffectGameObject* o, GJBaseGameLayer* layer, int via) {
+    if (g_cfg.trigFireStack <= 0 || o->m_uniqueID != g_cfg.trigFireStack || !g_started || g_sessionOver) return;
+    static int lines = 0;
+    if (++lines > 60) return;
+#ifdef GEODE_IS_WINDOWS
+    static uintptr_t base = 0, size = 0;
+    if (!base) {
+        base = (uintptr_t)GetModuleHandleW(nullptr);
+        auto* dos = (IMAGE_DOS_HEADER*)base;
+        auto* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+        size = nt->OptionalHeader.SizeOfImage;
+    }
+    char sb[480];
+    int kept = 0;
+    int n = snprintf(sb, sizeof sb, "trigstack: t=%lld uid=%d id=%d via=%d px=%.3f rva=", (long long)g_tick, (int)o->m_uniqueID, (int)o->m_objectID, via,
+                     (layer && layer->m_player1) ? (double)layer->m_player1->getPositionX() : -1.0);
+    ULONG_PTR sp = (ULONG_PTR)&kept;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery((LPCVOID)sp, &mbi, sizeof mbi)) {
+        ULONG_PTR end = (ULONG_PTR)mbi.BaseAddress + mbi.RegionSize;
+        if (end > sp + 0x2000) end = sp + 0x2000;
+        for (ULONG_PTR p = sp; p + 8 <= end && kept < 14 && n < (int)sizeof sb - 20; p += 8) {
+            const ULONG_PTR v = *(ULONG_PTR*)p;
+            if (v < base || v - base >= size) continue;
+            n += snprintf(sb + n, sizeof sb - (size_t)n, "%s%llx", kept++ ? "," : "", (unsigned long long)(v - base));
+        }
+    }
+    if (!kept) snprintf(sb + n, sizeof sb - (size_t)n, "(none in module)");
+    writeResult(sb);
+#endif
+}
+static void trigFireRow(EffectGameObject* o, GJBaseGameLayer* layer, int via) {
+    trigStackLine(o, layer, via);
+    if (!(g_cfg.trigFire && g_started && !g_sessionOver)) return;
+    // a game that plays several levels (a suite) opens a file for each: trigfire_<level>.csv, the single level's trigfire.csv as before
+    static std::ofstream f;
+    static int s_level = -1;
+    const int level = suite::active() ? suite::current() : 0;
+    if (!f.is_open() || level != s_level) {
+        if (f.is_open()) f.close();
+        f.open(std::string(DATA_DIR) + (level ? "/trigfire_" + std::to_string(level) + ".csv" : std::string("/trigfire.csv")), std::ios::trunc);
+        // cfg trigfirey=1 adds the player's y and mode: a record of another flight of the level has the same x at every tick (x is the tick's), so the x alone cannot say whose flight a row belongs to
+        // (measured 2026-10-31: 13 rows of a custom level were another flight's). Off by default: a reader that wants the header to end in `,via` (trig_replay's recordComplete test) is not told anything new.
+        f << (g_cfg.trigFireY ? "attempt,tick,uid,id,px,spawnTriggered,via,py,mode\n" : "attempt,tick,uid,id,px,spawnTriggered,via\n");
+        s_level = level;
+    }
+    const double px = (layer && layer->m_player1) ? (double)layer->m_player1->getPositionX() : -1.0;
+    f.precision(10);
+    f << g_attempt << ',' << g_tick << ',' << o->m_uniqueID << ',' << o->m_objectID << ',' << px << ',' << (int)o->m_isSpawnTriggered << ',' << via;
+    if (g_cfg.trigFireY) {
+        PlayerObject* p1 = layer ? layer->m_player1 : nullptr;
+        const double py = p1 ? (double)p1->getPositionY() : -1.0;
+        const int md = !p1 ? -1 : p1->m_isShip ? 1 : p1->m_isBall ? 2 : p1->m_isBird ? 3 : p1->m_isDart ? 4 : p1->m_isRobot ? 5 : p1->m_isSpider ? 6 : p1->m_isSwing ? 7 : 0;   // the mode numbering of the mode-change line (cube 0 .. swing 7)
+        f << ',' << py << ',' << md;
+    }
+    f << '\n';
+    f.flush();
+}
+class $modify(TrigFireHook, EffectGameObject) {
+    GDSOLVER_HOOK_GUARD()
+    void triggerObject(GJBaseGameLayer* layer, int uniqueID, std::vector<int> const* remapKeys) {
+        trigFireRow(this, layer, 0);
+        EffectGameObject::triggerObject(layer, uniqueID, remapKeys);
+    }
+};
+#define GDSOLVER_TRIGFIRE_VIA(NAME, CLS, VIA) \
+    class $modify(NAME, CLS) { \
+        GDSOLVER_HOOK_GUARD() \
+        void triggerObject(GJBaseGameLayer* layer, int uniqueID, std::vector<int> const* remapKeys) { \
+            trigFireRow(this, layer, VIA); \
+            CLS::triggerObject(layer, uniqueID, remapKeys); \
+        } \
+    };
+GDSOLVER_TRIGFIRE_VIA(TrigFireSpawn, SpawnTriggerGameObject, 1)
+GDSOLVER_TRIGFIRE_VIA(TrigFireControl, TriggerControlGameObject, 2)
+GDSOLVER_TRIGFIRE_VIA(TrigFireTransform, TransformTriggerGameObject, 3)
+GDSOLVER_TRIGFIRE_VIA(TrigFireCount, CountTriggerGameObject, 4)
+GDSOLVER_TRIGFIRE_VIA(TrigFireItem, ItemTriggerGameObject, 5)
+GDSOLVER_TRIGFIRE_VIA(TrigFireRand, RandTriggerGameObject, 6)
+GDSOLVER_TRIGFIRE_VIA(TrigFireSequence, SequenceTriggerGameObject, 7)
+GDSOLVER_TRIGFIRE_VIA(TrigFireTimer, TimerTriggerGameObject, 8)
+GDSOLVER_TRIGFIRE_VIA(TrigFireEvent, EventLinkTrigger, 9)
+GDSOLVER_TRIGFIRE_VIA(TrigFireArt, ArtTriggerGameObject, 10)
+GDSOLVER_TRIGFIRE_VIA(TrigFireCamera, CameraTriggerGameObject, 11)
 // An End trigger fired: the level finishes here, wherever "here" is (cfg dpendtrigclear reads the
 // tick at the clear). SubZero 4002 ends this way on the way back through its reversal, 6,278 px short
 // of its end portal.
 class $modify(EndTrigHook, EndTriggerGameObject) {
     GDSOLVER_HOOK_GUARD()
-    void triggerObject(GJBaseGameLayer* layer, int uniqueID, gd::vector<int> const* remapKeys) {
+    void triggerObject(GJBaseGameLayer* layer, int uniqueID, std::vector<int> const* remapKeys) {
+        trigFireRow(this, layer, 12);
         if (g_started && solver::g_endTriggerFiredTick < 0) {
             solver::g_endTriggerFiredTick = (long long)g_tick;
             writeResult("endtrigger: uid " + std::to_string(this->m_uniqueID) + " fired at t="

@@ -1,5 +1,6 @@
 #pragma once
 #include "dp/fixup.hpp"
+#include "dp/shadow_step.hpp"
 
 #include <array>
 #include <memory>
@@ -150,10 +151,11 @@ struct GroupEnv {
     std::vector<const Obj*> near, ports, pads, orbs, slps, spds;
     std::vector<std::pair<const TouchTrig*, TouchMask>> trigs;
     std::vector<CoinLive> coinLive;   // --coins, filled below the windows
-    std::vector<const Obj*> nearSolid;   // --solidorder: near in GD's solid order, once per group
+    std::vector<const Obj*> nearSolid;   // --solidorder (removed): near in GD's solid order, once per group
     std::vector<FollowRef> fol;          // --followy: the follow groups' objects in the windows
     const ModelWorld* w = nullptr;
     GroupOpts opts;
+    uint64_t sgen = 0;                   // --shadowstep: this prepareGroup call's number (StepCtx::sgen)
 
     StepCtx ctx() const {
         StepCtx c{x, xPrev, dxF, t, &near, &ports, &pads, &orbs, &slps, &spds,
@@ -161,6 +163,7 @@ struct GroupEnv {
                   opts.coins ? &coinLive : nullptr, opts.veto ? &w->vetoIdx : nullptr,
                   &nearSolid};
         c.fol = fol.empty() ? nullptr : &fol;
+        c.sgen = sgen;
         return c;
     }
 };
@@ -177,6 +180,7 @@ inline void prepareGroup(ModelWorld& w, FrameSlices& FS, GroupEnv& e, int gframe
                          double x, double xPrev, float dxUsed, double wLo, double wHi,
                          long long t, const GroupOpts& opts = GroupOpts{}) {
     Level& L = w.L;
+    if (g_shadowStepModes) e.sgen = g_shadowGroupGen.fetch_add(1, std::memory_order_relaxed) + 1;   // --shadowstep: the shadow re-reads the movers (shadow_step.hpp)
     e.w = &w;
     e.opts = opts;
     e.x = x;
@@ -187,6 +191,26 @@ inline void prepareGroup(ModelWorld& w, FrameSlices& FS, GroupEnv& e, int gframe
     // seek() mutates the rects in place, so the pointers the search already
     // holds (snapObj / usedOrb / usedPad) keep pointing at the same object.
     Level& LG = *FS.lv;
+    // The group's own previous place for the movers its boxes move (Dynamics::groupPrevPass): the Dynamics holds the last placement of whichever group this thread stepped before, and a
+    // group of other boxes (touch mask, fire ticks, lock) is another world. A group with the key of the last one keeps the carry, which is its own.
+    bool gpDone = false;
+    uint64_t gpKey = 0;
+    {
+        auto mix = [](uint64_t h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); return h * 0xff51afd7ed558ccdULL; };
+        uint32_t lb; std::memcpy(&lb, &lockAt, 4);
+        gpKey = mix(mix(mix(0x5151ULL, gtrig.word(0)), (uint64_t)(uint32_t)gFire), (uint64_t)lb);
+        if (gFireB) for (int b = 0; b < kTouchBits; ++b) if (gtrig.test(b)) gpKey = mix(gpKey, (uint64_t)gFireB[b]);
+        Dynamics& D = LG.dyn;
+        const int t1 = (int)t - 1;
+        const bool sameKey = D.lastGroupKeyValid && D.lastGroupKey == gpKey;
+        const bool gpWill = (D.lastT == t1 || D.lastT == (int)t) && !sameKey;
+        D.sqHead((int)t, gpWill, gtrig, gFireB);   // the quiet objects: which of them this group's walks (the previous place, seek, applyTriggers, groupPrevApply) pass by (dynamics.hpp)
+        if (gpWill)
+            gpDone = D.groupPrevPass(gtrig, gFire, gFireB, lockAt - (float)(x - xPrev), t1, xPrev);
+        // dupbatch (dynamics.hpp FireReadSet): without that pass the previous place of this group's movers is what the Dynamics carries from the group before it, made from ticks this build
+        // does not read -- the set then says every tick was read.
+        if (D.fireSink && !gpDone) D.fireSink->all.store(true, std::memory_order_relaxed);
+    }
     LG.dyn.seek((int)t, true);   // (applyTriggers follows below: see Dynamics::seek)
     seekOtherFrames(&LG, (int)t);   // --rotpretap only; serial here, before the workers
     ppSubMark(4);   // --phaseprof's sub-buckets (progress.hpp)
@@ -203,11 +227,19 @@ inline void prepareGroup(ModelWorld& w, FrameSlices& FS, GroupEnv& e, int gframe
     LG.dyn.areaPxPrev = xPrev;   // --areamove: GD's area pass reads P1 before the step
     LG.dyn.areaTickPrev = (int)t - 1;
     LG.dyn.applyTriggers(gtrig, gFire, gFireB, lockAt, (int)t, x);
+    if (gpDone) LG.dyn.groupPrevApply();
+    LG.dyn.sqAfterA();
+    LG.dyn.lastGroupKey = gpKey; LG.dyn.lastGroupKeyValid = true;
     ppSubMark(5);
-    if (g_phaseProf) LG.dyn.censusAlways((int)t, wLo, wHi);
+    { static const bool census = std::getenv("PP_CENSUS") != nullptr; if (g_phaseProf && census) LG.dyn.censusAlways((int)t, wLo, wHi); }   // (the census is a measurement of its own, and reads every placed-every-tick object: PP_CENSUS=1)
+    // --trigsupply: the shadow's movers inside this group's window (widest bucket window + 40: a mover is kept by collect() against its own bucket's window); frame 0 only, as supplyPlaceMovers is
+    thread_local SupHits supHits;
+    supHits.clear();
+    const SupHits* supP = nullptr;
+    if (gframe == 0 && g_supplyHitsHook) { SqTimer tmHits(g_sqStats.nsHits, g_phaseProf); g_supplyHitsHook(wLo - 120, wHi + 120, supHits); if (!supHits.empty()) supP = &supHits; }
     std::vector<const Obj*>& near = e.near;
     FS.near->forRange(wLo - 40, wHi + 40, [&](const Obj& o) { near.push_back(&o); });
-    LG.dyn.collect(Dynamics::NEAR, wLo - 40, wHi + 40, near);
+    LG.dyn.collect(Dynamics::NEAR, wLo - 40, wHi + 40, near, supP);
     ppSubMark(6);
     // --trigdbg <tick>: the mask this GROUP applied, and where it left the
     // object named by --hazdbg. The resim prints the same pair from the
@@ -237,7 +269,7 @@ inline void prepareGroup(ModelWorld& w, FrameSlices& FS, GroupEnv& e, int gframe
                         seen->hw, seen->hh);
     }
     FS.port->forRange(wLo - 60, wHi + 60, [&](const Obj& o) { e.ports.push_back(&o); });
-    LG.dyn.collect(Dynamics::PORT, wLo - 60, wHi + 60, e.ports);
+    LG.dyn.collect(Dynamics::PORT, wLo - 60, wHi + 60, e.ports, supP);
     // --portorder (constants.hpp): the collision pass's order, cell by cell and by uid in a cell
     std::stable_sort(e.ports.begin(), e.ports.end(), [](const Obj* a, const Obj* b) {
         const int ax = gdSectionCell(a->cx), bx = gdSectionCell(b->cx);
@@ -248,11 +280,11 @@ inline void prepareGroup(ModelWorld& w, FrameSlices& FS, GroupEnv& e, int gframe
         return a->uid < b->uid;
     });
     FS.pad->forRange(wLo - 40, wHi + 40, [&](const Obj& o) { e.pads.push_back(&o); });
-    LG.dyn.collect(Dynamics::PAD, wLo - 40, wHi + 40, e.pads);
+    LG.dyn.collect(Dynamics::PAD, wLo - 40, wHi + 40, e.pads, supP);
     FS.orb->forRange(wLo - 50, wHi + 50, [&](const Obj& o) { e.orbs.push_back(&o); });
-    LG.dyn.collect(Dynamics::ORB, wLo - 50, wHi + 50, e.orbs);
+    LG.dyn.collect(Dynamics::ORB, wLo - 50, wHi + 50, e.orbs, supP);
     FS.slope->forRange(wLo - 60, wHi + 60, [&](const Obj& o) { e.slps.push_back(&o); });
-    LG.dyn.collect(Dynamics::SLOPE, wLo - 60, wHi + 60, e.slps);
+    LG.dyn.collect(Dynamics::SLOPE, wLo - 60, wHi + 60, e.slps, supP);
     FS.speed->forRange(wLo - 80, wHi + 80, [&](const Obj& o) { e.spds.push_back(&o); });
     LG.dyn.collect(Dynamics::SPEED, wLo - 80, wHi + 80, e.spds);
     ppSubMark(7);
@@ -360,7 +392,7 @@ inline void prepareGroup(ModelWorld& w, FrameSlices& FS, GroupEnv& e, int gframe
     }
     // --followy: the crossing tick of each Follow Player Y (every state of the group shares this
     // tick's x), and where its group's objects sit in the windows -- the step puts each one at
-    // its own state's height (step.hpp, the top of stepOne).
+    // its own state's height (followPassPlan, step_shared.hpp, which the shadow's tick runs).
     e.fol.clear();
     const bool folOn = !g_followYs.empty() || !g_followSecObjs.empty();
     if (folOn || !g_bigSecObjs.empty() || !g_bigSecDyn.empty()) {
@@ -425,15 +457,20 @@ struct RotNote {
 // the old frame would put two different worlds in one cell. `rot` (may be null) gets what
 // --rotwatch prints, and only when the watch covers this tick and the child turned.
 inline State advanceState(const State& s, int input, const StepCtx& K, bool& dead, RotNote* rot) {
-    State c = stepBoth(s, input, K, dead);
+    // The shadow step (shadow_step.hpp) is the tick: there is no old model to run first or to fall back to.
+    State c = shadowAdvance(s, input, K, dead);
     if (!dead && !g_rotTrig.empty()) {
         const bool rw = rot && g_rotWatchLo >= 0 && K.t >= g_rotWatchLo
                         && K.t <= g_rotWatchHi;
         if (rw) g_rotWatchUid = -1;
         const int f0R = (int)c.frame;
-        // --tpjumpnext: the crossing starts where last tick's forward jump left (step.hpp crossBaseX)
+        const uint8_t up0R = gdUpOf(c);   // (GD's upside-down byte before the turn: Rotate Gameplay calls flipGravity, which stamps the flip time only when that byte really changes)
+        // --tpjumpnext (removed): the crossing starts where last tick's forward jump left (step.hpp crossBaseX)
         const int nfR = applyRotation(c, crossBaseX(s), (double)K.dxF, K.t,
-                                      input, s.grounded != 0, (double)s.y, true);
+                                      input, s.grounded != 0, (double)s.y, true, s.action == 0 || s.pSpiderTap != 0);
+        // The turn is a gravity flip when it changes GD's up byte (frame 3 is the mirror of frame 0 for the same State::flip): the flip clock restarts, which the end of the tick (step.hpp, c.flipT) cannot see
+        // because the turn is applied after it. A shadow seed in the turned frame reads it as the stamp GD's flipGravity wrote (shadow_step.hpp, +0x808): the grace of a body inside a solid.
+        if (nfR >= 0 && gdUpOf(c) != up0R) c.flipT = 0;
         if (rw && nfR >= 0) {   // --rotwatch: print only, read in the serial pass
             rot->set = true;
             rot->uid = g_rotWatchUid;
@@ -441,6 +478,7 @@ inline State advanceState(const State& s, int input, const StepCtx& K, bool& dea
             rot->nf = (int8_t)nfR;
         }
     }
+    shadowRotFinish(c, s.rotSpent);   // the shadow's body over the old tick's turn, when both turned with the same trigger (shadow_step.hpp)
     return c;
 }
 
@@ -457,7 +495,28 @@ inline State advanceState(const State& s, int input, const StepCtx& K, bool& dea
 // Returns the last state. (The witness resim is a caller; a search that judges whole plans is
 // another.)
 // `bindFrame` (>= 0): the frame the slices start bound to, when it is not the start's own -- a walk
-// resumed mid-way (--walkresume) keeps the binding the walk it continues had.
+// started mid-way keeps the binding the walk it continues had.
+// The world's tog update: one tick of State::tog / xgate for the step from `s` to `c` with `input` -- the Taps' button edges, the Toggle Orbs the press hits (the push path: the player's box at the parent row against the
+// orb's rect; State::mode 6 is the spider, `mini` 18 the small size) and the x-gate crossings (trigevent_togstate.hpp). The parent's x is the farthest x when --tpback has moved the player back (crossXOf).
+inline void togWorldStep(const State& s, State& c, int input, std::vector<gdtrig::TogChange>* out = nullptr) {
+    static thread_local std::vector<int> hits;
+    gdtrig::OrbPlayer pl;
+    pl.x = (double)s.xAbs; pl.y = (double)s.y; pl.vsize = s.mini ? 0.6 : 1.0; pl.spider = s.mode == 6;   // (State::mini is 0 / 1; this read `== 18`, the size portal's type, and a mini player had the full-size box)
+    if (t_bodyFiredOut.valid) {   // the shadow stepped this tick: the Toggle Orbs its body fired (the game's own press latch, box and row), ascending uid as the push path gives them
+        hits.clear();
+        for (int u : t_bodyFiredOut.uids) if (gdtrig::g_togTable.findOrb(u)) hits.push_back(u);
+        std::sort(hits.begin(), hits.end());
+        t_bodyFiredOut.valid = false;
+    } else
+        gdtrig::togOrbPushHits(gdtrig::g_togTable, pl, input && !s.action, hits);
+    gdtrig::togStep(gdtrig::g_togTable, c.tog, c.xgate, crossXOf((double)s.xAbs, s.tpBack), crossXOf((double)c.xAbs, c.tpBack), (int)s.action, input, out, &hits);
+}
+
+// --trigsupply-group in a walk (search_dp.hpp installs both when it is included; each is a no-op unless a supplied group is on): `group` tells the shadow this tick's one-state group (the call the search makes per
+// group before prepare), `place` puts the supplied groups' movers of the tick's env where the shadow has them (the block the search runs after prepare). Null / no-op: the walk is what it was.
+inline void (*g_rolloutGroupHook)(long long t, float dx, const State& s, double x) = nullptr;
+inline void (*g_rolloutPlaceHook)(const GroupEnv& env, int gframe, int grev) = nullptr;
+
 template <class Pre, class Post>
 inline State rollout(ModelWorld& w, const State& start, long long t0,
                      const std::vector<uint8_t>& lvl, float fallbackDx, Pre&& pre, Post&& post,
@@ -472,26 +531,40 @@ inline State rollout(ModelWorld& w, const State& start, long long t0,
         const double xPrev = (double)s.xAbs;
         const double x = (double)advanceX(s.xAbs, dxUsed);
         // --witnessauto (search_key.hpp): the autonomous triggers fire on THIS walk's own
-        // crossing, as --replay fires them (x is where the player is AT tick t).
+        // crossing, as --replay fires them and as the search dates them (fireAutoTriggers): the
+        // crossing is read on the x of tick t-1, so a trigger crossed in tick c takes effect from
+        // the placement of tick c+1 (GD's crossing loop runs after the player's collisions; cli.hpp
+        // --replay has the measurement).
         if (g_rolloutFiresAuto)
             for (AutoTrig& A : g_autoTrig) {
                 if (A.fireT >= 0) continue;
-                if (x < A.cx) break;   // sorted by cx
-                A.fireT = (int)t + A.delay;
-                A.fireX = A.lockLastX = x;
+                if (xPrev < A.cx) break;   // sorted by cx
+                A.fireT = (int)(t - 1) + A.delay;
+                A.fireX = A.lockLastX = xPrev;
                 std::printf("witnessauto: uid %d x=%.0f crossed at t=%lld, effect t=%d\n", A.uid,
-                            A.cx, t, A.fireT);
+                            A.cx, t - 1, A.fireT);
             }
         GroupEnv env;
         double pLo = x, pHi = x;
         p2Widen(pLo, pHi, p2Dx(s), p2Dx(s));   // --p2xoff
+        if (g_rolloutGroupHook) g_rolloutGroupHook(t, (s.dx > 0.f) ? s.dx : fallbackDx, s, x);
         prepareGroup(w, fs, env, (int)s.frame, s.trig, (int)s.trigT, s.fireB,
                      s.lockOff + (float)(x - (double)s.xAbs), x, xPrev, dxUsed, pLo, pHi, t,
                      GroupOpts{false, false, false});
+        if (g_rolloutPlaceHook) g_rolloutPlaceHook(env, (int)s.frame, (int)s.rev);
         const StepCtx K = env.ctx();
         bool dead = false;
         const int frame0 = (int)s.frame;
         State c = advanceState(s, (int)lvl[i], K, dead, nullptr);
+        // The groups' on / off and the x-gate digest; --togtrace prints each change at this walk's tick t
+        {
+            std::vector<gdtrig::TogChange> ch;
+            togWorldStep(s, c, (int)lvl[i], g_togTrace ? &ch : nullptr);
+            for (const gdtrig::TogChange& e : ch) {
+                if (e.gate) std::printf("togtrace: t=%lld gate uid %d fired %d\n", t, e.uid, e.fired ? 1 : 0);
+                else std::printf("togtrace: t=%lld tap uid %d group %d %s\n", t, e.uid, e.group, e.on ? "on" : "off");
+            }
+        }
         if (!dead && !g_rotTrig.empty() && (int)c.frame != frame0)
             bindFrameSlices(fs, frameLevel(w.L, (int)c.frame));
         pre(i, t, (const State&)s, c, dead, K);
@@ -548,7 +621,7 @@ inline void fireAutoTriggers(const std::vector<State>& frontier, long long t) {
         // sorted by cx: the first unfired one that has not been crossed ends the scan (two
         // triggers CAN share an x -- lv19 has pairs at 5,955 and 29,265 -- so no early break on a
         // fire)
-        double xl = xLead;   // --chanmove: a channelled Move is fired by the states that have that channel up
+        double xl = xLead;   // --chanmove (removed): a channelled Move is fired by the states that have that channel up
         if (A.chan != 0 && g_rotQueue && !g_rotQ.empty()) {
             // a state that has the channel up passes it in its own travel direction (a reversed rider when x falls to cx)
             bool any = false;
@@ -615,8 +688,7 @@ inline bool inputAllowed(const State& s, int input, int gridNow, long long t) {
 // What taking `input` from `prev` writes into the stepped child `c`: its own action (keyOf reads it,
 // for the robot's hover, before anything else would set it), --minpulse's edge age, and --latgap's
 // lock (a mode with latency 2 entered from one without).
-inline void noteInput(const State& prev, State& c, int input) {
-    c.action = (uint8_t)input;
+inline void noteInput(const State& prev, State& c, int input) {    c.action = (uint8_t)input;
     if (g_minPulse > 1 || g_wavePulse > 1)
         c.edgeAge = (input != (int)prev.action) ? 0 : (uint8_t)std::min(254, (int)prev.edgeAge + 1);
     const auto lat2 = [](uint8_t m) { return m == 1 || m == 3; };

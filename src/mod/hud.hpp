@@ -45,17 +45,17 @@ struct OverlayCursor { float y; };
 // each other.
 // `id` is the Geode node ID: the lookup is still by tag, but these hang off a layer the game
 // owns, so other mods need a name for them.
-inline cocos2d::CCLabelBMFont* overlayLabel(cocos2d::CCNode* parent, int tag,
+inline geode::Label* overlayLabel(cocos2d::CCNode* parent, int tag,
                                             const std::string& id, const char* font,
                                             float scale, bool visible, OverlayCursor& cur) {
     using namespace cocos2d;
-    auto* lbl = static_cast<CCLabelBMFont*>(parent->getChildByTag(tag));
+    auto* lbl = static_cast<geode::Label*>(parent->getChildByTag(tag));
     if (!visible) {
         if (lbl) lbl->setVisible(false);
         return nullptr;
     }
     if (!lbl) {
-        lbl = CCLabelBMFont::create("", font);
+        lbl = geode::Label::create(std::string(), geode::ZStringView(font));
         if (!lbl) return nullptr;
         lbl->setTag(tag);
         lbl->setID(id);
@@ -71,7 +71,7 @@ inline cocos2d::CCLabelBMFont* overlayLabel(cocos2d::CCNode* parent, int tag,
 }
 
 // Move the cursor past a label overlayLabel placed and the caller has filled.
-inline void overlayAdvance(cocos2d::CCLabelBMFont* lbl, OverlayCursor& cur) {
+inline void overlayAdvance(geode::Label* lbl, OverlayCursor& cur) {
     if (lbl) cur.y -= lbl->getContentSize().height * lbl->getScaleY() + 3.f;
 }
 
@@ -92,7 +92,7 @@ inline void speedText(char* out, size_t n) {
 // Keys, current speed and whether time is stopped. Hidden with F1 -- unlike the badge, this is
 // the user's to turn off. In a replay this is the ONLY line besides the badge, so the speed
 // lives here and nowhere else (it used to be printed twice).
-inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
+inline void fillKeysHud(geode::Label* lbl) {
     if (!lbl) return;
     static auto s_last = std::chrono::steady_clock::time_point{};
     auto now = std::chrono::steady_clock::now();
@@ -194,7 +194,7 @@ inline void fillKeysHud(cocos2d::CCLabelBMFont* lbl) {
 // session block. What the badge is for is saying that this run is a bot's -- and which version
 // of the mod's: a screenshot or a recording then says what produced the run. The version is the
 // mod's own (mod.json, as the play menu reads it), never a literal.
-inline void fillBotBadge(cocos2d::CCLabelBMFont* lbl) {
+inline void fillBotBadge(geode::Label* lbl) {
     if (!lbl) return;
     static int s_wasMode = -1;
     static const std::string s_version = geode::Mod::get()->getVersion().toVString();
@@ -224,7 +224,7 @@ inline void fillBotBadge(cocos2d::CCLabelBMFont* lbl) {
 constexpr float kBadgeScale = 0.28f;
 constexpr float kBadgeMinScale = 0.15f;
 constexpr float kGdBarHalfWidth = 105.f;
-inline void fitBotBadge(cocos2d::CCLabelBMFont* lbl) {
+inline void fitBotBadge(geode::Label* lbl) {
     using namespace cocos2d;
     if (!lbl) return;
     float s = kBadgeScale;
@@ -295,7 +295,7 @@ inline int barLine(char* out, size_t cap, const char* label,
     return (n < (int)cap) ? n : (int)cap - 1;
 }
 
-inline void fillSessionHud(cocos2d::CCLabelBMFont* hud) {
+inline void fillSessionHud(geode::Label* hud) {
     using namespace cocos2d;
     if (!hud) return;
     // setString rebuilds the glyph sprites, so every frame is heavy (drops the spectating FPS).
@@ -353,6 +353,11 @@ inline void fillSessionHud(cocos2d::CCLabelBMFont* hud) {
                      pr.tick, pr.horizon, pr.x, pr.alive);
             n += barLine(b + n, sizeof(b) - n, "search",
                          (double)(pr.tick - pr.from), (double)(pr.horizon - pr.from), detail);
+            // barLine ends its line with a newline and this is the last line: the "now" branch below has none, and
+            // geode::Label measures a trailing newline as one more (empty) line, so the label was a line taller
+            // while a search ran and everything under it -- the bars, the speed, the keys -- sat ~35 px lower than
+            // between searches. The text now has the same number of lines in both.
+            if (n > 0 && b[n - 1] == '\n') b[--n] = 0;
         } else {
             snprintf(b + n, sizeof(b) - n, "now    x %.0f  (%.1f%%)   anchor t=%lld x=%.0f",
                      (double)px, lvl > 0.0 ? px / lvl * 100.0 : 0.0,

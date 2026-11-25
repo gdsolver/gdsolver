@@ -21,9 +21,9 @@ A SECOND ARM, under one switched rule, is the same command with a name of its
 own and the flag appended -- and, because it goes through model_replay, it gets
 a sidecar saying so:
 
-    python py/fidelity_offline.py 20 --out-prefix satrot --extra-flag=--no-satrotraw
+    python py/fidelity_offline.py 20 --out-prefix satrot --extra-flag=--no-areaadd
 
-The `=` is not decoration: `--extra-flag --no-satrotraw` is read by argparse as
+The `=` is not decoration: `--extra-flag --no-areaadd` is read by argparse as
 an option, not as its value. The trace lands beside the default one
 (build/fidelity/satrot_lv20.trace.csv) rather than overwriting it, so the two
 arms can be compared afterwards.
@@ -66,7 +66,7 @@ def main() -> int:
     ap.add_argument("--extra-flag", action="append", default=[],
                     metavar="FLAG",
                     help="extra leveldp flag, repeatable; write it as "
-                         "--extra-flag=--no-satrotraw, or argparse reads the "
+                         "--extra-flag=--no-areaadd, or argparse reads the "
                          "value as an option of its own")
     a = ap.parse_args()
 

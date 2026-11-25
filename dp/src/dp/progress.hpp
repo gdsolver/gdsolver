@@ -149,6 +149,22 @@ struct SearchCheckpoints {
 inline SearchCheckpoints g_check;
 // --phaseprof (cli.hpp): per-phase wall time of the layer loop. Print only.
 inline bool g_phaseProf = false;
+// KEYOBS=1 (env, collide.hpp g_keyObs; printed with --phaseprof's lines): the angle against the dedupe key (search_dp.hpp, before each group's dedupe; print only): the groups and their live children, the distinct keys, the keys whose children
+// carry more than one angle, the ones that still do within a quarter turn (a square's box), the children of those, and the children by mode (cube, ball, the rest).
+struct RotKeyObs { long long groups = 0, kids = 0, keys = 0, mixed = 0, mixedQ = 0, kidsQ = 0, byMode[3] = {0, 0, 0}; };
+inline RotKeyObs g_rotKeyObs;
+// ...and, under KEYOBS too, a dual's second exemption bit against the dedupe key (search_dp.hpp, before each group's dedupe; print only). The bit (+0x95a) is read by a ship / ufo / swing only, and a
+// flying body whose vy is inside the plain band has it cleared at the head of its next update, before either reader (upd.hpp updateJump). The dual children; the ones with the bit up, by what
+// the second body is: [0] a ship / ufo / swing outside the band (the bit decides its next tick), [1] a ship / ufo / wave / swing inside it (cleared before it is read), [2] a wave outside the
+// band or a body that does not fly (not read while it stays so). Then the distinct keys of the dual children: as they are, with the bit's term taken out of every key, and with it taken out
+// of the [1] children's only -- the keys the bit splits, and the ones it would still split.
+struct Boost2Obs { long long groups = 0, dualKids = 0, up[3] = {0, 0, 0}, keys = 0, keysNoBit = 0, keysCanon = 0; };
+inline Boost2Obs g_boost2Obs;
+// ...and the first body's bit (State::boost) the same way, over every live child (search_dp.hpp; the `boostobs:` line). Its [1] is the narrower class the second body's write-back clears
+// (upd.hpp exemptionClearedNext, as far as the State says: a flying body, not dashing, no touched ring, vy inside the part the upright and the upside-down band share); [0] a ship / ufo /
+// swing that is not [1]; [2] the rest.
+struct Boost1Obs { long long groups = 0, kids = 0, up[3] = {0, 0, 0}, keys = 0, keysNoBit = 0, keysCanon = 0; };
+inline Boost1Obs g_boost1Obs;
 // ...and what its `setup` bucket is made of (search_dp.hpp): [0] the autonomous triggers' crossings, [1] the group keys, [2] the rotation triggers and the group's own crossings,
 // [3] what model.prepare leaves after its own marks, and prepareGroup's: [4] dyn.seek (the moving geometry placed for the tick), [5] dyn.applyTriggers, [6] the near window (the level's
 // static objects and dyn.collect NEAR), [7] the ports/pads/orbs/slopes/speeds windows, [8] the touch boxes, coins and follow lists, [9] the ramp veto index and solidOrderInto.
@@ -157,6 +173,12 @@ inline double g_ppSub[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 inline long long g_ppGroups = 0, g_ppParents = 0;   // groups placed, parents stepped (each makes up to two children)
 inline std::atomic<long long> g_ppKidNs{0};           // thread-time spent stepping children (the work inside the step)
 inline long long g_ppStepNs = 0, g_ppSerialGroups = 0;   // wall time of the step blocks, and how many ran on one thread
+// --phaseprof: a child's step by part (thread-ns, summed like g_ppKidNs): 0 the checks before the model's tick, 1 the model's tick (Model::advance: the shadow's step, or the old tick), 2 after the tick up to the
+// dedupe key (the input note, the on/off world, the late crossings, the gates, the rules, the tightness), 3 the dedupe key, 4 the rest. g_ppKidStepped: the children that reached the tick.
+// g_ppSlGcNs: the shadow block store's gc at the end of a layer (wall; it is inside the `cap` bucket).
+inline std::atomic<long long> g_ppKidSeg[5] = {};
+inline std::atomic<long long> g_ppKidStepped{0};
+inline long long g_ppSlGcNs = 0;
 inline std::chrono::steady_clock::time_point g_ppSubLast;
 inline void ppSubMark(int b) {
     if (!g_phaseProf) return;
@@ -164,6 +186,52 @@ inline void ppSubMark(int b) {
     g_ppSub[b] += std::chrono::duration<double>(n - g_ppSubLast).count();
     g_ppSubLast = n;
 }
+// --layerprof FILE (cli.hpp; observation only, turns --phaseprof on): one row per layer of a search with what --phaseprof sums over the whole search, each as the layer's own share (the
+// difference of the running totals between two layer tops), beside the layer's tick, x and number of states. Tab-separated; the totals' names are the header row (search_dp.hpp
+// layerProfTotals). A `#search` row starts every search of the call (a cap ladder's rungs, the plain and the grid pass).
+inline double g_ppMain[7] = {0, 0, 0, 0, 0, 0, 0};   // ppMark's buckets (cli.hpp), mirrored where --layerprof can read them
+inline long long g_ppSupplyNs = 0;                    // supplyPlaceMovers (the main thread, between a group's prepare and its step)
+struct LayerProf {
+    enum { kMax = 40 };
+    std::string path;
+    std::FILE* f = nullptr;
+    long long search = 0, t = 0;
+    double x = 0.0, prev[kMax] = {};
+    double ex[8] = {};   // the layer's own counts, written by the search while the layer runs: its groups and the distinct values of each part of the group key (search_dp.hpp)
+    size_t states = 0;
+    bool have = false;
+    long long call = 0;
+    bool callPending = false;   // the flag was read for a new call (the solver also runs call after call inside the mod: one file then holds every call, each under a `#call` row)
+    bool on() const { return !path.empty(); }
+    void beginSearch(const char* header) {
+        if (!on()) return;
+        if (!f) { f = std::fopen(path.c_str(), "w"); if (!f) { path.clear(); return; } std::fprintf(f, "search\tt\tx\tstates\tg_all\tg_dx\tg_trig\tg_frame\tg_fsig\tg_xc\tst_firesig\tst_xcsig\t%s\n", header); }
+        if (callPending) { callPending = false; std::fprintf(f, "#call %lld\n", ++call); }
+        ++search; have = false;
+        std::fprintf(f, "#search %lld\n", search);
+    }
+    void row(const double* tot, int n) {
+        std::fprintf(f, "%lld\t%lld\t%.1f\t%zu", search, t, x, states);
+        for (double v : ex) std::fprintf(f, "\t%.0f", v);
+        for (int i = 0; i < n && i < kMax; ++i) std::fprintf(f, "\t%.4g", tot[i] - prev[i]);
+        std::fputc('\n', f);
+        for (double& v : ex) v = 0.0;
+    }
+    // at the top of layer `tNow`: the layer before it is over
+    void top(long long tNow, double xNow, size_t statesNow, const double* tot, int n) {
+        if (!f) return;
+        if (have) row(tot, n);
+        for (int i = 0; i < n && i < kMax; ++i) prev[i] = tot[i];
+        t = tNow; x = xNow; states = statesNow; have = true;
+    }
+    void endSearch(const double* tot, int n) {
+        if (!f) return;
+        if (have) row(tot, n);
+        have = false;
+        std::fflush(f);
+    }
+};
+inline LayerProf g_layerProf;
 
 // What the search concluded, for a caller that has no pipe to read.
 //
@@ -200,6 +268,9 @@ struct SearchOutcome {
     // last states were the ones that passed it without it. Read by --ladderenv (cliMain).
     int coinWall = -1;
     long long capHits = -1;  // -1 = no capstat line, i.e. the layer loop never ran
+    // The x the first layer that the alive cap thinned stood at (the leader's x the layer's cap was read at; -1 = the cap never bound). The cap ladder's windows read it: a window that
+    // begins after it has not reached the first prune of the search, and "the same cap hits" says nothing about the stretch before it (cli.hpp backSame, --ladderfirsthit).
+    double capHitX0 = -1.0;
     // The search's own work: the states its layers carried forward (each layer's frontier after
     // the alive cap, summed). Deterministic, printed nowhere -- the mod weighs a repair round's
     // cost with it (cfg dpsecrent), where a wall clock would make the loop's decisions depend on
@@ -245,6 +316,13 @@ struct SearchOutcome {
     // plan's (a field differs, or it dies where the old walk did not). -1 = it never does.
     long long rejoinBadT = -1;
     const char* rejoinBadWhy = nullptr;   // string literal
+    // --rejoinprobe: this call's answer was searched again without the join because the joined plan's walk died at or past the join (cli.hpp): the
+    // tick of the join that was refused and the tick its walk died on, -1 = no join was refused. (Of the attempt whose outcome this is.)
+    long long rejoinRefusedT = -1, rejoinRefusedDieT = -1;
+    long long rejoinRefusedN = 0;   // ...and how many joins the call refused (cliMain: over every attempt of the ladder; the two above are then the last one)
+    // --rejoinuse: the first tick a state came back onto the old plan and the join was NOT taken because the old plan's inputs end short of the goal and of
+    // this call's end (refwatch.hpp rejoinTailReaches), the tick those inputs end at, and the number of layers that declined one; -1 / -1 / 0 = none.
+    long long rejoinShortT = -1, rejoinShortEndT = -1, rejoinShortN = 0;
     // Touch boxes this call REQUIRED the route to enter, and which of them the anchor is
     // already past. A requirement the anchor cannot possibly satisfy empties the frontier
     // before a single tick runs, and from outside that is indistinguishable from a physics
@@ -318,6 +396,7 @@ struct SearchOutcome {
     // PlainElsewhere::ready, cli.hpp). A change to the ladder can show from these that what
     // it chose did not move, call by call.
     std::string ladder;
+    std::string camy;   // --camy: the call's camera counters, one line (cam_y_obs.hpp camySummary), for the mod to relay (dp's printf does not reach result.txt)
     // This call wrote its plan file (--out), and the trace beside it. An early return and a
     // cancelled search write neither, and a ladder's files then still hold the search before.
     bool planWritten = false;
@@ -332,10 +411,12 @@ struct SearchOutcome {
     void reset() {
         verdict = VerdictFailed;
         horizonCut = false;
-        deepT = -1; deepX = -1.0; capHits = -1; replayDiedT = -1; cancelT = -1; rejoinT = -1;
+        deepT = -1; deepX = -1.0; capHits = -1; capHitX0 = -1.0; replayDiedT = -1; cancelT = -1; rejoinT = -1;
         coinWall = -1;
         workStates = 0;
         rejoinBadT = -1; rejoinBadWhy = nullptr;
+        rejoinRefusedT = -1; rejoinRefusedDieT = -1; rejoinRefusedN = 0;
+        rejoinShortT = -1; rejoinShortEndT = -1; rejoinShortN = 0;
         resimDead = -1; resimFirst = -1; resimWhy = nullptr; resimKind = -1;
         resimUid = -1; resimObjX = 0.f; resimObjY = 0.f; resimTrig = TouchMask{};
         resimFrame = -1;
@@ -353,6 +434,7 @@ struct SearchOutcome {
         trigMapSig = 0;
         unsupported.clear();
         ladder.clear();
+        camy.clear();
         dumpT = -1;
         dumpStart.clear();
         startStateT = -1;

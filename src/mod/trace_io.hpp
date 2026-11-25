@@ -101,6 +101,12 @@ inline long long g_rotGameplayCalls = 0;
 
 inline std::ofstream g_trace;
 inline std::ofstream g_dump;
+inline std::ofstream g_hs;   // cfg hstrace=1 (hstrace.csv, opened on the first tick that writes to it)
+inline std::ofstream g_ct;   // cfg ctrace=1 (ctrace.csv, opened on the first tick that writes to it)
+inline std::ofstream g_rect_cache;   // cfg rectcache=t0,t1 (rectcache.csv, opened on the first row)
+inline std::ofstream g_ct_raw;   // cfg ctraw=t0,t1 (ctraw.csv, opened on the first row)
+inline std::ofstream g_ct_upd;   // cfg ctupd=t0,t1 (ctupd.csv, opened on the first row)
+inline std::ofstream g_bt_raw;   // cfg btraw=t0,t1 (btraw.csv, opened on the first row)
 
 inline int curStep() {
     return (int)g_tick;
@@ -150,7 +156,10 @@ inline void openFiles() {
               "dual,p2y,p2vy,p2up,p2ground,p2dead,pmin,pmax,snapuid,snapdist,"
               "camscale,gframe,ctrlOff,camx,camy,p2ground2,p2mode,p2vsize,p2x,"
               "rotch,rotidx,rotrev,firedw,bandst,bandmode,camoffy,freemode,bandforce,p2rot,"
-              "p2ctrlOff\n";
+              "p2ctrlOff,b728,boost,revoff,revcar";
+    if (g_cfg.dumpP2Dir) g_dump << ",p2left,p2turn,p1left";
+    if (g_cfg.dumpRide) g_dump << ",onSlope,slopeUnder,slopeUid,slopeStart,totalTime,spiderStamp,b985,b986,dashing2,dashRing2,dashing1,dashWord,b985_2,b986_2,p2gmod,otspeed,p2onSlope,p2slopeUnder,p2slopeUid,p2slopeStart,p2totalTime,item1,cnt1,item2,cnt2";
+    g_dump << '\n';
 }
 
 inline void ev(const char* name, double a = 0, double b = 0, double c = 0) {
@@ -163,6 +172,11 @@ inline void ev(const char* name, double a = 0, double b = 0, double c = 0) {
 inline void flushAll() {
     if (g_trace.is_open()) g_trace.flush();
     if (g_dump.is_open()) g_dump.flush();
+    if (g_hs.is_open()) g_hs.flush();
+    if (g_ct.is_open()) g_ct.flush();
+    if (g_ct_raw.is_open()) g_ct_raw.flush();
+    if (g_rect_cache.is_open()) g_rect_cache.flush();
+    if (g_bt_raw.is_open()) g_bt_raw.flush();
 }
 
 inline const char* modeStr(PlayerObject* p) {

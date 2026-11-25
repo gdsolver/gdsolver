@@ -29,7 +29,7 @@
 #ifdef GEODE_IS_WINDOWS
 #include <cocos-ext.h>
 #if GEODE_COMP_GD_VERSION >= 22090
-#include <Geode/binding/GDFileWriter209.hpp>
+#include <Geode/binding/GDFileWriter.hpp>
 #endif
 #endif
 
@@ -249,9 +249,9 @@ namespace savetest {
 inline void run(bool atQuit = false) {
 #if GEODE_COMP_GD_VERSION >= 22090 && defined(GEODE_IS_WINDOWS)
     const char* name = atQuit ? "gdsolver-savetest-quit.dat" : "gdsolver-savetest.dat";
-    const gd::string path = std::string(cocos2d::CCFileUtils::sharedFileUtils()->getWritablePath()) + name;
+    const std::string path = std::string(cocos2d::CCFileUtils::sharedFileUtils()->getWritablePath()) + name;
     const long long before = g_blockedSave;
-    GDFileWriter209::writeAtomic(path, gd::string("gdsolver savetest"));
+    GDFileWriter::writeAtomic(path, std::string("gdsolver savetest"));
     FILE* f = std::fopen(path.c_str(), "rb");
     const bool exists = f != nullptr;
     if (f) std::fclose(f);
@@ -344,7 +344,7 @@ inline void flatten(const std::string& xml, Flat& out) {
     }
 }
 
-inline bool decode(const gd::string& s, std::string& xml, std::string& how) {
+inline bool decode(const std::string& s, std::string& xml, std::string& how) {
     if (s.empty()) { how = "empty save string"; return false; }
     // getCompressedSaveString = compressString(plist, encrypt=false, -1, 11): base64url + gzip, no XOR layer.
     const std::string a = cocos2d::ZipUtils::decompressString(s, false, 11);
@@ -460,6 +460,27 @@ inline void report(const char* when) {
             if (++shown > 24) { writeResult("memaudit: ... " + std::to_string(ch.size()) + " changes in all", false); return; }
             writeResult("memaudit:   [" + cat + "] " + c.which + " " + c.path + ": " + c.a + " -> " + c.b, false);
         }
+}
+
+// The level-record keys the game would save differently now than when the session opened, for the session's `level record changed:` line: "" when
+// there are none, or when the audit could not be made (its own line says so). The line's fixed list of counters (LevelProgress) cannot name a field
+// nobody has heard of -- 2.209's practice-attempt counter grew by one per restore in a takeover while the line read `none` -- and this is what
+// stops that line from saying `none` about a key it does not look at.
+inline std::string levelRecordChanges() {
+    if (!g_haveStart || !g_start.valid) return std::string();
+    const Snap now = take();
+    if (!now.valid) return std::string();
+    std::vector<Change> ch;
+    diffFlat("gm", g_start.gm, now.gm, ch);
+    diffFlat("ll", g_start.ll, now.ll, ch);
+    std::string names;
+    int n = 0;
+    for (const auto& c : ch) {
+        if (categoryOf(c.path) != "level record") continue;
+        if (++n <= 3) names += (names.empty() ? "" : ", ") + c.path + " " + c.a + "->" + c.b;
+    }
+    if (!n) return std::string();
+    return "memaudit=" + std::to_string(n) + " key(s) (" + names + (n > 3 ? ", ..." : "") + ")";
 }
 
 }  // namespace memaudit

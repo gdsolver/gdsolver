@@ -872,7 +872,7 @@ def main(argv=None) -> int:
     ap.add_argument("--extra-flag", action="append", default=[],
                     metavar="FLAG",
                     help="extra leveldp flag for the model side, repeatable; "
-                         "write it as --extra-flag=--ceilpush, or argparse "
+                         "write it as --extra-flag=--no-areaadd, or argparse "
                          "reads the value as an option of its own")
     # --- record ---
     ap.add_argument("--trunc", nargs="*", type=int,

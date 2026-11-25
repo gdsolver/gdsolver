@@ -74,6 +74,8 @@ class $modify(P1MenuLayer, MenuLayer) {
                 writeResult(g_cfg.researchCapture
                     ? "session: research capture on (per-attempt band/groups/recorder-input copies are kept)"
                     : "session: research capture off (per-attempt band/groups/recorder-input copies are not kept)");
+                for (const std::string& w : g_planWarnings) writeResult(w);   // what the cfg's planfile= said while the result log was not yet open
+                g_planWarnings.clear();
                 // Load the plan onto the very first attempt of serve mode too. Relying on
                 // rerun, a session that finishes without dying (nodeath) would never receive
                 // the plan. Start-Serve always writes plan_in.txt before launch (if it is

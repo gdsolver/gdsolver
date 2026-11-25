@@ -15,7 +15,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import gdsave, window
+from . import gdsave, procscan, window
 from .paths import BUILD_MOD, WORKERS_ROOT
 from .worker import (_spawn, _WorkerBase, check_plan_buttons, taskkill_image)
 
@@ -27,15 +27,15 @@ def kill_all_gd() -> None:
     what we do by default. Do not call it while another solve or regression is running.
     """
     import psutil
-    for p in psutil.process_iter(["pid", "name"]):
-        if (p.info["name"] or "").lower().startswith("geometrydash"):
+    for p, info in procscan.scan(["pid", "name"]):
+        if (info["name"] or "").lower().startswith("geometrydash"):
             try:
                 p.kill()
             except psutil.Error:
                 pass
     for _ in range(40):
-        alive = [p for p in psutil.process_iter(["name"])
-                 if (p.info["name"] or "").lower().startswith("geometrydash")]
+        alive = [p for p, info in procscan.scan(["name"])
+                 if (info["name"] or "").lower().startswith("geometrydash")]
         if not alive:
             return
         time.sleep(0.25)

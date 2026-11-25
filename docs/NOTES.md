@@ -22,7 +22,7 @@ What is published here:
   slicing.
 * [`../README.md`](../README.md) — what it is, what it solves, how to watch it
   run, and the safety rules.
-* [`RESULTS.md`](RESULTS.md) — the cold runs of the official and spin-off levels,
+* [`RESULTS.md`](RESULTS.md) — the cold runs of the official levels,
   level by level.
 * the comments in `dp/` and `src/`, which carry the measured physics.
 

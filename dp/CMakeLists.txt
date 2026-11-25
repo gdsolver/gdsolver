@@ -19,7 +19,9 @@ target_compile_features(gdsolver_dp INTERFACE cxx_std_17)
 # Release optimisation level -- the core libraries below, and the test drivers.
 function(gdsolver_dp_options target)
     if (MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8
+        # (/bigobj: the object file format's limit on sections, which the core's translation unit has reached; it changes
+        # the object file's layout, not the code)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8 /bigobj
             $<$<CONFIG:RelWithDebInfo>:/Ob2>)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -O2)

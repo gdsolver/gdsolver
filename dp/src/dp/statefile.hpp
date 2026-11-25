@@ -206,6 +206,7 @@ inline bool readStateFile(const std::string& path, StateFile& f, std::string& wh
     if (ok) {
         ok = get(in, f.t) && get(in, f.dxF)
              && std::fread(&f.s, sizeof(State), 1, in) == 1
+             && ((void)(f.s.slRef = 0), true)   // (--shadowstep's handle names a slot of the process that wrote the file: never taken)
              && std::fread(f.refs, sizeof f.refs, 1, in) == 1
              && std::fread(f.refUid, sizeof f.refUid, 1, in) == 1
              && getVec(in, f.autoUid) && getVec(in, f.autoFireT) && getVec(in, f.autoSpread)

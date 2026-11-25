@@ -34,12 +34,16 @@ inline int levelHeaderReverseSync(std::string s) {
 
 // Whether the level's attempt-dependent triggers reach play (levelwarn::kAttemptDependent), read from
 // the stored or raw string the way the play menu's note reads it.
-inline bool levelAttemptDependent(std::string s) {
+// `keeps` (if given) says whether the items Item Persistence keeps reach play too (Findings::attemptKeeps).
+inline bool levelAttemptDependent(std::string s, bool* keeps = nullptr) {
+    if (keeps) *keeps = false;
     s = gdcompat::rawLevelString(std::move(s));
     if (s.empty()) return false;
     const std::string_view all(s);
     const bool platformer = levelwarn::field(all.substr(0, all.find(';')), "kA22") == "1";
-    return (levelwarn::scan(all, platformer).unmodelled & levelwarn::kAttemptDependent) != 0;
+    const auto w = levelwarn::scan(all, platformer);
+    if (keeps) *keeps = w.attemptKeeps;
+    return (w.unmodelled & levelwarn::kAttemptDependent) != 0;
 }
 
 // cfg attemptauto for a level the play menu started: the same decision enterConfiguredLevel makes for a
@@ -47,14 +51,18 @@ inline bool levelAttemptDependent(std::string s) {
 // configured (its result file is open).
 inline void attemptAutoForLevel(GJGameLevel* level) {
     g_attemptAutoCount = -1;
+    g_attemptAutoKeeps = false;
     if (!level || !g_attemptAuto || g_attemptOne || g_attemptCount >= 0) return;
     const std::string str = level->m_levelType == GJLevelType::Main
         ? std::string(LocalLevelManager::sharedState()->getMainLevelString(level->m_levelID.value()))
         : std::string(level->m_levelString);
-    if (!levelAttemptDependent(str)) return;
+    bool keeps = false;
+    if (!levelAttemptDependent(str, &keeps)) return;
     g_attemptAutoCount = 1;
+    g_attemptAutoKeeps = keeps;
     writeResult("attemptauto: the level reads the attempt count or keeps items across attempts "
-                "into play; driven as attempt 1 would be a later one (attemptcount=1)");
+                "into play; driven as attempt 1 would be a later one (attemptcount=1)"
+                + std::string(keeps ? ", its kept items not carried over (they start every attempt as on the first)" : ""));
 }
 
 // ---- where a suite level comes from (cfg `leveldir`, see suite:: in config.hpp) ----
@@ -181,14 +189,18 @@ inline bool enterConfiguredLevel() {
                 + " sig=" + levelContentSig(srcBytes) + " bytes=" + std::to_string(srcBytes.size()));
     // cfg attemptauto: decided afresh at every entry, so a pin never outlives its level.
     g_attemptAutoCount = -1;
+    g_attemptAutoKeeps = false;
     if (g_attemptAuto && !g_attemptOne && g_attemptCount < 0) {
         const std::string fullStr = srcKind == "main"
             ? std::string(LocalLevelManager::sharedState()->getMainLevelString(g_cfg.levelId))
             : srcBytes;
-        if (levelAttemptDependent(fullStr)) {
+        bool keeps = false;
+        if (levelAttemptDependent(fullStr, &keeps)) {
             g_attemptAutoCount = 1;
+            g_attemptAutoKeeps = keeps;
             writeResult("attemptauto: the level reads the attempt count or keeps items across attempts "
-                        "into play; driven as attempt 1 would be a later one (attemptcount=1)");
+                        "into play; driven as attempt 1 would be a later one (attemptcount=1)"
+                        + std::string(keeps ? ", its kept items not carried over (they start every attempt as on the first)" : ""));
         }
     }
     // Line for ruling out the suspicion that the calibration rig (levelfile=) and the
@@ -210,7 +222,7 @@ inline bool enterConfiguredLevel() {
     // the window back at its launch size before the level loads (window_guard.hpp)
     if (g_cfg.windowGuard) windowguard::enforce("level entry", true, [](const std::string& s) { writeResult(s); });
     g_forceCleanStart = true;
-    auto* scene = PlayLayer::scene(level, false, false);
+    auto* scene = PlayLayer::scene(level, false);
     CCDirector::sharedDirector()->replaceScene(CCTransitionFade::create(0.5f, scene));
     return true;
 }
@@ -246,7 +258,7 @@ inline bool swapLevelNow(const std::string& path) {
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - g_swapT0).count();
     g_forceCleanStart = true;
-    auto* scene = PlayLayer::scene(level, false, false);
+    auto* scene = PlayLayer::scene(level, false);
     CCDirector::sharedDirector()->replaceScene(scene);
     writeResult("swaplevel: read+compressed " + std::to_string(raw.size()) + " chars in "
                 + std::to_string(ms) + " ms; scene replaced");
@@ -301,9 +313,23 @@ public:
         // the first. (PlayLayer::onQuit has already reset g_cfg to its defaults, so this is a
         // fresh parse and `dparg`'s append cannot double up.)
         g_cfg = Config{};
-        loadConfig();
-        g_cfg.levelId = suite::current();
-        openFiles();                      // endSession closed them
+        // Every cfg key whose variable is a global of its own back to what it was before any cfg
+        // was read. `g_cfg = Config{}` puts the struct back, but trigtrace and 160 more kept what
+        // the last level's cfg gave them -- py/cfg_swap_check.py found it as a `cfgeff:` difference.
+        effcfg::restoreGlobals();
+        // cfg `levelcfgdir`: this level's own whole cfg, when the suite has one for it
+        std::string levelCfg;
+        if (!suite::g_cfgDir.empty() && suite::active()) {
+            levelCfg = suite::g_cfgDir + "/" + std::to_string(suite::current()) + ".cfg";
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(levelCfg, ec)) {
+                writeResult("suite: no " + levelCfg + " - this level reads autorun.cfg");
+                levelCfg.clear();
+            }
+        }
+        loadConfig(levelCfg);
+        if (suite::active()) g_cfg.levelId = suite::current();
+        openFiles();                   // endSession closed them
         // Main levels by ID; with cfg leveldir, the others from that directory (never a rig file
         // left in the cfg by `levelfile=`).
         if (!suiteLevelSource()) {

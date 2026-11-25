@@ -76,6 +76,8 @@ SolveOutcome outcome();
 // Seconds into the last call at the end of each part of its preparation (dp::g_prepMark: arguments,
 // group recordings, touch/auto triggers, the level, the rest of the tables; -1 = not reached).
 std::vector<double> prepMarks();
+// The stages of the last call (dp::g_callStages): one entry per search or replay the call ran, each with its seconds and its own cap ladder's account.
+std::string callStages();
 
 // ---- checkpoints: lineages to fly while the search is still running ------------------------
 //

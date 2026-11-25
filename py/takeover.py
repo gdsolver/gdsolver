@@ -376,6 +376,10 @@ def model_argv(level_dir: Path, plan: Path, out_base: Path, leveldp: Path,
         args += ["--obb", str(obb)]
     args += groups_args(plan)
     args += whole_run_args(level)
+    # The shadow step is the only tick there is: leveldp refuses to replay without it (exit 2, no trace,
+    # so the check's model leg read "ERROR: no ...model.trace.csv"). This argv is assembled here by hand,
+    # as quick_regress assembles its own, so the flag is added here too.
+    args.append("--shadowstep=all")
     if not official:
         args += custom_start_args(level_dir, plan, out_base, replay_rows or {})
     return [str(leveldp)] + args

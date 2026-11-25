@@ -17,7 +17,7 @@
 using namespace p1;
 namespace ui = gdsolver::ui;
 
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && !defined(GDSOLVER_GEODE6)
 using PopupBase = ui::Popup;
 #else
 using PopupBase = geode::Popup;
@@ -74,7 +74,8 @@ struct LevelFacts {
     bool official = false;   // a main level (GJLevelType::Main), where the yellow note is not shown
     std::string newerIds = "none";   // which objects from 2.0 on, for the log (newerSummary)
     // Reads the attempt count or keeps items across attempts, and the attempt pin is on
-    // (g_attemptOne): solved as its first attempt, a yellow note rather than a red one.
+    // (cfg attemptone: every attempt is the first; or cfg attemptauto where only the count reaches play: every attempt
+    // reads the same count): solved as one fixed attempt, a yellow note rather than a red one.
     bool attempts = false;
     // Two-player mode (header kA10): the second player is planned too, so it is a yellow note (the support is
     // experimental and a level whose press switches the other player's world is not solved), not a red one.
@@ -173,6 +174,14 @@ inline LevelFacts readLevel(GJGameLevel* level, bool mainLevel) {
     // a level: every attempt is its first. What it still cannot do -- a level that opens only after
     // dying -- is what the yellow note says.
     if (g_attemptOne && (f.unmodelled & levelwarn::kAttemptDependent)) {
+        f.unmodelled &= ~levelwarn::kAttemptDependent;
+        f.attempts = true;
+    }
+    // The attempt pin the mod puts on such a level by itself (cfg attemptauto, level_entry.hpp: the count reads 1 on every attempt, and
+    // the shadow's Item Compare reads the same 1) is one fixed level while the bot drives it: the yellow note, as with attemptone. Where
+    // the kept items reach play too (Findings::attemptKeeps) the pin also stops them being carried into the next attempt (T58,
+    // g_attemptAutoKeeps), so that level is fixed too and goes yellow like the rest (it used to stay red).
+    else if (g_attemptAuto && g_attemptCount < 0 && (f.unmodelled & levelwarn::kAttemptDependent)) {
         f.unmodelled &= ~levelwarn::kAttemptDependent;
         f.attempts = true;
     }
@@ -351,7 +360,7 @@ protected:
 
     void keyDown(cocos2d::enumKeyCodes key, double p1) override {
         if (key == cocos2d::enumKeyCodes::KEY_Enter) { onOk(nullptr); return; }
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && !defined(GDSOLVER_GEODE6)
         // The text scrolls from the keyboard too (a touch drag is the other way).
         if (m_scroll) {
             using K = cocos2d::enumKeyCodes;
@@ -840,9 +849,9 @@ protected:
                                     + ", where the solver is still being matched to the game: "
                                       "slower, and it may not be solved.",
                                 kWarnYellow, "newer-objects-note"_spr);
-        m_attemptNote = makeNote("It changes from attempt to attempt: the bot takes it as its "
-                                 "first attempt, so a level that opens only after dying will not "
-                                 "be solved.",
+        m_attemptNote = makeNote("It changes from attempt to attempt: the bot plays every attempt "
+                                 "of it as the same one, so a level that opens only after dying "
+                                 "will not be solved.",
                                  kWarnYellow, "attempt-note"_spr);
         m_twoNote = makeNote("A two-player level: both players are planned (experimental), and a "
                              "level where one player's press switches the other's world will not "
@@ -1533,7 +1542,7 @@ class $modify(PlayMenuPreview, MenuLayer) {
             // The level page's own press ends in the same scene: the play menu is the only thing between this and the layer.
             auto enter = [level] {
                 CCDirector::sharedDirector()->replaceScene(
-                    CCTransitionFade::create(0.5f, PlayLayer::scene(level, false, false)));
+                    CCTransitionFade::create(0.5f, PlayLayer::scene(level, false)));
             };
             if (auto* p = playmenu::Popup::create(level, playmenu::readLevel(level, mainLevel), enter)) {
                 p->show();

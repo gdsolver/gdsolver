@@ -1,4 +1,5 @@
 #pragma once
+#include <random>
 // The search: the layer DP's loop (searchLayers), its dedupe tables, its stepped children, and the
 // coin rules it enforces. cliMainOnce (cli.hpp) sets the search up and hands it a SearchEnv; the
 // model it steps through is model.hpp.
@@ -6,7 +7,15 @@
 #include "dp/clearance.hpp"
 #include "dp/refwatch.hpp"
 #include "dp/search_census.hpp"
+#include "dp/port_audit.hpp"
+#include "dp/cap_audit.hpp"
 #include "dp/model.hpp"
+#include "dp/trigevent_camera.hpp"
+#include "dp/worldkey.hpp"
+#include "dp/state_serial.hpp"
+#include "dp/place_table.hpp"
+#include "dp/trigshadow_live.hpp"
+#include "dp/cam_y_search.hpp"   // --camy S2.1
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -17,6 +26,307 @@
 #include <vector>
 
 namespace dp {
+
+// --trigsupply-group (trigshadow_live.hpp, P6-0): the movers of the supplied groups take the shadow's place for the tick, and dcx / dcy the step from tick t-1 to t (both read in the same phase). The search runs
+// it after model.prepare; a walk (model.hpp rollout, the --replay path) through g_rolloutPlaceHook after prepareGroup -- the same block, so the two cannot drift.
+inline void supplyPlaceMovers(const GroupEnv& env, int gframe, int grev) {
+    // --trigsupply-all (gd-04, a custom level:15800 g276): in a rotated gameplay frame the group's x is the frame's, not the world x the position triggers cross (the Move never fires in the shadow's timeline): the model's placement stays
+    if (g_trigLive.supplyAll && gframe != 0) { ++g_trigLive.supFrame; return; }
+    const std::vector<const Obj*>& near = env.near;
+    const std::vector<const Obj*>& ports = env.ports;
+    const std::vector<const Obj*>& pads = env.pads;
+    const std::vector<const Obj*>& orbs = env.orbs;
+    const std::vector<const Obj*>& slps = env.slps;
+    std::vector<Obj*> done;
+    for (const std::vector<const Obj*>* lp : {&near, &ports, &pads, &orbs, &slps})
+        for (const Obj* oc : *lp) {
+            if (!oc || !oc->dynObj || std::find(done.begin(), done.end(), const_cast<Obj*>(oc)) != done.end()) continue;
+            double sx, sy, spx, spy;
+            if (!g_trigLive.valueAt(oc->uid, sx, sy, spx, spy)) {
+                // A turned hazard that has a recording is not supplied (no slot: its place is the rows'), but its box is not in the rows -- they hold the bound -- and what grows it is the timeline's scale since the
+                // objrects were written. Only the scale is written here (the place, the previous place and the on/off stay the model's). ownScaleAt answers only for an objrects with the sscx column.
+                if (!gframe && oc->oriented && oc->type == 2 && oc->radius <= 0.0) {
+                    float qx = 1.f, qy = 1.f, px = 1.f, py = 1.f;
+                    if (g_trigLive.ownScaleAt(oc->uid, qx, qy, px, py)) { Obj* oo = const_cast<Obj*>(oc); oo->sclX = qx; oo->sclY = qy; oo->sclPX = px; oo->sclPY = py; oo->sclT = g_trigLive.lastT; }
+                }
+                continue;
+            }
+            Obj* o = const_cast<Obj*>(oc);
+            done.push_back(o);
+            if (!(t_sqDyn && t_sqDyn->sqTouch(o))) g_sqForeign.store(true, std::memory_order_relaxed);   // the supply writes the object from here on (marked also where the ground clamp below leaves it): dynamics.hpp sqHead
+            // GD's getObjectRect (what the recording and so the model's cx / cy / hh hold) raises the top of a rect that lies wholly below y = 0 up to 0: the rect's centre is then not the object's position
+            // (measured on a custom level, w104 flight, wtrace against grouptrace: 1,827 of 1,827 differing rows have cy + h / 2 = 0 exactly, and no row of a rect wholly below 0 agrees). The model's own placement is that rect: kept.
+            if (!gframe && sy < 0.0 && std::fabs(o->cy + o->hh) < 0.02) { ++g_trigLive.supGround; continue; }
+            double fx = sx, fy = sy, fpx = spx, fpy = spy, olx = o->cx, oly = o->cy;
+            if (gframe) { toFrame(gframe, sx, sy, fx, fy); toFrame(gframe, spx, spy, fpx, fpy); fromFrame(gframe, o->cx, o->cy, olx, oly); }
+            g_trigLive.dbgFrame = gframe; g_trigLive.dbgRev = grev;
+            g_trigLive.supplyNote(o->uid, o->cx, o->cy, o->dcx, o->dcy, fx, fy, fx - fpx, fy - fpy, olx, oly, sx, sy);
+            o->cx = fx; o->cy = fy; o->dcx = fx - fpx; o->dcy = fy - fpy;
+            // The previous place is the timeline's too. Obj::pcy (read by shadowPlaceMovers before cy - dcy) came from the model's own formula (Dynamics::groupPrevApply, or the last place the thread's
+            // Dynamics made for another group): with cy and dcy the supply's it would be another world's step, and the pass would ride a mover whose previous and current place have two sources.
+            o->pcy = (float)fpy;
+            // The object's own scale is the timeline's too (a Transform that scales takes it along): the shadow's world reads it for a saw's radius (shadowPlaceMovers), where the load scale stood.
+            { float qx = 1.f, qy = 1.f, px = 1.f, py = 1.f; if (g_trigLive.scaleAt(o->uid, qx, qy, px, py)) { if (gframe & 1) { std::swap(qx, qy); std::swap(px, py); } o->sclX = qx; o->sclY = qy; o->sclPX = px; o->sclPY = py; o->sclT = g_trigLive.lastT; } }
+            // The object's own angle is the timeline's too (a Rotate turns a portal about its own centre: the place does not change, the box does). The placement turns a box by the recording's angle
+            // (Dynamics::turnedBox), and a supplied group has no recording to read: the box stood at the angle it was loaded with. a custom level t=18056: a cube portal and a size portal (uid 152886 / 152885,
+            // loaded at 45 degrees, eased round by a Rotate; the flight's row says 52.09) were met at t=18058 both, GD's at 18056 and 18057 -- the tick each box at the row's angle first overlaps the ship.
+            // Only a box that is oriented as loaded (its own halves are known and a turn does not change them: turnedBox's `only the angle is redrawn`), in the level's own frame.
+            if (!gframe && o->oriented && (lp == &ports || lp == &pads || lp == &orbs)) {
+                double rdeg = 0.0;
+                if (g_trigLive.rotAt(o->uid, rdeg)) { o->rotSup = rdeg; o->rotT = g_trigLive.lastT; }   // (stamped with its tick, as the scale: object.hpp)
+            }
+        }
+}
+// K1 (dynamics.hpp sqGateAnchored): the supply's on/off of the model's anchored movers as g_supplyOnHook gives it for the group being placed, kept per mover from call to call (`m.v`: 0 off, 1 on,
+// 2 no answer, 3 not read yet). Read-only on the supply, in model code: the timeline's objects are read where supVal reads them (the object's disable counter before the group's step, `blind` after it), and
+// only the pages that are not the ones this reader read last are read again (CowPages::Watch: a page it holds is shared, so no copy writes it again and its address is not given to another page).
+struct SupOnSt {
+    long long gen = -1; bool supOn = false; size_t n = 0, pages = 0;
+    std::vector<int> slot;                          // per mover: its supply slot, -1 = none
+    std::vector<uint32_t> page, start, list;        // the pages of the timeline that hold some mover (ascending); CSR page -> places in the movers' list
+    gdtrig::CowPages<gdtrig::ObjState>::Watch wCur, wPre;
+    std::vector<uint8_t> dirty;
+};
+inline void supplyOnSync(SupOnMirror& m, const std::vector<int>& uids, std::vector<uint32_t>& changed) {
+    TrigLive& T = g_trigLive;
+    changed.clear();
+    if (!m.st) m.st = std::make_shared<SupOnSt>();
+    SupOnSt& st = *static_cast<SupOnSt*>(m.st.get());
+    const bool supOn = T.supplyOn();
+    const size_t n = uids.size();
+    const size_t pages = T.supCur ? T.supCur->objs.pageCount() : 0;
+    if (m.v.size() != n || st.gen != T.supGen || st.n != n || st.supOn != supOn || st.pages != pages) {   // a new supply, another set of movers, another timeline's size: all of it is read again
+        st.gen = T.supGen; st.n = n; st.supOn = supOn; st.pages = pages;
+        m.v.assign(n, 3);
+        st.wCur.clear(); st.wPre.clear();
+        st.slot.assign(n, -1);
+        std::vector<std::pair<uint32_t, uint32_t>> pj;
+        for (size_t j = 0; j < n; ++j) {
+            const auto it = T.supSlot.find(uids[j]);
+            if (it == T.supSlot.end()) continue;
+            st.slot[j] = it->second;
+            const int ix = T.supObj[(size_t)it->second];
+            if (ix >= 0 && T.supCur) pj.emplace_back((uint32_t)T.supCur->objs.pageOf((size_t)ix), (uint32_t)j);
+        }
+        std::sort(pj.begin(), pj.end());
+        st.page.clear(); st.start.clear(); st.list.clear();
+        for (const auto& e : pj) {
+            if (st.page.empty() || st.page.back() != e.first) { st.page.push_back(e.first); st.start.push_back((uint32_t)st.list.size()); }
+            st.list.push_back(e.second);
+        }
+        st.start.push_back((uint32_t)st.list.size());
+    }
+    auto tri = [&](size_t j) -> uint8_t {
+        if (!supOn) return 2;
+        const int sl = st.slot[j];
+        if (sl < 0) return 2;
+        TrigLive::SupVal v;
+        return T.supVal((size_t)sl, v) ? (uint8_t)(v.pon ? 1 : 0) : (uint8_t)2;
+    };
+    auto setj = [&](size_t j) { const uint8_t nv = tri(j); if (m.v[j] != nv) { m.v[j] = nv; changed.push_back((uint32_t)j); } };
+    if (!supOn || !T.supCur || T.supPre.pageCount() != pages) {   // no answer at all, or a timeline this reader cannot watch: every mover is read
+        for (size_t j = 0; j < n; ++j) setj(j);
+        st.wCur.clear(); st.wPre.clear();
+        return;
+    }
+    st.dirty.assign(st.page.size(), 0);
+    st.wCur.sync(T.supCur->objs, st.page, [&](size_t k) { st.dirty[k] = 1; });
+    st.wPre.sync(T.supPre, st.page, [&](size_t k) { st.dirty[k] = 1; });
+    for (size_t k = 0; k < st.page.size(); ++k)
+        if (st.dirty[k]) for (uint32_t q = st.start[k]; q < st.start[k + 1]; ++q) setj((size_t)st.list[q]);
+    static const bool check = std::getenv("K1CHECK") != nullptr;
+    if (check) {   // every mover against the hook itself: a difference stops the process
+        for (size_t j = 0; j < n; ++j) {
+            int so = 0; const bool h = supplyOnHookFn(uids[j], so);
+            const uint8_t want = h ? (uint8_t)(so ? 1 : 0) : (uint8_t)2;
+            if (m.v[j] == 3 ? want != 2 && st.slot[j] >= 0 && false : m.v[j] != want) {
+                std::printf("k1check: supplyOnSync MISMATCH uid=%d mirror=%d hook=%d\n", uids[j], (int)m.v[j], (int)want);
+                std::fflush(stdout);
+                std::abort();
+            }
+        }
+    }
+}// --supobs (dynamics.hpp): after the supply placed a frame-0 group's movers. `dyn` is the frame-0 Dynamics (the lists point into its objs), `wLo` / `wHi` the window the group's lists were
+// collected for (model.hpp prepareGroup: near and pads +-40, portals and slopes +-60, orbs +-50). Reads only.
+inline void supObsGroup(const GroupEnv& env, const Dynamics& dyn, double wLo, double wHi) {
+    const std::vector<const Obj*>* lists[5] = {&env.near, &env.ports, &env.pads, &env.orbs, &env.slps};
+    const double margin[5] = {40.0, 60.0, 40.0, 50.0, 60.0};
+    SupObsStat& S = g_supObsStat;
+    std::vector<const Obj*> done;
+    for (int li = 0; li < 5; ++li)
+        for (const Obj* oc : *lists[li]) {
+            if (!oc || !oc->dynObj || std::find(done.begin(), done.end(), oc) != done.end()) continue;
+            double sx, sy, spx, spy;
+            if (!g_trigLive.valueAt(oc->uid, sx, sy, spx, spy)) continue;
+            if (sy < 0.0 && std::fabs(oc->cy + oc->hh) < 0.02) continue;   // (the ground clamp: left on the model's placement, not a placed mover)
+            done.push_back(oc);
+            ++S.placed;
+            if (sx < wLo - margin[li] || sx > wHi + margin[li]) { ++S.outWin; ++S.outWinBy[li]; }
+            const std::ptrdiff_t i = dyn.objs.empty() ? -1 : (oc - &dyn.objs[0]);
+            if (i < 0 || (size_t)i >= dyn.objs.size() || (size_t)i >= dyn.samples.size() || dyn.samples[(size_t)i].empty()) { ++S.noRow; continue; }
+            const DynSample& r0 = dyn.samples[(size_t)i][0];
+            const double dw = std::fabs(oc->hw - (double)r0.hw), dh = std::fabs(oc->hh - (double)r0.hh);
+            float qx = 1.f, qy = 1.f;
+            const bool scaled = g_trigLive.scaleAt(oc->uid, qx, qy) && (std::fabs(qx - 1.f) > 1e-6f || std::fabs(qy - 1.f) > 1e-6f);
+            if (dw <= 1e-3 && dh <= 1e-3) { ++S.sizeLoad; if (scaled) ++S.scaledButLoad; continue; }
+            ++S.sizeDiff;
+            if (std::max(dw, dh) > S.maxDiff) { S.maxDiff = std::max(dw, dh); S.maxDiffUid = oc->uid; }
+            if (!scaled) { ++S.sizeDiffUnscaled; continue; }
+            ++S.sizeDiffScaled;
+            if (std::fabs(oc->hw - (double)r0.hw * qx) <= 1e-3 && std::fabs(oc->hh - (double)r0.hh * qy) <= 1e-3) ++S.sizeScaledMatch;
+        }
+}
+// --layerprof (progress.hpp): the running totals a row is the difference of, and their names. Counts first, then milliseconds: --phaseprof's phases of the layer loop, the parts of the group
+// setup (g_ppSub), the step (thread time inside the children's steps, wall time of the step blocks), the supply's placement, and the trigger shadow's own clocks (group() in all, its part
+// before the key, stepNow in all and its four parts, endLayer, dropping the older layer). The shadow's times lie INSIDE the phases (group() is called from the setup), so the columns do not add up.
+inline const char* layerProfHeader() {
+    return "groups\tparents\tdup_leaders\tdup_followers\tsetup\tstep\tdedupe\tcap\tgc\tmem\trest\ts_autotrig\ts_groupkeys\ts_rottrig\ts_preprest\tp_seek\tp_apply\tp_near\tp_windows\tp_touch\tp_veto"
+           "\tkid_thread\tstep_wall\tsupply\tsh_group\tsh_prekey\tsh_stepnow\tsh_copyfeed\tsh_table\tsh_step\tsh_rest\tsh_endlayer\tsh_drop";
+}
+inline int layerProfTotals(double* o) {
+    int n = 0;
+    o[n++] = (double)g_ppGroups; o[n++] = (double)g_ppParents; o[n++] = (double)g_dupBatchLeaders; o[n++] = (double)g_dupBatchFollowers;
+    for (int i = 0; i < 7; ++i) o[n++] = g_ppMain[i] * 1e3;
+    for (int i = 0; i < 10; ++i) o[n++] = g_ppSub[i] * 1e3;
+    o[n++] = (double)g_ppKidNs.load(std::memory_order_relaxed) * 1e-6; o[n++] = (double)g_ppStepNs * 1e-6; o[n++] = (double)g_ppSupplyNs * 1e-6;
+    o[n++] = g_trigLive.grpTotalMs; o[n++] = g_trigLive.grpPre; o[n++] = g_trigLive.grpStepNow;
+    o[n++] = g_trigLive.nowCopyMs; o[n++] = g_trigLive.nowFillMs; o[n++] = g_trigLive.nowStepMs; o[n++] = g_trigLive.nowTailMs;
+    o[n++] = g_trigLive.grpEndLayerMs; o[n++] = g_trigLive.grpClearMs;
+    return n;
+}
+inline void rolloutGroupShadow(long long t, float dx, const State& s, double x) {
+    if (g_trigLive.supplyOn()) {
+        // the walk's one state: its world y (frame 0); a turned frame's travel axis is the progress axis, and its lateral part (s.y in the frame's coordinates) is the world x of an odd frame (frames.hpp fromFrame). NOTE: s is
+        // the state before this tick's step (x is the tick's), so y is one tick old: a crossing can fire one tick late
+        double wxw = std::nan("");
+        if ((int)s.frame & 1) { double X = 0.0, Y = 0.0; fromFrame((int)s.frame, 0.0, (double)s.y, X, Y); wxw = X; }
+        g_trigLive.gin = TrigLive::GroupIn{}; g_trigLive.gin.evg = s.evgate;   // (the events the walk's one state raised: the timeline is told them, feedEvents)
+        g_trigLive.group(t, dx, s.trig.word(0), (int)s.frame, (int)s.rev, 0, 0, x, s.fireB, s.frame == 0 ? (double)s.y : std::nan(""), wxw);
+    }
+}
+inline void rolloutPlaceShadow(const GroupEnv& env, int gframe, int grev) {
+    if (g_trigLive.supplyOn()) supplyPlaceMovers(env, gframe, grev);
+}
+inline const std::vector<int>& tpEventsAt(long long t) { return g_trigLive.tpFiresAt(t); }
+inline bool tpEventsSupplyOn() { return g_trigLive.supplyOn(); }
+inline bool tpEventsModelled(int uid) { return g_trigLive.base && g_trigLive.base->modelled(uid); }
+inline bool supBoxPlace(int uid, double& x, double& y, bool& on) {   // shadow_step.hpp placeBox: a special box a trigger moves, with no recording rows, stands where the supply's timeline has it
+    if (!g_trigLive.supplyOn()) return false;
+    double px, py;
+    if (!g_trigLive.valueAt(uid, x, y, px, py)) return false;
+    bool o = true;
+    on = g_trigLive.onAt(uid, o) ? o : true;
+    return true;
+}
+inline const bool g_tpEventsHooksInstalled = [] { g_tpEventsHook = &tpEventsAt; g_tpEventsSupplyOnHook = &tpEventsSupplyOn; g_tpEventsModelledHook = &tpEventsModelled; g_supBoxPlaceHook = &supBoxPlace; return true; }();
+inline const std::vector<int>& gravEventsAt(long long t) { return g_trigLive.gravFiresAt(t); }
+inline void supplyHitsOf(double x0, double x1, SupHits& out) {
+    if (g_trigLive.supplyOn()) g_trigLive.supplyHits(x0, x1, out);
+}
+inline const bool g_rolloutSupplyHooksInstalled = [] { g_rolloutGroupHook = &rolloutGroupShadow; g_rolloutPlaceHook = &rolloutPlaceShadow; g_supplyHitsHook = &supplyHitsOf; g_gravEventsHook = &gravEventsAt; return true; }();
+
+// DUPOBS_OUT=FILE (env, read once; observation only; E8 W3): do the groups of a layer that share one shadow world also share one tick of the model's world?
+// For each group, after its geometry is placed (model.prepare, then the supply), two hashes:
+//   dup   what the trigger shadow's side of the group is: the content and track hash of its timeline after the step (TrigShadow::contentHash / trackHash), the group's x, its window, its speed, frame and direction
+//   ctx   what the group's step reads beside its states: x / xPrev / dx, the objects in its windows (which objects, in which order, and for a moving one where the tick put it: place, size, turn, per-tick
+//         motion, on / off, scale), the touch boxes in reach, the autonomous triggers' fire ticks as this group has them, and the Teleports / Gravity triggers its shadow step fired
+// One line per layer: layer, groups, distinct dup, distinct (dup, ctx), groups whose (dup, ctx) an earlier group of the layer had (a REPEAT: its prepare made what was already there) and their parents,
+// groups whose dup an earlier group had with ANOTHER ctx (the model's side tells them apart although the shadow's does not). Totals at the end of the process.
+// Not in ctx: the coins' and the Follow objects' per-group lists (their sizes are), the camera Y's per-group input.
+struct DupObs {
+    enum { kParts = 7 };   // ctx by part: 0 x / xPrev / dx, 1 which objects in which order, 2 the moving objects' placement, 3 the touch boxes in reach, 4 the coin / follow list sizes, 5 the autonomous triggers' fire ticks, 6 the shadow step's Teleports / Gravity
+    enum { kKeyParts = 6 };   // what tells the two groups of a REPEAT apart in the search's own group key: 0 the touch mask, 1 the boxes' fire ticks (gFire, gFireB), 2 the lock offset, 3 the own-crossing records' signature, 4 the fire signature, 5 the x part
+    struct Row { uint64_t dup, ctx; long long parents; uint64_t part[kParts]; uint64_t kp[kKeyParts]; };
+    std::vector<Row> rows;
+    long long keyDiff[kKeyParts] = {}, repeatsNoOldInput = 0;   // repeats whose parts 0..2 (the old model's inputs) are the first group's too
+    long long t = -1, groups = 0, dupKeys = 0, pairKeys = 0, repeats = 0, repeatParents = 0, differ = 0, parentsAll = 0, noShadow = 0;
+    long long partDiff[kParts] = {}, differShown = 0;
+    static std::FILE* file() { static std::FILE* const f = [] { const char* e = std::getenv("DUPOBS_OUT"); return (e && *e) ? std::fopen(e, "a") : nullptr; }(); return f; }
+    static bool on() { return file() != nullptr; }
+    void flush() {
+        if (rows.empty()) return;
+        std::unordered_map<uint64_t, size_t> sp;   // (dup, ctx) -> the first row that had it
+        std::unordered_map<uint64_t, size_t> sd;   // dup -> the first row that had it
+        long long rep = 0, repPar = 0, dif = 0, par = 0;
+        for (size_t ri = 0; ri < rows.size(); ++ri) {
+            const Row& r = rows[ri];
+            par += r.parents;
+            const uint64_t pk = gdtrig::Hash2::mixA(r.dup, r.ctx);
+            const auto di = sd.find(r.dup);
+            const auto pi = sp.find(pk);
+            if (pi != sp.end()) {
+                ++rep; repPar += r.parents;
+                bool oldSame = true;
+                for (int k = 0; k < kKeyParts; ++k) if (r.kp[k] != rows[pi->second].kp[k]) { ++keyDiff[k]; if (k <= 2) oldSame = false; }
+                if (oldSame) ++repeatsNoOldInput;
+            }
+            else if (di != sd.end()) {   // a new pair of a dup seen before: which parts of the ctx differ from the first group's
+                ++dif;
+                unsigned mask = 0;
+                for (int k = 0; k < kParts; ++k) if (r.part[k] != rows[di->second].part[k]) { ++partDiff[k]; mask |= 1u << k; }
+                if (differShown++ < 40) std::fprintf(file(), "# differ t=%lld parts=%02x parents=%lld (first group's %lld)\n", t, mask, r.parents, rows[di->second].parents);
+            }
+            if (pi == sp.end()) sp.emplace(pk, ri);
+            if (di == sd.end()) sd.emplace(r.dup, ri);
+        }
+        std::fprintf(file(), "%lld %zu %zu %zu %lld %lld %lld\n", t, rows.size(), sd.size(), sp.size(), rep, repPar, dif);
+        groups += (long long)rows.size(); dupKeys += (long long)sd.size(); pairKeys += (long long)sp.size(); repeats += rep; repeatParents += repPar; differ += dif; parentsAll += par;
+        rows.clear();
+    }
+    uint64_t kpNow[kKeyParts] = {};   // set by the caller before group() (keyParts)
+    void keyParts(const TouchMask& gtrig, int gFire, const uint16_t* gFireB, float lockAt, uint64_t xcS, uint64_t fireS, int xc) {
+        gdtrig::Hash2 a, b;
+        for (int k = 0; k < (kTouchBits + 63) / 64; ++k) a.add(gtrig.word(k));
+        b.add((uint64_t)(uint32_t)gFire); for (int i = 0; i < kTouchBits; ++i) if (gtrig.test(i)) b.add((uint64_t)gFireB[i]);
+        uint32_t lb; std::memcpy(&lb, &lockAt, 4);
+        kpNow[0] = a.a; kpNow[1] = b.a; kpNow[2] = lb; kpNow[3] = xcS; kpNow[4] = fireS; kpNow[5] = (uint64_t)(uint32_t)xc;
+    }
+    void group(const GroupEnv& env, int gframe, int grev, float gdx, double wLo, double wHi, long long tt, size_t parents) {
+        if (tt != t) { flush(); t = tt; }
+        if (!g_trigLive.supplyOn() || !g_trigLive.supCur) { ++noShadow; return; }
+        gdtrig::Hash2 d;
+        d.addH(g_trigLive.supCur->contentHash()); d.addH(g_trigLive.supCur->trackHash());
+        d.addD(env.x); d.addD(wLo); d.addD(wHi); d.addF(gdx); d.add((uint64_t)(uint32_t)gframe | ((uint64_t)(uint32_t)grev << 32));
+        gdtrig::Hash2 pc[kParts];
+        pc[0].addD(env.x); pc[0].addD(env.xPrev); pc[0].addF(env.dxF);
+        const std::vector<const Obj*>* lists[7] = {&env.near, &env.ports, &env.pads, &env.orbs, &env.slps, &env.spds, &env.nearSolid};
+        for (const auto* lp : lists) {
+            pc[1].add(0x4c00 + (uint64_t)lp->size());
+            for (const Obj* o : *lp) {
+                pc[1].add((uint64_t)(uintptr_t)o);
+                if (!o || !o->dynObj) continue;
+                gdtrig::Hash2& c = pc[2];
+                c.addD(o->cx); c.addD(o->cy); c.addD(o->hw); c.addD(o->hh); c.addD(o->radius); c.addD(o->rot); c.addD(o->sy0); c.addD(o->sy1); c.addD(o->ohw); c.addD(o->ohh); c.addD(o->rc); c.addD(o->rs);
+                c.addD(o->gcx); c.addD(o->gcy); c.addD(o->bhw); c.addD(o->bhh); c.addD(o->bc); c.addD(o->bs); c.addD(o->dcx); c.addD(o->dcy); c.addD(o->dhh); c.addF(o->pcy); c.addF2(o->sclX, o->sclY); c.addF2(o->sclPX, o->sclPY);
+                c.add((uint64_t)o->oriented | ((uint64_t)o->obbOk << 8) | ((uint64_t)o->hasGc << 16) | ((uint64_t)o->rotTurned << 24) | ((uint64_t)o->recOn << 32) | ((uint64_t)o->onPrev << 40) | ((uint64_t)o->onNew << 48) | ((uint64_t)o->slope << 56));
+            }
+        }
+        pc[3].add(0x4d00 + (uint64_t)env.trigs.size());
+        for (const auto& tb : env.trigs) { pc[3].add((uint64_t)(uintptr_t)tb.first); for (int k = 0; k < (kTouchBits + 63) / 64; ++k) pc[3].add(tb.second.word(k)); }
+        pc[4].add(0x4e00 + (uint64_t)env.coinLive.size()); pc[4].add(0x4f00 + (uint64_t)env.fol.size());
+        pc[5].add(0x5000 + (uint64_t)g_autoTrig.size()); for (const AutoTrig& a : g_autoTrig) pc[5].add((uint64_t)(uint32_t)a.fireT);
+        pc[6].add(0x5100); for (int u : g_trigLive.tpFiresAt(tt)) pc[6].add((uint64_t)(uint32_t)u);
+        pc[6].add(0x5200); for (int u : g_trigLive.gravFiresAt(tt)) pc[6].add((uint64_t)(uint32_t)u);
+        Row row{};
+        gdtrig::Hash2 c;
+        for (int k = 0; k < kParts; ++k) { row.part[k] = pc[k].a ^ (pc[k].b * 0x9e3779b97f4a7c15ULL); c.add(row.part[k]); }
+        row.dup = d.a ^ (d.b * 0x9e3779b97f4a7c15ULL); row.ctx = c.a ^ (c.b * 0x9e3779b97f4a7c15ULL); row.parents = (long long)parents;
+        for (int k = 0; k < kKeyParts; ++k) row.kp[k] = kpNow[k];
+        rows.push_back(row);
+    }
+    ~DupObs() {
+        if (!on()) return;
+        flush();
+        std::fprintf(file(), "# total: groups %lld (parents %lld), distinct dup %lld, distinct (dup, ctx) %lld, repeats %lld (parents %lld), same dup with another ctx %lld, groups without a shadow timeline %lld\n",
+                     groups, parentsAll, dupKeys, pairKeys, repeats, repeatParents, differ, noShadow);
+        std::fprintf(file(), "# the parts that differed in those: x %lld, objects %lld, placement %lld, touch boxes %lld, coin / follow sizes %lld, auto fire ticks %lld, shadow events %lld\n",
+                     partDiff[0], partDiff[1], partDiff[2], partDiff[3], partDiff[4], partDiff[5], partDiff[6]);
+        std::fprintf(file(), "# what told a repeat from the first group with its (dup, ctx): touch mask %lld, fire ticks %lld, lock offset %lld, own-crossing signature %lld, fire signature %lld, x part %lld; repeats with the first group's mask, fire ticks and lock offset %lld\n",
+                     keyDiff[0], keyDiff[1], keyDiff[2], keyDiff[3], keyDiff[4], keyDiff[5], repeatsNoOldInput);
+        std::fflush(file());
+    }
+};
+inline DupObs g_dupObs;
 
 // --coins: a counter a coin needs (see where coinReq is filled in cliMainOnce).
 struct CoinCountReq {
@@ -174,6 +484,7 @@ struct Child {
     State s{};
     uint64_t key = 0;         // modelKeyOf(s) ^ rules.keyBits(s), computed on the worker thread
     uint8_t dead = 0;
+    uint8_t deadKind = 0;     // g_deadKind of a dead child (kDeathPhysics / kDeathRule / kDeathPrune): --partialphys
     uint8_t valid = 0;
     const char* why = "";     // --dbg only
     const Obj* obj = nullptr; // --dbg only
@@ -264,6 +575,38 @@ inline std::atomic<bool> g_ladderStop{false};
 // (search-plugin cut 5). searchLayers takes any type with these members; CurrentRules is today's:
 // the level's end in frame 0, with every coin when --coins is on. `C` is cliMainOnce's CoinTables:
 // references to the coin tables built at load and to the two lambdas the coin rules call.
+// heldRingInReach's moving rings (search below): per Dynamics, the box every recorded place of each ORB-bucket mover and its place at the build lie in. Built
+// once per level object and kept while its object count and rows are the ones it was built from, for one call (g_shCallGen: a new call empties the list, so
+// no entry outlives the level it names); under a mutex, since the groups that ask may run at once.
+struct MovRingBox { double x0, x1, y0, y1; bool anywhere; };   // anywhere: a mover with no rows (no bound from them, in x or y)
+struct MovRingBoxes { const void* dyn = nullptr; size_t n = 0; const void* rows0 = nullptr; uint64_t gen = 0; std::vector<MovRingBox> box; size_t anywhere = 0; };
+inline std::mutex g_movRingMu;
+inline std::vector<std::unique_ptr<MovRingBoxes>> g_movRings;
+inline const MovRingBoxes& heldRingBoxesOf(const Dynamics& D) {
+    std::lock_guard<std::mutex> lk(g_movRingMu);
+    const void* rows0 = D.samples.empty() ? nullptr : (const void*)D.samples[0].rows().data();
+    if (!g_movRings.empty() && g_movRings.front()->gen != g_shCallGen) g_movRings.clear();
+    for (const auto& p : g_movRings) if (p->dyn == &D && p->n == D.objs.size() && p->rows0 == rows0) return *p;
+    auto m = std::make_unique<MovRingBoxes>();
+    m->dyn = &D; m->n = D.objs.size(); m->rows0 = rows0; m->gen = g_shCallGen;
+    for (size_t i = 0; i < D.objs.size() && i < D.bucket.size(); ++i) {
+        if (D.bucket[i] != Dynamics::ORB) continue;
+        const Obj& o = D.objs[i];
+        MovRingBox b{(double)o.cx - o.hw, (double)o.cx + o.hw, (double)o.cy - o.hh, (double)o.cy + o.hh, false};
+        const bool rows = i < D.samples.size() && !D.samples[i].rows().empty();
+        if (rows)
+            for (const DynSample& r : D.samples[i].rows()) {
+                b.x0 = std::min(b.x0, (double)r.cx - r.hw); b.x1 = std::max(b.x1, (double)r.cx + r.hw);
+                b.y0 = std::min(b.y0, (double)r.cy - r.hh); b.y1 = std::max(b.y1, (double)r.cy + r.hh);
+            }
+        else { b.anywhere = true; ++m->anywhere; }
+        m->box.push_back(b);
+    }
+    std::printf("heldring: %zu moving ring(s) (%zu without rows) for the held-jump test\n", m->box.size(), m->anywhere);
+    g_movRings.push_back(std::move(m));
+    return *g_movRings.back();
+}
+
 template <class C>
 struct CurrentRules {
     double goalX;      // the level's end (cliMainOnce: L.maxX + 60)
@@ -679,11 +1022,41 @@ struct LayerWork {
 struct SearchArena {
     std::vector<Node> arena;
     std::vector<uint8_t> arenaMode;
-    explicit SearchArena(bool checkWanted) {
+    std::vector<uint8_t> arenaLossy;   // --lossystat (thread_pool.hpp): 1 = kept out of a thinned cap class, or a descendant of one; only filled under the flag
+    explicit SearchArena(bool checkWanted, bool lossyWanted = false) {
         arena.push_back(Node{0});
         if (checkWanted) arenaMode.push_back(0);   // the root, which no state owns
+        if (lossyWanted) arenaLossy.push_back(0);
     }
 };
+
+// --lossystat: the line after a search (cliMainOnce prints it beside capstat:). Nothing without the flag.
+inline void lossyStatPrint() {
+    if (!g_lossyStat) return;
+    std::printf("lossystat: firstCapT=%lld lastCapT=%lld capLayers=%lld", g_lossy.firstCapT, g_lossy.lastCapT, g_lossy.capLayers);
+    const std::vector<LossyStat::Row>& v = g_lossy.tail;
+    if (!v.empty()) {
+        const size_t n = v.size();
+        for (size_t back : {(size_t)0, (size_t)9, (size_t)49, (size_t)99, (size_t)255}) {
+            if (back >= n) break;
+            const LossyStat::Row& r = v[n - 1 - back];
+            std::printf(" end-%zu(t=%lld alive=%zu lossy=%zu pre=%zu)", back, r.t, r.alive, r.lossy, r.pre);
+        }
+        // the cap's pressure over the last w layers: how many it thinned and the mean of pre / alive over them
+        for (size_t w : {(size_t)10, (size_t)50, (size_t)255}) {
+            const size_t m = std::min(w, n);
+            size_t thinned = 0;
+            double ratio = 0.0;
+            for (size_t k = 0; k < m; ++k) {
+                const LossyStat::Row& r = v[n - 1 - k];
+                if (r.pre > r.alive) ++thinned;
+                ratio += r.alive ? (double)r.pre / (double)r.alive : 1.0;
+            }
+            std::printf(" win%zu(thinned=%zu/%zu pre/alive=%.2f)", w, thinned, m, ratio / (double)m);
+        }
+    }
+    std::printf("\n");
+}
 
 // A method that keeps its states in the arena (searchLayers / searchBeam / searchMontecarlo) reads
 // its plan off it: from the goal's parent back to the root, then reversed.
@@ -692,6 +1065,31 @@ inline void planFromArena(const std::vector<Node>& arena, const State& goal,
     inputs.clear();
     for (uint32_t i = goal.parent; i != 0; i = arena[i].parent()) inputs.push_back(arena[i].action());
     std::reverse(inputs.begin(), inputs.end());
+}
+
+// E9 probe (observation only, gd-02 11-16, from gd-07's patch4): the lineage of a state the shadow declined, as `input=tick,v` edges (zero latency), to GD07_LINEAGE_LOG
+inline const std::vector<Node>* g_probeArena = nullptr;
+// the arena of the search running now, set for the length of the search (a search that ends hands the previous one back: a dump outside a live search -- the shadow stepped from a model seed, a reference pass --
+// has no parent chain and says so instead of reading a dead arena)
+struct ProbeArenaScope { const std::vector<Node>* prev; explicit ProbeArenaScope(const std::vector<Node>* a) : prev(g_probeArena) { g_probeArena = a; } ~ProbeArenaScope() { g_probeArena = prev; } };
+inline void probeDumpLineage(const State& s, int input, long long t, int why, int uid) {
+    static const char* path = std::getenv("GD07_LINEAGE_LOG");
+    static std::mutex mu; static int nDump = 0; static std::set<long long> bucket;
+    if (!path || !g_probeArena) return;
+    std::lock_guard<std::mutex> lk(mu);
+    if (nDump >= 60 || !bucket.insert(t / 40 + (long long)why * 100000000LL).second) return;
+    std::vector<uint8_t> in;
+    const bool inSearch = g_probeArena->size() > s.parent && g_probeArena->size() > 1;
+    if (inSearch) for (uint32_t i = s.parent; i != 0 && i < g_probeArena->size(); i = (*g_probeArena)[i].parent()) in.push_back((*g_probeArena)[i].action());
+    std::reverse(in.begin(), in.end()); in.push_back((uint8_t)input);
+    const long long t0 = t - (long long)(in.size() - 1);
+    if (std::FILE* f = std::fopen(path, "a")) {
+        std::fprintf(f, "# dump %d t %lld t0 %lld mode %d frame %d x %.3f y %.3f why %d uid %d n %zu parent %u arena %zu\n", nDump, t, t0, (int)s.mode, (int)s.frame, (double)s.xAbs, (double)s.y, why, uid, in.size(), (unsigned)s.parent, g_probeArena->size());
+        uint8_t prev = 0;
+        for (size_t k = 0; k < in.size(); ++k) { if (in[k] != prev) { std::fprintf(f, "input=%lld,%d\n", t0 + (long long)k, (int)in[k]); prev = in[k]; } }
+        std::fprintf(f, "# end %d\n", nDump); std::fclose(f);
+    }
+    ++nDump;
 }
 
 // --ladderprefix: a cap ladder's attempt k+1 starts from attempt k's layer loop where the two
@@ -716,10 +1114,16 @@ struct AutoFireState {
     int fireSpreadT = 0;
     double lockLastX = 0.0;
 };
+// A group's turn of a layer by the arena nodes its children got: [a0, a1) -> the key the group's trigger timeline is stored under (searchLayers' wrPrev / wrCur).
+struct LayerWorldRange { uint32_t a0, a1; uint64_t key; };
 struct LadderPrefixSnap {
     long long T = -1;
     std::vector<State> cur;
+    TrigLive::SavedLayer tl;             // the layer's trigger timelines (trigshadow_live.hpp saveLayer): the resumed attempt goes on with them instead of replaying one
+    std::vector<LayerWorldRange> wr;     // ...and which of them each state of `cur` was stepped in (the ranges of the nodes layer T made)
     std::vector<uint64_t> objRefs;   // the frontier's Obj pointers, 12 per state (Model::encodeObj)
+    gdcol::SlDiffRun sl;   // --shadowstep: the frontier's shadow blocks by value, as words that differ from the first (the store keeps only the live layer); empty without the flag
+    gdcol::SlDiffRun sl2;  // ...and player 2's (State::slRef2), which a dual level's states carry as well
     size_t arenaSize = 0, arenaModeSize = 0;
     size_t gcNext = 0;
     long long nBornPrev = 0, nDiedPrev = 0;
@@ -727,6 +1131,14 @@ struct LadderPrefixSnap {
     long long bestT = 0;
     double bestX = 0;
     State goalState{};
+    State bestAnyS{};              // --lpbestany (removed): the furthest-in-x layer so far (partialbyx)
+    double bestAnyX = -1e18;
+    long long bestAnyT = -1;
+    bool haveAny = false;
+    State physS{};                 // --partialphys: the parent of the latest physical death (physT = the tick of its child)
+    long long physT = -1;
+    bool havePhys = false;
+    long long lyPhysPrev = 0, lyPrunePrev = 0;   // --partialphys: the last layer's deaths by kind
     bool solved = false;
     size_t maxAlive = 0;
     long long capDropped = 0, capHits = 0, cellCuts = 0, cellSpared = 0, cellTwinsKept = 0;
@@ -745,9 +1157,10 @@ struct LadderPrefixSnap {
     size_t layerXSize = 0;
     // What this save holds allocated, for the cap on all of them (g_ladderPrefixMaxMiB).
     size_t bytes() const {
-        size_t n = sizeof(*this) + cur.capacity() * sizeof(State) + objRefs.capacity() * sizeof(uint64_t)
+        size_t n = sizeof(*this) + cur.capacity() * sizeof(State) + objRefs.capacity() * sizeof(uint64_t) + sl.bytes() + sl2.bytes()
                    + autoFire.capacity() * sizeof(AutoFireState) + rotTrig.capacity() * sizeof(RotTrig)
-                   + carry.capacity() * sizeof(std::vector<double>) + carryOn.capacity();
+                   + carry.capacity() * sizeof(std::vector<double>) + carryOn.capacity()
+                   + g_trigLive.savedBytes(tl) + wr.capacity() * sizeof(LayerWorldRange);
         for (const std::vector<double>& c : carry) n += c.capacity() * sizeof(double);
         return n;
     }
@@ -793,10 +1206,27 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
     LayerWork work(init);   // the frontier starts at the root
     auto& cur = work.cur;
     auto& nxt = work.nxt;
-    SearchArena store(e.in.checkWanted);   // this method's states
-    auto& arena = store.arena;
+    // The arena nodes of this layer's states that exist only because a hold is carried towards a ring (heldRingInReach, below): each rides with the released child of
+    // the same parent at the alive cap instead of being counted there. In node order (the layer is made in it), cleared when the cap has read it.
+    std::vector<uint32_t> rideNodes;
+    const bool lossyOn = g_lossyStat;   // --lossystat: observation only, the arena's side vector below
+    SearchArena store(e.in.checkWanted, lossyOn);   // this method's states
+    auto& arena = store.arena; ProbeArenaScope probeScope(&store.arena);
     auto& checkWanted = e.in.checkWanted;
     auto& arenaMode = store.arenaMode;
+    auto& arenaLossy = store.arenaLossy;
+    // The groups of the last layer by the arena nodes their children got: [a0, a1) -> the key the group's trigger timeline is stored under. A state's own node tells which timeline it was stepped in
+    // (trigshadow_live.hpp GroupIn::world). wrCur is the layer being made; a layer that does not follow the last one starts with none.
+    using WorldRange = LayerWorldRange;
+    std::vector<WorldRange> wrPrev, wrCur;
+    long long wrT = -2;
+    // (a group's nodes are the ones the arena gets during its turn, by either dedupe path: the range is opened when the turn starts and closed when the next one starts, the arena is compacted or the layer ends)
+    size_t wrA0 = 0; bool wrOpen = false; uint64_t wrOpenKey = 0;
+    auto wrClose = [&]() {
+        if (wrOpen && arena.size() > wrA0) wrCur.push_back(WorldRange{(uint32_t)wrA0, (uint32_t)arena.size(), wrOpenKey});
+        wrOpen = false;
+    };
+    g_lossy = LossyStat{};
     auto& seen = work.seen;
     auto& shards = work.shards;
     auto& kidKeys = work.kidKeys;
@@ -828,11 +1258,12 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
     auto& prevAlive = work.prevAlive;
     auto& curDxF = e.in.curDxF;
     auto& ppMark = e.in.ppMark;
+    if (g_layerProf.on()) g_layerProf.beginSearch(layerProfHeader());   // --layerprof (observation only)
     if (g_stateCross) stateCrossPrepare();   // --statecross (search_key.hpp)
     // --ladderprefix: only inside a ladder, and not where the loop talks to the outside or
     // prints per layer (the checkpoint channel, the reference watch, the census, the band file).
     const bool lpOn = g_lpc.active && !checkWanted && !g_refWatch && g_searchCensus == 0
-                      && g_bandPath.empty();
+                      && g_bandPath.empty() && !lossyOn;
     long long tStart = t0 + 1;
     g_lpc.resumedFrom = -1;
     const long long lpWork0 = g_outcome.workStates;   // what the call had before this loop
@@ -850,11 +1281,21 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             s.usedOrb2 = model.decodeObj(r[3]);
             for (int k = 0; k < 4; ++k) s.usedPad[k] = model.decodeObj(r[4 + k]);
             for (int k = 0; k < 4; ++k) s.usedPad2[k] = model.decodeObj(r[8 + k]);
+            // --shadowstep: the save's blocks go back into the store (the handles the save holds are long retired)
+            gdcol::ShadowLite b;
+            s.slRef = (gdcol::g_slStore && S.sl.get(i, b) && (b.flags & gdcol::kSlValid)) ? gdcol::g_slStore->put(b) : 0;
+            // ...and player 2's: the handle the save's copy of the state holds is as retired as slRef's (left alone, it named whichever block the store gave that slot since, and a dual state's second body
+            // stepped from a stranger's: --ladderprefixcheck lv16 t0=3851 attempt 2, resumed after t=7050, said MISMATCH where the same attempt from t0 did not)
+            s.slRef2 = (gdcol::g_slStore && S.sl2.get(i, b) && (b.flags & gdcol::kSlValid)) ? gdcol::g_slStore->put(b) : 0;
         }
         g_lpc.arena.resize(S.arenaSize);
         arena.swap(g_lpc.arena);
         g_lpc.arenaMode.resize(S.arenaModeSize);
         arenaMode.swap(g_lpc.arenaMode);
+        if (S.tl.have) {   // the layer's trigger timelines and the nodes that name them: layer T + 1 follows layer T as in the attempt that made the save
+            g_trigLive.restoreLayer(S.tl);
+            wrPrev.clear(); wrCur = S.wr; wrT = S.T; wrOpen = false;
+        }
         work.gcNext = S.gcNext;
         nBornPrev = S.nBornPrev;
         nDiedPrev = S.nDiedPrev;
@@ -905,9 +1346,34 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
     g_lpc.arenaMode.clear();
     g_lpc.t0 = t0;
     bool lpBound = capHits > 0;   // save only once this attempt's cap has bound (a call that never binds never climbs)
+    // --partialbyx: the layer whose leader got furthest in x, over the whole search (the Partial answer below). The last non-empty layer is the one that lived longest in TICKS,
+    // which is not the one that got furthest: lv22 from t=565, a cube climbing out of the level (vy 15 up to maxplayy 3675, alive 1000 ticks longer) outlived the lane that
+    // reached x=5229 by t=2820, and the loop replayed the climb for six iterations.
+    State bestAnyS{};
+    double bestAnyX = -1e18;
+    long long bestAnyT = -1;
+    bool haveAny = false;
+    State physS{};
+    long long physT = -1;
+    bool havePhys = false;
+    long long lyPhysPrev = 0, lyPrunePrev = 0;
+    if (g_partialPhys && g_lpc.resumedFrom >= 0 && g_lpc.resume >= 0 && (size_t)g_lpc.resume < g_lpc.snaps.size()) {   // a resumed attempt carries the saved prefix's physical-death parent
+        const LadderPrefixSnap& R = g_lpc.snaps[(size_t)g_lpc.resume];
+        physS = R.physS; physT = R.physT; havePhys = R.havePhys; lyPhysPrev = R.lyPhysPrev; lyPrunePrev = R.lyPrunePrev;
+    }
+    // (always on: the switch --lpbestany is removed)
+    // --lpbestany (removed): a save of the ladder's prefix keeps the furthest-in-x layer the attempt had so far (search_dp.hpp bestAnyS / bestAnyX / bestAnyT), and a resumed
+    // attempt starts from it. Without it the resumed attempt looked for the furthest layer among the layers after the save only: --ladderprefixcheck on lv22's t0=857 call (--shadowframe) says MISMATCH for an
+    // attempt resumed after t=2841, because the layer that got furthest (x=5229.1 at t=2820) lies before the save and the climbing lane that came after it (x=4445.9) was emitted instead.
+    // On since the lv16-22 loop's 169 ladder calls (--ladderprefixcheck, --shadowstep=all) gave 3 MISMATCH with it and 6 without, the three the same ones in both.
+    if (g_partialByX && g_lpc.resumedFrom >= 0 && g_lpc.resume >= 0 && (size_t)g_lpc.resume < g_lpc.snaps.size()) {   // a resumed attempt starts from the layer the saved prefix had got furthest with
+        const LadderPrefixSnap& R = g_lpc.snaps[(size_t)g_lpc.resume];
+        bestAnyS = R.bestAnyS; bestAnyX = R.bestAnyX; bestAnyT = R.bestAnyT; haveAny = R.haveAny;
+    }
     for (long long t = tStart; t <= tEnd && !solved; ++t) {
         if (lpOn) g_lpc.layerX.push_back(bestX);   // the x this layer's capAtX / gridAtX read
         ppMark(6);
+        if (g_layerProf.f) { double lpT[LayerProf::kMax]; const int lpN = layerProfTotals(lpT); g_layerProf.top(t, bestX, cur.size(), lpT, lpN); }   // --layerprof: the layer before this one is over
         nxt.clear();
         // ---- reference watch, part 1: where is it now (--refwatch) ---------
         // Locate the reference's PARENT in the frontier before the layer runs.
@@ -991,18 +1457,20 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // parent k times for k identical children. It goes in keyOf instead,
         // where the separation is exactly as absolute and costs one xor.
         // The model's group key (model.hpp GroupKey), and the search's own split of it:
-        // xc, --groupxsplit's part, 0 without the flag (search_key.hpp).
+        // xc, --groupxsplit (removed)'s part, 0 without the flag (search_key.hpp) -- or, in a layer the x-crossing split
+        // is made in, the index of that part and the state's two crossing counts in xcTab (below).
         struct GKey : GroupKey {
             uint16_t xc;
             bool operator==(const GKey& o) const {
                 return GroupKey::operator==(o) && xc == o.xc;
             }
         };
-        std::vector<uint64_t> curSig((g_groupFire || g_stateCross) ? cur.size() : 0);
+        const bool sigOld = g_groupFire || g_stateCross;   // the signature the groups had before the game events: a level with no listener keeps its size and its contents (groupFireSig is not computed when neither flag is on)
+        std::vector<uint64_t> curSig((sigOld || gdev::evChainOn()) ? cur.size() : 0);
         for (size_t i = 0; i < curSig.size(); ++i)
-            curSig[i] = groupFireSig(cur[i], t) ^ (g_stateCross ? xcSig(cur[i], t) : 0);   // --statecross: what the members dated themselves
+            curSig[i] = (sigOld ? (groupFireSig(cur[i], t) ^ (g_stateCross ? xcSig(cur[i], t) : 0)) : 0) ^ evSig(cur[i]);   // --statecross: what the members dated themselves; evSig: the game events they raised that an Event trigger listens for (0 on a level with none)
         auto sigOf = [&](size_t i) -> uint64_t { return curSig.empty() ? 0 : curSig[i]; };
-        // --groupxsplit: the members of each group in x order, a new part wherever the gap to the
+        // --groupxsplit (removed): the members of each group in x order, a new part wherever the gap to the
         // previous member is wider than the threshold. Part 0 is the lowest x.
         std::vector<uint16_t> curXc;
         // ...only in a layer where every state is in frame 0 and runs forward. gidx hands a parent
@@ -1011,7 +1479,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // the flag took the loop off d008ee2's route at the second iteration, the search's
         // chosen plan dying in its own resim in frame 1 (`resimdie=511@1758/spider/no-target
         // ... f1`). Where a turned or reversed frame is live the layer is processed as before.
-        bool xsplitHere = g_groupXSplit && cur.size() > 1;
+        bool xsplitHere = cur.size() > 1;
         for (size_t i = 0; xsplitHere && i < cur.size(); ++i)
             if (model.progress(cur[i]).frame != 0 || model.progress(cur[i]).rev != 0) xsplitHere = false;
         if (xsplitHere) {
@@ -1048,19 +1516,207 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             }
             if (split) ++g_groupXSplitLayers;
         }
+        // The x-crossing split (trigshadow_live.hpp GroupIn): in a layer of the plain frame, a state's part is also told by how many of the x-crossing triggers the shadow runs it has crossed before this
+        // tick's step and after it. xc then indexes xcTab (the --groupxsplit (removed) part and the two counts); the tests of xc below compare it as before.
+        struct XcPart { uint16_t part; uint32_t q0, q1; };
+        std::vector<XcPart> xcTab;
+        bool crossHere = g_trigLive.crossOn() && !cur.empty();
+        for (size_t i = 0; crossHere && i < cur.size(); ++i)
+            if ((int)cur[i].frame != 0 || cur[i].rev) crossHere = false;
+        if (crossHere) {
+            const bool had = !curXc.empty();
+            if (!had) curXc.assign(cur.size(), 0);
+            for (size_t i = 0; i < cur.size(); ++i) {
+                const State& s = cur[i];
+                const double x0 = (double)s.xAbs, x1 = x0 + (double)((s.dx > 0.f) ? s.dx : curDxF);   // (the x the group's timeline is stepped with is its front's, made the same way)
+                const XcPart p{had ? curXc[i] : (uint16_t)0, g_trigLive.crossCount(x0), g_trigLive.crossCount(x1)};
+                size_t j = 0;
+                for (; j < xcTab.size(); ++j) if (xcTab[j].part == p.part && xcTab[j].q0 == p.q0 && xcTab[j].q1 == p.q1) break;
+                if (j == xcTab.size()) {
+                    if (xcTab.size() >= 0xFFFF) { j = 0; }   // (more parts than xc can name: the rest go with the first)
+                    else xcTab.push_back(p);
+                }
+                curXc[i] = (uint16_t)j;
+            }
+        }
         auto xcOf = [&](size_t i) -> uint16_t { return curXc.empty() ? 0 : curXc[i]; };
         std::vector<GKey> groupDx;
+        std::vector<uint32_t> groupOf(cur.size());   // each state's group (its index in groupDx), for the batching of a layer's groups below
+        std::vector<size_t> groupFirst;              // each group's first member
         for (size_t i = 0; i < cur.size(); ++i) {
             const State& s = cur[i];
             const GKey k{model.groupKey(s, curDxF, sigOf(i)), xcOf(i)};
-            if (std::find(groupDx.begin(), groupDx.end(), k) == groupDx.end())
+            const size_t j = (size_t)(std::find(groupDx.begin(), groupDx.end(), k) - groupDx.begin());
+            if (j == groupDx.size()) {
                 groupDx.push_back(k);
+                groupFirst.push_back(i);
+            }
+            groupOf[i] = (uint32_t)j;
+        }
+        // each group's trigger timeline: the part of xc its key is made with, what it tells the shadow of its crossings and of the timeline its first member was stepped in, and the key it is stored under
+        wrClose();
+        if (wrT != (long long)t) {
+            if (wrT == (long long)t - 1) wrPrev.swap(wrCur); else wrPrev.clear();
+            wrCur.clear();
+            wrT = (long long)t;
+        }
+        std::vector<TrigLive::GroupIn> gIn(groupDx.size());
+        std::vector<int> gPart(groupDx.size(), 0);
+        std::vector<uint64_t> gStore(groupDx.size(), 0);
+        if (g_trigLive.on) {
+            for (size_t j = 0; j < groupDx.size(); ++j) {
+                const GKey& gk = groupDx[j];
+                TrigLive::GroupIn& in = gIn[j];
+                gPart[j] = crossHere ? (int)xcTab[gk.xc].part : (int)gk.xc;
+                if (crossHere) { in.cross = true; in.cross0 = xcTab[gk.xc].q0; in.cross1 = xcTab[gk.xc].q1; }
+                in.evg = cur[groupFirst[j]].evgate;   // the group's members share it (the signature of the key holds it)
+                const uint32_t node = cur[groupFirst[j]].parent;
+                const auto wi = std::upper_bound(wrPrev.begin(), wrPrev.end(), node, [](uint32_t n, const WorldRange& r) { return n < r.a1; });   // (the ranges are in arena order and do not overlap)
+                if (wi != wrPrev.end() && node >= wi->a0) { in.hasWorld = true; in.world = wi->key; }
+            }
+            // a group that crosses on this tick and one that crossed before would store under one key: the first is salted
+            for (size_t j = 0; crossHere && j < groupDx.size(); ++j) {
+                if (gIn[j].cross0 == gIn[j].cross1) continue;
+                for (size_t m = 0; m < groupDx.size() && !gIn[j].salt; ++m)
+                    if (m != j && gIn[m].cross1 == gIn[j].cross1 && gPart[m] == gPart[j] && static_cast<const GroupKey&>(groupDx[m]) == static_cast<const GroupKey&>(groupDx[j])
+                        && (gIn[m].cross0 == gIn[m].cross1 || m < j))
+                        gIn[j].salt = true;
+            }
+            for (size_t j = 0; j < groupDx.size(); ++j) {
+                const GKey& gk = groupDx[j];
+                gStore[j] = TrigLive::storeKeyOf(TrigLive::keyOf(gk.dx, gk.trig.word(0), (int)gk.frame, (int)gk.rev, gk.fsig, gPart[j]), gIn[j]);
+            }
+        }
+        // --layerprof: what tells this layer's groups apart -- the number of groups and of distinct values of each part of the group key over them (speed, touch mask, frame and direction,
+        // fire signature, x part), and over the STATES the distinct touch fire signatures and own-crossing signatures (the two things the key's signature is made of)
+        if (g_layerProf.f) {
+            auto distinct = [](std::vector<uint64_t>& v) { std::sort(v.begin(), v.end()); return (double)(std::unique(v.begin(), v.end()) - v.begin()); };
+            std::vector<uint64_t> a, b, c, d, e2;
+            for (const GKey& g : groupDx) {
+                uint32_t dxb; std::memcpy(&dxb, &g.dx, 4); a.push_back(dxb);
+                uint64_t tw = 0; for (int k = 0; k < (kTouchBits + 63) / 64; ++k) tw = tw * 0x9e3779b97f4a7c15ULL + g.trig.word(k); b.push_back(tw);
+                c.push_back((uint64_t)(uint32_t)g.frame | ((uint64_t)(uint32_t)g.rev << 32)); d.push_back(g.fsig); e2.push_back(g.xc);
+            }
+            double* ex = g_layerProf.ex;
+            ex[0] = (double)groupDx.size(); ex[1] = distinct(a); ex[2] = distinct(b); ex[3] = distinct(c); ex[4] = distinct(d); ex[5] = distinct(e2);
+            std::vector<uint64_t> fs, xs;
+            for (size_t i = 0; i < cur.size(); ++i) { if (g_groupFire) fs.push_back(groupFireSig(cur[i], t)); if (g_stateCross) xs.push_back(xcSig(cur[i], t)); }
+            ex[6] = fs.empty() ? 0.0 : distinct(fs); ex[7] = xs.empty() ? 0.0 : distinct(xs);
+            // ...and, where the touch fire signature splits the layer, which boxes do it: a `#fs` row with, for every box that is in the signature of some state (entered, its window
+            // g_touchMoveTicks still running) with more than one entry tick among the states: box index, the trigger's uid, the states that have it, the distinct entry ticks, the earliest
+            // and the latest, and the window
+            if (ex[6] >= 2.0) {
+                const size_t nb = std::min<size_t>(g_touchMoveTicks.size(), (size_t)kTouchBits);
+                std::string row;
+                for (size_t b = 0; b < nb; ++b) {
+                    const long long win = g_touchMoveTicks[b];
+                    if (win <= 0) continue;
+                    std::vector<uint64_t> tk;
+                    double xEarly = 0.0, xLate = 0.0; long long tEarly = -1, tLate = -1;   // the x now of a state with the earliest entry tick and of one with the latest
+                    for (size_t i = 0; i < cur.size(); ++i) if (cur[i].trig.test(b) && t - (long long)cur[i].fireB[b] < win) {
+                        const long long f = (long long)cur[i].fireB[b];
+                        tk.push_back((uint64_t)f);
+                        if (tEarly < 0 || f < tEarly) { tEarly = f; xEarly = (double)cur[i].xAbs; }
+                        if (f > tLate) { tLate = f; xLate = (double)cur[i].xAbs; }
+                    }
+                    if (tk.size() < 2) continue;
+                    const size_t live = tk.size();
+                    const double nd = distinct(tk);
+                    if (nd < 2.0) continue;
+                    char buf[200];
+                    std::snprintf(buf, sizeof buf, "\tb%zu:uid%d:live%zu:n%.0f:lo%llu:hi%llu:win%lld:xe%.1f:xl%.1f", b, b < g_touch.size() ? g_touch[b].uid : -1, live, nd, (unsigned long long)tk.front(),
+                                  (unsigned long long)*std::max_element(tk.begin(), tk.begin() + (std::ptrdiff_t)nd), win, xEarly, xLate);
+                    row += buf;
+                }
+                if (!row.empty()) std::fprintf(g_layerProf.f, "#fs\t%lld\t%lld%s\n", g_layerProf.search, (long long)t, row.c_str());
+                // ...and whether what such a box moves or switches is anywhere the player can get to while the box is in the signature: a `#fr` row. A box's class, by x only (no y test,
+                // so "in reach" is the generous side): 0 nothing of its chain is among the moving objects, 1 none of them within the stretch the frontier can cover before the window runs
+                // out (200 px behind to 200 px + 2.4 px a tick ahead, each object widened by its move's offset), 2 some there but none within 110 px now, 3 some within 110 px now,
+                // 4 the box also switches triggers or arms roots (kept whatever its objects). Then the layer's number of groups as it is, with the boxes of class 0-1 left out of the
+                // signature, with 0-2 left out, and with no fire signature at all. Frame 0 coordinates: a layer with a turned frame in it is marked f1.
+                {
+                    Dynamics& D0 = model.levelOf(0).dyn;
+                    static std::unordered_map<int, size_t> uidAt; static long long uidAtSearch = -1;
+                    if (uidAtSearch != g_layerProf.search) { uidAt.clear(); for (size_t i = 0; i < D0.objs.size(); ++i) uidAt.emplace(D0.objs[i].uid, i); uidAtSearch = g_layerProf.search; }
+                    const double step = std::max(2.4, std::fabs((double)curDxF));
+                    int cls[kTouchBits]; for (int& c : cls) c = -1;
+                    std::string frow;
+                    for (size_t b = 0; b < nb && b < g_touch.size(); ++b) {
+                        const long long win = g_touchMoveTicks[b];
+                        if (win <= 0) continue;
+                        long long remain = -1;
+                        for (size_t i = 0; i < cur.size(); ++i) if (cur[i].trig.test(b) && t - (long long)cur[i].fireB[b] < win) remain = std::max(remain, win - (t - (long long)cur[i].fireB[b]));
+                        if (remain < 0) continue;
+                        const TouchTrig& tb = g_touch[b];
+                        const double farLo = bestX - 200.0, farHi = bestX + 200.0 + step * (double)remain;
+                        int known = 0, far = 0, near = 0;
+                        auto see = [&](int uid, double off) {
+                            const auto it = uidAt.find(uid);
+                            if (it == uidAt.end()) return;
+                            const Obj& o = D0.objs[it->second];
+                            const double e = std::max(o.hw, o.radius) + off;
+                            ++known;
+                            if (o.cx + e >= farLo && o.cx - e <= farHi) ++far;
+                            if (o.cx + e >= bestX - 110.0 && o.cx - e <= bestX + 110.0) ++near;
+                        };
+                        for (const TrigCtl& c : tb.ctl) see(c.uid, std::fabs((double)c.dx));
+                        for (const TouchTrig::TogEv& e : tb.togEv) see(e.uid, 0.0);
+                        cls[b] = (!tb.trigTog.empty() || !tb.spawnsRoots.empty() || tb.countAct) ? 4 : near > 0 ? 3 : far > 0 ? 2 : known > 0 ? 1 : 0;
+                        char buf[96]; std::snprintf(buf, sizeof buf, "\tb%zu:c%d:o%d:far%d:near%d", b, cls[b], known, far, near); frow += buf;
+                    }
+                    auto sigLess = [&](const State& s, int upTo) -> uint64_t {   // groupFireSig without the boxes of class <= upTo (upTo 9: none of them)
+                        uint64_t k = 0;
+                        for (size_t b = 0; b < nb; ++b) {
+                            if (!s.trig.test(b) || cls[b] <= upTo) continue;
+                            const long long moving = g_touchMoveTicks[b];
+                            if (moving <= 0 || t - (long long)s.fireB[b] >= moving) continue;
+                            uint64_t h = ((uint64_t)(b + 1) << 32) ^ (uint64_t)s.fireB[b];
+                            h = (h ^ (h >> 30)) * 0xBF58476D1CE4E5B9ull; h = (h ^ (h >> 27)) * 0x94D049BB133111EBull; k ^= h ^ (h >> 31);
+                        }
+                        return k;
+                    };
+                    size_t gN[3] = {0, 0, 0}; bool turned = false;
+                    const int upTo[3] = {1, 2, 9};
+                    for (int v = 0; v < 3; ++v) {
+                        std::vector<GKey> ks;
+                        for (size_t i = 0; i < cur.size(); ++i) {
+                            if (v == 0 && model.progress(cur[i]).frame != 0) turned = true;
+                            const GKey k{model.groupKey(cur[i], curDxF, sigLess(cur[i], upTo[v]) ^ (g_stateCross ? xcSig(cur[i], t) : 0)), xcOf(i)};
+                            if (std::find(ks.begin(), ks.end(), k) == ks.end()) ks.push_back(k);
+                        }
+                        gN[v] = ks.size();
+                    }
+                    std::fprintf(g_layerProf.f, "#fr\t%lld\t%lld\t%zu\t%zu\t%zu\t%zu\t%s%s\n", g_layerProf.search, (long long)t, groupDx.size(), gN[0], gN[1], gN[2], turned ? "f1" : "f0", frow.c_str());
+                }
+            }
         }
 
+        // --worldtree (modifiers.hpp): the layer's states by group and by world (observation only)
+        if (g_worldTree.on && !cur.empty()) {
+            std::unordered_map<uint64_t, long long> perWorld;
+            std::unordered_set<uint64_t> pairs;
+            std::unordered_map<uint64_t, std::unordered_set<size_t>> groupsOfWorld;
+            for (size_t i = 0; i < cur.size(); ++i) {
+                const GKey k{model.groupKey(cur[i], curDxF, sigOf(i)), xcOf(i)};
+                const size_t j = (size_t)(std::find(groupDx.begin(), groupDx.end(), k) - groupDx.begin());
+                const uint64_t wk = worldKeyOf(cur[i], false, true);
+                ++perWorld[wk];
+                pairs.insert(wk * 0x9E3779B97F4A7C15ull ^ (uint64_t)(j + 1) * 0xC2B2AE3D27D4EB4Full);
+                groupsOfWorld[wk].insert(j);
+            }
+            auto& B = g_worldTree.b[(long long)t / 2000];
+            ++B.layers; B.states += (long long)cur.size(); B.g += (long long)groupDx.size(); B.w += (long long)perWorld.size(); B.p += (long long)pairs.size();
+            for (const auto& kv : perWorld) B.maxStatesPerWorld = std::max(B.maxStatesPerWorld, kv.second);
+            for (const auto& kv : groupsOfWorld) B.maxGroupsPerWorld = std::max(B.maxGroupsPerWorld, (long long)kv.second.size());
+        }
+
+        uint32_t emitNode = 0;   // the node emit() gave the state it has just stored (0: it stored none), for rideNodes
         auto emit = [&](State s, const State& from, uint8_t action, uint64_t k) {
             auto finish = [&](State& stored) {
                 arena.push_back(Node{from.parent | ((uint32_t)action << 31)});
+                emitNode = (uint32_t)(arena.size() - 1);
                 if (checkWanted) arenaMode.push_back(s.mode);
+                if (lossyOn) { const uint8_t lf = arenaLossy[from.parent]; arenaLossy.push_back(lf); }
                 s.parent = (uint32_t)(arena.size() - 1);
                 s.action = action;
                 stored = s;
@@ -1087,28 +1743,59 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 }
             };
             Slots& sl = seen.at(k);
+            // --hsmergeaudit: the shadow signature of a state (each body's H, S and carried consumers), compared with the survivors of its key
+            auto hsSig = [](const State& x) -> uint32_t {
+                return (uint32_t)(x.gdHS & 3) | ((uint32_t)(x.gdAux & 6) << 1) | (x.dual ? ((uint32_t)(x.gdHS2 & 3) | ((uint32_t)((x.gdAux >> 4) & 6) << 1)) << 4 : 0u);
+            };
             if (sl.hi < 0) {
                 nxt.push_back(State{});
                 sl.hi = sl.lo = (int)nxt.size() - 1;
                 finish(nxt.back());
+                if (g_hsMergeAudit) ++g_hsMergeStored;
             } else if (s.vy > nxt[(size_t)sl.hi].vy + 1e-9) {
+                if (gdcol::g_keyObs && sl.hi != sl.lo) noteDroppedPrev(nxt[(size_t)sl.hi], s);   // KEYOBS: the displaced rep
+                if (g_hsMergeAudit && sl.hi != sl.lo) {
+                    ++g_hsMergeReplaced;
+                    const uint32_t gone = hsSig(nxt[(size_t)sl.hi]);
+                    if (gone != hsSig(s) && gone != hsSig(nxt[(size_t)sl.lo])) ++g_hsMergeReplacedDistinct;
+                }
                 if (sl.hi == sl.lo) {
                     nxt.push_back(State{});
                     sl.hi = (int)nxt.size() - 1;
                 }
                 finish(nxt[(size_t)sl.hi]);
             } else if (s.vy < nxt[(size_t)sl.lo].vy - 1e-9) {
+                if (gdcol::g_keyObs && sl.hi != sl.lo) noteDroppedPrev(nxt[(size_t)sl.lo], s);   // KEYOBS: the displaced rep
+                if (g_hsMergeAudit && sl.hi != sl.lo) {
+                    ++g_hsMergeReplaced;
+                    const uint32_t gone = hsSig(nxt[(size_t)sl.lo]);
+                    if (gone != hsSig(s) && gone != hsSig(nxt[(size_t)sl.hi])) ++g_hsMergeReplacedDistinct;
+                }
                 if (sl.hi == sl.lo) {
                     nxt.push_back(State{});
                     sl.lo = (int)nxt.size() - 1;
                 }
                 finish(nxt[(size_t)sl.lo]);
+            } else if (g_hsMergeAudit || gdcol::g_keyObs) {
+                if (gdcol::g_keyObs) { noteDroppedPrev(s, nxt[(size_t)sl.hi]); if (sl.lo != sl.hi) noteDroppedPrev(s, nxt[(size_t)sl.lo]); }   // KEYOBS: dropped; compared with the reps it lost to
+                if (g_hsMergeAudit) {
+                ++g_hsMergeDropped;
+                const uint32_t me = hsSig(s);
+                if (me != hsSig(nxt[(size_t)sl.hi]) && me != hsSig(nxt[(size_t)sl.lo])) ++g_hsMergeDroppedDistinct;
+                }
             }
         };
 
         // "alive dropped" does not say whether the children DIED or were merged
         // away by the dedupe; those need opposite fixes, so count both.
         long long nBorn = 0, nDied = 0;
+        long long lyPhys = 0, lyPrune = 0;   // --partialphys: this layer's deaths by kind
+        // --partialphys: a child that died by the game's own rules, and the state that stepped it
+        auto notePhys = [&](const State& from, uint8_t kind) {
+            if (kind == kDeathPrune) { ++lyPrune; return; }
+            ++lyPhys;
+            if (!havePhys || physT != t || from.xAbs > physS.xAbs) { physS = from; physT = t; havePhys = true; }
+        };
         // --qfoldwatch: which rotation-queue states this group's dedupe merged
         // away. keyOf has no rotSpent/rotChan/rotRev, so children that differ
         // only in the queue share a cell. For each key, the queue states among
@@ -1117,7 +1804,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         long long qfLost = 0, qfKeys = 0;
         auto qfoldAccount = [&](size_t before) {
             auto qs = [](const State& s) {
-                return ((uint64_t)s.rotSpent << 32) | ((uint64_t)s.rotChan << 16)
+                return ((uint64_t)(uint32_t)s.rotSpent << 32) | ((uint64_t)s.rotChan << 16)
                        | (uint64_t)s.rotRev;
             };
             auto add = [](std::vector<uint64_t>& v, uint64_t q) {
@@ -1141,7 +1828,122 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         };
         const bool qfHere = (g_qfoldLo >= 0 && t >= g_qfoldLo && t <= g_qfoldHi);
         ppSubMark(1);
+        if (g_trigLive.take && g_trigLive.supplyOn()) {   // --trigsupplytake: the layer's group keys, before any group() call (trigshadow_live.hpp announce)
+            std::vector<uint64_t> aks; aks.reserve(groupDx.size());
+            for (const auto& gk : groupDx) aks.push_back(TrigLive::keyOf(gk.dx, gk.trig.word(0), (int)gk.frame, (int)gk.rev, gk.fsig, gPart[(size_t)(&gk - groupDx.data())]));
+            g_trigLive.announce((long long)t, aks, gIn);
+        }
+        // ---- dupbatch (search_key.hpp): the layer's groups go to the trigger shadow first, and each gets the key of its tick ----
+        // dupG[gi]: `view` what the shadow's group() left as the current group (made current again at the group's turn); `ka / kb` the key; `buffered` an earlier group with that key (the leader) steps this
+        // group's states with its own; gidx / kids / keys / flags what that pass made for it.
+        // (camY: --camy, the group's own camera input of this tick. It is not in the key: a follower's children are stepped with the follower's own, see kidCam)
+        struct DupG { bool live = false, buffered = false, readTicks = false; uint64_t ka = 0, kb = 0; TrigLive::View view; CamYGroup camY; std::vector<size_t> gidx; std::vector<Child> kids; std::vector<uint64_t> keys; std::vector<uint8_t> flags; };
+        std::vector<DupG> dupG;
+        std::unordered_map<uint64_t, std::vector<uint32_t>> dupByKey;   // key -> the groups that have it, in the layer's order
+        struct GStat { double lo = 1e18, hi = -1e18; int fire = -1, fireMin = 0x7fffffff; uint16_t fb[kTouchBits] = {}; float lockOff = 1e30f, d2lo = 0.f, d2hi = 0.f; size_t rep = (size_t)-1; std::vector<size_t> members; };
+        std::vector<GStat> gs;
+        bool dupOneFrame = true;   // every state of the layer is in one frame and direction: a group's parents are then its members (no parent of another frame is handed to it)
+        // (not where something reads or prints every group's own tick: --needtrig, the per-layer instruments, and DUPOBS_OUT, which measures the groups as they are without the batching)
+        const bool dupHere = g_trigLive.on && g_trigLive.supplyOn() && groupDx.size() > 1 && !g_needTrig && !(dbgLayers > 0 && t - t0 <= dbgLayers) && !g_refWatch && !g_clearProbe
+                             && !g_portAudit && !qfHere && g_searchCensus <= 0 && !g_placeObs.on && g_trigLive.checkEvery == 0 && !(g_rotWatchLo >= 0 && t >= g_rotWatchLo && t <= g_rotWatchHi)
+                             && !DupObs::on();
+        g_trigLive.shareSteps = dupHere;   // (trigshadow_live.hpp: a group with an earlier group's parent timeline and inputs takes its stepped timeline)
+        if (dupHere) {
+            ++g_dupBatchLayers;
+            // each group's members, their span, fire ticks, lock offset and second-body spread: what the loops at the head of the group's own turn find by walking every state for every group, taken here in
+            // one pass over the states (the group's turn reads them from here instead)
+            gs.assign(groupDx.size(), GStat{});
+            for (size_t ci = 0; ci < cur.size(); ++ci) {
+                const State& s = cur[ci];
+                GStat& G = gs[groupOf[ci]];
+                if (G.rep == (size_t)-1) G.rep = ci;
+                G.members.push_back(ci);
+                G.lo = std::min(G.lo, (double)s.xAbs); G.hi = std::max(G.hi, (double)s.xAbs);
+                G.fire = std::max(G.fire, (int)s.trigT); G.fireMin = std::min(G.fireMin, (int)s.trigT);
+                for (int b = 0; b < kTouchBits; ++b) if (s.fireB[b] > G.fb[b]) G.fb[b] = s.fireB[b];
+                if (s.lockOff < G.lockOff) G.lockOff = s.lockOff;
+                const float d2 = p2Dx(s);
+                G.d2lo = std::min(G.d2lo, d2); G.d2hi = std::max(G.d2hi, d2);
+                if ((int)s.frame != (int)cur[0].frame || (int)s.rev != (int)cur[0].rev) dupOneFrame = false;
+            }
+            dupG.resize(groupDx.size());
+            std::unordered_map<const gdtrig::TrigShadow*, std::pair<gdtrig::Hash2, gdtrig::Hash2>> dupHashOf;
+            for (size_t gi = 0; gi < groupDx.size(); ++gi) {
+                const GKey& gk = groupDx[gi];
+                GStat& G = gs[gi];
+                if (G.lockOff > 1e29f) G.lockOff = 0.f;
+                const int gf = (int)gk.frame, gr = (int)gk.rev;
+                const double sdx2 = gr ? -(double)gk.dx : (double)gk.dx;
+                const double x2 = (gr ? G.lo : G.hi) + sdx2;
+                const double wLo2 = gr ? (G.lo + sdx2) : G.lo, wHi2 = gr ? G.hi : (G.hi + sdx2);
+                g_trigLive.gin = gIn[gi];
+                g_trigLive.group(t, gk.dx, gk.trig.word(0), gf, gr, gk.fsig, gPart[gi], x2, G.fb);   // (the call the group's own turn makes without the flag, with the same arguments)
+                DupG& D = dupG[gi];
+                D.view = g_trigLive.view();
+                if (g_camy) D.camY = g_trigLive.camYOfLast();   // (made by group() for the group just given, from its parent timeline's camera)
+                if (!D.view.cur) continue;   // the shadow stepped nothing for it (no supplied group): it is prepared for itself
+                gdtrig::Hash2 h;
+                auto hc = dupHashOf.find(D.view.cur.get());   // (groups that took one stepped timeline -- TrigLive::shareSteps -- hash it once)
+                if (hc == dupHashOf.end()) hc = dupHashOf.emplace(D.view.cur.get(), std::make_pair(D.view.cur->contentHash(), D.view.cur->trackHash())).first;
+                h.addH(hc->second.first); h.addH(hc->second.second);
+                // ...and the objects as they stood BEFORE this group's step. The supply hands a mover its previous place and its on / off from there (TrigLive::supVal: px / py / pon; dcx, dcy and
+                // pcy are made of them), and two timelines can step to one content from two different ones: a Move that ends this tick in the one and ended a tick earlier in the other leaves the
+                // same place and another step. Found by --dupbatchcheck on lv19 and lv20 of the 22-level cold (trunk e3eb678d: vy 0 against 0.008 on a platform's last step).
+                h.addH(gdtrig::TrigShadow::objsHash(D.view.pre));
+                h.addD(x2); h.addD(G.lo); h.addD(G.hi); h.addD(wLo2); h.addD(wHi2); h.addF(gk.dx); h.addF2(G.d2lo, G.d2hi); h.add((uint64_t)(uint32_t)gf | ((uint64_t)(uint32_t)gr << 32));
+                for (int k = 0; k < (kTouchBits + 63) / 64; ++k) h.add(gk.trig.word(k));
+                h.addF(G.lockOff + (float)sdx2);
+                // The touch fire ticks (gFire / gFireB) are what the MODEL's own placement of a touch-moved mover reads; the shadow's timeline has that mover's place in its content, and where the supply
+                // puts every mover there the ticks are not read. They are part of the key wherever the model's placement can stand instead: a turned gameplay frame (supplyPlaceMovers leaves it whole
+                // under --trigsupply-all), named groups only, a timeline with a blind object (its objects are not supplied), a mover with no slot in the supply, or one left on the model's place for a
+                // rect below y = 0 (supGround). Found by --dupbatchcheck on lv22's first call (t=1758, a spider in a turned frame: a platform the model placed by the leader's ticks).
+                // Every tick as it is, not only those whose window still runs (g_touchMoveTicks): with that narrower key the check passed on the calls tried, but the window is the model's
+                // estimate, not a proof that a later tick is never read.
+                // In two of those cases the ticks are NOT in the key, and the leader's build notes which ticks its placement READ instead (dynamics.hpp FireReadSet): a group with the leader's
+                // key follows it only if it has the leader's value for each tick read (the test where the followers are gathered). The build is a function of its inputs, and of those only
+                // the ticks are not in the key.
+                //   a turned frame (why 2): every object is on the model's placement, and every object's reads are noted. With that test taken out, --dupbatchcheck finds the t=1758
+                //   mismatch above again; with it, none;
+                //   a mover with no slot (why 4): the reads of those movers are noted (Dynamics::tickTrack). With the ticks in the key, one such mover keyed every group of the plain frame
+                //   by its ticks: lv22's first call has 39, its later calls 75 and more, and none of their groups was batched. What this case still takes on trust is what a level with
+                //   every mover supplied takes: that nothing the step reads of a SUPPLIED mover hangs on the ticks.
+                {
+                    Dynamics& dyn0 = model.levelOf(0).dyn;
+                    // (a ground-clamped mover before a mover with no slot: the first is keyed by every tick, and the set of the second does not note a supplied mover's reads)
+                    const int why = !g_trigLive.supplyAll ? 1 : gf != 0 ? 2 : D.view.cur->anyBlind() ? 3 : g_trigLive.supGround > 0 ? 5 : g_trigLive.unsupMovers(dyn0.objs) > 0 ? 4 : 0;
+                    if (why) ++g_dupBatchFireKeyed[why];
+                    if (why == 4 || why == 2) {
+                        if (why == 4 && (dyn0.tickTrackGen != g_trigLive.supGen || dyn0.tickTrack.size() != dyn0.objs.size()))
+                            dyn0.setTickTrack([](int uid) { return !g_trigLive.hasSlot(uid); }, g_trigLive.supGen);
+                        D.readTicks = true;
+                        h.add(0x6674 + (uint64_t)why);
+                    } else if (why) {
+                        h.add(0x6672 + (uint64_t)(uint32_t)G.fire);
+                        for (int b = 0; b < kTouchBits; ++b) h.add((uint64_t)G.fb[b]);
+                    }
+                }
+                h.add(0x7470 + (uint64_t)D.view.tp.size()); for (int u : D.view.tp) h.add((uint64_t)(uint32_t)u);
+                h.add(0x6772 + (uint64_t)D.view.grav.size()); for (int u : D.view.grav) h.add((uint64_t)(uint32_t)u);
+                {   // the autonomous triggers as this group dates them (what its turn's AutoOwnGuard sets, put back when this block ends)
+                    AutoOwnGuard ao;
+                    g_autoOwnT0 = t0;
+                    if (gf == 0 && !gr) {
+                        if (g_stateCross && G.rep != (size_t)-1) autoOwnApplyCross(ao, G.hi, (double)gk.dx, t, cur[G.rep]);
+                        else autoOwnApply(ao, G.hi, (double)gk.dx, t);
+                    }
+                    h.add(0x616f + (uint64_t)ao.saved.size());
+                    for (const auto& p : ao.saved) { h.add((uint64_t)p.first); h.add((uint64_t)(uint32_t)g_autoTrig[p.first].fireT); }
+                }
+                D.ka = h.a; D.kb = h.b; D.live = true;
+                dupByKey[h.a ^ (h.b * 0x9e3779b97f4a7c15ULL)].push_back((uint32_t)gi);
+            }
+        }
         for (const auto& gkey : groupDx) {
+        const size_t dupGi = (size_t)(&gkey - groupDx.data());
+        wrClose();
+        if (g_trigLive.on) { wrA0 = arena.size(); wrOpen = true; wrOpenKey = gStore[dupGi]; }
+        const bool dupBuf = dupHere && dupG[dupGi].buffered;                // an earlier group of the layer has stepped this group's states with its own
+        const bool dupSkip = dupBuf && !g_dupBatchCheck;                     // ...and this group is not prepared or stepped for itself
         if (g_phaseProf) g_ppSubLast = std::chrono::steady_clock::now();   // this group's setup starts here (not at the end of the previous group's step)
         const float gdx = gkey.dx;
         const TouchMask gtrig = gkey.trig;
@@ -1163,6 +1965,11 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // opening: the smallest offset is the one that has ridden least.
         float gLockOff = 1e30f;
         size_t gRep = (size_t)-1;   // --statecross: a member, whose records are the group's
+        if (dupHere) {   // dupbatch: the pass before the loop has them (the same values: the same folds over the same members, in the same order)
+            const GStat& G = gs[dupGi];
+            gLo = G.lo; gHi = G.hi; gFire = G.fire; gFireMin = G.fireMin; gLockOff = G.lockOff; gRep = G.rep;
+            for (int b = 0; b < kTouchBits; ++b) gFireB[b] = G.fb[b];
+        } else
         for (size_t ci = 0; ci < cur.size(); ++ci) {
             const State& s = cur[ci];
             // Asked for every state of every group, every layer: the model's test compares the
@@ -1188,6 +1995,8 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // pass of its own, under the flag only: the loop above is the layer's hottest (one helper
         // call in it cost lv22's search 3%, see its note), so nothing of the flag's goes in it.
         float gD2Lo = 0.f, gD2Hi = 0.f;
+        if (dupHere) { gD2Lo = gs[dupGi].d2lo; gD2Hi = gs[dupGi].d2hi; }
+        else
         for (size_t ci = 0; ci < cur.size(); ++ci) {
             const State& s = cur[ci];
             if (!model.inGroup(gkey, s, curDxF) || sigOf(ci) != gkey.fsig || xcOf(ci) != gkey.xc)
@@ -1215,8 +2024,8 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             bool missed = false;
             for (size_t b = 0; b < g_touch.size() && !missed; ++b)
                 if ((g_needTrig & ~gtrig) & touchBit(b))
-                    // --needtrigrev (triggers.hpp): a reversed group passes a box going left
-                    missed = (g_needTrigRev && grev) ? gHi < g_touch[b].cx - g_touch[b].hw - 40.0
+                    // --needtrigrev (removed) (triggers.hpp): a reversed group passes a box going left
+                    missed = (grev) ? gHi < g_touch[b].cx - g_touch[b].hw - 40.0
                                                      : gLo > g_touch[b].cx + g_touch[b].hw + 40.0;
             if (missed) continue;
         }
@@ -1228,6 +2037,10 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         const float dxUsed = (float)sdx;
         const double wLo = grev ? (gLo + sdx) : gLo;
         const double wHi = grev ? gHi : (gHi + sdx);
+        if (g_layerXStat) g_layerXStatData.add(t, x, gdx, gframe, grev, gtrig.any(), gHi - gLo);
+        if (dupHere) g_trigLive.activate(dupG[dupGi].view, (long long)t);   // dupbatch: the shadow stepped this group before the loop; its timeline is the current one again
+        else if (g_trigLive.on) { g_trigLive.gin = gIn[dupGi]; g_trigLive.group(t, gdx, gtrig.word(0), gframe, grev, gkey.fsig, gPart[dupGi], x, gFireB); }   // --trigshadowlive (trigshadow_live.hpp)
+        const CamYGroup camyG = g_camy ? (dupHere ? dupG[dupGi].camY : g_trigLive.camYOfLast()) : CamYGroup{};   // --camy S2.1: this group's camera timeline input, a local of this group's scope (cam_y_search.hpp)
         ppSubMark(1);
         // Gameplay rotation triggers this group's advance reaches (model.hpp fireRotTriggers).
         model.fireRotTriggers(gframe, grev, gLo, gHi, wLo, wHi, t);
@@ -1237,7 +2050,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // --autoown (dynamics.hpp): this group's own crossings for the autonomous triggers, for its
         // placement and its step; the leader's come back when the group is done.
         AutoOwnGuard autoOwn;
-        g_autoOwnT0 = t0;   // --autoownpre (dynamics.hpp); the same value from every thread
+        g_autoOwnT0 = t0;   // --autoownpre (removed) (dynamics.hpp); the same value from every thread
         if (gframe == 0 && !grev) {
             if (g_stateCross && gRep != (size_t)-1) autoOwnApplyCross(autoOwn, gHi, (double)gdx, t, cur[gRep]);
             else autoOwnApply(autoOwn, gHi, (double)gdx, t);
@@ -1246,8 +2059,18 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         GroupEnv env;
         double pLo = wLo, pHi = wHi;
         p2Widen(pLo, pHi, gD2Lo, gD2Hi);   // --p2xoff
+        // dupbatch, a group keyed without its ticks (a turned frame, a mover with no supply slot): its build notes the ticks it reads; whoever follows it must have them.
+        // In a turned frame every object counts (the frame's Level is its own copy, and whatever table of supplied objects it carries does not hold there).
+        FireReadSet dupRd;
+        const bool dupRead = dupHere && !dupBuf && dupG[dupGi].live && dupG[dupGi].readTicks;
+        if (dupRead) { dupRd.everyObject = gframe != 0; model.levelOf(gframe).dyn.fireSink = &dupRd; }
+        if (!dupSkip)   // (dupbatch: a follower's states were stepped with the leader's tick; its own is not built)
         model.prepare(env, gframe, gtrig, gFire, gFireB, gLockOff + (float)sdx, x, xPrev, dxUsed,
                       pLo, pHi, t);
+        if (dupRead) {
+            model.levelOf(gframe).dyn.fireSink = nullptr;
+            ++g_dupBatchRead[dupRd.all.load(std::memory_order_relaxed) ? 0 : (dupRd.count() || dupRd.scalar.load(std::memory_order_relaxed)) ? 1 : 2];
+        }
         ppSubMark(3);
         const std::vector<const Obj*>& near = env.near;
         const std::vector<const Obj*>& ports = env.ports;
@@ -1255,10 +2078,32 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         const std::vector<const Obj*>& orbs = env.orbs;
         const std::vector<const Obj*>& slps = env.slps;
         const std::vector<std::pair<const TouchTrig*, TouchMask>>& trigs = env.trigs;
+        if (g_trigLive.on && g_trigLive.checkEvery > 0) {   // --trigshadowcheck N (trigshadow_live.hpp, observation only): the model's placed movers, in the level's own frame, for the shadow's timeline of this group
+            g_trigLive.markSnap(t);
+            if (g_trigLive.snapping()) {
+                const auto s0 = std::chrono::steady_clock::now();
+                for (const std::vector<const Obj*>* lp : {&near, &ports, &pads, &orbs, &slps})
+                    for (const Obj* o : *lp) {
+                        if (!o || !o->dynObj) continue;
+                        double wx = o->cx, wy = o->cy;
+                        if (gframe) fromFrame(gframe, o->cx, o->cy, wx, wy);
+                        g_trigLive.snapObj(o->uid, wx, wy);
+                    }
+                g_trigLive.modelSnapMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - s0).count();
+            }
+        }
+        const long long dupGround0 = g_trigLive.supGround;
+        const auto lpSup0 = g_phaseProf ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};   // (--phaseprof / --layerprof: the supply's own time)
+        if (!dupSkip && g_trigLive.supplyOn()) supplyPlaceMovers(env, gframe, grev);   // --trigsupply-group (trigshadow_live.hpp, P6-0): the movers of the supplied groups take the shadow's place for tick t (the block above, shared with the walk)
+        // dupbatch: this build left a SUPPLIED mover on the model's own placement (its rect lies below y = 0, supGround). That placement was made from the group's ticks, and no set noted its
+        // reads (the mover has a slot): whoever follows this group must have every tick of it. Seen here, for the build it happens in -- the count in the key (why 5) only knows the builds before.
+        const bool dupGroundHere = g_trigLive.supGround != dupGround0;
+        if (g_phaseProf) g_ppSupplyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - lpSup0).count();
+        if (g_supObs && !dupSkip && gframe == 0 && g_trigLive.supplyOn()) supObsGroup(env, model.levelOf(0).dyn, pLo, pHi);   // --supobs (observation only)
         seen.ensure(cur.size() * 2 + 64);
         seen.clear();   // per GROUP, not per layer (see the note above)
         (void)x; (void)xPrev;
-        const StepCtx K = env.ctx();
+        const StepCtx K = dupSkip ? StepCtx{} : env.ctx();   // (a follower steps nothing here: no tick was built for it)
         ppMark(0);
         // ---- phase 1: STEP every state of this group (parallel) -------------
         // Stepping is pure -- it reads the shared windows and writes only its
@@ -1266,10 +2111,12 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // `nxt` stay on the main thread in phase 2, walked in the SAME order as
         // the serial loop was, which keeps the emitted plan bit-identical.
         gidx.clear();
+        if (dupHere && dupOneFrame) gidx = gs[dupGi].members;   // dupbatch, a layer of one frame and direction: the test below is the group's own key, so its parents are its members
+        else
         for (size_t i = 0; i < cur.size(); ++i)
             if (((cur[i].dx > 0.f) ? cur[i].dx : curDxF) == gdx
                 && cur[i].trig == gtrig && sigOf(i) == gkey.fsig
-                // --groupxsplit: a member of this frame and direction goes to its own part only.
+                // --groupxsplit (removed): a member of this frame and direction goes to its own part only.
                 // A parent from another frame (gidx hands those to every group, see above) keeps
                 // being stepped once per frame group, in its part 0.
                 && (curXc.empty()
@@ -1278,6 +2125,56 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                             : gkey.xc == 0)))
                 gidx.push_back(i);
         if (g_phaseProf) { ++g_ppGroups; g_ppParents += (long long)gidx.size(); }
+        if (g_placeObs.on) g_placeObs.group(env, gframe, (long long)t, gdx, grev, gkey.fsig, (int)gkey.xc, x, cur, gidx);   // --placetable (place_table.hpp, P7-1): the placement this group made, filed under the worlds of its states (observation only)
+        if (g_trigLive.on) { g_trigLive.parents((long long)gidx.size()); g_trigLive.members(arena, cur, gidx, gdx); }   // --trigshadowlive: the parents this group steps (observation only)
+        if (DupObs::on()) {   // DUPOBS_OUT (observation only)
+            g_dupObs.keyParts(gtrig, gFire, gFireB, gLockOff + (float)sdx, (g_stateCross && gRep != (size_t)-1) ? xcSig(cur[gRep], t) : 0, gRep != (size_t)-1 ? groupFireSig(cur[gRep], t) : 0, (int)gkey.xc);
+            g_dupObs.group(env, gframe, grev, gdx, wLo, wHi, (long long)t, gidx.size());
+        }
+        // dupbatch: a leader takes the states of the later groups that have its key into its own pass (each follower's parents by the test of the loop above with the follower's key, after its own)
+        const size_t dupOwn = gidx.size();
+        std::vector<std::pair<uint32_t, size_t>> dupSeg;   // (follower, where its parents start in gidx)
+        if (dupHere && !dupBuf && dupG[dupGi].live) {
+            const auto fi = dupByKey.find(dupG[dupGi].ka ^ (dupG[dupGi].kb * 0x9e3779b97f4a7c15ULL));
+            if (fi != dupByKey.end())
+                for (uint32_t hj : fi->second) {
+                    DupG& H = dupG[hj];
+                    if ((size_t)hj <= dupGi || H.buffered || H.ka != dupG[dupGi].ka || H.kb != dupG[dupGi].kb) continue;
+                    if (dupRead || dupGroundHere) {   // the ticks this leader's build read: the candidate's must be the same (it stays its own leader otherwise)
+                        const GStat& A = gs[dupGi]; const GStat& B = gs[hj];
+                        bool same = true;
+                        if (dupGroundHere || dupRd.all.load(std::memory_order_relaxed)) { same = A.fire == B.fire; for (int b = 0; b < kTouchBits && same; ++b) same = A.fb[b] == B.fb[b]; }
+                        else {
+                            if (dupRd.scalar.load(std::memory_order_relaxed)) same = A.fire == B.fire;
+                            for (int b = 0; b < kTouchBits && same; ++b) if (dupRd.test((size_t)b)) same = A.fb[b] == B.fb[b];
+                        }
+                        if (!same) { ++g_dupBatchRead[3]; continue; }
+                    }
+                    const GKey& hk = groupDx[hj];
+                    const size_t at = gidx.size();
+                    if (dupOneFrame) gidx.insert(gidx.end(), gs[hj].members.begin(), gs[hj].members.end());
+                    else
+                    for (size_t i = 0; i < cur.size(); ++i)
+                        if (((cur[i].dx > 0.f) ? cur[i].dx : curDxF) == hk.dx && cur[i].trig == hk.trig && sigOf(i) == hk.fsig
+                            && (curXc.empty() || ((((int)cur[i].frame == (int)hk.frame && (int)cur[i].rev == (int)hk.rev)) ? curXc[i] == hk.xc : hk.xc == 0)))
+                            gidx.push_back(i);
+                    H.buffered = true;
+                    H.gidx.assign(gidx.begin() + (std::ptrdiff_t)at, gidx.end());
+                    dupSeg.push_back({hj, at});
+                    ++g_dupBatchFollowers; g_dupBatchParents += (long long)(gidx.size() - at);
+                }
+            if (!dupSeg.empty()) ++g_dupBatchLeaders;
+        }
+        // --camy with dupbatch: the camera input of each parent of this pass -- the leader's own for its parents, each follower's own for the parents it brought (the key says the tick the model builds
+        // is one; the camera input is the group's and is read per child, so it is handed per parent instead of being asked to agree)
+        std::vector<const CamYGroup*> kidCam;
+        if (g_camy && !dupSeg.empty()) {
+            kidCam.assign(gidx.size(), &camyG);
+            for (size_t k = 0; k < dupSeg.size(); ++k) {
+                const size_t a = dupSeg[k].second, b = k + 1 < dupSeg.size() ? dupSeg[k + 1].second : gidx.size();
+                for (size_t j = a; j < b; ++j) kidCam[j] = &dupG[dupSeg[k].first].camY;
+            }
+        }
         // Airborne cube input is normally moot, so only one child is expanded --
         // but NOT next to an orb, where a press in mid-air is the whole point.
         // Leaving this unconditional silently threw away every orb activation
@@ -1360,7 +2257,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // Rings: the contact test reads this tick's and the previous tick's position, and a
             // rotated ring reaches 18 + 15*sqrt(2) = 39.2 px along its axis; the margin covers
             // both. Portals: a mode portal can hand the press to the new mode on its tick
-            // (--portalpress). Pads read no input in the air, so they are not a reason.
+            // (--portalpress (removed)). Pads read no input in the air, so they are not a reason.
             // Ramps: a contact made on this tick goes through slopeNudge, which reads the
             // input (a custom level t=15,834, an airborne cube at vy 0: released -2.000, pressed
             // -0.216).
@@ -1378,7 +2275,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // --inputgrid / --gridmap: this layer's grid, from the leader x of the layer before it
         // (the x --capmap reads, so a ladder window lifts both over the same stretch).
         const int gridNow = gridAtX(bestX);
-        // --airpressnear (with --airpress): the air press child is kept only where a landing is within
+        // --airpressnear (removed) (with --airpress): the air press child is kept only where a landing is within
         // reach. A press held from the air into a landing is one future whatever tick in the arc it began
         // on (the buffer is set at the first and the states merge once it is), so the children of the
         // ticks long before any surface add expansions and no reachable state.
@@ -1399,11 +2296,82 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             };
             return hit(near, true) || hit(slps, false);
         };
+        // A cube already HOLDING the button in the air, with a ring within the reach of this flight. GD tells a hold that has already made a jump from a fresh
+        // press: carried into a landing it jumps again at once, and it does not fire a ring the body is touching there, where a fresh press fires the ring. The
+        // air prune below made every jump a press let go on the next tick, so "held through the jump, landing beside a ring" was not a state of the search at
+        // all (a custom level, t=2675..2800: the only way past its wall is a hold from the ceiling through the landing next to a hidden ring; the frontier
+        // died at t=2882 with nothing dropped at cap 64000). A cube in the air with the button held has no say in where it goes: until it lands its path is
+        // the one arc its y and vy give (the cube's gravity up to its terminal speed, kCubeG / kCubeTerm; y += 0.225 * vy a tick, state.hpp; this tick's x
+        // speed). The landing is a point of that arc, so "lands beside a ring" is "the arc passes through a ring's box": the held child is kept while it does,
+        // followed until the body has left the level's height (0 .. the level's maxY). With no ring on the arc the hold cannot differ from a press on the
+        // landing tick, and it is pruned as before. Fixed rings only (Level::orbs): a moving ring is in the near list when it is close. The arc is the
+        // cube's plain one (no gravity modifier, no speed portal on the way): it picks which states keep a child, it is not a step of the model.
+        // (The first form kept the child while any ring lay between here and where a fall to the level's edge would end, whatever its height. On the official
+        // levels that doubled airborne states in their cap class far from any ring the flight could touch: lv22's anchor call from t=1986 went from 22 s to
+        // 252 s -- eight attempts and a plain search at a wall the base passes on its third attempt -- and lv11 and lv16 each gained iterations, 2026-11-20.)
+        double orbMaxHw = 0.0;   // the widest fixed ring of this frame's level (the rings are sorted by cx, so the scan below starts that far back)
+        for (const Obj& o : model.levelOf(gframe).orbs) orbMaxHw = std::max(orbMaxHw, (double)o.hw);
+        // ...and the MOVING rings (Dynamics bucket ORB): a level whose rings are all movers has an empty fixed list (a custom level: level: 0 orbs, 35396 moving),
+        // so the hold was pruned everywhere there. A mover's place along the arc's ticks is not this tick's; it is bounded instead by every place its rows
+        // record and the one it has now (heldRingBoxesOf), and the arc meeting that box keeps the child -- a box too large only keeps more children. A mover with
+        // no rows (its place comes from its triggers alone) has no bound from its rows in x or in y: it may be anywhere in the level (MovRingBox::anywhere), and
+        // any held arc keeps the child while the level has one. (The first form spanned only the level's height at the mover's x at the build: a trigger that
+        // moves it sideways took it out of that box, and a held child meeting it there was pruned -- a miss, where the test may only keep too many.)
+        const MovRingBoxes& movRings = heldRingBoxesOf(model.levelOf(gframe).dyn);
+        auto heldRingInReach = [&](const State& s) -> bool {
+            const Level& LV = model.levelOf(gframe);
+            if (LV.orbs.empty() && movRings.box.empty()) return false;
+            const double g = s.flip ? -kCubeG : kCubeG, vt = std::fabs(kCubeTerm), half = playerHalf(s.mode, s.mini != 0);
+            double x = (double)s.xAbs, y = (double)s.y, vy = (double)s.vy;
+            const double dx = (double)K.dxF;
+            if (dx == 0.0) return false;
+            if (movRings.anywhere > 0) return true;
+            while (y >= 0.0 && y <= LV.maxY) {
+                vy = std::max(-vt, std::min(vt, vy + g));
+                y += 0.225 * vy;
+                x += dx;
+                auto it = std::lower_bound(LV.orbs.begin(), LV.orbs.end(), x - orbMaxHw - half, [](const Obj& o, double xx) { return o.cx < xx; });
+                for (; it != LV.orbs.end() && it->cx - it->hw - half <= x; ++it)
+                    if (std::fabs(it->cx - x) <= it->hw + half && std::fabs(it->cy - y) <= it->hh + half) return true;
+                for (const MovRingBox& b : movRings.box)
+                    if (x >= b.x0 - half && x <= b.x1 + half && y >= b.y0 - half && y <= b.y1 + half) return true;
+            }
+            return false;
+        };
+        // The air prune of a pressed child, without the hold-towards-a-ring exception: the button does nothing for this cube on this tick.
+        auto airPruned = [&](const State& s, bool edgeLocked, int forcedIn) -> bool {
+            // (always on: the switch --airpressnear is removed)
+            // --airpressnear (removed) (with --airpress): the air press child is expanded only where a surface lies within
+            // reach of a landing (search_dp.hpp landingNear). The press held into a landing is one future whichever tick of
+            // the arc it began on, so --airpress alone pays for the children of every tick of every air arc.
+            return forcedIn < 0 && s.mode == 0 && !s.grounded && orbsEmpty
+                   && !s.dashing && !(s.dual && s.dashing2)   // --dualdash
+                   && !nearPressBox(s) && !nearCtrlHoldBox((double)s.xAbs)
+                   && !(g_airPress && landingNear(s))
+                   && !nearHoldTap((double)s.xAbs)   // --holdtap (object.hpp)
+                   && !(edgeLocked && s.action == 1);
+        };
+        // Is the pressed child of `s` one that only the hold-towards-a-ring exception keeps (the same reading stepKidAt makes of it)?
+        auto heldRide = [&](const State& s) -> bool {
+            if (s.mode != 0 || s.grounded || s.action != 1) return false;
+            const int gridS = (g_gridGroundPress && gridNow > 1 && (K.t % gridNow) != 0 && ((s.grounded && (!g_gridGroundPressCube || s.mode == 0)) || (s.mode == 0 && landingNear(s)))) ? 1 : gridNow;
+            return airPruned(s, model.edgeLocked(s, gridS, K.t), mustPressAt((long long)K.t)) && heldRingInReach(s);
+        };
         auto stepKidAt = [&](size_t i, bool mayTwin) {
             const State& s = cur[gidx[i >> 1]];
             const int input = (int)(i & 1);
+            const bool ppK = g_phaseProf;   // --phaseprof: this child's step by part (progress.hpp g_ppKidSeg)
+            auto ppT = ppK ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+            auto ppSeg = [&](int k) {
+                if (!ppK) return;
+                const auto n = std::chrono::steady_clock::now();
+                g_ppKidSeg[k].fetch_add((long long)std::chrono::duration_cast<std::chrono::nanoseconds>(n - ppT).count(), std::memory_order_relaxed);
+                ppT = n;
+            };
+            // --gridgroundpress (search_census.hpp): the grid does not lock a grounded state, nor a cube with a landing within reach (the press on the landing tick is a GD jump too)
+            const int gridS = (g_gridGroundPress && gridNow > 1 && (K.t % gridNow) != 0 && ((s.grounded && (!g_gridGroundPressCube || s.mode == 0)) || (s.mode == 0 && landingNear(s)))) ? 1 : gridNow;
             // May the button change on this tick (model.hpp edgeLocked)?
-            const bool edgeLocked = model.edgeLocked(s, gridNow, K.t);
+            const bool edgeLocked = model.edgeLocked(s, gridS, K.t);
             const int forcedIn = mustPressAt((long long)K.t);   // --mustpress: the tick's button is given
             if (forcedIn >= 0 && input != forcedIn) return;
             if (forcedIn < 0 && edgeLocked && input != (int)s.action) return;
@@ -1414,15 +2382,11 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // landing is a different jump from one pressed on the landing tick.
             // ...and not when the input rule has just forbidden the release: then the held child
             // is the only one left.
-            if (input == 1 && forcedIn < 0 && s.mode == 0 && !s.grounded && orbsEmpty
-                && !s.dashing && !(s.dual && s.dashing2)   // --dualdash
-                && !nearPressBox(s) && !nearCtrlHoldBox((double)s.xAbs)
-                && !(g_airPress && (!g_airPressNear || landingNear(s)))
-                && !nearHoldTap((double)s.xAbs)   // --holdtap (object.hpp)
-                && !(edgeLocked && s.action == 1))
+            if (input == 1 && airPruned(s, edgeLocked, forcedIn)
+                && !(s.action == 1 && heldRingInReach(s)))   // ...and not a hold carried towards a ring (heldRingInReach; the child rides with its released sibling at the cap, rideNodes)
                 return;
             // --latgap: no edge on a tick GD cannot put one (model.hpp inputAllowed)
-            if (!model.inputAllowed(s, input, gridNow, K.t))
+            if (!model.inputAllowed(s, input, gridS, K.t))
                 return;
             // --twinskip: decided after the step pass, from the released sibling (slot i-1):
             // copied in when that one stayed in the air, stepped for real otherwise.
@@ -1439,7 +2403,12 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // then the gameplay rotation if the tick crossed one -- BEFORE keyOf below, which must
             // key the child in the frame it ended in.
             RotNote rot;
+            if (g_camy) camyChildBegin();   // --camy S2.1: this thread's portal event is cleared, then read as this child's own
+            ppSeg(0);
+            if (ppK) g_ppKidStepped.fetch_add(1, std::memory_order_relaxed);
             kid.s = model.advance(s, input, K, dead, &rot);
+            ppSeg(1);
+            if (g_camy) camyChild(s, kid.s, (long long)t, kidCam.empty() ? camyG : *kidCam[i >> 1], (float)g_maxPlayY);
             if (rot.set) {   // --rotwatch: print only, read in the serial pass below
                 kid.rotUid = rot.uid;
                 kid.rotF0 = rot.f0;
@@ -1453,6 +2422,10 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // note in keyOf describes.
             // (model.hpp noteInput: the action, --minpulse's edge age, --latgap's lock.)
             model.noteInput(s, kid.s, input);
+            // --worldkey (modifiers.hpp): the camera summary, the x curve at its change points (trigevent_camera.hpp dxHistStep)
+            if (g_worldKey) kid.s.dxHist = dp::gdtrig::dxHistStep(s.dxHist, s.dx, kid.s.dx, (double)s.xAbs, (double)kid.s.xAbs, (long long)t);
+            // the groups' on / off and the x-gate digest (trigevent_togstate.hpp)
+            togWorldStep(s, kid.s, input);
             // --statecross: the late crossings of autonomous triggers this step made (search_key.hpp)
             if (g_stateCross && !dead) stateCrossNote(kid.s, s, t);
             // ---- --coins: collect, then kill whoever left one behind (rules.afterStep) ----
@@ -1465,6 +2438,27 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             if (!dead && g_needSpeedX >= 0.0 && (double)s.xAbs < g_needSpeedX && (double)kid.s.xAbs >= g_needSpeedX
                 && ((int)speedCodeForDx((double)kid.s.dx) == g_needSpeedCode) == g_needSpeedNot)
                 DIE_AS(kDeathRule, "speed/required", nullptr);
+            // --deadband x0,x1[,mode[,y0,y1]] (modifiers.hpp): a box of WORLD coordinates the search must not be in -- the repair loop's phantom veto draws one around GD's dump state, and the wedge
+            // hint ("crossed a mode portal in the wrong mode") forces the crossing with `--deadband x0,x1,<mode>`. The rule is the old tick's, as it stood at its removal:
+            // [R] a589807d dp/src/dp/step.hpp:3250-3270, inside stepOne:
+            //     if (!g_deadBands.empty()) { double dbX = x, dbY = (double)s.y; if (s.frame & 3) fromFrame((int)s.frame, x, (double)s.y, dbX, dbY);
+            //       for (const auto& db : g_deadBands) { if (dbX < db.x0 || dbX > db.x1 || dbY < db.y0 || dbY > db.y1) continue;
+            //         const bool hit = (db.mode == -1) || (db.mode >= 0 && (int)s.mode != db.mode) || (db.mode <= -2 && (int)s.mode == -2 - db.mode);
+            //         if (hit) { dead = true; g_deadWhy = "deadband"; g_deadObj = nullptr; g_deadKind = kDeathPhysics; ... return c; } } }
+            // with x = c.xAbs (3119, this tick's x step), s.y and s.mode the ENTRY state's, the frame the entry state's. Under --shadowstep=all the tick is the shadow's and stepOne does not run, and the E9 removal
+            // took the block with stepOne, so the boxes stopped acting: coin lv22 (E10_coins, 11-18) wedged twice at (20115, 829) with `--deadband 19050,19080,5` in the call that planned it, and the
+            // plan passed the robot portal (19005, 705) as a ship. x is the child's own where the tick stayed in the frame, else the plain x step (a turn rewrites xAbs into the new frame).
+            if (!dead && !g_deadBands.empty()) {
+                const double dbx = (kid.s.frame == s.frame) ? (double)kid.s.xAbs
+                                                              : (double)advanceX(s.xAbs, ((s.dx > 0.f) ? s.dx : K.dxF) * (s.rev ? -1.f : 1.f));
+                double dbX = dbx, dbY = (double)s.y;
+                if (s.frame & 3) fromFrame((int)s.frame, dbx, (double)s.y, dbX, dbY);
+                for (const auto& db : g_deadBands) {
+                    if (dbX < db.x0 || dbX > db.x1 || dbY < db.y0 || dbY > db.y1) continue;
+                    const bool hit = (db.mode == -1) || (db.mode >= 0 && (int)s.mode != db.mode) || (db.mode <= -2 && (int)s.mode == -2 - db.mode);
+                    if (hit) { DIE_AS(kDeathPhysics, "deadband", nullptr); break; }
+                }
+            }
             // Route tightness rides along with the child (State c = s copies it
             // already, so this only adds this tick's own contribution). Read by
             // the goal pick below; nothing else looks at it.
@@ -1487,10 +2481,13 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 kid.s.tight = (uint16_t)std::min(0xffff, (int)kid.s.tight + add);
             }
             kid.dead = dead ? 1 : 0;
+            kid.deadKind = dead ? g_deadKind : 0;
             kid.valid = 1;
             // the dedupe key is a pure function of the child, so it belongs on
             // this thread rather than in the serial phase
+            ppSeg(2);
             if (!dead) kid.key = modelKeyOf(kid.s, (long long)t) ^ rules.keyBits(kid.s);
+            ppSeg(3);
             // fireB's invariant, checked where every surviving child passes.
             // (i) is invisible to every replay harness -- dedupe is not on the
             // replay path -- so "quick_regress is byte-identical" says the
@@ -1523,6 +2520,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             kidKeys[i] = kid.key;
             kidFlag[i] = dead ? 1 : 2;
             if (dbgHere || g_refWatch) { kid.why = g_deadWhy; kid.obj = g_deadObj; }
+            ppSeg(4);
         };
         auto stepKid = [&](size_t i) {
             if (!g_phaseProf) { stepKidAt(i, true); return; }
@@ -1534,11 +2532,76 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // --dbg stays serial: it prints per child, in order, and the reason
         // globals are per thread.
         const auto pf0 = g_phaseProf ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-        if (pool && !dbgHere && kids.size() >= kParallelMin)
+        if (dupSkip) {   // dupbatch: this group's children as the leader's pass made them
+            const DupG& B = dupG[dupGi];
+            kids = B.kids; kidKeys = B.keys; kidFlag = B.flags;
+        } else if (pool && !dbgHere && kids.size() >= kParallelMin)
             pool->parallelFor(kids.size(), stepKid);
         else {
             for (size_t i = 0; i < kids.size(); ++i) stepKid(i);
             if (g_phaseProf) ++g_ppSerialGroups;
+        }
+        if (dupBuf && g_dupBatchCheck) {   // --dupbatchcheck: this follower was stepped for itself above; the leader's pass must have made the same children
+            const DupG& B = dupG[dupGi];
+            bool same = B.kids.size() == kids.size() && B.gidx == gidx;
+            // (the canonical record of state_serial.hpp, not the State's bytes: a state names its shadow body by a slot of the store (slRef), and the two passes took different slots for the same body)
+            const stser::Stats keepStats = stser::g_serialStats;
+            std::vector<uint8_t> ra, rb;
+            size_t bad = (size_t)-1; int badWhy = 0;   // the first child that differs, and in what: 1 its flag, 2 its dedupe key, 3 a field of the canonical record, 4 a camera field
+            for (size_t i = 0; same && i < kids.size(); ++i) {
+                if (B.flags[i] != kidFlag[i]) { same = false; bad = i; badWhy = 1; break; }
+                if (kidFlag[i] != 2) continue;
+                if (B.keys[i] != kidKeys[i]) { same = false; bad = i; badWhy = 2; break; }
+                ra.clear(); rb.clear(); stser::serializeState(B.kids[i].s, ra); stser::serializeState(kids[i].s, rb);
+                if (ra != rb) { same = false; bad = i; badWhy = 3; break; }
+                if (g_camy) {   // (the camera fields --camy carries in the State have no row in the serializer: compared here, bit for bit)
+                    const State& x = B.kids[i].s; const State& y = kids[i].s;
+                    if (std::memcmp(&x.camY, &y.camY, sizeof x.camY) || x.camPortal != y.camPortal || std::memcmp(&x.camTwStart, &y.camTwStart, sizeof x.camTwStart)
+                        || std::memcmp(&x.camDy, &y.camDy, sizeof x.camDy) || std::memcmp(&x.camTan, &y.camTan, sizeof x.camTan)) { same = false; bad = i; badWhy = 4; break; }
+                }
+            }
+            stser::g_serialStats = keepStats;
+            ++g_dupBatchChecked;
+            if (!same && ++g_dupBatchMismatch <= 20) {
+                std::printf("dupbatch: MISMATCH at t=%lld: a follower's own children are not the ones its leader's tick made (group %zu of %zu, %zu parents)\n", (long long)t, dupGi, groupDx.size(), gidx.size());
+                if (bad == (size_t)-1) std::printf("dupbatch:   the two passes do not hold the same parents (%zu / %zu children)\n", B.kids.size(), kids.size());
+                else {
+                    const State& x = B.kids[bad].s; const State& y = kids[bad].s; const State& par = cur[gidx[bad >> 1]];
+                    std::printf("dupbatch:   child %zu (parent %zu, input %d; parent x %.4f y %.4f vy %.4f mode %d): %s; flags leader's %d own %d, keys %016llx / %016llx\n", bad, bad >> 1, (int)(bad & 1), (double)par.xAbs, (double)par.y,
+                                (double)par.vy, (int)par.mode, badWhy == 1 ? "the flag" : badWhy == 2 ? "the dedupe key" : badWhy == 3 ? "the record" : "a camera field", (int)B.flags[bad], (int)kidFlag[bad],
+                                (unsigned long long)B.keys[bad], (unsigned long long)kidKeys[bad]);
+                    if (B.flags[bad] == 2 && kidFlag[bad] == 2) {
+                        ra.clear(); rb.clear(); stser::serializeState(x, ra); stser::serializeState(y, rb); stser::g_serialStats = keepStats;
+                        std::vector<std::pair<uint32_t, uint32_t>> sa, sb;
+                        stser::fieldSlices(ra, sa); stser::fieldSlices(rb, sb);
+                        const auto& fl = stser::fields();
+                        int shown = 0;
+                        for (size_t k = 0; k < fl.size() && k < sa.size() && k < sb.size() && shown < 12; ++k) {
+                            const bool eq = sa[k].second == sb[k].second && sa[k].first + sa[k].second <= ra.size() && sb[k].first + sb[k].second <= rb.size()
+                                            && !std::memcmp(ra.data() + sa[k].first, rb.data() + sb[k].first, sa[k].second);
+                            if (eq) continue;
+                            ++shown;
+                            std::printf("dupbatch:     field %s (%c): leader's pass", fl[k].name, fl[k].kind);
+                            for (uint32_t b = 0; b < sa[k].second && b < 16 && sa[k].first + b < ra.size(); ++b) std::printf(" %02x", ra[sa[k].first + b]);
+                            std::printf(" | own");
+                            for (uint32_t b = 0; b < sb[k].second && b < 16 && sb[k].first + b < rb.size(); ++b) std::printf(" %02x", rb[sb[k].first + b]);
+                            if (fl[k].kind == 'f' && sa[k].second == 4 && sb[k].second == 4) { float fa, fb; std::memcpy(&fa, ra.data() + sa[k].first, 4); std::memcpy(&fb, rb.data() + sb[k].first, 4); std::printf("  (%.6f | %.6f)", (double)fa, (double)fb); }
+                            std::printf("\n");
+                        }
+                        if (g_camy) std::printf("dupbatch:     camera: leader's pass camY %.4f portal %d start %.4f | own camY %.4f portal %d start %.4f\n", (double)x.camY, (int)x.camPortal, (double)x.camTwStart, (double)y.camY, (int)y.camPortal, (double)y.camTwStart);
+                    }
+                }
+            }
+        }
+        if (!dupSeg.empty()) {   // dupbatch: the followers' children leave the leader's arrays, each to wait for its group's turn
+            for (size_t k = 0; k < dupSeg.size(); ++k) {
+                DupG& H = dupG[dupSeg[k].first];
+                const size_t a = dupSeg[k].second * 2, b = (k + 1 < dupSeg.size() ? dupSeg[k + 1].second : gidx.size()) * 2;
+                H.kids.assign(kids.begin() + (std::ptrdiff_t)a, kids.begin() + (std::ptrdiff_t)b);
+                H.keys.assign(kidKeys.begin() + (std::ptrdiff_t)a, kidKeys.begin() + (std::ptrdiff_t)b);
+                H.flags.assign(kidFlag.begin() + (std::ptrdiff_t)a, kidFlag.begin() + (std::ptrdiff_t)b);
+            }
+            kids.resize(dupOwn * 2); kidKeys.resize(dupOwn * 2); kidFlag.resize(dupOwn * 2); gidx.resize(dupOwn);
         }
         if (g_phaseProf)
             g_ppStepNs += (long long)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - pf0).count();
@@ -1571,7 +2634,6 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                     if (g_heldAll) {
                         k.s.held = 1;
                         k.s.jumpBuf = 1;
-                        if (g_dualJumpBuf && k.s.dual) k.s.jumpBuf2 = 1;   // --dualjumpbuf
                         k.key = modelKeyOf(k.s, (long long)t) ^ rules.keyBits(k.s);
                     }
                     return k;
@@ -1673,6 +2735,49 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         // acceptance test (py/quick_regress.py, bit-identical).
         // Serial on purpose: the stepping above is what needed the threads, and
         // a probe that took a lock per child would be measuring the lock.
+        // --portaudit (port_audit.hpp; print only): do two candidates that share a dedupe key and differ only in portSeen part on the next tick?
+        if (g_portAudit) {
+            // (1) the pairs the layer before sampled whose group this is: step both one tick, each input, under this layer's context
+            for (auto& pp : g_portAuditPending) {
+                if (pp.done) continue;
+                if (pp.t < t - 1) { pp.done = true; ++g_portAuditStats.expired; continue; }
+                if (pp.t != t - 1) continue;
+                if (!((((pp.a.dx > 0.f) ? pp.a.dx : curDxF) == gdx) && pp.a.trig == gtrig)) continue;
+                portAuditStepPair(pp, [&](const State& s, int input, State& out, uint64_t& key) -> int {
+                    if (!model.inputAllowed(s, input, gridNow, K.t)) return -1;
+                    bool dead = false;
+                    RotNote rot;
+                    out = model.advance(s, input, K, dead, &rot);
+                    model.noteInput(s, out, input);
+                    if (dead) return 0;
+                    key = modelKeyOf(out, (long long)t) ^ rules.keyBits(out);
+                    return 1;
+                });
+            }
+            g_portAuditPending.erase(std::remove_if(g_portAuditPending.begin(), g_portAuditPending.end(), [](const PortAuditPair& p) { return p.done; }), g_portAuditPending.end());
+            // (2) this group's candidates, before the dedupe: the collision pairs, and a few of them kept for the next layer
+            long long alive = 0, shared = 0;
+            const auto prs = portAuditFind(kids, &alive, &shared);
+            g_portAuditStats.kids += alive;
+            g_portAuditStats.keyShared += shared;
+            g_portAuditStats.pairs += (long long)prs.size();
+            for (const auto& pr : prs)
+                if (portSeenReal(kids[pr.first].s) || portSeenReal(kids[pr.second].s)) ++g_portAuditStats.pairsReal;
+            if (!prs.empty()) ++g_portAuditStats.layers;
+            static long long auditLayerT = -1;
+            static int auditTaken = 0;
+            if (auditLayerT != t) { auditLayerT = t; auditTaken = 0; }
+            for (const auto& pr : prs) {
+                if (auditTaken >= g_portAuditSample) break;
+                PortAuditPair np;
+                np.a = kids[pr.first].s;
+                np.b = kids[pr.second].s;
+                np.t = t;
+                g_portAuditPending.push_back(np);
+                ++auditTaken;
+                ++g_portAuditStats.sampled;
+            }
+        }
         if (g_clearProbe) {
             clearKids.clear();
             for (size_t i = 0; i < kids.size(); ++i) {
@@ -1699,6 +2804,167 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             g_clear.addLayer(clearKids);
         }
 
+        // --worldkey: the group's CHILDREN before its dedupe -- K = distinct dedupe keys, KD = distinct (key, dxHist) (trigevent_camera.hpp countKeys)
+        if (g_worldKey) {
+            std::vector<std::pair<uint64_t, uint64_t>> kh;
+            kh.reserve(kids.size());
+            for (const Child& kd : kids) if (kd.valid && !kd.dead) kh.emplace_back(kd.key, kd.s.dxHist);
+            const dp::gdtrig::KeyCount kc = dp::gdtrig::countKeys(kh);
+            auto& W = g_worldKeyStat;
+            const long long gain = kc.kd - kc.k;
+            ++W.candGroups; W.candK += kc.k; W.candKD += kc.kd; W.candMaxExtra = std::max(W.candMaxExtra, gain); if (gain > 0) ++W.candGroupsSplit;
+            auto& B = W.cb[(long long)t / 2000];
+            ++B.layers; B.k += kc.k; B.kd += kc.kd; B.maxExtra = std::max(B.maxExtra, gain);
+        }
+        // --camy S2.4 (observation only): per dedupe key of this group's live children, do their camY agree? If not, the camera Y is not a function of the key and the dedupe keeps one of them
+        if (g_camy) {
+            std::vector<std::pair<uint64_t, float>> kc;
+            kc.reserve(kids.size());
+            for (const Child& kd : kids) if (kd.valid && !kd.dead && kd.s.camY > -0.5f) kc.emplace_back(kd.key, kd.s.camY);
+            std::sort(kc.begin(), kc.end());
+            long long keys = 0, mixed = 0, mixed05 = 0, kidsIn = 0, kidsIn05 = 0; float maxSp = 0.0f;
+            for (size_t a = 0; a < kc.size();) {
+                size_t b = a + 1;
+                while (b < kc.size() && kc[b].first == kc[a].first) ++b;
+                ++keys;
+                const float sp = kc[b - 1].second - kc[a].second;   // sorted by camY inside a key
+                if (sp > 1e-3f) { ++mixed; kidsIn += (long long)(b - a); if (sp > 0.5f) { ++mixed05; kidsIn05 += (long long)(b - a); } maxSp = std::max(maxSp, sp); }
+                a = b;
+            }
+            {   // S3-0 (a): the children that are a 1914 static with a known start, per key
+                std::vector<std::pair<uint64_t, float>> sk;
+                for (const Child& kd : kids) if (kd.valid && !kd.dead && kd.s.camPortal == 254 && kd.s.camTan > -1e29f && kd.s.camY > -0.5f) sk.emplace_back(kd.key, kd.s.camY);
+                std::sort(sk.begin(), sk.end());
+                long long sKeys = 0, m005 = 0, m025 = 0, m1 = 0; float maxS = 0.0f;
+                for (size_t a = 0; a < sk.size();) {
+                    size_t b2 = a + 1; while (b2 < sk.size() && sk[b2].first == sk[a].first) ++b2;
+                    if (b2 - a >= 2) { ++sKeys; const float sp = sk[b2 - 1].second - sk[a].second; if (sp > 0.05f) ++m005; if (sp > 0.25f) ++m025; if (sp > 1.0f) ++m1; maxS = std::max(maxS, sp); }
+                    a = b2;
+                }
+                g_camyObs.stChildren += (long long)sk.size(); g_camyObs.stKeys += sKeys; g_camyObs.stMixed005 += m005; g_camyObs.stMixed025 += m025; g_camyObs.stMixed1 += m1;
+                const int sms = (int)std::min(1.0e6f, maxS * 1000.0f); if (sms > g_camyObs.stMaxMilli.load()) g_camyObs.stMaxMilli = sms;
+            }
+            ++g_camyObs.mxGroups; g_camyObs.mxKeys += keys; g_camyObs.mxMixed += mixed; g_camyObs.mxMixed05 += mixed05; g_camyObs.mxKids += kidsIn; g_camyObs.mxKids05 += kidsIn05;
+            const int ms = (int)std::min(1.0e6f, maxSp * 1000.0f); if (ms > g_camyObs.mxMaxSpreadMilli.load()) g_camyObs.mxMaxSpreadMilli = ms;
+        }
+        // KEYOBS=1 (env; observation only; cli.hpp prints the `rotobs:` line): per dedupe key of this group's live children, do their angles agree? The key leaves the angle out (search_key.hpp), so
+        // the dedupe keeps one child of a key whatever the others' are. Two counts: the raw angles differ, and they differ as a square's (the angle within a quarter turn; the first body only).
+        if (gdcol::g_keyObs) {
+            std::vector<std::pair<uint64_t, float>> kr;
+            kr.reserve(kids.size());
+            for (const Child& kd : kids) if (kd.valid && !kd.dead) kr.emplace_back(kd.key, kd.s.rot);
+            std::sort(kr.begin(), kr.end());
+            long long keys = 0, mixed = 0, mixedQ = 0, kidsQ = 0, byMode[3] = {0, 0, 0};
+            std::vector<float> q;
+            for (size_t a = 0; a < kr.size();) {
+                size_t b = a + 1;
+                while (b < kr.size() && kr[b].first == kr[a].first) ++b;
+                ++keys;
+                if (b - a >= 2 && kr[b - 1].second != kr[a].second) {   // (sorted by the angle inside a key)
+                    ++mixed;
+                    q.clear();
+                    for (size_t k = a; k < b; ++k) q.push_back(kr[k].second - 90.0f * std::floor(kr[k].second / 90.0f));
+                    std::sort(q.begin(), q.end());
+                    float gap = q.front() + 90.0f - q.back();   // the largest gap of the angles on the quarter circle: the rest is the arc they span
+                    for (size_t k = 1; k < q.size(); ++k) gap = std::max(gap, q[k] - q[k - 1]);
+                    if (90.0f - gap > 1e-3f) { ++mixedQ; kidsQ += (long long)(b - a); }
+                }
+                a = b;
+            }
+            for (const Child& kd : kids) if (kd.valid && !kd.dead) ++byMode[kd.s.mode == 0 ? 0 : kd.s.mode == 2 ? 1 : 2];
+            ++g_rotKeyObs.groups; g_rotKeyObs.kids += (long long)kr.size(); g_rotKeyObs.keys += keys; g_rotKeyObs.mixed += mixed; g_rotKeyObs.mixedQ += mixedQ; g_rotKeyObs.kidsQ += kidsQ;
+            for (int k = 0; k < 3; ++k) g_rotKeyObs.byMode[k] += byMode[k];
+        }
+        // KEYOBS=1 (env; observation only; progress.hpp Boost2Obs, cli.hpp prints the `boost2obs:` line): what a dual's second exemption bit does to this group's keys before its dedupe.
+        // (The band is asked of the State's float vy2, the game's of the image's double: a child on the band's edge may be counted on the other side.)
+        if (gdcol::g_keyObs) {
+            std::vector<uint64_t> k0, k1, k2;
+            long long up[3] = {0, 0, 0};
+            for (const Child& kd : kids) {
+                if (!kd.valid || kd.dead || !kd.s.dual) continue;
+                const State& z = kd.s;
+                int cls = -1;
+                if (z.boost2) {
+                    const int m = (int)z.mode2;
+                    const bool flies = m == 1 || m == 3 || m == 4 || m == 7, reads = m == 1 || m == 3 || m == 7;
+                    const double v = (double)z.vy2, f22 = z.mini2 ? 0.85f : 1.0f;   // updateJump's clear95a (upd.hpp), the flying modes' size factor
+                    const bool inBand = !z.flip2 ? ((0.0 <= v && v < (double)(8.0f / (float)f22)) || (v <= 0.0 && (double)(-6.4f / (float)f22) < v))
+                                                 : ((v <= 0.0 && (double)-(8.0f / (float)f22) < v) || (0.0 <= v && v < (double)-(-6.4f / (float)f22)));
+                    cls = (flies && inBand) ? 1 : reads ? 0 : 2;
+                    ++up[cls];
+                }
+                k0.push_back(kd.key);
+                k1.push_back(cls >= 0 ? kd.key ^ kKeyBoost2 : kd.key);
+                k2.push_back(cls == 1 ? kd.key ^ kKeyBoost2 : kd.key);
+            }
+            if (!k0.empty()) {
+                auto distinct = [](std::vector<uint64_t>& v) { std::sort(v.begin(), v.end()); return (long long)(std::unique(v.begin(), v.end()) - v.begin()); };
+                ++g_boost2Obs.groups; g_boost2Obs.dualKids += (long long)k0.size();
+                for (int k = 0; k < 3; ++k) g_boost2Obs.up[k] += up[k];
+                g_boost2Obs.keys += distinct(k0); g_boost2Obs.keysNoBit += distinct(k1); g_boost2Obs.keysCanon += distinct(k2);
+            }
+        }
+        // KEYOBS=1 (env; observation only; progress.hpp Boost1Obs, cli.hpp prints the `boostobs:` line): the same for the first body's bit (State::boost), over every live child. Its class
+        // [1] is the narrower one the second body's write-back uses (upd.hpp exemptionClearedNext): a flying body, not dashing, no touched ring, vy inside the part the two bands share.
+        if (gdcol::g_keyObs) {
+            std::vector<uint64_t> k0, k1, k2;
+            long long up[3] = {0, 0, 0};
+            for (const Child& kd : kids) {
+                if (!kd.valid || kd.dead) continue;
+                const State& z = kd.s;
+                int cls = -1;
+                if (z.boost) {
+                    const int m = (int)z.mode;
+                    const bool flies = m == 1 || m == 3 || m == 4 || m == 7, reads = m == 1 || m == 3 || m == 7;
+                    const float f22 = z.mini ? 0.85f : 1.0f;
+                    const double v = (double)z.vy;
+                    const bool inBoth = (double)(-6.4f / f22) < v && v < (double)-(-6.4f / f22);
+                    const bool noRing = z.touchRing[0] < 0 && z.touchRing[1] < 0 && z.touchRing[2] < 0 && z.touchRing[3] < 0;
+                    cls = (flies && inBoth && !z.dashing && noRing) ? 1 : reads ? 0 : 2;
+                    ++up[cls];
+                }
+                k0.push_back(kd.key);
+                k1.push_back(cls >= 0 ? kd.key ^ kKeyBoost : kd.key);
+                k2.push_back(cls == 1 ? kd.key ^ kKeyBoost : kd.key);
+            }
+            if (!k0.empty()) {
+                auto distinct = [](std::vector<uint64_t>& v) { std::sort(v.begin(), v.end()); return (long long)(std::unique(v.begin(), v.end()) - v.begin()); };
+                ++g_boost1Obs.groups; g_boost1Obs.kids += (long long)k0.size();
+                for (int k = 0; k < 3; ++k) g_boost1Obs.up[k] += up[k];
+                g_boost1Obs.keys += distinct(k0); g_boost1Obs.keysNoBit += distinct(k1); g_boost1Obs.keysCanon += distinct(k2);
+            }
+        }
+        // --bandpairs (modifiers.hpp): children with the same dedupe key and bandProgress but a different raw bandAnim byte
+        if (g_bandPair.on) {
+            std::vector<std::tuple<uint64_t, long long, uint8_t>> bp;
+            for (const Child& kd : kids) if (kd.valid && !kd.dead) bp.emplace_back(kd.key, std::llround(bandProgress(kd.s.bandAnim) * 1000000.0), kd.s.bandAnim);
+            std::sort(bp.begin(), bp.end());
+            long long d1 = 0, d2 = 0;
+            for (size_t i = 0; i < bp.size(); ++i) {
+                const bool newRaw = i == 0 || bp[i] != bp[i - 1];
+                const bool newProg = i == 0 || std::get<0>(bp[i]) != std::get<0>(bp[i - 1]) || std::get<1>(bp[i]) != std::get<1>(bp[i - 1]);
+                d2 += newRaw; d1 += newProg;
+            }
+            ++g_bandPair.groups; g_bandPair.kids += (long long)bp.size(); g_bandPair.d1 += d1; g_bandPair.d2 += d2;
+            if (d2 > d1) { ++g_bandPair.groupsWithExtra; g_bandPair.maxExtra = std::max(g_bandPair.maxExtra, d2 - d1); }
+        }
+        // --worldtree (P5-2b): the two-level key against the flat one, over this group's children before the dedupe (observation only)
+        if (g_worldTree.on) {
+            std::vector<uint64_t> a, f;
+            std::vector<std::pair<uint64_t, uint64_t>> pr;
+            for (const Child& kd : kids) {
+                if (!kd.valid || kd.dead) continue;
+                const uint64_t w = worldKeyOf(kd.s, false, true);
+                const uint64_t rest = kd.key ^ w;
+                a.push_back(rest); pr.emplace_back(w, rest); f.push_back(rest ^ w);
+            }
+            std::sort(a.begin(), a.end()); a.erase(std::unique(a.begin(), a.end()), a.end());
+            std::sort(pr.begin(), pr.end()); pr.erase(std::unique(pr.begin(), pr.end()), pr.end());
+            std::sort(f.begin(), f.end()); f.erase(std::unique(f.begin(), f.end()), f.end());
+            auto& W2 = g_worldTree;
+            ++W2.cGroups; W2.cK += (long long)a.size(); W2.cKW += (long long)pr.size(); W2.cKF += (long long)f.size();
+            if (pr.size() != f.size()) ++W2.cGroupsMismatch;
+        }
         // ---- phase 2p: dedupe in parallel shards (big layers) ---------------
         // Same result as the serial loop below, built in three steps:
         //   1. each shard walks the ordinals ascending and, for ITS keys only,
@@ -1744,6 +3010,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                         // the comparisons mirror emit() exactly, including the
                         // float->double promotion of `vy + 1e-9`
                         if ((double)vy > (double)r.hiVy + 1e-9) {
+                            if (gdcol::g_keyObs && r.hiIdx != r.loIdx) noteDroppedPrev(kids[r.hiIdx].s, kids[i].s);   // KEYOBS: the displaced rep
                             if (r.bOrd == kNone) {
                                 r.bOrd = i;
                                 r.bWasHi = 1;
@@ -1754,6 +3021,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                             r.hiVy = vy;
                             accepted = true;
                         } else if ((double)vy < (double)r.loVy - 1e-9) {
+                            if (gdcol::g_keyObs && r.hiIdx != r.loIdx) noteDroppedPrev(kids[r.loIdx].s, kids[i].s);   // KEYOBS: the displaced rep
                             if (r.bOrd == kNone) {
                                 r.bOrd = i;
                                 r.bWasHi = 0;
@@ -1763,6 +3031,9 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                             r.loIdx = i;
                             r.loVy = vy;
                             accepted = true;
+                        } else if (gdcol::g_keyObs) {   // KEYOBS: dropped; compared with the reps it lost to (State::prevWX / prevWY is not in the key)
+                            noteDroppedPrev(kids[i].s, kids[r.hiIdx].s);
+                            if (r.loIdx != r.hiIdx) noteDroppedPrev(kids[i].s, kids[r.loIdx].s);
                         }
                     }
                     // Same test as the serial path (rules.reached): keep the
@@ -1786,7 +3057,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             for (size_t i = 0; i < kids.size(); ++i) {
                 if (!kidFlag[i]) continue;
                 ++nBorn;
-                if (kidFlag[i] == 1) ++nDied;
+                if (kidFlag[i] == 1) { ++nDied; if (g_partialPhys) notePhys(cur[gidx[i >> 1]], kids[i].deadKind); }
             }
             // materialise nxt in the serial loop's slot order
             for (uint32_t i = 0; i < (uint32_t)kids.size(); ++i) {
@@ -1802,9 +3073,11 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 const uint8_t action = (uint8_t)(src & 1);
                 arena.push_back(Node{from.parent | ((uint32_t)action << 31)});
                 if (checkWanted) arenaMode.push_back(kids[src].s.mode);
+                if (lossyOn) { const uint8_t lf = arenaLossy[from.parent]; arenaLossy.push_back(lf); }
                 nxt.push_back(kids[src].s);
                 nxt.back().parent = (uint32_t)(arena.size() - 1);
                 nxt.back().action = action;
+                if (action == 1 && heldRide(from)) rideNodes.push_back(nxt.back().parent);
             }
             {
                 // Across shards, the same rule as within one: roomiest first,
@@ -1829,6 +3102,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                     arena.push_back(
                         Node{from.parent | ((uint32_t)action << 31)});
                     if (checkWanted) arenaMode.push_back(kids[g].s.mode);
+                    if (lossyOn) { const uint8_t lf = arenaLossy[from.parent]; arenaLossy.push_back(lf); }
                     goalState = kids[g].s;
                     goalState.parent = (uint32_t)(arena.size() - 1);
                     goalState.action = action;
@@ -1847,7 +3121,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             const State& c = kid.s;
             const bool dead = kid.dead != 0;
             ++nBorn;
-            if (dead) ++nDied;
+            if (dead) { ++nDied; if (g_partialPhys) notePhys(s, kid.deadKind); }
             {
                 if (dbgHere) {
                     // name the killer. "dead=1" alone never says whether the
@@ -1889,7 +3163,11 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                                 (int)c.flip, (int)c.grounded, (int)s.held,
                                 (int)dead, why, two);
                 }
-                if (!dead) emit(c, s, (uint8_t)input, kid.key);
+                if (!dead) {
+                    emitNode = 0;
+                    emit(c, s, (uint8_t)input, kid.key);
+                    if (emitNode && input == 1 && heldRide(s)) rideNodes.push_back(emitNode);
+                }
             }
         }
         if (qfHere) qfoldAccount(qfBefore);
@@ -2128,6 +3406,17 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                             std::memcpy(a.usedOrbHist, b.usedOrbHist, sizeof(a.usedOrbHist));
                             std::memcpy(a.usedOrbHist2, b.usedOrbHist2, sizeof(a.usedOrbHist2));
                         }
+                        if (g_refAdoptSl) {   // --refadoptsl (refwatch.hpp): a shadow block that differs only in the benign words does not keep the survivor from standing in
+                            for (int p = 0; p < 2; ++p) {
+                                const gdcol::ShadowLite* x = gdcol::slOf(p ? nxt[si].slRef2 : nxt[si].slRef);
+                                const gdcol::ShadowLite* y = gdcol::slOf(p ? g_refKidState[want].slRef2 : g_refKidState[want].slRef);
+                                std::string nm;
+                                if (x && y && slDiffBenign(*x, *y, nm)) {
+                                    if (p) a.slRef2 = b.slRef2; else a.slRef = b.slRef;
+                                    if (!nm.empty()) diff += std::string(" shadow") + (p ? "2:" : "1:") + nm;
+                                }
+                            }
+                        }
                         if (std::memcmp(&a, &b, sizeof(State)) == 0 && !g_refAdopt) {
                             std::printf("refwatch: merge t=%lld the survivor differs only in:%s "
                                         "(--refadopt would carry on with it)\n", t, diff.c_str());
@@ -2154,6 +3443,14 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                             for (size_t o = 0; o < sizeof(State) && nd < 16; ++o)
                                 if (pa[o] != pb[o]) { std::printf(" %zu", o); ++nd; }
                             std::printf("\n");
+                            // the shadow's own block differs where the handle's bytes say nothing: name what differs (refwatch.hpp slDiffNames)
+                            const gdcol::ShadowLite* sa1 = gdcol::slOf(nxt[si].slRef);
+                            const gdcol::ShadowLite* sb1 = gdcol::slOf(g_refKidState[want].slRef);
+                            if (sa1 && sb1) std::printf("refwatch: cell-mate %zu shadow(p1) differs:%s\n", si, slDiffNames(*sa1, *sb1).c_str());
+                            else std::printf("refwatch: cell-mate %zu shadow(p1) block %s\n", si, (!sa1 && !sb1) ? "absent on both" : (!sa1 ? "absent on the survivor" : "absent on the reference"));
+                            const gdcol::ShadowLite* sa2 = gdcol::slOf(nxt[si].slRef2);
+                            const gdcol::ShadowLite* sb2 = gdcol::slOf(g_refKidState[want].slRef2);
+                            if (sa2 && sb2) std::printf("refwatch: cell-mate %zu shadow(p2) differs:%s\n", si, slDiffNames(*sa2, *sb2).c_str());
                         }
                     }
                     if (adopted) {
@@ -2185,7 +3482,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         }
         maxAlive = std::max(maxAlive, nxt.size());
         const bool censusHere = g_searchCensus > 0 && ((t - t0) % g_searchCensus) == 0;
-        if (g_searchCensus > 0) census.layer(nxt, (long long)t, curDxF, nBorn, nDied, censusHere);
+        if (g_searchCensus > 0 || g_censusLayersOn) census.layer(nxt, (long long)t, curDxF, nBorn, nDied, censusHere);
         // --capmap: this layer's cap, from the leader x of the layer before it.
         const size_t capNow = capAtX(bestX);
         g_outcome.workStates += (long long)std::min(nxt.size(), capNow);
@@ -2196,7 +3493,11 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
         std::vector<uint32_t> cellPool;
         std::vector<uint32_t> cellOf;
         bool overCap = nxt.size() > capNow;
-        if (overCap && g_heldCellCap && g_heldAll) {
+        // --capholdpair: the cells are instead the two children of one parent that the press has
+        // not told apart yet (same parent, same y / vy / grounded / mode / size / flip / dual): the
+        // released and the pressed child, which the new model's key keeps as two states (slKeyBits).
+        const bool pairCells = g_capHoldPair;
+        if (overCap && ((g_heldCellCap && g_heldAll) || pairCells)) {
             // The keys on the pool's threads (the layer is thousands of states on every capped
             // layer, and keyOf is the costly part), then (key, index) sorted: a cell's first
             // state is its lowest index.
@@ -2204,6 +3505,19 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             std::vector<std::pair<uint64_t, uint32_t>> ck(n);
             auto keyAt = [&](size_t i) {
                 State s = nxt[i];
+                if (pairCells) {
+                    uint32_t yb, vyb;
+                    static_assert(sizeof s.y == 4 && sizeof s.vy == 4, "float body");
+                    std::memcpy(&yb, &s.y, 4);
+                    std::memcpy(&vyb, &s.vy, 4);
+                    const uint64_t k =
+                        ((uint64_t)(arena[s.parent].parent() + 1) * 0x9E3779B97F4A7C15ull)
+                        ^ ((((uint64_t)yb << 32) | vyb) * 0xBF58476D1CE4E5B9ull)
+                        ^ (((uint64_t)s.grounded << 1 | (uint64_t)s.mode << 8 | (uint64_t)s.mini << 16
+                            | (uint64_t)s.flip << 24 | (uint64_t)s.dual << 32) * 0x94D049BB133111EBull);
+                    ck[i] = {k, (uint32_t)i};
+                    return;
+                }
                 s.held = 0;
                 s.jumpBuf = 0;
                 ck[i] = {modelKeyOf(s, (long long)t) ^ rules.keyBits(s), (uint32_t)i};
@@ -2223,9 +3537,50 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             if (overCap) ++cellCuts;
             else ++cellSpared;
         }
+        // A held child kept towards a ring (rideNodes) is not a state the cap chooses: in the air it is its released sibling with another button history, and counted in
+        // the layer it took a share of its class from states that are different places. It rides instead: left out of what the water-fill samples, kept exactly when
+        // the state it is the same body as is kept -- same x, y, vy, mode, size, gravity, dual and frame, the button aside (the cells below, as --heldcellcap's twins
+        // are). The released child of its own parent is that state only on the first tick of the hold: after it, that child has merged with the released lineage's.
+        // A held child with no such state in the layer is counted as any state.
+        if (overCap && cellOf.empty() && !rideNodes.empty()) {
+            const size_t n = nxt.size();
+            auto bodyKey = [](const State& q) -> uint64_t {
+                uint32_t xb, yb, vb;
+                static_assert(sizeof q.xAbs == 4 && sizeof q.y == 4 && sizeof q.vy == 4, "float body");
+                std::memcpy(&xb, &q.xAbs, 4); std::memcpy(&yb, &q.y, 4); std::memcpy(&vb, &q.vy, 4);
+                return ((((uint64_t)yb << 32) | vb) * 0xBF58476D1CE4E5B9ull) ^ ((uint64_t)xb * 0x9E3779B97F4A7C15ull)
+                       ^ (((uint64_t)q.mode | (uint64_t)q.mini << 8 | (uint64_t)q.flip << 16 | (uint64_t)q.dual << 24 | (uint64_t)q.frame << 32 | (uint64_t)q.grounded << 40) * 0x94D049BB133111EBull);
+            };
+            auto sameBody = [](const State& a, const State& b) {
+                return a.xAbs == b.xAbs && a.y == b.y && a.vy == b.vy && a.mode == b.mode && a.mini == b.mini && a.flip == b.flip && a.dual == b.dual && a.frame == b.frame && a.grounded == b.grounded;
+            };
+            std::vector<uint8_t> isRide(n, 0);
+            std::unordered_map<uint64_t, uint32_t> body;
+            for (size_t i = 0; i < n; ++i) {
+                isRide[i] = std::binary_search(rideNodes.begin(), rideNodes.end(), nxt[i].parent) ? 1 : 0;
+                if (!isRide[i]) body.emplace(bodyKey(nxt[i]), (uint32_t)i);
+            }
+            cellOf.resize(n);
+            for (size_t i = 0; i < n; ++i) {
+                cellOf[i] = (uint32_t)i;
+                if (isRide[i]) {
+                    const auto it = body.find(bodyKey(nxt[i]));
+                    if (it != body.end() && sameBody(nxt[it->second], nxt[i])) cellOf[i] = it->second;
+                }
+                if (cellOf[i] == (uint32_t)i) cellPool.push_back((uint32_t)i);
+            }
+            overCap = cellPool.size() > capNow;
+            if (!overCap) { cellOf.clear(); cellPool.clear(); }
+        }
+        rideNodes.clear();
         const bool cellCap = !cellOf.empty();
         if (overCap) {
             ++capHits;
+            if (e.outcome.capHitX0 < 0.0) e.outcome.capHitX0 = (double)bestX;   // the first layer the cap thinned: where (SearchOutcome::capHitX0)
+            // the first / last layer the cap thinned (--lossystat prints them; kept always, they are three integers)
+            if (g_lossy.firstCapT < 0) g_lossy.firstCapT = (long long)t;
+            g_lossy.lastCapT = (long long)t;
+            ++g_lossy.capLayers;
             if (!cellCap) capDropped += (long long)(nxt.size() - capNow);
             if (!g_bandPath.empty() && !g_bands.empty() && g_bands.back().t == t)
                 g_bands.back().capdrop = (int)((cellCap ? cellPool.size() : nxt.size()) - capNow);
@@ -2233,7 +3588,13 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // rules.winCell).
             const bool bandClass = rules.bandClass();
             auto coinWinCell = [&rules](const State& s) -> uint64_t { return rules.winCell(s); };
-            auto classOf = [bandClass, &coinWinCell, &rules](const State& s) {
+            // --capholdclass: the holding bits of a state's shadow block (ShadowLite::hold, GD's
+            // m_holdingButtons[1..3]); 0 for a state the shadow did not step
+            auto holdOf = [](const State& s) -> uint64_t {
+                const gdcol::ShadowLite* p = gdcol::slOf(s.slRef);
+                return (p && (p->flags & gdcol::kSlValid)) ? (uint64_t)p->hold : 0;
+            };
+            auto classOf = [bandClass, &coinWinCell, &rules, &holdOf](const State& s) {
                 return coinWinCell(s) ^ ((uint64_t)s.mode << 32) ^ ((uint64_t)s.mini << 24)
                        ^ ((uint64_t)s.flip << 16) ^ ((uint64_t)s.dual << 8)
                        // the route's own class (CurrentRules::classBits: the coins taken)
@@ -2269,7 +3630,26 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                        // (refwatch on a human route the model replays to 0 px).
                        ^ (bandClass ? (s.trig & g_actMask).word(0) * 0x94D049BB133111EBull
                                     : 0)
-                       ^ (uint64_t)(uint32_t)std::lround(s.dx * 1000.0);
+                       ^ (uint64_t)(uint32_t)std::lround(s.dx * 1000.0)
+                       // --capdashclass (removed): a state holding a dash is a class of its own
+                       // (always on: the switch --capdashclass is removed)
+                       // --capdashclass (removed): the frontier cap's per-class stride (search_dp.hpp classOf) counts a state holding a dash (State::dashing) as a class of its own, so a thin dash line keeps all its states while the big cube class is thinned. lv21 x~2480: the only route over the pit holds a dash orb for 100+ ticks; under a binding cap the stride kept it at random, and the new model, whose layer is wider, lost it at t=1909.
+                       ^ ((uint64_t)s.dashing << 40)
+                       // --capholdclass: ...and so is each set of the new model's holding bits, so a
+                       // stride over (released, pressed) pairs does not keep one side only
+                       ^ (g_capHoldClass ? (holdOf(s) << 44) : 0)
+                       // ...and whether a counting Tap's window is open with its Count not fired yet (State::taps / tapsX, bit 0x80: set while
+                       // the presses are being counted, cleared when the Count on the Tap's item has fired or the window has shut -- cli.hpp).
+                       // The two sides are different futures: past the level's own threshold the Count switches its group, before it the
+                       // route is still free. As one class, the side that has fired outnumbers the other until the stride keeps none of it:
+                       // on a custom level (a Tap at x=49095 counts into item 2, a Count at 6 turns a spike back on at x=49433) the states
+                       // that had not fired were 857 of 2000 45 ticks into the window, 31 after 69 and none after 117, and every attempt of
+                       // the call from t=33983 died on the spike up to cap 8000; with the class it solves on the first attempt at cap 125
+                       // (the count itself as the class also solves, at cap 500 on the second attempt: more classes, a smaller share each).
+                       // The threshold is the level's (the Count's target, which is what clears the bit); nothing here knows a number. 0 for a
+                       // state with no open window, so a level without a counting Tap keeps every class as it was.
+                       ^ ((uint64_t)(((s.taps >> 7) & 1u) | (((s.tapsX[0] >> 7) & 1u) << 1) | (((s.tapsX[1] >> 7) & 1u) << 2) | (((s.tapsX[2] >> 7) & 1u) << 3))
+                          * 0xC2B2AE3D27D4EB4Full);
             };
             std::vector<uint64_t> cls;
             std::vector<std::vector<uint32_t>> byCls;
@@ -2292,10 +3672,13 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             std::vector<uint32_t> keepIdx;
             keepIdx.reserve(capNow);
             size_t left = capNow;
+            std::vector<uint8_t> clsThinned;   // --lossystat: byCls index -> the water-fill kept fewer states than the class had
+            if (lossyOn) clsThinned.assign(byCls.size(), 0);
             for (size_t n = 0; n < ord.size(); ++n) {
                 const std::vector<uint32_t>& v = byCls[ord[n]];
                 const size_t fair = left / (ord.size() - n);
                 const size_t take = std::min(v.size(), fair);
+                if (lossyOn && take < v.size()) clsThinned[ord[n]] = 1;
                 if (take == v.size()) {
                     keepIdx.insert(keepIdx.end(), v.begin(), v.end());
                 } else if (g_capEnvelope && take >= 3) {
@@ -2332,7 +3715,7 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 std::vector<uint8_t> pick(nxt.size(), 0);
                 for (uint32_t i : idx) pick[i] = 1;
                 idx.clear();
-                if (g_heldCellTwins <= 0) {
+                if (g_heldCellTwins <= 0 || pairCells) {
                     for (uint32_t i = 0; i < (uint32_t)nxt.size(); ++i)
                         if (pick[cellOf[i]]) idx.push_back(i);
                     return;
@@ -2366,9 +3749,20 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 cellTwinsKept += (long long)(keepIdx.size() - cellsKept);
             }
             std::sort(keepIdx.begin(), keepIdx.end());
+            if (lossyOn) {
+                // --lossystat: every kept state of a thinned class is marked; its descendants inherit the mark when their nodes are made. cellOf names a twin's cell (--heldcellcap), whose first state is in byCls.
+                std::vector<int32_t> clsOfIdx(nxt.size(), -1);
+                for (size_t c = 0; c < byCls.size(); ++c) for (uint32_t i : byCls[c]) clsOfIdx[i] = (int32_t)c;
+                for (uint32_t i : keepIdx) {
+                    const uint32_t rep = cellCap ? cellOf[i] : i;
+                    const int32_t c = clsOfIdx[rep];
+                    if (c >= 0 && clsThinned[(size_t)c]) arenaLossy[nxt[i].parent] = 1;
+                }
+            }
+            if (g_capAudit) capAuditLayer(t, nxt, keepIdx);   // --capaudit (cap_audit.hpp): what the cap did to the layer's worlds; print only
             // --searchcensus: the same water-fill, with each class's stride taken over the
             // class sorted by (y, vy) instead of in layer order. Counted, never kept.
-            if (g_searchCensus > 0) census.cap(nxt.size(), capNow, nDied);
+            if (g_searchCensus > 0 || g_censusLayersOn) census.cap(nxt.size(), capNow, nDied);
             if (censusHere) {
                 std::vector<uint32_t> altIdx;
                 size_t leftA = capNow;
@@ -2411,9 +3805,15 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 }
             }
         }
+        if (lossyOn && !nxt.empty()) {   // --lossystat: the layer's lossy count, the last kTail layers
+            size_t nl = 0;
+            for (const State& s : nxt) nl += arenaLossy[s.parent];
+            if (g_lossy.tail.size() >= LossyStat::kTail) g_lossy.tail.erase(g_lossy.tail.begin());
+            g_lossy.tail.push_back({(long long)t, nxt.size(), nl, qfPre});
+        }
         // --heldcellcap keeps more states than the cap counts: charge what the layer really keeps.
         if (cellCap) g_outcome.workStates += (long long)nxt.size() - (long long)std::min(qfPre, capNow);
-        if (g_searchCensus > 0) census.kept(nxt);
+        if (g_searchCensus > 0 || g_censusLayersOn) census.kept(nxt);
         // How many complete routes the final pick is choosing between, and how
         // far back they are actually different (--clearprobe only; reads the
         // arena, changes nothing).
@@ -2435,9 +3835,19 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             }, [&](const State& s, const RefRow& r) {
                 return !g_rjFull || (r.haveKey && (modelKeyOf(s, tt) ^ rules.keyBits(s)) == r.key);
             });
-            // ...and only onto an old plan that goes on: a trace that ends a tick past the join
-            // (the old plan was a PARTIAL that died there) would turn a dead end into a SOLVED.
-            const bool rjGoesOn = !g_rjRows.empty() && g_rjRows.rbegin()->first - tt >= kRjMinTail;
+            // ...and only onto an old plan whose inputs reach where this call's plan has to end (refwatch.hpp
+            // rejoinTailReaches): a tail that stops short of the goal and of t0 + horizon is where the old search
+            // stopped, and joining it would turn that into a SOLVED. The search goes on instead.
+            long long rjEndT = -1; double rjEndX = 0.0;
+            const bool rjGoesOn = ji >= 0 && rejoinTailReaches(tt, (double)goalX, horizon > 0 ? (long long)t0 + (long long)horizon : 0, &rjEndT, &rjEndX);
+            if (g_rjUse && ji >= 0 && !solved && !rjGoesOn) {
+                if (g_rjCall.shortN++ == 0) { g_rjCall.shortT = tt; g_rjCall.shortEndT = rjEndT; }
+                if (g_outcome.rejoinShortN++ == 0) {
+                    g_outcome.rejoinShortT = tt; g_outcome.rejoinShortEndT = rjEndT;
+                    std::printf("rejoin: NOT joined at t=%lld: the old plan's inputs end at t=%lld x=%.1f, short of the goal (x %.1f) and of this call's end\n",
+                                tt, rjEndT, rjEndX, (double)goalX);
+                }
+            }
             // ...and, with --coins, not where the route still owes a press or a coin
             // (rules.rejoinOk).
             const State* rjS = ji >= 0 ? &nxt[(size_t)ji] : nullptr;
@@ -2464,15 +3874,130 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             && std::any_of(nxt.begin(), nxt.end(), [](const State& s) { return s.mode == 4; }))
             std::stable_sort(nxt.begin(), nxt.end(),
                              [](const State& a, const State& b) { return a.tight < b.tight; });
+        // --canonorder / --canonorder-y (modifiers.hpp): the frontier in a canonical order, a function of the set of states and not of how it was built
+        if (g_canonOrder && nxt.size() > 1) {
+            if (g_canonShuffle) { std::mt19937 rng((uint32_t)g_canonShuffle * 2654435761u + (uint32_t)t); std::shuffle(nxt.begin(), nxt.end(), rng); }
+            struct CK { uint64_t k; float y, vy; double x; uint32_t i; };
+            std::vector<CK> ck(nxt.size());
+            for (size_t i = 0; i < nxt.size(); ++i) ck[i] = {modelKeyOf(nxt[i], (long long)t) ^ rules.keyBits(nxt[i]), nxt[i].y, nxt[i].vy, (double)nxt[i].xAbs, (uint32_t)i};
+            const bool yFirst = g_canonOrder == 2;
+            std::stable_sort(ck.begin(), ck.end(), [yFirst, &nxt](const CK& a, const CK& b) {
+                if (!yFirst && a.k != b.k) return a.k < b.k;
+                if (a.y != b.y) return a.y < b.y;
+                if (a.vy != b.vy) return a.vy < b.vy;
+                if (a.x != b.x) return a.x < b.x;
+                if (yFirst && a.k != b.k) return a.k < b.k;
+                // equal in the comparator so far: the hidden fields the tie census found (bandAnim, tight, portSeen), then the lineage (parent: the arena index, which follows the previous layer's canonical order)
+                const State& sa = nxt[a.i]; const State& sb = nxt[b.i];
+                if (sa.bandAnim != sb.bandAnim) return sa.bandAnim < sb.bandAnim;
+                if (sa.tight != sb.tight) return sa.tight < sb.tight;
+                const int c = std::memcmp(&sa.portSeen, &sb.portSeen, sizeof sa.portSeen);
+                if (c != 0) return c < 0;
+                return sa.parent < sb.parent;
+            });
+            std::vector<State> sorted;
+            sorted.reserve(nxt.size());
+            for (const CK& c : ck) sorted.push_back(nxt[c.i]);
+            ++g_canonStat.layers;
+            g_canonStat.states += (long long)sorted.size();
+            for (size_t i = 1; i < ck.size(); ++i)
+                if (ck[i].k == ck[i - 1].k && ck[i].y == ck[i - 1].y && ck[i].vy == ck[i - 1].vy && ck[i].x == ck[i - 1].x) {
+                    ++g_canonStat.tiePairs;
+                    if (std::memcmp(&sorted[i], &sorted[i - 1], sizeof(State)) != 0) ++g_canonStat.tieDiff;
+                    { const unsigned char* pa = (const unsigned char*)&sorted[i]; const unsigned char* pb = (const unsigned char*)&sorted[i - 1];
+                      for (size_t w = 0; w < sizeof(State) / 4 && w < 128; ++w) if (std::memcmp(pa + w * 4, pb + w * 4, 4) != 0) ++g_canonStat.wordDiff[w]; }
+                }
+            nxt.swap(sorted);
+        }        // --worldkeytable (worldkey.hpp): the world key of every state of the new frontier, interned, with its parent worlds and the camera-summary criteria
+        if (g_worldTable.on) { g_worldTable.withTog = true; g_worldTable.layer((long long)t, nxt, arena); }
+        // --worldkey (modifiers.hpp): how many distinct states a layer would hold if the dx history entered the dedupe key
+        if (g_worldKey && !nxt.empty()) {
+            std::vector<uint64_t> a, b;
+            a.reserve(nxt.size()); b.reserve(nxt.size());
+            for (const State& s : nxt) {
+                const uint64_t mk = modelKeyOf(s, (long long)t) ^ rules.keyBits(s);
+                a.push_back(mk);
+                uint64_t h = mk ^ (s.dxHist + 0x9e3779b97f4a7c15ULL + (mk << 6) + (mk >> 2));
+                b.push_back(h * 0xff51afd7ed558ccdULL);
+            }
+            std::sort(a.begin(), a.end()); a.erase(std::unique(a.begin(), a.end()), a.end());
+            std::sort(b.begin(), b.end()); b.erase(std::unique(b.begin(), b.end()), b.end());
+            auto& W = g_worldKeyStat;
+            const long long gain = (long long)b.size() - (long long)a.size();
+            ++W.layers; W.states += (long long)nxt.size(); W.k += (long long)a.size(); W.kd += (long long)b.size();
+            W.maxExtra = std::max(W.maxExtra, gain); if (gain > 0) ++W.layersSplit;
+            auto& B = W.b[(long long)t / 2000];
+            ++B.layers; B.states += (long long)nxt.size(); B.k += (long long)a.size(); B.kd += (long long)b.size(); B.maxExtra = std::max(B.maxExtra, gain);
+        }        // --layerdigest (modifiers.hpp): the layer's order-independent fingerprint, for tools/layer_diff.py
+        if (!g_layerDigestPath.empty()) {
+            if (!g_layerDigestFile && layerDigestCall((long long)t0)) {
+                static int ldSeq1 = 0;
+                g_layerDigestFile = std::fopen(layerDigestName(g_layerDigestPath, (long long)t0, ldSeq1).c_str(), "w");
+                if (g_layerDigestFile) std::fprintf(g_layerDigestFile, "# layerdigest v1: rung,t,n,sum,xor,ymin,ymax\n");
+            }
+            if (g_layerDigestFile) {
+                if ((long long)t <= g_ldLastT) ++g_ldRung;
+                g_ldLastT = (long long)t;
+                auto mix = [](uint64_t h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); return h * 0xff51afd7ed558ccdULL; };
+                uint64_t sum = 0, xr = 0;
+                float ymin = 1e30f, ymax = -1e30f;
+                for (const State& s : nxt) {
+                    const uint64_t h = layerStateFingerprint(s, modelKeyOf(s, (long long)t) ^ rules.keyBits(s));
+                    sum += h; xr ^= h;
+                    if (s.y < ymin) ymin = s.y;
+                    if (s.y > ymax) ymax = s.y;
+                }
+                std::fprintf(g_layerDigestFile, "%lld,%lld,%zu,%016llx,%016llx,%.9g,%.9g\n", g_ldRung, (long long)t, nxt.size(), (unsigned long long)sum, (unsigned long long)xr, (double)ymin, (double)ymax);
+                std::fflush(g_layerDigestFile);
+            }
+        }
+        // --layerdigest2 (modifiers.hpp, state_serial.hpp): the canonical serializer's digest of the layer, 128 bits over every field of every state, the records in byte order
+        if (!g_layerDigest2Path.empty()) {
+            if (!g_layerDigest2File && layerDigestCall((long long)t0)) {
+                static int ldSeq2 = 0;
+                g_layerDigest2Name = layerDigestName(g_layerDigest2Path, (long long)t0, ldSeq2);
+                g_layerDigest2File = std::fopen(g_layerDigest2Name.c_str(), "w");
+                if (g_layerDigest2File) { std::fprintf(g_layerDigest2File, "# layerdigest v2: rung,t,n,hashA,hashB\n"); stser::writeFieldsJson(g_layerDigest2Name + ".fields.json"); }
+            }
+            if (g_layerDigest2File) {
+                if ((long long)t <= g_ld2LastT) ++g_ld2Rung;
+                g_ld2LastT = (long long)t;
+                std::vector<std::vector<uint8_t>> recs;
+                stser::layerRecords(nxt, recs);
+                const stser::Dig128 dg = stser::layerDigest(recs);
+                std::fprintf(g_layerDigest2File, "%lld,%lld,%zu,%016llx,%016llx\n", g_ld2Rung, (long long)t, nxt.size(), (unsigned long long)dg.a, (unsigned long long)dg.b);
+                std::fflush(g_layerDigest2File);
+                if (std::find(g_layerBytes2T.begin(), g_layerBytes2T.end(), (long long)t) != g_layerBytes2T.end()) {
+                    const std::string bp = g_layerDigest2Name + ".t" + std::to_string((long long)t) + ".r" + std::to_string(g_ld2Rung) + ".bin";
+                    if (std::FILE* bf = std::fopen(bp.c_str(), "wb")) {
+                        const uint32_t magic = 0x324c4447u, n = (uint32_t)recs.size();   // "GDL2"
+                        const int64_t tt = (int64_t)t;
+                        std::fwrite(&magic, 4, 1, bf); std::fwrite(&tt, 8, 1, bf); std::fwrite(&n, 4, 1, bf);
+                        for (const auto& rc : recs) { const uint32_t len = (uint32_t)rc.size(); std::fwrite(&len, 4, 1, bf); std::fwrite(rc.data(), 1, rc.size(), bf); }
+                        std::fclose(bf);
+                    }
+                }
+            }
+        }
         prevAlive = cur.size();
         cur.swap(nxt);
+        // --shadowstep: the shadow's blocks of the new frontier are kept, every other one goes (shadow_lite.hpp SlStore::gc). No store without the flag.
+        if (gdcol::g_slStore) {
+            const auto gc0 = g_phaseProf ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+            gdcol::g_slStore->gc(cur);
+            if (g_phaseProf) g_ppSlGcNs += (long long)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - gc0).count();   // (inside the `cap` bucket)
+        }
         nBornPrev = nBorn;
         nDiedPrev = nDied;
+        lyPhysPrev = lyPhys; lyPrunePrev = lyPrune;
         // The layer no longer HAS one x (see the speed groups above), so the
         // number everything downstream reports is the frontier's own leader.
         double x = 0.0;
         for (const State& s : cur) x = std::max(x, (double)s.xAbs);
         if (!cur.empty()) { bestT = t; bestX = x; }
+        if (g_partialByX)
+            for (const State& s : cur)
+                if ((double)s.xAbs > bestAnyX) { bestAnyX = (double)s.xAbs; bestAnyS = s; bestAnyT = t; haveAny = true; }
         if (cur.empty()) break;
         // horizon reached: take the surviving state with the most clearance
         // (highest |vy| is a bad proxy; just take the first survivor -- they
@@ -2516,6 +4041,14 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             };
             markFrom(cur);
             markFrom(nxt);   // the PARTIAL path reads nxt after the loop
+            if (haveAny) {   // --partialbyx: the best-x state is read after the loop too
+                std::vector<State> one(1, bestAnyS);
+                markFrom(one);
+            }
+            if (havePhys) {   // --partialphys: so is the physical-death parent
+                std::vector<State> one(1, physS);
+                markFrom(one);
+            }
             size_t keep = 0;
             for (size_t i = 0; i < arena.size(); ++i) keep += mark[i];
             std::vector<uint32_t> remap(arena.size(), 0);
@@ -2526,8 +4059,9 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
             // ALREADY been published can be reached from here -- a published prefix is ticks
             // and levels, never indices (dp/progress.hpp) -- so this only has to keep the live
             // array consistent for the next LCA walk.
-            std::vector<uint8_t> nm;
+            std::vector<uint8_t> nm, nl;
             if (checkWanted) nm.reserve(keep);
+            if (lossyOn) nl.reserve(keep);   // --lossystat's side vector, compacted in the same pass
             for (size_t i = 0; i < arena.size(); ++i) {
                 if (!mark[i]) continue;
                 remap[i] = (uint32_t)na.size();
@@ -2536,16 +4070,33 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 na.push_back(Node{remap[arena[i].parent()]
                                   | ((uint32_t)arena[i].action() << 31)});
                 if (checkWanted) nm.push_back(arenaMode[i]);
+                if (lossyOn) nl.push_back(arenaLossy[i]);
+            }
+            // the last two layers' ranges of nodes (WorldRange) follow their nodes: the kept ones of a range stay next to each other, in order
+            const bool wrWas = wrOpen;
+            wrClose();
+            for (std::vector<WorldRange>* wv : {&wrPrev, &wrCur}) {
+                size_t w = 0;
+                for (const WorldRange& r : *wv) {
+                    uint32_t first = 0, n = 0;
+                    for (uint32_t i = r.a0; i < r.a1 && (size_t)i < arena.size(); ++i) if (mark[i]) { if (!n) first = remap[i]; ++n; }
+                    if (n) (*wv)[w++] = WorldRange{first, first + n, r.key};
+                }
+                wv->resize(w);
             }
             const size_t before = arena.size();
             arena.swap(na);
+            if (wrWas) { wrA0 = arena.size(); wrOpen = true; }   // (the turn the compaction fell in goes on in a new range)
             na = std::vector<Node>();   // release the old allocation NOW
             if (checkWanted) {
                 arenaMode.swap(nm);
                 nm = std::vector<uint8_t>();
             }
+            if (lossyOn) arenaLossy.swap(nl);
             for (State& s : cur) s.parent = remap[s.parent];
             for (State& s : nxt) s.parent = remap[s.parent];
+            if (haveAny) bestAnyS.parent = remap[bestAnyS.parent];
+            if (havePhys) physS.parent = remap[physS.parent];
             if (g_rjOldNode != 0xffffffffu)
                 g_rjOldNode = mark[g_rjOldNode] ? remap[g_rjOldNode] : 0xffffffffu;
             gcNext = std::max(g_gcNodes, arena.size() * 2);
@@ -2575,8 +4126,18 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                     for (int k = 0; k < 4; ++k) r[4 + k] = model.encodeObj(s.usedPad[k], refsOk);
                     for (int k = 0; k < 4; ++k) r[8 + k] = model.encodeObj(s.usedPad2[k], refsOk);
                 }
+                if (gdcol::g_slStore) {   // --shadowstep: the blocks by value
+                    for (size_t i = 0; i < cur.size(); ++i) S.sl.add(gdcol::slOf(cur[i].slRef));
+                    S.sl.data.shrink_to_fit();
+                    S.sl.at.shrink_to_fit();
+                    for (size_t i = 0; i < cur.size(); ++i) S.sl2.add(gdcol::slOf(cur[i].slRef2));
+                    S.sl2.data.shrink_to_fit();
+                    S.sl2.at.shrink_to_fit();
+                }
                 S.arenaSize = arena.size();
                 S.arenaModeSize = arenaMode.size();
+                wrClose();
+                if (wrT == (long long)t) { g_trigLive.saveLayer(S.tl, (long long)t); if (S.tl.have) S.wr = wrCur; }
                 S.gcNext = work.gcNext;
                 S.nBornPrev = nBornPrev;
                 S.nDiedPrev = nDiedPrev;
@@ -2584,6 +4145,8 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
                 S.bestT = bestT;
                 S.bestX = bestX;
                 S.goalState = goalState;
+                S.bestAnyS = bestAnyS; S.bestAnyX = bestAnyX; S.bestAnyT = bestAnyT; S.haveAny = haveAny;
+                if (g_partialPhys) { S.physS = physS; S.physT = physT; S.havePhys = havePhys; S.lyPhysPrev = lyPhysPrev; S.lyPrunePrev = lyPrunePrev; }
                 S.solved = solved;
                 S.maxAlive = maxAlive;
                 S.capDropped = capDropped;
@@ -2845,6 +4408,26 @@ inline int searchLayers(E& e, const Rules& rules, SearchResult& out) {
     } else if (horizon > 0 && !nxt.empty()) {
         out.kind = SearchResult::Partial;
         out.goal = rules.pick(nxt);
+        if (g_partialByX && haveAny) {
+            double lastX = -1e18;
+            for (const State& s : nxt) lastX = std::max(lastX, (double)s.xAbs);
+            if (bestAnyX > lastX + 1.0) {
+                std::printf("partialbyx: the last layer (t=%lld x=%.1f) is not the furthest; emitting the layer at t=%lld x=%.1f\n", bestT, lastX, bestAnyT, bestAnyX);
+                out.goal = bestAnyS;
+                bestT = bestAnyT;
+                bestX = bestAnyX;
+            }
+        }
+        // --partialphys: the frontier ended by the loop's own bounds (every child of the last layer died by the out-of-play prune, none by the game's rules),
+        // so the deepest branch is a body flying out of the level, which GD takes to the ceiling (lv22 R7: nine of 55 rounds). Emit the state that stepped
+        // the latest PHYSICAL death instead: that plan ends where the model says the game kills it, which GD confirms or refutes.
+        if (g_partialPhys && havePhys && physT >= 0 && lyPrunePrev > 0 && lyPhysPrev == 0 && physT < bestT) {
+            std::printf("partialphys: the last layer (t=%lld x=%.1f) ended by the out-of-play bound only (%lld children); emitting the parent of the latest physical death, t=%lld x=%.1f\n",
+                        bestT, bestX, lyPrunePrev, physT, (double)physS.xAbs);
+            out.goal = physS;
+            bestT = physT;
+            bestX = (double)physS.xAbs;
+        }
     } else {
         out.kind = SearchResult::NoPlan;
         // after the final swap the previous layer's states sit in nxt
@@ -2883,7 +4466,7 @@ inline int searchBeam(E& e, const Rules& rules, SearchResult& out) {
     auto& cur = work.cur;
     auto& nxt = work.nxt;
     SearchArena store(e.in.checkWanted);   // this method's states
-    auto& arena = store.arena;
+    auto& arena = store.arena; ProbeArenaScope probeScope(&store.arena);
     auto& checkWanted = e.in.checkWanted;
     auto& arenaMode = store.arenaMode;
     auto& model = e.in.model;
@@ -2951,6 +4534,7 @@ inline int searchBeam(E& e, const Rules& rules, SearchResult& out) {
                 bool dead = false;
                 kid.s = model.advance(s, input, K, dead, nullptr);
                 model.noteInput(s, kid.s, input);
+                togWorldStep(s, kid.s, input);
                 model.fireGates(kid.s, s.action, input, K, frame, t, dead);
                 rules.afterStep(s, kid, input, K, frame, t, dead);
                 if (dead) continue;
@@ -2982,6 +4566,7 @@ inline int searchBeam(E& e, const Rules& rules, SearchResult& out) {
         for (size_t i : rank) nxt.push_back(keep(cand[i]));
         prevAlive = cur.size();
         cur.swap(nxt);
+        if (gdcol::g_slStore) gdcol::g_slStore->gc(cur);   // --shadowstep (searchLayers' note)
         double xl = 0.0;
         for (const State& s : cur) xl = std::max(xl, model.progress(s).x);
         if (!cur.empty()) { bestT = t; bestX = xl; }
@@ -3182,7 +4767,7 @@ inline int searchMontecarlo(E& e, const Rules& rules, SearchResult& out) {
     auto& init = e.in.init;
     auto& tEnd = e.in.tEnd;
     SearchArena store(e.in.checkWanted);   // this method's states
-    auto& arena = store.arena;
+    auto& arena = store.arena; ProbeArenaScope probeScope(&store.arena);
     auto& checkWanted = e.in.checkWanted;
     auto& arenaMode = store.arenaMode;
     auto& model = e.in.model;
@@ -3253,11 +4838,11 @@ inline int searchMontecarlo(E& e, const Rules& rules, SearchResult& out) {
         const float dxU = ((s.dx > 0.f) ? s.dx : curDxF) * (s.rev ? -1.f : 1.f);
         const double xPrev = (double)s.xAbs;
         const double x = (double)advanceX(s.xAbs, dxU);
-        for (AutoTrig& A : g_autoTrig) {   // autonomous fires on this walk's own crossing
+        for (AutoTrig& A : g_autoTrig) {   // autonomous fires on this walk's own crossing, read on the x of tick t-1 as the search reads it (model.hpp fireAutoTriggers; cli.hpp --replay has the GD measurement)
             if (A.fireT >= 0) continue;
-            if (x < A.cx) break;   // sorted by cx
-            A.fireT = (int)t + A.delay;
-            A.fireX = A.lockLastX = x;
+            if (xPrev < A.cx) break;   // sorted by cx
+            A.fireT = (int)(t - 1) + A.delay;
+            A.fireX = A.lockLastX = xPrev;
         }
         GroupEnv env;
         double pLo = x, pHi = x;
@@ -3267,7 +4852,6 @@ inline int searchMontecarlo(E& e, const Rules& rules, SearchResult& out) {
                       GroupOpts{false, false, false});
         const StepCtx K = env.ctx();
         g_nearOrb = 0;
-        g_dashVySet = 0;
         bool dead = false;
         State c = model.advance(s, n.curIn, K, dead, nullptr);
         c.action = (uint8_t)n.curIn;
@@ -3467,11 +5051,11 @@ inline int searchMontecarlo(E& e, const Rules& rules, SearchResult& out) {
                     else model.forgetWorld(f);   // class 0 at T
                 }
                 loadAuto(cls[(size_t)p].autoSt);
-                for (AutoTrig& A : g_autoTrig) {   // autonomous fires on this class's own crossing
+                for (AutoTrig& A : g_autoTrig) {   // autonomous fires on this class's own crossing, read on the x of tick t-1 (stepTick above)
                     if (A.fireT >= 0) continue;
-                    if (P.x < A.cx) break;   // sorted by cx
-                    A.fireT = (int)t + A.delay;
-                    A.fireX = A.lockLastX = P.x;
+                    if (P.xPrev < A.cx) break;   // sorted by cx
+                    A.fireT = (int)(t - 1) + A.delay;
+                    A.fireX = A.lockLastX = P.xPrev;
                 }
                 GroupEnv env;
                 double pLo = P.x, pHi = P.x;
@@ -3491,7 +5075,6 @@ inline int searchMontecarlo(E& e, const Rules& rules, SearchResult& out) {
                     Lane& L = lanes[(size_t)l];
                     if (L.cls != (int)c) continue;
                     g_nearOrb = 0;
-                    g_dashVySet = 0;
                     bool dead = false;
                     State s2 = model.advance(L.n.s, L.n.curIn, K, dead, nullptr);
                     s2.action = (uint8_t)L.n.curIn;

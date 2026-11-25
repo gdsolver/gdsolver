@@ -10,6 +10,9 @@ Resolution indices (measured on this machine, client area):
     21=1280x720 (16:9)  22=1280x800  23=1280x960  24=1365x1024
     25=1706x960 (16:9)
 A brand-new save with no index comes up at 1202x902 = 4:3.
+
+The index is a position in the list of display modes GD builds from the display, so the same index is another size on another machine: what a
+run measured is a SIZE (GD's saw radius follows the window height), and window_size() gives the size an index means HERE.
 """
 
 from __future__ import annotations
@@ -90,6 +93,42 @@ def _set_str_key(xml: str, key: str, value: str) -> str:
         return pat.sub(rf"\g<1>{value}\g<2>", xml)
     return xml.replace("<k>valueKeeper</k><d>",
                        f"<k>valueKeeper</k><d><k>{key}</k><s>{value}</s>", 1)
+
+
+# Sizes in GD's own units (client area as GD sees it, DPI-scaled) of the indices measured on the lab machine (the table in the docstring above).
+LAB_SIZES = {7: (784, 442), 13: (906, 512), 15: (960, 600), 19: (1120, 700), 20: (1178, 661), 21: (1280, 720), 22: (1280, 800), 23: (1280, 960),
+             24: (1365, 1024), 25: (1706, 960)}
+# GD's saw radius follows the window height ([M] 10-04: the same at every height of 900 and above, another one at 864 and below; between the two
+# it was not measured, so a window there is comparable only with the very same height).
+SAW_BIG_FROM, SAW_SMALL_TO = 900, 864
+
+
+def window_size(index: int, workers_root: Path | None = None) -> tuple[int, int] | None:
+    """The window (width, height) the resolution index means on THIS machine: the machine's own map (<workers root>/resolution_sizes.json,
+    {"16": [1600, 900]}, written by the calibration of gd06_setup_v2) when it names the index, else the lab machine's table. None when
+    neither knows the index (then only the index itself can be compared)."""
+    import json
+    from .paths import WORKERS_ROOT
+    p = Path(workers_root or WORKERS_ROOT) / "resolution_sizes.json"
+    try:
+        m = json.loads(p.read_text(encoding="utf-8-sig"))
+        if str(index) in m:
+            w, h = m[str(index)]
+            return int(w), int(h)
+    except (OSError, ValueError, TypeError):
+        pass
+    return LAB_SIZES.get(int(index))
+
+
+def saw_side(height: int) -> str | None:
+    """'big' (height >= 900), 'small' (<= 864), None between the two (not measured)."""
+    return "big" if height >= SAW_BIG_FROM else ("small" if height <= SAW_SMALL_TO else None)
+
+
+def same_saw_side(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """Whether two windows give the same saw radius: the same side of the 864 / 900 threshold, or the very same height between the two."""
+    sa, sb = saw_side(a[1]), saw_side(b[1])
+    return (sa is not None and sa == sb) or a[1] == b[1]
 
 
 def set_resolution_index(worker_id: int | str, index: int) -> None:

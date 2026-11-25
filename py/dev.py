@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from gdtas import procscan
 from gdtas.paths import BUILD_MOD, REPO
 
 def _gd_dir() -> Path:
@@ -92,8 +93,8 @@ def main(argv=None) -> int:
 
     # A running GD holds the DLL locked, so close it first
     import psutil
-    for p in psutil.process_iter(["pid", "name"]):
-        if (p.info["name"] or "").lower() == "geometrydash.exe":
+    for p, info in procscan.scan(["pid", "name"]):
+        if (info["name"] or "").lower() == "geometrydash.exe":
             print("GD is running - closing it before deploy...")
             try:
                 p.kill()

@@ -15,7 +15,7 @@
 
 namespace gdsolver::ui {
 
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && !defined(GDSOLVER_GEODE6)
 
 class Toast : public cocos2d::CCNodeRGBA {
 public:

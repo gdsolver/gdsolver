@@ -38,6 +38,7 @@ def queue(level: int, exe: Path, level_data: Path) -> list[dict]:
         return _QUEUE[level]
     rg = level_data / f"rotgameplay_lv{level}.txt"
     out: list[dict] = []
+    touch = _touch_boxes(level_data / f"objrects_lv{level}.txt")
     if rg.exists():
         exact: dict[int, tuple[float, float, int]] = {}
         lines = rg.read_text(encoding="utf-8-sig", errors="replace").splitlines()
@@ -50,7 +51,7 @@ def queue(level: int, exe: Path, level_data: Path) -> list[dict]:
                     continue
         with tempfile.TemporaryDirectory(prefix="rotq_") as td:
             argv = [str(exe), str(level_data / f"objrects_lv{level}.txt"),
-                    "--rotgameplay", str(rg), "--rotqueue",
+                    "--rotgameplay", str(rg), "--rotqueue", "--rotq64",
                     "--out", str(Path(td) / "probe"), "--horizon", "1"]
             trig = level_data / f"triggers_lv{level}.txt"
             grp = level_data / f"objgroups_lv{level}.txt"
@@ -70,11 +71,36 @@ def queue(level: int, exe: Path, level_data: Path) -> list[dict]:
                 if uid not in exact:
                     continue
                 px, py, oid = exact[uid]
+                tch = touch.get(uid, (0, 0.0, 0.0))
                 out.append({"ch": ch, "uid": uid, "px": px, "py": py,
                             "swarm": int(m.group(2)), "swch": int(m.group(3)),
                             "chanOnly": int(m.group(4)), "gnddir": int(m.group(5)),
-                            "id": oid})
+                            "id": oid, "touch": tch[0], "hw": tch[1], "hh": tch[2]})
     _QUEUE[level] = out
+    return out
+
+
+def _touch_boxes(path: Path) -> dict[int, tuple[int, float, float]]:
+    """uid -> (touch, half width, half height) of the level's 2900s, from objrects (w, h as getObjectRect gives them: not swapped by the rotation)."""
+    out: dict[int, tuple[int, float, float]] = {}
+    if not path.exists():
+        return out
+    lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    if not lines:
+        return out
+    hdr = lines[0].split(",")
+    try:
+        i_id, i_w, i_h, i_uid, i_t = (hdr.index("id"), hdr.index("w"), hdr.index("h"), hdr.index("uid"), hdr.index("touch"))
+    except ValueError:
+        return out
+    for ln in lines[1:]:
+        c = ln.split(",")
+        if len(c) <= max(i_id, i_w, i_h, i_uid, i_t) or c[i_id] != "2900":
+            continue
+        try:
+            out[int(c[i_uid])] = (int(float(c[i_t])), float(c[i_w]) * 0.5, float(c[i_h]) * 0.5)
+        except ValueError:
+            continue
     return out
 
 
@@ -239,7 +265,34 @@ def _reverses(rows: dict, t: int, g: int) -> bool:
     return d0 * d1 < 0.0
 
 
-def seed_sim(rows: dict, t0: int, q: list[dict]) -> tuple[str, str, str]:
+def _gd_chan(rows: dict, t: int):
+    """(active channel, its reverse bit) as GD's own state shows it on row t: the dump's rotch / rotrev. None when the
+    reference has no such column (an old one) or the channel's reverse flag was not there to read."""
+    r = rows.get(t)
+    if r is None:
+        return None
+    try:
+        ch = int(float(r["rotch"]))
+        rv = int(float(r.get("rotrev", -1)))
+    except (KeyError, ValueError, TypeError):
+        return None
+    if not 0 <= ch <= 15:
+        return None
+    return ch, rv
+
+
+def _touch_half(r: dict) -> float:
+    """dp's playerHalf for the touch test, as repair.hpp touchSeedArg spells it (wave, spider, everything else; mini, full)."""
+    mini = float(r.get("vsize") or 1.0) < 0.99
+    mode = r.get("mode")
+    if mode == "wave" or mode == str(_WAVE):
+        return 2.0 if mini else 5.0
+    if mode == "spider" or mode == str(_SPIDER):
+        return 8.1 if mini else 13.5
+    return 9.0 if mini else 15.0
+
+
+def seed_sim(rows: dict, t0: int, q: list[dict], touch: bool = False) -> tuple[str, str, str]:
     """(class, why, seed): GD's own consumption loop replayed over the recording.
 
     GJBaseGameLayer::checkSpawnObjects (0x21a8f0, notes 2026-09-01 section 4):
@@ -261,6 +314,7 @@ def seed_sim(rows: dict, t0: int, q: list[dict]) -> tuple[str, str, str]:
         return "unavailable", "no queue", ""
     by = [[e for e in q if e["ch"] == c] for c in range(16)]
     chan, rev, ptr, spent = 0, [False] * 16, [0] * 16, []
+    spent_set: set[int] = set()
     pg = None
     for t in sorted(t for t in rows if t <= t0):
         rr = _row(rows, t)
@@ -270,18 +324,47 @@ def seed_sim(rows: dict, t0: int, q: list[dict]) -> tuple[str, str, str]:
         axis = g if pg is None else pg
         acted = pg is not None and (g != pg or _reverses(rows, t, g))
         turned = 0
+        if touch and pg is not None and g != pg:
+            # cfg dprotseed=T (repair.hpp seedSim): a touch 2900 is consumed by overlap with the player's box, on the row the recording turns
+            half = _touch_half(rows[t])
+            for e in q:
+                if not e.get("touch") or not _visible(e) or e["uid"] in spent_set:
+                    continue
+                if abs(x - e["px"]) > e["hw"] + half + 1e-4 or abs(y - e["py"]) > e["hh"] + half + 1e-4:
+                    continue
+                spent.append(e["uid"])
+                spent_set.add(e["uid"])
+                lst0 = by[e["ch"]]
+                if ptr[e["ch"]] < len(lst0) and lst0[ptr[e["ch"]]]["uid"] == e["uid"]:
+                    ptr[e["ch"]] += 1
+                gdc0 = _gd_chan(rows, t)
+                if e["swarm"] == 1 and 0 <= e["swch"] <= 15 and (gdc0 is None or gdc0[0] == e["swch"]):
+                    chan = e["swch"]
+                    rev[chan] = 0 <= e["gnddir"] - 2 < 2
+                turned += 1
+                axis = g
+                break
         for _guard in range(64):
             lst = by[chan]
             if ptr[chan] >= len(lst):
                 break
             e = lst[ptr[chan]]
+            if e["uid"] in spent_set:
+                ptr[chan] += 1   # spent by its touch
+                continue
             if not _passed(axis, x, y, e, rev[chan]):
                 break
             ptr[chan] += 1
             spent.append(e["uid"])
+            spent_set.add(e["uid"])
             if _visible(e) and not (acted and turned == 0):
                 continue   # consumed with neither half (switched off)
-            if e["id"] == 2900 and e["swarm"] == 1 and 0 <= e["swch"] <= 15:
+            # The channel switch is the game's, not the object's: a consumed 2900 that names a channel moves the active one
+            # only if the game's own state (rotch) says so on this row. A touch-started channel-only 2900 can be passed
+            # and consumed with no switch (a custom level's uid 107595 names channel 3, which holds nothing, and the
+            # active channel stayed 0 for the rest of the level).
+            gdc = _gd_chan(rows, t)
+            if e["id"] == 2900 and e["swarm"] == 1 and 0 <= e["swch"] <= 15 and (gdc is None or gdc[0] == e["swch"]):
                 chan = e["swch"]
                 rev[chan] = 0 <= e["gnddir"] - 2 < 2
             if _visible(e):
@@ -292,6 +375,11 @@ def seed_sim(rows: dict, t0: int, q: list[dict]) -> tuple[str, str, str]:
                 axis = g
         if pg is not None and g != pg and turned == 0:
             return "underivable", f"t={t}: the recording turns and the walk fired nothing", ""
+        gdc = _gd_chan(rows, t)
+        if gdc is not None and gdc[0] != chan:   # the game moved to a channel the walk did not
+            chan = gdc[0]
+            if gdc[1] in (0, 1):
+                rev[chan] = bool(gdc[1])
         pg = g
     mask = 0
     for c in range(16):

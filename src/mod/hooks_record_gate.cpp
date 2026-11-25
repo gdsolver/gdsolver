@@ -23,7 +23,7 @@
 #include <Geode/modify/CCHttpClient.hpp>
 #include <Geode/modify/DS_Dictionary.hpp>
 #if GEODE_COMP_GD_VERSION >= 22090 && defined(GEODE_IS_WINDOWS)
-#include <Geode/modify/GDFileWriter209.hpp>
+#include <Geode/modify/GDFileWriter.hpp>
 #endif
 
 using namespace p1;
@@ -99,16 +99,16 @@ class $modify(RecordGateSave, DS_Dictionary) {
 
 #if GEODE_COMP_GD_VERSION >= 22090 && defined(GEODE_IS_WINDOWS)
 // The atomic writer under CCPlatformerSave.dat (and whatever else 2.209 writes through it).
-class $modify(RecordGateWriter, GDFileWriter209) {
+class $modify(RecordGateWriter, GDFileWriter) {
     GDSOLVER_HOOK_GUARD()
-    static bool writeAtomic(gd::string const& path, gd::string const& data) {
+    static bool writeAtomic(std::string const& path, std::string const& data) {
         if (saveBlockActive()) {
             ++g_blockedSave;
             gate::noteBlocked("save", g_blockedSave,
                               "atomic writer " + gate::fileNameOf(path.c_str()) + " (" + std::to_string(data.size()) + " B)");
             return true;
         }
-        return GDFileWriter209::writeAtomic(path, data);
+        return GDFileWriter::writeAtomic(path, data);
     }
 };
 #endif

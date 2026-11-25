@@ -1,10 +1,11 @@
 #pragma once
-#include "dp/step.hpp"
+#include "dp/step_shared.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -22,6 +23,14 @@ namespace dp {
 //      covers against the bins the kept states cover, and against what a stride over the same
 //      class sorted by (y, vy) would have kept.
 inline int g_searchCensus = 0;
+
+// --censuslayers PATH: one row per layer of every search call, appended to PATH as tab-separated text
+// (a "# call N layers=L" line first, then t, cap (0 = no cap on the layer), pre-cap and post-cap state
+// counts, born, died, the largest x among the pre-cap states, and the pre-cap then post-cap counts by
+// mode: cube ship ball ufo wave robot spider swing dual). Lighter than --searchcensus (none of the
+// sampled key work) and independent of it. Print only: nothing is read back by the search.
+inline bool g_censusLayersOn = false;
+inline std::string g_censusLayersPath;
 
 // --twinskip (ON by default; --no-twinskip turns it off): a parent whose pressed child provably
 // comes out as a TWIN of its released one --
@@ -48,6 +57,14 @@ inline bool g_twinAudit = false;
 // left with no child by the rule.
 inline int g_minPulse = 0;
 inline int g_inputGrid = 0;
+// --gridgroundpress (off; design v4 S2): the grid (--inputgrid / --gridmap) does not lock the button of a GROUNDED state, nor of a cube with a landing within reach (search_dp.hpp landingNear, the air press
+// child --airpress keeps): the press on the landing tick is a GD jump too. The grid is a search restriction (fewer children), and the census (notes p9_refwatch_census) found it drops the child such a jump needs:
+// the layo plan of lv11 jumps at t=1075 (from the ground) and t=2101 (on the landing tick), lv22's at t=261, odd ticks under --inputgrid 2, and a rung that keeps the grid has no lineage with that jump.
+inline bool g_gridGroundPress = false;
+// --gridgroundpresscube (in the default bundle since 2026-11-13, kDefaultBundle; --no-gridgroundpresscube is the off arm; implies --gridgroundpress): the grounded unlock only for a CUBE (mode 0). The cold of --gridgroundpress (gd-05, 11-13) made lv19 worse (4 -> 11 iterations, new deaths at 11354 / 12233 / 12254 /
+// 12272 / 14865, all in robot sections where the model dies on the same tick as GD): a robot stands on the ground for hundreds of ticks and every one of them then takes a press child, which a cube's brief ground
+// contact does not; the layers grow and the cap drops lineages. The jumps the census needed (lv11 t=1075 and 2101, lv22 t=261) are cube jumps.
+inline bool g_gridGroundPressCube = false;
 //   --wavepulse K  --minpulse for the WAVE only (State::mode 4 at the tick the button would change): a wave
 //                  that has just pressed or let go keeps that level for at least K ticks. The user's
 //                  wave-behaviour option (Avoid glitches, third choice): a hand cannot toggle every 1-3
@@ -101,6 +118,8 @@ struct CensusField {
     const char* name;
     void (*canon)(State&);
     bool core;   // part of the "everything but the physics core" key
+    int slMask = -1;   // >= 0: the key is taken with only these parts of the shadow bits (shadow_lite.hpp g_slKeyMask)
+    int slBytes = -1;  // >= 0: ...and with only these bytes of the press part (g_slPressBytes)
 };
 
 inline const CensusField kCensusFields[] = {
@@ -127,6 +146,36 @@ inline const CensusField kCensusFields[] = {
     {"coins", [](State& s) { s.coins = 0; s.items = 0; s.taps = 0; s.tapsX[0] = s.tapsX[1] = s.tapsX[2] = 0; }, true},
     {"latch", [](State& s) { s.portalLatch = GravLatch{}; s.portalLatch2 = GravLatch{}; }, true},
     {"fireB", [](State& s) { for (auto& f : s.fireB) f = 0; }, true},
+    // --shadowstep: the shadow bits of the key (shadow_lite.hpp slKeyBits), all together and one part at a time
+    {"slall", [](State& s) { s.slRef = 0; s.slRef2 = 0; }, true},
+    {"slpress", [](State&) {}, false, 0xF & ~1},
+    {"slhold", [](State&) {}, false, 0xF & ~2},
+    {"sllast", [](State&) {}, false, 0xF & ~4},
+    {"sldash", [](State&) {}, false, 0xF & ~8},
+    // the press part one byte at a time (+0x98d H, +0x98e S, +0x98f Hp, +0x990 Rp, +0x991 Hm, +0x992 Sm, +0x993 slot A)
+    {"sl:H", [](State&) {}, false, -1, 0x7F & ~1},
+    {"sl:S", [](State&) {}, false, -1, 0x7F & ~2},
+    {"sl:Hp", [](State&) {}, false, -1, 0x7F & ~4},
+    {"sl:Rp", [](State&) {}, false, -1, 0x7F & ~8},
+    {"sl:Hm", [](State&) {}, false, -1, 0x7F & ~16},
+    {"sl:Sm", [](State&) {}, false, -1, 0x7F & ~32},
+    {"sl:slotA", [](State&) {}, false, -1, 0x7F & ~64},
+    {"sl:HS", [](State&) {}, false, -1, 0x7F & ~3},
+    {"sl:HpRp", [](State&) {}, false, -1, 0x7F & ~12},
+    {"sl:HmSmA", [](State&) {}, false, -1, 0x7F & ~(16 | 32 | 64)},
+    {"sl:Hp+Rp+Hm+Sm+A", [](State&) {}, false, -1, 0x7F & ~(4 | 8 | 16 | 32 | 64)},
+    // the quantisation of y / vy, coarser by 4x / 4x (a census of what a coarser bin would merge, not a rule)
+    {"y4", [](State& s) { s.y = std::floor(s.y / 2.0f) * 2.0f; s.y2 = std::floor(s.y2 / 2.0f) * 2.0f; }, false},
+    {"vy4", [](State& s) { s.vy = std::floor(s.vy / 0.4f) * 0.4f; s.vy2 = std::floor(s.vy2 / 0.4f) * 0.4f; }, false},
+    // the old model's press terms together (held / action / ringHold / pressSpent / rHover / dashing): what the shadow bits make redundant, read with slall
+    {"oldpress", [](State& s) { s.held = 0; s.action = 0; s.ringHold = 0; s.pressSpent = 0; s.rHover = 0; s.dashing = 0; s.dashing2 = 0; s.jumpBuf = 0; }, false},
+    {"oldpress+sl", [](State& s) { s.held = 0; s.action = 0; s.ringHold = 0; s.pressSpent = 0; s.rHover = 0; s.dashing = 0; s.dashing2 = 0; s.jumpBuf = 0; s.slRef = 0; s.slRef2 = 0; }, false},
+    // single old terms
+    {"slopeT", [](State& s) { s.slopeT = 0; s.slopeT2 = 0; s.rideLanded = 0; s.rideLanded2 = 0; s.slopeUid0 = 0; s.slopeUidNow = 0; }, false},
+    {"taps", [](State& s) { s.taps = 0; s.tapsX[0] = s.tapsX[1] = s.tapsX[2] = 0; }, false},
+    {"seatT", [](State& s) { s.seatT = 0; }, false},
+    {"dx2", [](State& s) { s.dx2 = 0.f; }, false},
+    {"revOff", [](State& s) { s.revOff = 0.f; }, false},
 };
 constexpr int kCensusN = (int)(sizeof(kCensusFields) / sizeof(kCensusFields[0]));
 
@@ -144,11 +193,27 @@ struct SearchCensus {
     // Sibling census, every layer: for each parent that expanded both inputs, by the parent's mode
     // ([8] = dual) and grounded (0/1): [0] both died, [1] one died, [2] same dedupe cell,
     // [3] cells differ only in ringHold/pressSpent, [4] ...only in held/action, [5] otherwise.
-    long long sib[9][2][6] = {};
+    long long sib[9][2][7] = {};   // [6]: the cells differ only in the shadow bits
     long long single[9][2] = {};   // parents that expanded only one input (by the same split)
     long long twin[9][2] = {};     // same cell AND bit-equal y, vy, x, y2, vy2, rot
     // cap coverage, sampled cap layers: [0] 2 px x 0.5 vy bins, [1] 8 px x 2.0
     long long covLayers = 0, covPre[2] = {}, covKept[2] = {}, covAlt[2] = {};
+    // sampled layers: the y / vy bins of the key. cells that have an adjacent-bin sibling with the rest of the key equal (boundary splits); states whose key equals another's while their primary terms
+    // (yq, vq, xq, mini, flip, mode, dual, the pair's bins) differ (a collision of the xor-fold, counted by content); a two-stage key's estimate: the first stage = the rest of the key
+    // (y and vy put to 0), the second = the continuous pair covered by boxes m x the current bin (greedy centres).
+    long long bndCells = 0, bndWithNbr = 0, collStates = 0, collBad = 0, stage1 = 0;
+    long long est[3] = {}, estCells = 0;   // m = 1, 2, 4
+    long long estByMode[9][3] = {}, estCellsByMode[9] = {};
+    // --censuslayers: one row per layer. preM / postM by mode ([8] = dual, counted as well as its mode).
+    struct LayerRow {
+        long long t = 0, born = 0, died = 0;
+        size_t cap = 0, pre = 0, post = 0;
+        float maxX = 0.f;
+        long long preM[9] = {}, postM[9] = {};
+    };
+    std::vector<LayerRow> rows;
+    LayerRow curRow;
+    bool curOpen = false;
 
     static uint64_t mix(uint64_t h, uint64_t v) {
         h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
@@ -183,6 +248,19 @@ struct SearchCensus {
         kids += born;
         died += dead;
         preCap += (long long)pre.size();
+        if (g_censusLayersOn) {
+            curRow = LayerRow();
+            curRow.t = t;
+            curRow.born = born;
+            curRow.died = dead;
+            curRow.pre = pre.size();
+            for (const State& s : pre) {
+                if (s.mode < 8) ++curRow.preM[s.mode];
+                if (s.dual) ++curRow.preM[8];
+                if (s.xAbs > curRow.maxX) curRow.maxX = (float)s.xAbs;
+            }
+            curOpen = true;
+        }
         if (!sample) return;
         ++sampled;
         std::unordered_set<uint64_t> full, cor, w[kCensusN];
@@ -201,7 +279,12 @@ struct SearchCensus {
             for (int f = 0; f < kCensusN; ++f) {
                 State d = s;
                 kCensusFields[f].canon(d);
+                const uint32_t savedMask = gdcol::g_slKeyMask, savedBytes = gdcol::g_slPressBytes;
+                if (kCensusFields[f].slMask >= 0) gdcol::g_slKeyMask = (uint32_t)kCensusFields[f].slMask;
+                if (kCensusFields[f].slBytes >= 0) gdcol::g_slPressBytes = (uint32_t)kCensusFields[f].slBytes;
                 const uint64_t kd = keyOf(d, t) ^ g;
+                gdcol::g_slKeyMask = savedMask;
+                gdcol::g_slPressBytes = savedBytes;
                 w[f].insert(kd);
                 mw[(size_t)(m * kCensusN + f)].insert(kd);
                 if (f == 0) mx[m].insert(kd);
@@ -211,6 +294,62 @@ struct SearchCensus {
             const uint64_t kc = keyOf(c, t) ^ g;
             cor.insert(kc);
             mc[m].insert(kc);
+        }
+        {   // boundary splits, collisions and the two-stage estimate (see the members)
+            struct CellYV { int yq, vq; float y, vy; int m; };
+            std::unordered_map<uint64_t, std::vector<CellYV>> rest;
+            std::unordered_map<uint64_t, std::array<int64_t, 9>> prim;
+            for (const State& s : pre) {
+                const uint64_t g = groupOf(s, curDx) * 0xD6E8FEB86659FD93ull;
+                const uint64_t kf = keyOf(s, t) ^ g;
+                const bool flying = (s.mode == 1 || s.mode == 3);
+                const double ys = flying ? g_shipYq : g_cubeYq, vs = flying ? g_shipVq : g_cubeVq;
+                const bool flyX = (s.mode == 1 || s.mode == 3 || s.mode == 4 || s.mode == 7);
+                const int32_t yq = (int32_t)std::lround(s.y * ys), vq = (int32_t)std::lround(s.vy * vs);
+                const int32_t xq = (int32_t)std::lround(s.xAbs * (flyX ? g_keyXqFly : g_keyXq));
+                std::array<int64_t, 9> tup = {yq, vq, xq, s.mini, s.flip, s.mode, s.dual,
+                    s.dual ? (int64_t)std::lround(s.y2 * (s.freeHalf ? ys * g_dualFreeQ : ys)) : 0,
+                    s.dual ? (int64_t)std::lround(s.vy2 * (s.freeHalf ? vs * g_dualFreeQ : vs)) : 0};
+                ++collStates;
+                auto pit = prim.find(kf);
+                if (pit != prim.end()) { if (pit->second != tup) ++collBad; continue; }   // a later state of a cell: its content must be the cell's
+                prim.emplace(kf, tup);
+                State d = s;
+                d.y = d.vy = d.y2 = d.vy2 = 0.f;
+                rest[keyOf(d, t) ^ g].push_back({yq, vq, s.y, s.vy, s.dual ? 8 : (s.mode < 8 ? s.mode : 0)});
+            }
+            stage1 += (long long)rest.size();
+            for (auto& kv : rest) {
+                auto& v = kv.second;
+                bndCells += (long long)v.size();
+                estCells += (long long)v.size();
+                std::unordered_set<uint64_t> have;
+                for (const auto& c : v) have.insert(((uint64_t)(uint32_t)c.yq << 32) | (uint32_t)c.vq);
+                for (const auto& c : v) {
+                    bool nb = false;
+                    for (int dy = -1; dy <= 1 && !nb; ++dy)
+                        for (int dv = -1; dv <= 1 && !nb; ++dv)
+                            if ((dy || dv) && have.count(((uint64_t)(uint32_t)(c.yq + dy) << 32) | (uint32_t)(c.vq + dv))) nb = true;
+                    if (nb) ++bndWithNbr;
+                }
+                const int m0 = v.empty() ? 0 : v[0].m;
+                estCellsByMode[m0] += (long long)v.size();
+                std::sort(v.begin(), v.end(), [](const CellYV& a, const CellYV& b) { return a.y < b.y || (a.y == b.y && a.vy < b.vy); });
+                for (int mi = 0; mi < 3; ++mi) {
+                    const double mul = (double)(1 << mi);
+                    const bool flying = (m0 == 1 || m0 == 3);
+                    const double wy = mul / (flying ? g_shipYq : g_cubeYq), wv = mul / (flying ? g_shipVq : g_cubeVq);
+                    std::vector<std::pair<float, float>> centres;
+                    for (const auto& c : v) {
+                        bool cov = false;
+                        for (const auto& k : centres)
+                            if (std::fabs((double)c.y - (double)k.first) <= wy * 0.5 && std::fabs((double)c.vy - (double)k.second) <= wv * 0.5) { cov = true; break; }
+                        if (!cov) centres.emplace_back(c.y, c.vy);
+                    }
+                    est[mi] += (long long)centres.size();
+                    estByMode[m0][mi] += (long long)centres.size();
+                }
+            }
         }
         cells += (long long)full.size();
         core += (long long)cor.size();
@@ -246,6 +385,7 @@ struct SearchCensus {
                 && ca.vy2 == cb.vy2 && ca.rot == cb.rot)
                 ++twin[m][g];
         }
+        else if (State xs = ca, ys = cb; (xs.slRef = ys.slRef = 0, xs.slRef2 = ys.slRef2 = 0, keyOf(xs, t) == keyOf(ys, t))) c = 6;   // --shadowstep: apart only by what the shadow's buttons wrote
         else {
             State x = ca, y = cb;
             x.ringHold = y.ringHold = 0;
@@ -266,9 +406,40 @@ struct SearchCensus {
             if (s.mode < 8) ++byMode[s.mode];
             if (s.dual) ++byMode[8];
         }
+        if (g_censusLayersOn && curOpen) {
+            curRow.post = post.size();
+            for (const State& s : post) {
+                if (s.mode < 8) ++curRow.postM[s.mode];
+                if (s.dual) ++curRow.postM[8];
+            }
+            rows.push_back(curRow);
+            curOpen = false;
+        }
+    }
+
+    // --censuslayers: append the call's rows to the file (print only).
+    void writeRows() const {
+        if (!g_censusLayersOn || g_censusLayersPath.empty()) return;
+        static int call = 0;
+        ++call;
+        std::FILE* f = std::fopen(g_censusLayersPath.c_str(), "ab");
+        if (!f) {
+            std::printf("censuslayers: cannot open %s\n", g_censusLayersPath.c_str());
+            return;
+        }
+        std::fprintf(f, "# call %d layers=%zu\n", call, rows.size());
+        std::fprintf(f, "# t\tcap\tpre\tpost\tborn\tdied\tmaxX\tpre:cube ship ball ufo wave robot spider swing dual\tpost:(same)\n");
+        for (const LayerRow& r : rows) {
+            std::fprintf(f, "%lld\t%zu\t%zu\t%zu\t%lld\t%lld\t%.1f\t", r.t, r.cap, r.pre, r.post, r.born, r.died, (double)r.maxX);
+            for (int m = 0; m < 9; ++m) std::fprintf(f, "%lld%c", r.preM[m], m == 8 ? '\t' : ' ');
+            for (int m = 0; m < 9; ++m) std::fprintf(f, "%lld%c", r.postM[m], m == 8 ? '\n' : ' ');
+        }
+        std::fclose(f);
+        std::printf("censuslayers: call %d, %zu layers -> %s\n", call, rows.size(), g_censusLayersPath.c_str());
     }
 
     void cap(size_t pre, size_t cap, long long deadThisLayer) {
+        if (g_censusLayersOn && curOpen) curRow.cap = cap;
         ++capLayers;
         capDropped += (long long)(pre - cap);
         if (deadThisLayer == 0) {
@@ -331,14 +502,26 @@ struct SearchCensus {
         for (int m = 0; m < 9; ++m)
             for (int g = 0; g < 2; ++g) {
                 const long long* v = sib[m][g];
-                const long long n = v[0] + v[1] + v[2] + v[3] + v[4] + v[5];
+                const long long n = v[0] + v[1] + v[2] + v[3] + v[4] + v[5] + v[6];
                 if (!n && !single[m][g]) continue;
                 std::printf("searchcensus: sib %-6s %s pairs=%lld single=%lld bothdead=%lld "
                             "onedead=%lld samecell=%lld pressonly=%lld heldonly=%lld distinct=%lld "
-                            "twin=%lld\n",
+                            "slonly=%lld twin=%lld\n",
                             kModeName[m], g ? "ground" : "air   ", n, single[m][g], v[0], v[1],
-                            v[2], v[3], v[4], v[5], twin[m][g]);
+                            v[2], v[3], v[4], v[5], v[6], twin[m][g]);
             }
+        std::printf("searchcensus: y/vy bins: cells=%lld, with an adjacent-bin sibling (same rest of the key)=%lld (%.1f%%)\n", bndCells, bndWithNbr, bndCells ? 100.0 * (double)bndWithNbr / (double)bndCells : 0.0);
+        std::printf("searchcensus: collisions: states=%lld, states whose key equals another's with other primary terms=%lld\n", collStates, collBad);
+        std::printf("searchcensus: two-stage key: stage-1 groups=%lld for %lld cells (%.2f cells a group); stage-2 centres with boxes of 1x / 2x / 4x the current bins: %lld / %lld / %lld (%.1f%% / %.1f%% / %.1f%% of the cells)\n",
+                    stage1, estCells, stage1 ? (double)estCells / (double)stage1 : 0.0, est[0], est[1], est[2],
+                    estCells ? 100.0 * (double)est[0] / (double)estCells : 0.0, estCells ? 100.0 * (double)est[1] / (double)estCells : 0.0, estCells ? 100.0 * (double)est[2] / (double)estCells : 0.0);
+        {
+            static const char* kMN[9] = {"cube", "ship", "ball", "ufo", "wave", "robot", "spider", "swing", "dual"};
+            for (int m = 0; m < 9; ++m)
+                if (estCellsByMode[m])
+                    std::printf("searchcensus: two-stage %-6s cells=%lld centres 1x/2x/4x = %.1f%% / %.1f%% / %.1f%%\n", kMN[m], estCellsByMode[m],
+                                100.0 * (double)estByMode[m][0] / (double)estCellsByMode[m], 100.0 * (double)estByMode[m][1] / (double)estCellsByMode[m], 100.0 * (double)estByMode[m][2] / (double)estCellsByMode[m]);
+        }
         std::printf("searchcensus: capcov layers=%lld bins2 pre=%lld kept=%lld sorted=%lld | "
                     "bins8 pre=%lld kept=%lld sorted=%lld\n",
                     covLayers, covPre[0], covKept[0], covAlt[0], covPre[1], covKept[1], covAlt[1]);

@@ -53,6 +53,9 @@ with tempfile.TemporaryDirectory() as t:
     assert gdbase.same_build("2.2081", "2.2081")
     assert gdbase.same_build("2.209", "2.209")
     assert gdbase.same_build("2.209b", "2.209")          # the hotfix is frozen as 2.209b, the package says 2.209
+    assert gdbase.same_build("2.209b", "2.2091")         # Geode 6 names the hotfix build 2.2091 in gd.win
+    assert not gdbase.same_build("2.2081", "2.2091")
+    assert not gdbase.same_build("2.209", "2.2091")      # the first 2.209 executable is not the 2.2091 one
     assert not gdbase.same_build("2.2081", "2.209")
     assert not gdbase.same_build("2.209", "2.2081")
     assert not gdbase.same_build("2.2091", "2.209")      # a digit after the version is another version, not a letter

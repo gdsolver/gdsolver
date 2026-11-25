@@ -72,7 +72,7 @@ sys.path.insert(0, str(HERE))
 import cold_manifest
 import run_guard
 from gdtas.paths import BUILD_MOD, DATA, DEFAULT_POOL
-from gdtas.worker import WorkerError, run_session, snapshot_mod
+from gdtas.worker import WorkerError, run_session, snapshot_mod, with_worker_keys
 
 # The runner's own limits inside a launch (py/run_guard.py). main() and other runners that
 # call one() / one_session() set these; 0 turns a limit off. LEVEL_DEADLINE_S is the
@@ -108,6 +108,9 @@ CFG = ["enabled=1", "attempts=1000000", "quitwhendone=1", "blockinput=1",
 # reads that as a stall and kills a healthy run.
 STALL_S = 2400.0
 
+# level -> its own cfg lines, for --level-cfg (one_session only; one() takes them as `extra`)
+LEVEL_CFG: dict[int, list[str]] = {}
+
 
 # The coin-on runs have a baseline of their own. They take different routes and
 # different iteration counts, so comparing one against cold_baseline.json says
@@ -141,6 +144,43 @@ def _all_coins(c: str) -> bool:
     return bool(m) and m.group(1) == m.group(2) and int(m.group(2)) > 0
 
 
+def _wh(s: str) -> tuple[int, int]:
+    """'1600x900' -> (1600, 900) (an argparse type)."""
+    m = re.fullmatch(r"\s*(\d+)\s*[xX*]\s*(\d+)\s*", s)
+    if not m:
+        raise argparse.ArgumentTypeError(f"{s!r} is not WxH")
+    return int(m.group(1)), int(m.group(2))
+
+
+def baseline_resolution_check(base: dict, a) -> tuple[bool, str]:
+    """(refused, the line to print) for the baseline's measuring conditions against this run's. GD's saw radius follows the window HEIGHT, and a
+    resolution index is a different size on another machine, so when both sides know their window the comparison is on sizes: the same side of
+    the 864 / 900 threshold is comparable. A baseline without a window size (an old one, unless --baseline-window says it) is compared by index."""
+    from gdtas import gdsave
+    meta = base.get("_meta", {}) if base else {}
+    bres = meta.get("resolution")
+    bwin = meta.get("window") or getattr(a, "baseline_window", None)
+    bwin = tuple(bwin) if bwin else None
+    win = tuple(a.window) if getattr(a, "window", None) else None
+    if not base:
+        return False, ""
+    if bres is None:
+        return False, "  the baseline does not record the resolution it was measured at"
+    if bwin and win:
+        if not gdsave.same_saw_side(bwin, win):
+            return True, (f"refused: the baseline was measured in a {bwin[0]}x{bwin[1]} window, these workers play at {win[0]}x{win[1]} "
+                          f"(not on the same side of the saw-radius threshold: heights {gdsave.SAW_BIG_FROM} and above / {gdsave.SAW_SMALL_TO} and below)")
+        if bwin != win:
+            return False, (f"  window {win[0]}x{win[1]} against the baseline's {bwin[0]}x{bwin[1]}: the same saw-radius side, compared "
+                           f"(resolution index {a.resolution} against {bres})")
+        return False, ""
+    if bres != a.resolution:
+        return True, (f"refused: the baseline was measured at resolution {bres}, these workers play at {a.resolution}"
+                      + ("" if meta.get("window") else " (the baseline records no window size: --baseline-window WxH says it)")
+                      + ("" if win else " (this machine's window size for the index is unknown: --window WxH says it)"))
+    return False, ""
+
+
 def _meta(a, coins: bool, resolution: int | None) -> dict:
     """What a baseline was blessed from, so a later run can tell whether it is
     comparable: the commit, the package that ran, the profile's resolution (GD's
@@ -149,6 +189,7 @@ def _meta(a, coins: bool, resolution: int | None) -> dict:
     m = {"head": run["head"],
          "mod_sha256": run["mod_sha256"],
          "resolution": resolution,
+         "window": list(a.window) if getattr(a, "window", None) else None,
          "levels": list(a.levels), "arrangement": "one-session",
          "record": "none on every level"}
     if coins:
@@ -172,7 +213,8 @@ def _run_meta(a) -> dict:
     meta = {"head": head, "mod": str(a.mod),
             "mod_sha256": hashlib.sha256(Path(a.mod).read_bytes()).hexdigest(),
             "cfg": list(a.cfg), "levels": list(a.levels),
-            "resolution": getattr(a, "resolution", None), "arrangement": "one-session"}
+            "resolution": getattr(a, "resolution", None), "arrangement": "one-session",
+            "window": list(a.window) if getattr(a, "window", None) else None}
     if getattr(a, "fresh_verify", False):
         meta["fresh_verify"] = True       # --adopt then needs each CLEARED level's sidecar
     return meta
@@ -456,7 +498,21 @@ def _one_session_pass(levels: list[int], wid: int, budget: float, extra: list[st
                  "deepest_t": -1, "deepest_x": -1.0, "fx": 0, "record": "?",
                  "wall": time.time() - t0, "fp": ""} for lv in levels], guard
     levels_arg = "levels=" + ",".join(str(l) for l in levels)
-    # Per-level wall clock. The log carries no timestamps of its own, so the
+    # Per-level cfg (--level-cfg): the first level's own lines go in the launch cfg, every level's
+    # whole cfg is a file the mod reads when it enters that level (cfg levelcfgdir), so each level
+    # starts as a launch with only its own cfg would.
+    cfg_dir_lines: list[str] = []
+    first_lines: list[str] = []
+    if LEVEL_CFG:
+        from gdtas.paths import WORKERS_ROOT
+        d = WORKERS_ROOT / f"worker-{wid}" / "session" / "data" / "levelcfg"
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True, exist_ok=True)
+        for lv in levels:
+            (d / f"{lv}.cfg").write_bytes(
+                ("\n".join(with_worker_keys(CFG + extra + LEVEL_CFG.get(lv, []))) + "\n").encode("ascii"))
+        first_lines = LEVEL_CFG.get(levels[0], [])
+        cfg_dir_lines = ["levelcfgdir=" + str(d).replace("\\", "/")]    # Per-level wall clock. The log carries no timestamps of its own, so the
     # only clock is this side: run_session reads what result.txt gained about
     # once a second and hands the complete new lines to `progress`, and a level
     # starts at the first poll its own `suite: level=` marker arrives in.
@@ -473,7 +529,7 @@ def _one_session_pass(levels: list[int], wid: int, budget: float, extra: list[st
         guard.progress(txt)
 
     try:
-        r = run_session(wid, CFG + extra + [levels_arg], timeout_s=budget,
+        r = run_session(wid, CFG + extra + first_lines + [levels_arg] + cfg_dir_lines, timeout_s=budget,
                         stall_s=STALL_S, mod_file=mod_file,
                         done_marker=SUITE_DONE, progress=_stamp, guard=guard)
     except Exception as e:                      # noqa: BLE001  a worker that will not start
@@ -1025,6 +1081,7 @@ def adopt(a) -> int:
         return 2
     a.cfg, a.levels, a.mod = list(run["cfg"]), list(run["levels"]), mod
     a.resolution, a.run_meta, a.bless = run.get("resolution"), run, True
+    a.window = tuple(run["window"]) if run.get("window") else None
     coins = coin_cfg(a.cfg)
     if coins is None:
         print("refused: the run's cfg names only one of the coin keys")
@@ -1122,6 +1179,9 @@ def main(argv=None) -> int:
                          "than a Windows one (1.5 for half as fast again)")
     ap.add_argument("--cfg", nargs="*", default=[],
                     help="extra autorun.cfg keys, e.g. dpfingerprint=0")
+    ap.add_argument("--level-cfg", type=Path, default=None, metavar="JSON",
+                    help="--one-session only: {level: [cfg lines]}; each level is solved with its own"
+                         " cfg on top of --cfg, in the same game (cfg levelcfgdir)")
     ap.add_argument("--one-session", action="store_true",
                     help="solve every level in ONE game, in order (implied by --bless)")
     ap.add_argument("--bless", action="store_true",
@@ -1142,6 +1202,12 @@ def main(argv=None) -> int:
     # desk -- different configuration, so not obviously the same arithmetic.
     ap.add_argument("--mod", type=Path, default=BUILD_MOD,
                     help="the .geode to run (default: the local build)")
+    ap.add_argument("--window", type=_wh, default=None, metavar="WxH",
+                    help="the window size the workers' resolution index means on this machine, when neither <workers root>/resolution_sizes.json "
+                         "nor the lab table (gdtas.gdsave.LAB_SIZES) knows it (an index is a position in the display's mode list)")
+    ap.add_argument("--baseline-window", type=_wh, default=None, metavar="WxH",
+                    help="the window size an OLD baseline (one whose _meta has no window) was measured at; without it such a baseline is "
+                         "compared by resolution index only")
     # The second stage of a bless: a --one-session run leaves
     # coldlog_suite.txt and coldlog_suite.meta.json in data/; copied to a folder
     # and reviewed, the baseline is adopted from them here, without running GD.
@@ -1206,19 +1272,21 @@ def main(argv=None) -> int:
         print(f"refused: worker {','.join(str(w) for w in used)} has a hand-configured "
               f"profile without a resolution key, so this run could not say what it measured")
         return 2
-    print(f"  resolution index {a.resolution} (worker {','.join(str(w) for w in used)})")
+    from gdtas import gdsave
+    a.window = a.window or gdsave.window_size(a.resolution)
+    print(f"  resolution index {a.resolution}"
+          + (f", window {a.window[0]}x{a.window[1]}" if a.window else ", window size unknown on this machine (--window WxH)")
+          + f" (worker {','.join(str(w) for w in used)})")
     a.geode, why = run_geode(used)
     if why:
         print(f"refused: {why}")
         return 2
     print(f"  Geode {a.geode['version']} (Geode.dll {str(a.geode['dll_sha256'])[:12]}, "
           f"worker {','.join(str(w) for w in used)})")
-    bres = base.get("_meta", {}).get("resolution")
-    if base and bres is None:
-        print("  the baseline does not record the resolution it was measured at")
-    elif base and bres != a.resolution:
-        print(f"refused: the baseline was measured at resolution {bres}, these "
-              f"workers play at {a.resolution}")
+    refused, line = baseline_resolution_check(base, a)
+    if line:
+        print(line)
+    if refused:
         return 2
 
     # The baseline is only worth what the arrangement that produced it can
@@ -1260,6 +1328,9 @@ def main(argv=None) -> int:
         # reads. On 2026-09-23 a mid-run build left a frozen log claiming a
         # package the run never loaded, and --adopt believes this file.
         a.run_meta = _run_meta(a)
+        if a.level_cfg:
+            LEVEL_CFG.update({int(k): list(v) for k, v in
+                              json.loads(a.level_cfg.read_text(encoding="utf-8")).items()})
         results = one_session(a.levels, wid, budget, list(a.cfg), DATA, a.mod)
         if a.fresh_verify_one_session:
             fresh_verify_one_session(results, wid, a.mod, DATA)

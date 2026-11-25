@@ -88,7 +88,15 @@ if (GDSOLVER_BUILD_MOD)
     # A 2.209 build links what the 2.209 libcocos2d exports and the SDK's libcocos2d.lib (made for 2.2081) does not list: an import
     # library made from tools/libcocos2d_209extra.def, by the toolchain's own linker (link.exe or lld-link, both take /lib).
     # (Matched as text: as versions "2.2081" would compare greater than "2.209".)
-    if (WIN32 AND GEODE_GD_VERSION MATCHES "^2\\.209")
+    # Geode 6 ships an import library for 2.2091 that lists what the game exports: no extra library there.
+    set(GDSOLVER_SDK_IS_6 OFF)
+    if (DEFINED ENV{GEODE_SDK} AND EXISTS "$ENV{GEODE_SDK}/VERSION")
+        file(STRINGS "$ENV{GEODE_SDK}/VERSION" GDSOLVER_SDK_VERSION LIMIT_COUNT 1)
+        if (GDSOLVER_SDK_VERSION MATCHES "^6\\.")
+            set(GDSOLVER_SDK_IS_6 ON)
+        endif()
+    endif()
+    if (WIN32 AND GEODE_GD_VERSION MATCHES "^2\\.209" AND NOT GDSOLVER_SDK_IS_6)
         set(GDSOLVER_COCOS_EXTRA_LIB ${CMAKE_BINARY_DIR}/libcocos2d_209extra.lib)
         add_custom_command(OUTPUT ${GDSOLVER_COCOS_EXTRA_LIB}
             COMMAND ${CMAKE_LINKER} /lib /nologo /machine:x64 /def:${CMAKE_CURRENT_SOURCE_DIR}/tools/libcocos2d_209extra.def
@@ -128,6 +136,9 @@ if (GDSOLVER_BUILD_MOD)
         set(CMAKE_CURRENT_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/package)
     endif()
 
+    if (GEODE_VERSION VERSION_GREATER_EQUAL 6)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE GDSOLVER_GEODE6=1)
+    endif()
     setup_geode_mod(${PROJECT_NAME})
     set(CMAKE_CURRENT_SOURCE_DIR ${GDSOLVER_SOURCE_DIR})
 endif()

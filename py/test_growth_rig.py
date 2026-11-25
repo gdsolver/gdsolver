@@ -146,7 +146,7 @@ def replay(unit: str, press: int | None, extra: list[str]) -> dict[int, tuple[fl
         (d / "objrects.txt").write_text(objrects(level))
         (d / "plan.txt").write_text(plan)
         subprocess.run([str(LEVELDP_EXE), str(d / "objrects.txt"), "--replay", str(d / "plan.txt"),
-                        "--start", start, "--out", str(d / "m"), "--cap", "50"] + extra,
+                        "--start", start, "--out", str(d / "m"), "--cap", "50", "--shadowstep=all"] + extra,
                        capture_output=True, text=True, timeout=120, check=True)
         with open(d / "m.trace.csv", encoding="utf-8-sig") as f:
             return {int(r["tick"]): (float(r["y"]), float(r["vy"])) for r in csv.DictReader(f)}

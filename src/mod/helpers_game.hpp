@@ -224,7 +224,7 @@ inline void restoreVolumes() {
 // is lost -- the song that would have started is the song that starts, one seek later and in the
 // right place.
 inline bool g_musicHeld = false;
-inline gd::string g_heldPath;
+inline std::string g_heldPath;
 inline bool g_heldLoop = false;
 inline float g_heldFade = 0.f;
 inline int g_heldChannel = 0;
@@ -233,11 +233,11 @@ inline int g_heldChannel = 0;
 // refuses the queued doors, so a song that does not come back after a seek is a question of which
 // door the restart went through -- answered here, and the group's state on arrival in sync().
 inline int g_seekMusicCalls = 0;
-inline void noteSeekMusic(const char* what, const gd::string& path) {
+inline void noteSeekMusic(const char* what, const std::string& path) {
     if (++g_seekMusicCalls <= 4) log::info("audio: {} during a seek: {}", what, path.c_str());
 }
 
-inline void holdMusic(const gd::string& path, bool loop, float fade, int channel) {
+inline void holdMusic(const std::string& path, bool loop, float fade, int channel) {
     g_musicHeld = true;
     g_heldPath = path;
     g_heldLoop = loop;

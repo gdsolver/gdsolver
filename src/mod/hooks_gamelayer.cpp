@@ -1,4 +1,5 @@
 // GJBaseGameLayer hook: tick control, fast loop, replay/serve, section solver, tracing.
+#include "mod/gd_raw.hpp"
 #include "mod/playlayer_helpers.hpp"
 #include "mod/profsample.hpp"
 #include "mod/replaystep.hpp"
@@ -236,6 +237,47 @@ struct SecRestTimer {
     }
 };
 
+// cfg `ctraw=t0,t1` (hooks checkCollisions below): one snapshot of the collision pass's inputs or outputs as a single comma-free field --
+// the player's bytes [0, 0xc80) in hex, the object pointers the pass keeps in the player as unique IDs (offset:uid, -1 = null), and
+// the layer's bytes the pass reads (flags and speed words [0x300,0x440), the level-bounds words [0x6f0,0x770), [0x317c,0x3180)).
+static std::string ctRawSnapshot(GJBaseGameLayer* layer, PlayerObject* p) {
+    static const char* H = "0123456789abcdef";
+    auto hex = [&](const unsigned char* b, size_t from, size_t to, std::string& s) {
+        for (size_t i = from; i < to; ++i) { s.push_back(H[b[i] >> 4]); s.push_back(H[b[i] & 15]); }
+    };
+    const auto* pb = reinterpret_cast<const unsigned char*>(p);
+    const auto* lb = reinterpret_cast<const unsigned char*>(layer);
+    std::string s;
+    s.reserve(2 * (0xc80 + 0x140 + 0x80 + 4) + 200);
+    hex(pb, 0x0, 0xc80, s);
+    s.push_back(';');
+    static const size_t kPtr[] = {0x5e8, 0x5f0, 0x600, 0x608, 0x610, 0x618, 0x678, 0x680, 0x890};
+    for (size_t off : kPtr) {
+        GameObject* o = *reinterpret_cast<GameObject* const*>(pb + off);
+        char b[40];
+        snprintf(b, sizeof(b), "%zx:%d ", off, o ? (int)o->m_uniqueID : -1);
+        s += b;
+    }
+    s.push_back(';');
+    // the layer words checkCollisions reads: A [0x1a0,0x1b0) the speed words, B [0x300,0x440) the flags (0x311 free mode, 0x422 dual),
+    // C [0x760,0x770), D [0x3170,0x3190) (0x317c, 0x317e), E [0x37a0,0x37b0) the grid scales and the level's ceiling word; then the
+    // band the portals make, getMaxPortalY / getMinPortalY, as floats
+    hex(lb, 0x1a0, 0x1b0, s);
+    s.push_back(';');
+    hex(lb, 0x300, 0x440, s);
+    s.push_back(';');
+    hex(lb, 0x760, 0x770, s);
+    s.push_back(';');
+    hex(lb, 0x3170, 0x3190, s);
+    s.push_back(';');
+    hex(lb, 0x37a0, 0x37b0, s);
+    s.push_back(';');
+    char pb2[64];
+    snprintf(pb2, sizeof(pb2), "%.9g:%.9g", (double)layer->getMaxPortalY(), (double)layer->getMinPortalY());
+    s += pb2;
+    return s;
+}
+
 // The srect:/drect: tick window. These queries run constantly, so a run that
 // names no upper bound (hbto) keeps the lv22 t=1,813 window they were added for;
 // with hbfrom/hbto set they follow it like the other hitboxtrace lines.
@@ -284,7 +326,7 @@ inline void setSectionHook(geode::Hook* h, bool& on, bool want, const char* name
     if (!h || on == want) return;
     if (auto r = want ? h->enable() : h->disable(); r.isErr()) {
         writeResult(std::string("sectionhooks: ") + name + (want ? " enable" : " disable")
-                    + " FAILED: " + r.unwrapErr());
+                    + " FAILED: " + std::string(r.unwrapErr()));
         return;
     }
     on = want;
@@ -520,8 +562,20 @@ class $modify(GJBaseGameLayer) {
     // partner object are settled.
     void rotateGameplay(RotateGameplayGameObject* object) {
         // Absolute angle. Same convention as the model's nf (lround(rot/90) & 3).
-        if (object)
-            g_gameFrame = ((int)std::lround(object->getRotation() / 90.0)) & 3;
+        if (object) {
+            int f = ((int)std::lround(object->getRotation() / 90.0)) & 3;
+            // ...unless the angle is not what the trigger does. The trigger sets the travel direction as an absolute value
+            // (m_groundDirection: 1 up, 2 down, 3 left, 4 right; level_loader.hpp reads 4 -> frame 0, 3 -> frame 0 reversed,
+            // 2 -> frame 1, 1 -> frame 3), and a trigger drawn at an angle that is not a multiple of 90 (a custom level uid 202:
+            // orot -45, gnddir 4) rounds to a sideways frame while the player runs along +x. g_gameFrame stayed 3 for the
+            // rest of the level, and every anchor after it was seeded in a frame the body was not in. Only the SIDEWAYS bit is
+            // taken from the direction, and only when the angle disagrees with it: where they agree (every other 2900 of the
+            // 31 levels that have one, lv22's twenty among them) the value is the one it always was.
+            const int gd = (int)object->m_groundDirection;
+            if (gd >= 1 && gd <= 4 && (((f & 1) != 0) != (gd <= 2)))
+                f = gd == 2 ? 1 : gd == 1 ? 3 : 0;
+            g_gameFrame = f;
+        }
         ++g_rotGameplayCalls;
         if (g_cfg.hitboxTrace && g_started && !g_sessionOver) {
             static int lines = 0;
@@ -598,7 +652,7 @@ class $modify(GJBaseGameLayer) {
     // gate as 2899 -- do not guess; have GD name it together with triggerID (the uid
     // of the firing object).
     void toggleGroupTriggered(int group, bool activate,
-                              gd::vector<int> const& remapKeys,
+                              std::vector<int> const& remapKeys,
                               int triggerID, int controlID) {
         if (g_cfg.hitboxTrace && g_started && !g_sessionOver) {
             static int lines = 0;
@@ -639,7 +693,7 @@ class $modify(GJBaseGameLayer) {
     // does not fire" = "it is not in the list in the first place". has = whether watchuid
     // is in the list.
     void collisionCheckObjects(PlayerObject* player,
-                               gd::vector<GameObject*>* objects,
+                               std::vector<GameObject*>* objects,
                                int objectCount, float dt) {
         if (g_cfg.watchUid > 0 && g_started && !g_sessionOver && objects
             && player == m_player1
@@ -657,7 +711,7 @@ class $modify(GJBaseGameLayer) {
                         has = 1; found = o; break;
                     }
                 }
-                const auto prct = player->getObjectRect();
+                const auto prct = peekObjectRect(player);
                 // ...and, when it IS in the list, the object's own rect and the
                 // state a refusal could come from. `has=1` alone cannot tell
                 // "the box is not what I think" from "the box matches and a
@@ -673,7 +727,7 @@ class $modify(GJBaseGameLayer) {
                 // claim bit already read on the ring path (see orbcall).
                 char ob[192] = "";
                 if (found) {
-                    const auto orct = found->getObjectRect();
+                    const auto orct = peekObjectRect(found);
                     snprintf(ob, sizeof(ob),
                              " orect=(%.3f,%.3f,%.3f,%.3f) oid=%d otype=%d"
                              " act=%d actP=%d grpOff=%d grpOffT=%d claim=%d",
@@ -1793,6 +1847,32 @@ class $modify(GJBaseGameLayer) {
         if (!lockedNow) g_endzoneLockStart = {};
         else if (g_endzoneLockStart.time_since_epoch().count() == 0)
             g_endzoneLockStart = nowLock;
+        // THE WAIT FOR THE END SEQUENCE. Once the goal has the player (m_isLocked) the fast loop drops to one tick a frame so that wall
+        // time reaches the game's own end sequence, and the sequence is 1.0 s of it: PlayLayer::playEndAnimationToPos (22091 base+0x50a2a0) runs on
+        // player 1 CCSequence(CCEaseIn(CCBezierTo(1.0 s), 1.2), CCCallFunc(PlayLayer::levelComplete)) through CCNode::runAction, so it is the action
+        // manager -- updated by the scheduler, at the start of the frame, outside the layer's update -- that calls levelComplete when 1.0 s of the
+        // scheduler's time has passed. cocos holds a frame to 1/60 s (it spins on the clock until then), so that is about a second of real time per
+        // cleared flight with nothing ticking (the physics of a locked player does not advance: g_tick is the same at the lock and at levelComplete).
+        // Raising the scheduler's time scale while locked makes one real frame carry the whole second. The fast loop calls the layer's update with its
+        // own fastdt, so the dt the scheduler hands the layer does not reach the physics; the scale is put back the moment the lock or the session ends.
+        // (Held against the unchanged loop on the 22 official levels, one session each: the same grouptrace rows and crc per attempt, the same [fp] lines, the same
+        // iterations and `record=none` per level, the profiled session of a plain level 2.0 s -> 1.0 s, 2026-11-19. Not a switch: it moves no tick.)
+        {
+            static float s_scaleBefore = -1.f;   // the time scale before this sequence sped it up; -1 = not sped up
+            auto* sch = cocos2d::CCDirector::sharedDirector()->getScheduler();
+            const bool fast = lockedNow && g_cfg.fastdt > 0 && !g_realtimeOverride;
+            if (fast) {
+                if (s_scaleBefore < 0.f) {
+                    s_scaleBefore = sch->getTimeScale();
+                    sch->setTimeScale(s_scaleBefore * kEndFastScale);
+                    writeResult("endfast: time scale " + std::to_string(s_scaleBefore) + " -> " + std::to_string(s_scaleBefore * kEndFastScale)
+                                + " for the end sequence (tick=" + std::to_string((long long)g_tick) + ")");
+                }
+            } else if (s_scaleBefore >= 0.f) {
+                sch->setTimeScale(s_scaleBefore);
+                s_scaleBefore = -1.f;
+            }
+        }
         if (g_started && !g_sessionOver && g_cfg.fastdt > 0 && !g_realtimeOverride) {
             // Visual effects while not rendering are not deleted but "advanced to
             // completion". GD's timed effects clean up by "the action removing itself",
@@ -1861,6 +1941,13 @@ class $modify(GJBaseGameLayer) {
                            std::chrono::steady_clock::now() - batchT0).count()
                            >= g_cfg.frameBudgetMs)
                     break;
+                // A requested reset comes BEFORE the lock test below: a serve worker that stopped at
+                // a clear (cfg serverearm) is still locked by the end sequence, and the test
+                // would break out of every batch before the reset was ever reached.
+                if (g_serveReset) {
+                    g_serveReset = false;
+                    if (auto* pl = PlayLayer::get()) pl->resetLevel();
+                }
                 // The END SEQUENCE took the player mid-batch: stop pumping ticks
                 // right here, so the next frames run at 1 tick/frame (lockedNow
                 // above) and wall time reaches the scheduler. Without this the
@@ -1897,6 +1984,10 @@ class $modify(GJBaseGameLayer) {
                 ++g_lastBatchCalls;
                 cpAfterUpdate();   // cfg cpflight: between two update calls, where a restore lands
                 takeoverAfterUpdate();
+                // A recording pass (nothing can die in it) whose player has left the board on the wrong side ends at the next frame boundary
+                // (dpsolve::poll, "fell off the board"): stop the batch here instead of running the rest of it. lv22's bootstrap pass crossed
+                // x=0 at t=18,080 and was stopped at t=21,594 -- two batches late -- for a recording that is discarded either way.
+                if (dpsolve::g_deepActive && m_player1 && m_player1->getPositionX() < -50.f) break;
             }
         } else {
             // F8 spectating speed (1x/2x/4x). Rather than increasing dt, call several times
@@ -3035,7 +3126,7 @@ class $modify(GJBaseGameLayer) {
         bool any = false;
         for (PlayerObject* p : {m_player1, m_player2}) {
             if (!p || (p == m_player2 && !m_gameState.m_isDualMode)) continue;
-            cocos2d::CCRect q = p->getObjectRect();
+            cocos2d::CCRect q = peekObjectRect(p);
             q.origin.x -= 60.f; q.origin.y -= 60.f; q.size.width += 120.f; q.size.height += 120.f;
             for (int kind = 0; kind < 2; ++kind) {
                 cocos2d::CCArray* a = kind == 0 ? staticObjectsInRect(q, true) : damagingObjectsInRect(q, true);
@@ -3642,8 +3733,8 @@ class $modify(GJBaseGameLayer) {
             {"m_disabledObjects", [&] { return (long long)this->m_disabledObjects.size(); }},
             {"m_areaObjects", [&] { return (long long)this->m_areaObjects.size(); }},
             {"m_processedAreaObjects", [&] { return (long long)this->m_processedAreaObjects.size(); }},
-            {"m_visibleObjects", [&] { return (long long)this->m_visibleObjects.size(); }},
-            {"m_visibleObjects2", [&] { return (long long)this->m_visibleObjects2.size(); }},
+            {"m_visibleObjects", [&] { return (long long)gdraw::at<std::vector<GameObject*>>(static_cast<GJBaseGameLayer*>(this), 3768).size(); }},
+            {"m_visibleObjects2", [&] { return (long long)gdraw::at<std::vector<GameObject*>>(static_cast<GJBaseGameLayer*>(this), 3800).size(); }},
             {"m_groups", [&] { return (long long)this->m_groups.size(); }},
             {"m_staticGroups", [&] { return (long long)this->m_staticGroups.size(); }},
             {"m_sections", [&] { return (long long)this->m_sections.size(); }},
@@ -6705,6 +6796,12 @@ class $modify(GJBaseGameLayer) {
 
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         ++g_pcCalls;   // sole direct indicator that physics runs (goes to the heartbeat)
+        // cfg leaveat: the leave-the-level key pressed by the harness at a tick -- the session ends and GD's own leave starts, as F9 does (session_hotkeys.hpp)
+        if (g_cfg.leaveAt >= 0 && g_started && !g_sessionOver && g_tick >= g_cfg.leaveAt && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) {
+            g_cfg.leaveAt = -1;
+            writeResult("leaveat: the leave-the-level key pressed at tick " + std::to_string((long long)g_tick));
+            endSession("user_quit_hotkey");
+        }
         // Tick counter: this substep executes as number g_tick
         // Input injection: call handleButton directly before the target tick's substep
         // runs (exact injection in tick space, independent of the queue's
@@ -6903,7 +7000,7 @@ class $modify(GJBaseGameLayer) {
                          : m_player1->m_isSwing ? 7 : 0;
             if (md != lastMode || m_player1->m_vehicleSize != lastSize) {
                 lastMode = md; lastSize = m_player1->m_vehicleSize;
-                CCRect pr = m_player1->getObjectRect();
+                CCRect pr = peekObjectRect(m_player1);
                 char b[192];
                 snprintf(b, sizeof(b),
                     "pbox: t=%lld mode=%d size=%.3f rect=(%.3f,%.3f,%.3f,%.3f)",
@@ -6924,7 +7021,7 @@ class $modify(GJBaseGameLayer) {
         if (g_cfg.hitboxTrace && g_started && !g_sessionOver && m_player1
             && g_tick >= g_cfg.hbFrom
             && (g_cfg.hbTo == 0 || g_tick <= g_cfg.hbTo)) {
-            const CCRect pr = m_player1->getObjectRect();
+            const CCRect pr = peekObjectRect(m_player1);
             CCRect q = pr;
             q.origin.x -= 30.f; q.origin.y -= 30.f;
             q.size.width += 60.f; q.size.height += 60.f;
@@ -6946,7 +7043,7 @@ class $modify(GJBaseGameLayer) {
             if (CCArray* s = this->staticObjectsInRect(q, true)) {
                 for (auto* o : CCArrayExt<GameObject*>(s)) {
                     if (!o) continue;
-                    const CCRect r = o->getObjectRect();
+                    const CCRect r = peekObjectRect(o);
                     char b[224];
                     snprintf(b, sizeof(b),
                         "stat: t=%lld uid=%d id=%d type=%d rect=(%.3f,%.3f,%.3f,%.3f)",
@@ -6959,7 +7056,7 @@ class $modify(GJBaseGameLayer) {
             if (a) {
                 for (auto* o : CCArrayExt<GameObject*>(a)) {
                     if (!o) continue;
-                    const CCRect r = o->getObjectRect();
+                    const CCRect r = peekObjectRect(o);
                     char b[224];
                     snprintf(b, sizeof(b),
                         "dmg: t=%lld uid=%d id=%d type=%d rect=(%.3f,%.3f,%.3f,%.3f)"
@@ -6990,8 +7087,8 @@ class $modify(GJBaseGameLayer) {
         if (g_cfg.hitboxTrace && g_started && !g_sessionOver && m_player1) {
             static int pobbLines = 0;
             if (++pobbLines <= 40000) {
-                if (OBB2D* ob = m_player1->getOrientedBox()) {
-                    const auto& c = ob->m_corners;
+                std::array<cocos2d::CCPoint, 4> c;
+                if (peekOrientedBoxCorners(m_player1, c)) {
                     // The 3 flags that decide the rotation's sign + the speed.
                     // runNormalRotation (win 0x38d220), the real thing:
                     //   m_rotationSpeed = 180 * s(+0x9bf) * s(+0x9c2) * s(+0x9c3)
@@ -7085,7 +7182,7 @@ class $modify(GJBaseGameLayer) {
                 auto pos = [](GameObject* o, char* dst, size_t n) {
                     if (!o) { snprintf(dst, n, "-"); return; }
                     auto q = o->getPosition();
-                    auto r = o->getObjectRect();
+                    auto r = peekObjectRect(o);
                     snprintf(dst, n, "uid%d id%d type%d @%.2f,%.2f %.2fx%.2f",
                              o->m_uniqueID, o->m_objectID, (int)o->m_objectType,
                              q.x, q.y, r.size.width, r.size.height);
@@ -7138,7 +7235,7 @@ class $modify(GJBaseGameLayer) {
                 for (auto* o : solver::g_gateObjs) {
                     if (!o) continue;
                     char hb[160];
-                    auto r = o->getObjectRect();
+                    auto r = peekObjectRect(o);
                     snprintf(hb, sizeof(hb),
                         "gateobj: id=%d uid=%d x=%.2f y=%.2f rect=%.2f,%.2f,%.2f,%.2f",
                         o->m_objectID, o->m_uniqueID,
@@ -7151,7 +7248,7 @@ class $modify(GJBaseGameLayer) {
             if (m_player1) {
                 char pb[224];
                 // Emit the real hitbox and GD's own collision record (lcol)
-                auto pr = m_player1->getObjectRect();
+                auto pr = peekObjectRect(m_player1);
                 auto* g = m_player1->m_maybeLastGroundObject;
                 snprintf(pb, sizeof(pb),
                     " px=%.1f py=%.1f prect=%.2f,%.2f,%.2f,%.2f ground=%d@%.0f,%.0f"
@@ -7230,9 +7327,34 @@ class $modify(GJBaseGameLayer) {
             while (g_injectNext < g_injects.size()
                    && g_injects[g_injectNext].tick == g_tick) {
                 auto& s = g_injects[g_injectNext++];
+                const double preX = m_player1->getPositionX(), preY = m_player1->getPositionY(), preRot = m_player1->getRotation();
                 if (s.hasX)  m_player1->setPositionX((float)s.x);
                 if (s.hasY)  m_player1->setPositionY((float)s.y);
                 if (s.hasVy) m_player1->m_yVelocity = s.vy;
+                if (s.hasRot) m_player1->setRotation((float)s.rot);
+                double pre2X = 0, pre2Y = 0, pre2Rot = 0;
+                const bool p2Fix = (s.hasP2 || s.hasRot2) && m_gameState.m_isDualMode && m_player2;   // xdBot: player 2 only in a dual
+                if (p2Fix) {
+                    pre2X = m_player2->getPositionX(); pre2Y = m_player2->getPositionY(); pre2Rot = m_player2->getRotation();
+                    if (s.hasP2) { m_player2->setPositionX((float)s.x2); m_player2->setPositionY((float)s.y2); }
+                    if (s.hasRot2) m_player2->setRotation((float)s.rot2);
+                }
+                if (s.fix) {   // a macro frame fix: what it replaced (the rotation is compared on the circle)
+                    char fb[160];
+                    double dr = s.hasRot ? std::fmod(s.rot - preRot, 360.0) : 0.0;
+                    if (dr > 180.0) dr -= 360.0; else if (dr < -180.0) dr += 360.0;
+                    snprintf(fb, sizeof(fb), "injfix: t=%lld dx=%.6f dy=%.6f drot=%.6f", (long long)g_tick, s.hasX ? s.x - preX : 0.0, s.hasY ? s.y - preY : 0.0, dr);
+                    std::string fl = fb;
+                    if (p2Fix) {   // only a line that names player 2 and meets a dual says anything about it, so a p1-only plan logs as before
+                        double dr2 = s.hasRot2 ? std::fmod(s.rot2 - pre2Rot, 360.0) : 0.0;
+                        if (dr2 > 180.0) dr2 -= 360.0; else if (dr2 < -180.0) dr2 += 360.0;
+                        char f2[120];
+                        snprintf(f2, sizeof(f2), " dx2=%.6f dy2=%.6f drot2=%.6f", s.hasP2 ? s.x2 - pre2X : 0.0, s.hasP2 ? s.y2 - pre2Y : 0.0, dr2);
+                        fl += f2;
+                    }
+                    writeResult(fl);
+                    continue;
+                }
                 char ib[192];
                 snprintf(ib, sizeof(ib),
                     "inject: t=%lld x=%.3f y=%.3f vy=%.3f mode=%s",
@@ -7425,6 +7547,7 @@ class $modify(GJBaseGameLayer) {
                 snprintf(ob2, sizeof(ob2), "stall: attempt=%d has run %lld ticks without "
                          "ending - forcing it over", g_attempt, (long long)g_tick);
                 writeResult(ob2);
+                g_verdict = AttemptVerdict{AttemptEnd::Overlong, g_attempt, (long long)g_tick};   // what ended this attempt, for dpsolve::onDeath of the same attempt (config.hpp)
                 if (auto* pl = PlayLayer::get()) {
                     pl->destroyPlayer(m_player1, m_player1);
                     g_stallResetPending = true;
@@ -7443,6 +7566,8 @@ class $modify(GJBaseGameLayer) {
                     "(x=%.3f y=%.3f) - ending the attempt",
                     g_attempt, (long long)s_stallSince, (double)px, (double)py);
                 writeResult(sb);
+                // the verdict, before the end is reported: stillness for the bound (StallStill), or the end sequence that never completed (EndzoneHung); `since` = where the stillness began
+                g_verdict = AttemptVerdict{(g_tick - s_stallSince >= 3000 && !endzoneGrace) ? AttemptEnd::StallStill : AttemptEnd::EndzoneHung, g_attempt, (long long)s_stallSince};
                 s_stallSince = -1;
                 if (auto* pl = PlayLayer::get()) {
                     pl->destroyPlayer(m_player1, m_player1);
@@ -7698,8 +7823,9 @@ class $modify(GJBaseGameLayer) {
         // section head, one per step of every node, growing the buffer by tens of thousands of
         // rows per search. The attempt the rung starts afterwards clears them (onAttemptStart),
         // so the ladder never read them, but every step paid for them.
-        if (g_started && !g_sessionOver && g_cfg.dpSolve && m_player1 && !secsolve::g_active)
+        if (g_started && !g_sessionOver && (g_cfg.dpSolve || g_cfg.payloadAtT1 >= g_cfg.payloadAtT0 || g_cfg.anchorSweep > 0) && m_player1 && !secsolve::g_active)   // cfg payloadat records the rows in a plain replay too (observation only)
             anchors::record(this, g_tick);
+        if (g_cfg.payloadAtT1 >= g_cfg.payloadAtT0 && g_tick == g_cfg.payloadAtT1 + 2 && g_payloadAtHook) g_payloadAtHook();   // cfg payloadat: written as soon as the window (and the row after it) is recorded
         // cfg `areatrace`: the listed objects' positions at this same instant (see g_areaT0).
         // The pointers are looked up again whenever the object array changes (a new level in
         // a one-session run) or the window starts.
@@ -7773,6 +7899,17 @@ class $modify(GJBaseGameLayer) {
                 writeResult("maxplayy: t=" + std::to_string(g_tick)
                             + " v=" + std::to_string(mp));
             }
+        }
+        // cfg `rngtrace` (OFF by default; observation only, nothing is called): rngtrace.csv, one row each time the trigger LCG (the global at base + gdoff::kSeedTriggerRva: Random / Advanced Random / Spawn delay variation /
+        // tryGetObject / Advanced Follow / modifyGroupPhysics draw from it; rngearly / rngfix pin it) is not what the previous tick left. `attempt,tick,before,after` (low 32 bits; the first row of an attempt has before = -1). From
+        // consecutive rows the number of draws in a tick is the n with LCG^n(before) = after, and the tick says where the game drew -- which is how a consumer the trigger shadow does not model is found (design note §0w).
+        if (g_cfg.rngTrace && g_started && !g_sessionOver && !secsolve::g_active) {
+            static std::ofstream s_rng; static long long s_last = -2; static int s_att = -1; static const void* s_layer = nullptr;
+            if (s_layer != this) { s_layer = this; s_att = -1; s_last = -1; }   // a new level in a one-session run (a new layer): the first row of its attempt starts from before = -1 even when the attempt number repeats
+            if (!s_rng.is_open()) { s_rng.open(std::string(DATA_DIR) + "/rngtrace.csv", std::ios::trunc); s_rng << "attempt,tick,before,after\n"; }
+            const long long v = *reinterpret_cast<const long long*>(reinterpret_cast<const unsigned char*>(geode::base::get()) + gdoff::kSeedTriggerRva) & 0xffffffffLL;
+            if (g_attempt != s_att) { s_att = g_attempt; s_last = -1; }
+            if (v != s_last) { s_rng << g_attempt << "," << g_tick << "," << s_last << "," << v << "\n"; s_rng.flush(); s_last = v; }
         }
         // End-of-tick state dump (after the player's physics is settled). Not inside a section
         // search: one row per step of every node, on ticks that are not the level's (see tEff).
@@ -7935,18 +8072,18 @@ class $modify(GJBaseGameLayer) {
                    // The size check is the layout check: MSVC's unordered_map is
                    // 0x40 bytes, which is exactly the distance between the two.
                    << ',' << [this]() {
-                          // gd::unordered_map is std::unordered_map on Windows and GD's
+                          // std::unordered_map is std::unordered_map on Windows and GD's
                           // GNU-STL layout on Android (0x38 bytes there).
-                          static_assert(sizeof(gd::unordered_map<int, int>)
+                          static_assert(sizeof(std::unordered_map<int, int>)
                                         == gdoff::kLayerSpawnChannel1 - gdoff::kLayerSpawnChannel0);
-                          static_assert(sizeof(gd::unordered_map<int, bool>)
+                          static_assert(sizeof(std::unordered_map<int, bool>)
                                         == gdoff::kLayerSpawnChannel1 - gdoff::kLayerSpawnChannel0);
                           auto const* base = reinterpret_cast<char const*>(this);
                           const int ch =
                               *reinterpret_cast<int const*>(base + gdoff::kLayerCurrentChannel);
-                          auto const& idx = *reinterpret_cast<gd::unordered_map<int, int> const*>(
+                          auto const& idx = *reinterpret_cast<std::unordered_map<int, int> const*>(
                               base + gdoff::kLayerSpawnChannel0);
-                          auto const& rev = *reinterpret_cast<gd::unordered_map<int, bool> const*>(
+                          auto const& rev = *reinterpret_cast<std::unordered_map<int, bool> const*>(
                               base + gdoff::kLayerSpawnChannel1);
                           auto const i = idx.find(ch);
                           auto const r = rev.find(ch);
@@ -8023,7 +8160,167 @@ class $modify(GJBaseGameLayer) {
                    // (processOptionsTrigger 0x223d50: +0x754 player 1, +0x758 player 2), so a
                    // window that stops only p1 left p2 jumping in GD while the model held both.
                    << ',' << ((m_player2 && m_player2->m_controlsDisabled) ? 1 : 0)
-                   << '\n';
+                   // b728: the ball's ground-stake byte (gdoff::kPlayerBallStake). The dump had no column for it, so an anchor
+                   // started dp's State::ball728 unknown; the byte is appended at the END, like every column since p2ground2.
+                   << ',' << (int)*(reinterpret_cast<const uint8_t*>(m_player1) + gdoff::kPlayerBallStake)
+                   // boost / revoff / revcar: the three anchor values the loop carries from the live player (AnchorRow::boost, revOff,
+                   // revCarry -> --start's 25th field and --startrev) that the dump had no column for, so a section replay started with
+                   // the velocity-limit exemption down and no reverse correction owed. The exemption is the byte at
+                   // gdoff::kPlayerAccelerating; the other two are m_maybeReverseSpeed and m_maybeReverseAcceleration.
+                   << ',' << (int)(*(reinterpret_cast<const uint8_t*>(m_player1) + gdoff::kPlayerAccelerating) ? 1 : 0)
+                   << ',' << (float)m_player1->m_maybeReverseSpeed
+                   << ',' << (float)m_player1->m_maybeReverseAcceleration;
+            if (g_cfg.dumpP2Dir) {   // cfg dumpp2dir: the direction bytes (see config.hpp); read by raw offset, 2.209's
+                g_dump << ',' << (m_player2 ? (int)*(reinterpret_cast<const uint8_t*>(m_player2) + gdoff::kPlayerGoingLeft) : -1)
+#ifdef GEODE_IS_WINDOWS
+#if GEODE_COMP_GD_VERSION >= 22090
+                       << ',' << (m_player2 ? (int)*reinterpret_cast<const int32_t*>(reinterpret_cast<const char*>(m_player2) + 0x9d0) : -1)
+#else
+                       << ',' << -1
+#endif
+#else
+                       << ',' << -1
+#endif
+                       << ',' << (int)*(reinterpret_cast<const uint8_t*>(m_player1) + gdoff::kPlayerGoingLeft);
+            }
+            if (g_cfg.dumpRide) {   // cfg dumpride: the slope ride and the press latch, read as AnchorRow reads them (repair.hpp, raw members; nothing is called)
+                auto const* pb = reinterpret_cast<const uint8_t*>(m_player1);
+                auto* ramp = *reinterpret_cast<GameObject* const*>(pb + gdoff::kPlayerCurrentSlope);
+                const bool d2 = m_gameState.m_isDualMode && m_player2 && m_player2->m_isDashing;
+                char rb[256];
+                std::snprintf(rb, sizeof rb, ",%d,%d,%d,%.6f,%.6f,%.6f,%d,%d,%d,%d",
+                              pb[gdoff::kPlayerOnSlope] ? 1 : 0, pb[gdoff::kPlayerUpsideDownSlope] ? 1 : 0, ramp ? (int)ramp->m_uniqueID : -1,
+                              *reinterpret_cast<double const*>(pb + gdoff::kPlayerSlopeStartTime), *reinterpret_cast<double const*>(pb + gdoff::kPlayerTotalTime),
+                              *reinterpret_cast<double const*>(pb + gdoff::kPlayerLastSpiderFlipTime),
+                              pb[gdoff::kPlayerJumpBuffered] ? 1 : 0, pb[gdoff::kPlayerStateRingJump] ? 1 : 0,
+                              d2 ? 1 : 0, d2 ? (m_player2->m_dashRing ? (int)reinterpret_cast<GameObject*>(m_player2->m_dashRing)->m_uniqueID : -1) : -1);
+                g_dump << rb;
+                // the dash a dash ring leaves on player 1 as the update reads it (22091: startDashing writes +0x9ec and the slope word +0x578); the loop derives the same from the ring's rotation, tan(-rot)
+#ifdef GEODE_IS_WINDOWS
+                char db[64];
+                std::snprintf(db, sizeof db, ",%d,%.9g", pb[gdoff::kPlayerDashing] ? 1 : 0, *reinterpret_cast<double const*>(pb + 0x578));
+                g_dump << db;
+#else
+                g_dump << ",-1,-1";
+#endif
+                {   // the second body's press words, as AnchorRow reads them (repair.hpp b985_2 / b986_2): -1 without a second body
+                    auto const* q2 = (m_gameState.m_isDualMode && m_player2) ? reinterpret_cast<const uint8_t*>(m_player2) : nullptr;
+                    char pb2[32];
+                    std::snprintf(pb2, sizeof pb2, ",%d,%d", q2 ? (q2[gdoff::kPlayerJumpBuffered] ? 1 : 0) : -1, q2 ? (q2[gdoff::kPlayerStateRingJump] ? 1 : 0) : -1);
+                    g_dump << pb2;
+                    // p2gmod: the second body's m_gravityMod (-1 without a second body), the word dp seeds player 2's gravity factor from (hist payload gmod2); otspeed: player 1's m_rotationSpeed as the float
+                    // (the +0x730 switch byte is the b728 column). Plain member reads.
+                    char pb3[64];
+                    const float g2 = q2 ? *reinterpret_cast<const float*>(q2 + gdoff::kPlayerGravityMod) : -1.f;
+                    const float ots = *reinterpret_cast<const float*>(pb + gdoff::kPlayerRotationSpeed);
+                    std::snprintf(pb3, sizeof pb3, ",%.9g,%.9g", (double)g2, (double)ots);
+                    g_dump << pb3;
+                    // p2onSlope .. p2totalTime: the second body's slope ride as AnchorRow::onSlope2 .. reads it (the hist payload's version 11, cfg histslope2): -1 / 0 without a second body. item1 / cnt1 / item2 /
+                    // cnt2: GD's two lowest item counters (solver::g_itemCounts, AnchorRow::item1 ..; -1 / 0 none), which the loop passes as --itembase under coinroute / worldgates. Plain member reads.
+                    char pb4[160];
+                    auto* ramp2 = q2 ? *reinterpret_cast<GameObject* const*>(q2 + gdoff::kPlayerCurrentSlope) : nullptr;
+                    std::snprintf(pb4, sizeof pb4, ",%d,%d,%d,%.6f,%.6f",
+                                  q2 ? (q2[gdoff::kPlayerOnSlope] ? 1 : 0) : -1, q2 ? (q2[gdoff::kPlayerUpsideDownSlope] ? 1 : 0) : -1, q2 ? (ramp2 ? (int)ramp2->m_uniqueID : -1) : -1,
+                                  q2 ? *reinterpret_cast<double const*>(q2 + gdoff::kPlayerSlopeStartTime) : 0.0, q2 ? *reinterpret_cast<double const*>(q2 + gdoff::kPlayerTotalTime) : 0.0);
+                    g_dump << pb4;
+                    int ik[2] = {-1, -1}, ic[2] = {0, 0}, in = 0;
+                    for (const auto& kv : solver::g_itemCounts) { if (in >= 2) break; ik[in] = kv.first; ic[in] = kv.second; ++in; }
+                    char pb5[64];
+                    std::snprintf(pb5, sizeof pb5, ",%d,%d,%d,%d", ik[0], ic[0], ik[1], ic[1]);
+                    g_dump << pb5;
+                }
+            }
+            g_dump << '\n';
+        }
+        // cfg `areadump=1`: the camera position the layer keeps (+0x410, +0x414: the pair a screen-centred Area's centre is built on) and the zoom, at the same point as the dump row. The layer's
+        // position and the zoom in dump.csv give the same camera only while the zoom is still (they are updated at different moments while it changes); a file of its own so that dump.csv is untouched.
+#ifdef GEODE_IS_WINDOWS   // 2.209's offsets
+        if (g_cfg.areaDump && g_started && !g_sessionOver && !secsolve::g_active && m_player1) {
+            static std::ofstream s_cam;
+            static GJBaseGameLayer* s_camLayer = nullptr;
+            if (!s_cam.is_open() || s_camLayer != this) {
+                if (s_cam.is_open()) s_cam.close();
+                s_cam.open(std::string(DATA_DIR) + "/camtrace.csv", std::ios::trunc);
+                s_cam << "attempt,tick,camPX,camPY,zoom,layerX,layerY\n";
+                s_camLayer = this;
+            }
+            s_cam.precision(10);
+            s_cam << g_attempt << ',' << g_tick << ',' << *reinterpret_cast<const float*>(reinterpret_cast<const char*>(this) + 0x410) << ',' << *reinterpret_cast<const float*>(reinterpret_cast<const char*>(this) + 0x414)
+                  << ',' << *reinterpret_cast<const float*>(reinterpret_cast<const char*>(this) + gdoff::kLayerCameraZoom) << ','
+                  << (this->m_objectLayer ? this->m_objectLayer->getPositionX() : 0.f) << ',' << (this->m_objectLayer ? this->m_objectLayer->getPositionY() : 0.f) << '\n';
+            s_cam.flush();
+        }
+#endif
+        // cfg `hstrace=1`: the press / hold / ground bytes of player 1 at the same point as the dump row (notes/pushbutton-state-table-2091):
+        // H m_jumpBuffered, S m_stateRingJump, Hm / Sm their mirrors, slot A / B / C the three per-class ring slots, G m_isOnGround, G2 m_isOnGround2,
+        // BOOST m_maybeIsBoosted, HB m_touchedPad (set by a release or a pad, cleared by a jump), Hp m_wasJumpBuffered. A file of its own so that
+        // dump.csv, and every reader that indexes it, is untouched.
+        if (g_cfg.hsTrace && g_started && !g_sessionOver && !secsolve::g_active && m_player1) {
+            if (!g_hs.is_open()) {
+                g_hs.open(std::string(DATA_DIR) + "/hstrace.csv", std::ios::trunc);
+                g_hs << "attempt,tick,H,S,Hm,Sm,slotA,slotB,slotC,G,G2,BOOST,HB,Hp,pH,pS,pHm,pSm,pSlotA,pSlotB,pSlotC\n";
+                // ...and the 2.2 changes flag (kA40) of the level and of the two players (PlayerObject::m_enable22Changes, +0xc4d in 2.209: what ringJump
+                // tests before a spawn orb spends the press), beside it. Nothing reads this file; levelsettings.txt is not touched (dp hashes it).
+                const int ls22 = m_levelSettings ? (m_levelSettings->m_enable22Changes ? 1 : 0) : -1;
+                const int p22a = m_player1 ? (m_player1->m_enable22Changes ? 1 : 0) : -1;
+                const int p22b = m_player2 ? (m_player2->m_enable22Changes ? 1 : 0) : -1;
+                std::ofstream ff(std::string(DATA_DIR) + "/levelflags.txt", std::ios::trunc);
+                ff << "enable22Changes=" << ls22 << "\nplayer1Enable22Changes=" << p22a << "\nplayer2Enable22Changes=" << p22b << "\n";
+                log::info("levelflags: enable22Changes={} player1={} player2={}", ls22, p22a, p22b);
+            }
+            auto* p = m_player1;
+            g_hs << g_attempt << ',' << g_tick
+                 << ',' << (int)p->m_jumpBuffered << ',' << (int)p->m_stateRingJump
+                 << ',' << (int)p->m_stateJumpBuffered << ',' << (int)p->m_stateRingJump2
+                 << ',' << (int)p->m_touchedRing << ',' << (int)p->m_touchedCustomRing << ',' << (int)p->m_touchedGravityPortal
+                 << ',' << (int)p->m_isOnGround << ',' << (int)p->m_isOnGround2
+                 << ',' << (int)p->m_maybeIsBoosted << ',' << (int)p->m_touchedPad << ',' << (int)p->m_wasJumpBuffered;
+            // ...and the second body's (a dual's player 2 is a PlayerObject of its own), appended so that every reader by name is unchanged; 0 without one
+            if (auto* q = m_player2)
+                g_hs << ',' << (int)q->m_jumpBuffered << ',' << (int)q->m_stateRingJump << ',' << (int)q->m_stateJumpBuffered << ',' << (int)q->m_stateRingJump2
+                     << ',' << (int)q->m_touchedRing << ',' << (int)q->m_touchedCustomRing << ',' << (int)q->m_touchedGravityPortal;
+            else
+                g_hs << ",0,0,0,0,0,0,0";
+            g_hs << '\n';
+        }
+        // cfg `ctrace=1`: player 1's contact record of the tick that just ended (notes/collision-state-table-2091 sections 5, 7, 8). What the
+        // collision pass left in the player: the unique IDs of the solid it stands on / bumped its head on / touched on the left and right
+        // (m_lastCollision*, -1 = none; GJBaseGameLayer::update resets them to -1 at the top of the step and updateCollide* write them), the contact
+        // LINES (m_collidedBottomMaxY = the highest floor top, m_collidedTopMinY = the lowest ceiling underside, 0 = none), the slope bytes
+        // (m_isOnSlope this tick, m_wasOnSlope last tick, m_currentSlope / m_currentSlope2, m_isCurrentSlopeTop), the objects postCollision keeps
+        // (m_lastGroundObject, m_collidedObject), and the ground bytes. A file of its own: dump.csv and hstrace.csv are untouched. Read-only.
+        if (g_cfg.ctTrace && g_started && !g_sessionOver && !secsolve::g_active && m_player1) {
+            if (!g_ct.is_open()) {
+                g_ct.open(std::string(DATA_DIR) + "/ctrace.csv", std::ios::trunc);
+                g_ct << "attempt,tick,fl,ce,le,ri,flY,ceY,leX,riX,slope,slope2,onSlope,wasSlope,slopeTop,ground,coll,G,G2,BOOST,vy,y,snap,w668,w670,w678,w680,nf671\n";
+            }
+            auto* p = m_player1;
+            auto rawObjUid = [](PlayerObject* pl, size_t off) -> int {
+                const auto v = *reinterpret_cast<const std::uintptr_t*>(reinterpret_cast<const char*>(pl) + off);
+                if (v == 0) return -1;
+                if (v < 0x10000 || (v & 7) != 0 || v > 0x00007fffffffffffull) return -2;
+                int uid = -2;
+                __try { uid = (int)reinterpret_cast<GameObject*>(v)->m_uniqueID; } __except (1) { uid = -2; }
+                return uid;
+            };
+            auto uidOf = [](GameObject* o) { return o ? (int)o->m_uniqueID : -1; };
+            g_ct.precision(10);
+            g_ct << g_attempt << ',' << g_tick
+                 << ',' << (int)p->m_lastCollisionBottom << ',' << (int)p->m_lastCollisionTop
+                 << ',' << (int)p->m_lastCollisionLeft << ',' << (int)p->m_lastCollisionRight
+                 << ',' << p->m_collidedBottomMaxY << ',' << p->m_collidedTopMinY
+                 << ',' << p->m_collidedLeftMaxX << ',' << p->m_collidedRightMinX
+                 << ',' << uidOf(static_cast<GameObject*>(p->m_currentSlope)) << ',' << uidOf(static_cast<GameObject*>(p->m_currentSlope2))
+                 << ',' << (int)p->m_isOnSlope << ',' << (int)p->m_wasOnSlope << ',' << (int)p->m_isCurrentSlopeTop
+                 << ',' << uidOf(static_cast<GameObject*>(p->m_lastGroundObject)) << ',' << uidOf(static_cast<GameObject*>(p->m_collidedObject))
+                 << ',' << (int)p->m_isOnGround << ',' << (int)p->m_isOnGround2 << ',' << (int)p->m_maybeIsBoosted
+                 << ',' << (double)p->m_yVelocity << ',' << p->getPositionY()
+                 << ',' << uidOf(static_cast<GameObject*>(p->m_objectSnappedTo))
+                 // ...and the words around the slope pointer (+0x668..+0x680, each read as an object pointer: its uid, -1 null, -2 not an object) and the byte at +0x671: the model's
+                 // preSlopeCollision keeps a ramp in its po::Cf across ticks (collide.hpp, +0x678); a custom level t=5082 needs to know whether the game's word is still set at the tick start
+                 << ',' << rawObjUid(p, 0x668) << ',' << rawObjUid(p, 0x670) << ',' << rawObjUid(p, 0x678) << ',' << rawObjUid(p, 0x680)
+                 << ',' << (int)*(reinterpret_cast<unsigned char*>(p) + 0x671)
+                 << '\n';
         }
     }
 
@@ -8070,8 +8367,8 @@ class $modify(GJBaseGameLayer) {
             && player == m_player1) {
             static int lines = 0;
             if (++lines <= 2000) {
-                const auto orct = object->getObjectRect();
-                const auto prct = player->getObjectRect();
+                const auto orct = peekObjectRect(object);
+                const auto prct = peekObjectRect(player);
                 char b[256];
                 snprintf(b, sizeof(b),
                          "ptt: t=%lld uid=%d id=%d orect=(%.3f,%.3f,%.3f,%.3f) "
@@ -8093,8 +8390,11 @@ class $modify(GJBaseGameLayer) {
         // !g_sessionOver is required: without it the block persists after the session
         // ends and manual play stops working
         // ...except a person's, once a takeover has given them the input (mod/takeover.hpp).
-        if (g_cfg.blockInput && g_started && !g_sessionOver && !g_injecting
+        // ...and in a worker also a PRESS while the level is still loading (g_started not yet set): a click then reached the first attempt (config.hpp workerInputGate), and said so. Not a release:
+        // the game's own releases at the level's start came through here before (measured: one per run, no state of a press behind it), and dropping them changed nothing but the count.
+        if (((g_cfg.blockInput && g_started && !g_sessionOver) || (workerInputGate() && down)) && !g_injecting
             && !takeover::personDriving()) {
+            if (down && workerInputGate()) noteWorkerInputDrop("a button press");   // (a release is dropped as before but not counted: the game's own come through here at every attempt's start)
             ev("handleButton_BLOCKED", down, button, isPlayer1);
             return;
         }
@@ -8123,7 +8423,81 @@ class $modify(GJBaseGameLayer) {
         // and the first test right after releasing noclip misdetects and dies instantly.
         // Pass-through is done via the no-op on the collidedWithObject side
         if (isP1) ev("checkCollisions", dt);
-        return GJBaseGameLayer::checkCollisions(player, dt, ignoreDamage);
+        if (isP1 && g_cfg.hwWatch != 0 && hwwatch::g_uid > 0 && (hwwatch::g_uidLayer != this || !hwwatch::g_uidObj) && m_objects) {   // cfg hwuid: find the level object once per layer
+            hwwatch::g_uidLayer = this; hwwatch::g_uidObj = nullptr;
+            for (auto* o : CCArrayExt<GameObject*>(m_objects)) if (o && o->m_uniqueID == (int)hwwatch::g_uid) { hwwatch::g_uidObj = o; break; }
+            if (auto* o = static_cast<GameObject*>(hwwatch::g_uidObj)) { char hb[200]; snprintf(hb, sizeof(hb), "hwuid: uid %d is object %p (id %d), m_positionX at +0x%x, m_positionY at +0x%x, rotation %.3f", (int)hwwatch::g_uid, (void*)o, (int)o->m_objectID, (unsigned)((char*)&o->m_positionX - (char*)o), (unsigned)((char*)&o->m_positionY - (char*)o), (double)o->getRotation()); writeResult(hb);
+                // ...and, for a trigger, where its activation latches are (a hwwatch offset to give) and what they hold now
+                if (auto* e = geode::cast::typeinfo_cast<EffectGameObject*>(o)) {
+                    snprintf(hb, sizeof(hb), "hwuid: trigger fields: m_isActivated +0x%x=%d, m_isTouchTriggered +0x%x=%d, m_isSpawnTriggered +0x%x=%d, m_isMultiTriggered +0x%x=%d, m_spawnXPosition +0x%x=%.3f",
+                             (unsigned)((char*)&e->m_isActivated - (char*)e), (int)e->m_isActivated, (unsigned)((char*)&e->m_isTouchTriggered - (char*)e), (int)e->m_isTouchTriggered,
+                             (unsigned)((char*)&e->m_isSpawnTriggered - (char*)e), (int)e->m_isSpawnTriggered, (unsigned)((char*)&e->m_isMultiTriggered - (char*)e), (int)e->m_isMultiTriggered,
+                             (unsigned)((char*)&e->m_spawnXPosition - (char*)e), (double)e->m_spawnXPosition);
+                    writeResult(hb);
+                } }
+            else writeResult("hwuid: no object with that uid");
+        }
+        if (isP1 && g_cfg.hwWatch != 0 && g_started && !g_sessionOver) hwwatch::tick(player, (long long)g_tick, std::string(DATA_DIR));
+        // cfg `ctraw=t0,t1`: the player's bytes at the entry of the collision pass and at its exit (ctraw.csv), for porting the pass as a pure
+        // function (notes/collision-state-table-2091-1027.md). Entry = after PlayerObject::update, which is what collidedWith* read.
+        const bool raw = g_cfg.ctRawT1 >= g_cfg.ctRawT0 && g_started && !g_sessionOver && !secsolve::g_active
+                         && (long long)g_tick >= g_cfg.ctRawT0 && (long long)g_tick <= g_cfg.ctRawT1
+                         && (player == m_player1 || (g_cfg.ctRawP2 && player == m_player2));
+        // cfg `rectcache=t0,t1` (needs grouptrace=1): what checkCollisions will read of each tracked object -- the dirty byte at +0x368 (set: the pass rebuilds the cache through vtable+0x4a0 before it
+        // tests the overlap; clear: the cached rect at +0x358 is used as it stands) and the cached rect itself, beside the node position. Plain reads; no virtual call, so nothing is refreshed by looking.
+        const bool rcOn = isP1 && g_cfg.rcT1 >= g_cfg.rcT0 && grouptrace::g_on && g_started && !g_sessionOver && !secsolve::g_active
+            && (long long)g_tick >= g_cfg.rcT0 && (long long)g_tick <= g_cfg.rcT1;
+        auto rectCacheRows = [&](int phase) {
+          if (rcOn) {
+            if (!g_rect_cache.is_open()) {
+                g_rect_cache.open(std::string(DATA_DIR) + "/rectcache.csv", std::ios::trunc);
+                g_rect_cache << "tick,uid,dirty,cx,cy,cw,ch,px,py,dx,dy,nodex,nodey,realx,realy,phase\n";
+            }
+            // Only the rows that matter are written (a heavy level tracks ~9,000 objects a tick): an object whose dirty byte is set, or whose cached rect has drifted from the node position by more than it
+            // was at the first sight (the offset between the rect centre and the node is constant for an object whose cache is fresh), plus one summary row per tick (uid 0: tracked, flagged).
+            static std::unordered_map<int, std::pair<float, float>> off0;
+            if (phase == 0 && g_tick <= g_cfg.rcT0) off0.clear();
+            char rb[320];
+            int nTracked = 0, nFlag = 0;
+            for (const auto& tr : grouptrace::g_objs) {
+                if (!tr.obj) continue;
+                ++nTracked;
+                const unsigned char* ob = reinterpret_cast<const unsigned char*>(tr.obj);
+                float cr[4];
+                std::memcpy(cr, ob + 0x358, sizeof(cr));
+                const float ox = cr[0] + cr[2] * 0.5f - tr.obj->m_positionX, oy = cr[1] + cr[3] * 0.5f - tr.obj->m_positionY;
+                auto it = off0.find(tr.uid);
+                if (it == off0.end()) it = off0.emplace(tr.uid, std::make_pair(ox, oy)).first;
+                const float dx = ox - it->second.first, dy = oy - it->second.second;
+                const int dirty = (int)ob[0x368];
+                if (!dirty && std::fabs(dx) <= 0.0005f && std::fabs(dy) <= 0.0005f && tr.uid != g_cfg.rcUid) continue;
+                ++nFlag;
+                float nd[2]; double rl[2];
+                std::memcpy(nd, ob + 0x4c, sizeof(nd));   // CCNode::m_obPosition (what vtable+0x4b8 may read)
+                std::memcpy(rl, ob + 0x3b8, sizeof(rl));   // getRealPosition's doubles
+                const int n = snprintf(rb, sizeof(rb), "%lld,%d,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.6g,%.6g,%.9g,%.9g,%.9g,%.9g,%d\n", (long long)g_tick, tr.uid, dirty,
+                                       (double)cr[0], (double)cr[1], (double)cr[2], (double)cr[3], (double)tr.obj->m_positionX, (double)tr.obj->m_positionY, (double)dx, (double)dy, (double)nd[0], (double)nd[1], rl[0], rl[1], phase);
+                g_rect_cache.write(rb, (size_t)n);
+            }
+            const int ns = snprintf(rb, sizeof(rb), "%lld,0,%d,%d,0,0,0,0,0,0,0,0,0,0,0,%d\n", (long long)g_tick, nTracked, nFlag, phase);
+            g_rect_cache.write(rb, (size_t)ns);
+          }
+        };
+        rectCacheRows(0);
+
+        std::string pre;
+        if (raw) pre = ctRawSnapshot(this, player);
+        const int rv = GJBaseGameLayer::checkCollisions(player, dt, ignoreDamage);
+        rectCacheRows(1);   // the same rows after the pass: what the pass did to the cache (dirty cleared? rect rebuilt?)
+        if (raw) {
+            if (!g_ct_raw.is_open()) {
+                g_ct_raw.open(std::string(DATA_DIR) + "/ctraw.csv", std::ios::trunc);
+                g_ct_raw << "attempt,tick,who,dt,ignore,ret,pre,post\n";
+            }
+            g_ct_raw << g_attempt << ',' << g_tick << ',' << (player == m_player1 ? 1 : 2) << ',' << dt << ',' << (int)ignoreDamage << ',' << rv
+                     << ',' << pre << ',' << ctRawSnapshot(this, player) << '\n';
+        }
+        return rv;
     }
 
     // A section solve makes checkpoints by the tens of thousands (markCheckpoint) and stores them

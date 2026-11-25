@@ -61,7 +61,7 @@ def run(rows: list[str], extra: list[str]) -> subprocess.CompletedProcess:
         (d / "plan.txt").write_text("input=1,0\n")
         return subprocess.run(
             [str(LEVELDP_EXE), str(d / "objrects.txt"), "--replay", str(d / "plan.txt"),
-             "--out", str(d / "out"), "--cap", "50", "--slopedbg"] + extra,
+             "--out", str(d / "out"), "--cap", "50", "--slopedbg", "--shadowstep=all"] + extra,
             capture_output=True, text=True, timeout=300)
 
 

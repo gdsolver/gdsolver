@@ -310,7 +310,8 @@ def run_level(level: int, worker_id: int, a) -> Result:
     dump_dst = tmp / f"fid_lv{level}.dump.csv"
     try:
         trace, died, _ = model_replay(level, plan_out, base, Path(a.leveldp),
-                                      a.with_fixups, whole_run=True)
+                                      a.with_fixups, whole_run=True,
+                                      extra_flags=a.extra_flag)
         out.model_died = died
         out.gd_clear, out.gd_detail, goal_x = gd_replay(
             worker_id, level, plan_out, dump_dst, a.timeout_minutes * 60,
@@ -425,6 +426,11 @@ def main(argv=None) -> int:
     ap.add_argument("--tmp", default=str(Path(__file__).resolve().parents[1]
                                          / "build" / "fidelity"))
     ap.add_argument("--json", dest="json_out", default="")
+    ap.add_argument("--extra-flag", action="append", default=[], metavar="FLAG",
+                    help="extra leveldp flag for the model side, repeatable; write "
+                         "it as --extra-flag=--shadowstep=cube (the GD side does not "
+                         "depend on it: one GD run can serve both arms through "
+                         "fidelity_offline.py)")
     ap.add_argument("--allow-busy", action="store_true",
                     help="use a worker even if something else holds it "
                          "(result.txt then gets mixed up)")

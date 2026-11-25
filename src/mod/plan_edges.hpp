@@ -2,6 +2,7 @@
 // A plan's input edges: the struct, the reader of one `input=` line and the writer of a plan's lines. Pure standard C++ (no game types), so tools/plan_roundtrip_test.cpp
 // checks the pair without the game. Included by config.hpp (InputCmd) and plan_io.hpp (the file reader and writer).
 #include <ostream>
+#include <string>
 #include <vector>
 
 namespace p1 {
@@ -21,6 +22,27 @@ inline bool pushInputMask(std::vector<InputCmd>& dst, int t, int d, int& prevMas
     return true;
 }
 
+// Where a plan was solved: one comment line at the top of a plan the mod writes, `# platform=windows gd=22091 mod=v0.7.1`. Every reader of a plan takes only its `input=` / `attempt=` / `until=` lines (a
+// comment line, as the `# lineage=` one already is, is skipped), so the line costs them nothing. A replay on another platform draws other numbers from the C library's rand() (the camera shake's offsets
+// follow the mod's srand and the platform's rand), so a plan that was solved on one platform and is replayed on another can leave the line it was solved on: the reader says so (a warning, never a refusal).
+inline std::string planHeader(const std::string& platform, const std::string& gd, const std::string& mod) {
+    return "# platform=" + platform + " gd=" + gd + " mod=" + mod;
+}
+// False when `line` is not a plan header. The fields it does not carry stay empty.
+inline bool parsePlanHeader(const std::string& line, std::string& platform, std::string& gd, std::string& mod) {
+    const std::string tag = "# platform=";
+    if (line.compare(0, tag.size(), tag) != 0) return false;
+    platform.clear(); gd.clear(); mod.clear();
+    size_t p = tag.size();
+    auto word = [&](size_t& at) { size_t q = line.find(' ', at); if (q == std::string::npos) q = line.size(); std::string w = line.substr(at, q - at); while (!w.empty() && (w.back() == '\r' || w.back() == '\n')) w.pop_back(); at = q < line.size() ? q + 1 : q; return w; };
+    platform = word(p);
+    while (p < line.size()) {
+        const std::string w = word(p);
+        if (w.compare(0, 3, "gd=") == 0) gd = w.substr(3);
+        else if (w.compare(0, 4, "mod=") == 0) mod = w.substr(4);
+    }
+    return !platform.empty();
+}
 // Write a plan back out in the same format loadInputsFile reads. Used to keep a solution the
 // mod solved and then SAW CLEAR THE LEVEL -- a plan that has not cleared is not a solution and
 // must not be filed as one (the repository already carries 72 dead lineages from the days when

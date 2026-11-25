@@ -6,5 +6,3 @@
 *.png binary
 *.geode binary
 *.lvl binary
-# A patch to files that carry CRLF line endings has CR bytes in its hunks; byte for byte, or git apply refuses it.
-tools/geode-sdk-2209.patch -text

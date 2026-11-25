@@ -9,9 +9,12 @@
 // event and, as Geode's does, lets a listener that takes the key stop it.
 //
 // Not built for 2.2081: Geode's own hook is there, and two would deliver every key twice.
+// Not built against Geode 6 either: it supports 2.209 itself and posts the KeyboardInputEvent from its window
+// procedure (loader/src/platform/windows/input.cpp), then calls this dispatcher. A second post from here
+// would deliver every key twice, and the hotkeys are the ones that must not run twice.
 #include "mod/playlayer_helpers.hpp"
 
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && !defined(GDSOLVER_GEODE6)
 
 #include <Geode/modify/CCKeyboardDispatcher.hpp>
 #include <Geode/utils/Keyboard.hpp>

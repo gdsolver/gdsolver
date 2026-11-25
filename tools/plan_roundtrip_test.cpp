@@ -122,7 +122,21 @@ int main(int argc, char** argv) {
         CHECK(w == "input=10,3\ninput=20,0\n");
     }
     // random plans: each button alternates down / up (a button is released only after it is pressed), edges grouped into ticks in order
-    std::mt19937 rng(20261022);
+    // The platform header (plan_edges.hpp planHeader / parsePlanHeader): a plan written with it reads back to the same edges (the reader skips the comment line), and the header parses to the fields it was made from.
+    {
+        const std::vector<InputCmd> plan = {{10, true}, {14, false}, {20, true, true}, {25, false, true}};
+        const std::string hdr = p1::planHeader("windows", "22091", "v0.7.1");
+        CHECK(hdr == "# platform=windows gd=22091 mod=v0.7.1");
+        std::string pl, gd, mv;
+        CHECK(p1::parsePlanHeader(hdr, pl, gd, mv) && pl == "windows" && gd == "22091" && mv == "v0.7.1");
+        CHECK(p1::parsePlanHeader(hdr + "\r", pl, gd, mv) && mv == "v0.7.1");           // a CRLF file
+        CHECK(p1::parsePlanHeader("# platform=android", pl, gd, mv) && pl == "android" && gd.empty() && mv.empty());   // an older or shorter header
+        CHECK(!p1::parsePlanHeader("# lineage=abc", pl, gd, mv));                      // the other comment a plan carries
+        CHECK(!p1::parsePlanHeader("input=5,1", pl, gd, mv));
+        CHECK(!p1::parsePlanHeader("# platform=", pl, gd, mv));
+        CHECK(same(canon(plan), canon(readBack(hdr + "\n" + written(plan)))));         // header first, then the inputs, as writeInputsFile writes them
+        CHECK(same(canon(plan), canon(readBack("# lineage=x\n" + hdr + "\n" + written(plan)))));
+    }    std::mt19937 rng(20261022);
     for (int round = 0; round < 20000; ++round) {
         std::vector<InputCmd> plan;
         bool held[2] = {false, false};

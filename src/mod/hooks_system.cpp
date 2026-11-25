@@ -1,4 +1,4 @@
-﻿// GameManager / FMODAudioEngine / AppDelegate / GameStatsManager hooks: achievement and stat blocking, music, focus.
+// GameManager / FMODAudioEngine / AppDelegate / GameStatsManager hooks: achievement and stat blocking, music, focus.
 #include "mod/playlayer_helpers.hpp"
 
 using namespace p1;
@@ -14,7 +14,13 @@ using namespace p1;
 // this". See the note on it in config.hpp: gating on a list of modes is what leaked last time.
 // The blocked counts are printed at the end of every session, so whether it is working can
 // always be confirmed
-inline bool statBlockActive() { return botDriving(); }
+inline bool statBlockActive() { return recordsHeld(); }
+// The level's record written for an attempt the bot flew after its session was torn down (config.hpp, recordsHeld): named in result.txt, the first few times, with what became of it, so that a run which
+// leaves the level mid-attempt shows the gate held (or not)
+inline void noteHeld(const char* what, bool refused) {
+    static int s_said = 0;
+    if (g_botAttempt && !g_started && ++s_said <= 20) writeResult(std::string("held attempt: ") + what + (refused ? " refused after the session ended" : " let through after the session ended"));
+}
 
 // ---- Level-progress blocking ----
 // Achievements and statistics are only half of what a run records. GD writes the LEVEL's own
@@ -43,11 +49,13 @@ class $modify(GJGameLevel) {
     GDSOLVER_HOOK_GUARD()
     void savePercentage(int percent, bool isPracticeMode, int clicks, int attempts,
                         bool isChkValid) {
+        noteHeld("GJGameLevel::savePercentage", progressBlockActive());
         if (progressBlockActive()) { ++g_blockedProgress; return; }
         GJGameLevel::savePercentage(percent, isPracticeMode, clicks, attempts, isChkValid);
     }
     void saveNewScore(int value, int type, int ticks, int clicks, int coins,
-                      gd::string inputs, bool save) {
+                      std::string inputs, bool save) {
+        noteHeld("GJGameLevel::saveNewScore", progressBlockActive());
         if (progressBlockActive()) { ++g_blockedProgress; return; }
         GJGameLevel::saveNewScore(value, type, ticks, clicks, coins, inputs, save);
     }
@@ -61,9 +69,9 @@ class $modify(GJGameLevel) {
     // and happens at the player's own next reset. Its one caller is resetLevel and it returns nothing.
     // Not counted in g_blockedProgress: that counter is "a recording path escaped the flag", and this
     // one is not behind it, as expected.
-    void rollOverDeathData209(int now, int gapSeconds) {
+    void rollSession(int now, int gapSeconds) {
         if (timeBlockActive()) { ++g_rolloverSkipped; return; }
-        GJGameLevel::rollOverDeathData209(now, gapSeconds);
+        GJGameLevel::rollSession(now, gapSeconds);
     }
 #endif
 };
@@ -72,6 +80,7 @@ class $modify(GameManager) {
     GDSOLVER_HOOK_GUARD()
     // The percentage GD records for the level (and reports for the leaderboard).
     void reportPercentageForLevel(int levelID, int percentage, bool isPlatformer) {
+        noteHeld("GameManager::reportPercentageForLevel", progressBlockActive());
         if (progressBlockActive()) { ++g_blockedProgress; return; }
         GameManager::reportPercentageForLevel(levelID, percentage, isPlatformer);
     }
@@ -102,7 +111,7 @@ class $modify(FMODAudioEngine) {
     // the song back in on purpose when the screen goes on (the note there), so the question is
     // always WHICH call, from which phase -- and a leak that only happens in one phase is
     // invisible to anything but a tally that outlives it.
-    static void notedSound(const char* what, const gd::string& path) {
+    static void notedSound(const char* what, const std::string& path) {
         if (!solveSession() || g_dpShowSolution) return;
         if (++g_soundWhileSolving <= 5)
             writeResult(std::string("audio: ") + what + " played while solving: "
@@ -117,13 +126,13 @@ class $modify(FMODAudioEngine) {
     // actionable if the refused side is counted too: if GD is calling them and being refused, the
     // sound has another way out of the engine; if it is not calling them at all, these hooks are
     // not the ones that matter for it.
-    static void notedBlocked(const char* what, const gd::string& path) {
+    static void notedBlocked(const char* what, const std::string& path) {
         if (!solveSession() || g_dpShowSolution) return;
         if (++g_soundBlockedWhileSolving <= 5)
             writeResult(std::string("audio: ") + what + " REFUSED while solving: "
                         + std::string(path.c_str()));
     }
-    void playMusic(gd::string path, bool shouldLoop, float fadeInTime, int channel) {
+    void playMusic(std::string path, bool shouldLoop, float fadeInTime, int channel) {
         if (audio::silent()) { notedBlocked("music", path); return; }
         // A seek restarts the level, and the restart starts the song from the top. Hold the call
         // instead of making it; audio::sync plays it when the seek lands, seeked to where the
@@ -143,7 +152,7 @@ class $modify(FMODAudioEngine) {
     // async siblings of the same calls, gated identically. Refusing a call that starts a sound is
     // the same contract the originals have, and outside a driven session both gates are false, so
     // ordinary play is untouched.
-    void loadAndPlayMusic(gd::string path, unsigned int time, int musicID) {
+    void loadAndPlayMusic(std::string path, unsigned int time, int musicID) {
         if (audio::silent() || audio::effectsMuted()) {
             if (audio::effectsMuted()) audio::noteSeekMusic("loadAndPlayMusic refused", path);
             notedBlocked("loadAndPlayMusic", path);
@@ -152,7 +161,7 @@ class $modify(FMODAudioEngine) {
         notedSound("loadAndPlayMusic", path);
         FMODAudioEngine::loadAndPlayMusic(path, time, musicID);
     }
-    void queueStartMusic(gd::string path, float pitch, float unk, float volume, bool loop,
+    void queueStartMusic(std::string path, float pitch, float unk, float volume, bool loop,
                          int start, int end, int fadeIn, int fadeOut, int musicID, bool p10,
                          int channelID, bool noPrepare, bool dontReset) {
         if (audio::silent() || audio::effectsMuted()) {
@@ -164,7 +173,7 @@ class $modify(FMODAudioEngine) {
         FMODAudioEngine::queueStartMusic(path, pitch, unk, volume, loop, start, end, fadeIn,
                                          fadeOut, musicID, p10, channelID, noPrepare, dontReset);
     }
-    int queuePlayEffect(gd::string path, float speed, float unk, float volume, float pitch,
+    int queuePlayEffect(std::string path, float speed, float unk, float volume, float pitch,
                         bool fft, bool reverb, int start, int end, int fadeIn, int fadeOut,
                         bool loop, int effectID, bool override, int uniqueID, float minInterval,
                         int group) {
@@ -188,12 +197,12 @@ class $modify(FMODAudioEngine) {
     }
     // (playEffectAsync is inline on Windows and cannot be hooked. It forwards into the queued
     // path above, which is hooked, so nothing is lost by not having it.)
-    int playEffect(gd::string path, float speed, float unknown, float volume) {
+    int playEffect(std::string path, float speed, float unknown, float volume) {
         if (audio::silent() || audio::effectsMuted()) { notedBlocked("effect", path); return 0; }
         notedSound("effect", path);
         return FMODAudioEngine::playEffect(path, speed, unknown, volume);
     }
-    int playEffectAdvanced(gd::string path, float speed, float unknown, float volume,
+    int playEffectAdvanced(std::string path, float speed, float unknown, float volume,
                            float pitch, bool fft, bool reverb, int startMillis, int endMillis,
                            int fadeIn, int fadeOut, bool loopEnabled, int effectID,
                            bool override, bool noPreload, int channelID, int uniqueID,

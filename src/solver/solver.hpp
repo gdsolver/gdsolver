@@ -260,9 +260,7 @@ inline bool g_cpInjected = false;   // injected in this attempt already? (false 
 
 inline std::vector<TickInfo> g_log;       // per-tick recording of the current attempt
 
-// Largest object x in the level (computed in buildPois). Reference for rejecting
-// physically impossible reach points produced by the exponential divergence in
-// the end zone (plausibleDeathX)
+// Largest object x in the level (computed in buildPois).
 inline float g_levelMaxX = 0;
 // The true goal x = position of GJBaseGameLayer::m_endPortal. On levels whose
 // ending runs backwards the goal is far short of the last object. 0 = not
@@ -275,14 +273,6 @@ inline float g_goalX = 0;
 // are cleanly separated by dx
 inline float g_prevTickX = -1e9f;
 
-// Is x physically possible as a reach point (excludes end-zone divergence / NaN).
-// Margin +60px (2 blocks): the only legitimate way past the last object is during
-// the clear animation's suck-in
-inline bool plausibleDeathX(float x) {
-    if (!std::isfinite(x)) return false;
-    if (g_levelMaxX > 0 && x > g_levelMaxX + 60.f) return false;
-    return true;
-}
 inline long long g_totalAttempts = 0;
 // Wall time spent in resetLevel (fixed cost per attempt. Used for resets= in stall.txt)
 inline long long g_resetNanos = 0;
@@ -463,7 +453,17 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
     //   m_stopJump (property 540), 1 m_stopMove (541), 2 m_stopRotation (542), 3 m_stopSlide (543), then which
     //   players it is aimed at as activatePlayerControlTrigger (0x2174e0) reads them: bit 4 m_targetPlayer1 (138),
     //   bit 5 m_targetPlayer2 (200); neither is both. 0 on every other row.
-          "pcctl\n";
+          "pcctl,scx,scy,"
+    // - posx,posy: GameObject::m_positionX / m_positionY (doubles at +0x3b8 / +0x3c0), the position GJBaseGameLayer::addToSection files the object
+    //   in its section cell by (the rect centre cx,cy can stand up to a few px off it: a pad turned 90 degrees has its centre 2 px to one side, so two pads
+    //   on one spot straddle a 100 px cell edge in the rect and not in the game). Appended at the END; a reader that knows the name reads them.
+          "posx,posy,"
+    // - claim: a spawn / toggle orb's Claim Touch (RingObject::m_claimTouch, +0x740, property 445). Appended at the END; 0 on every other row.
+          "claim,"
+    // - sscx,sscy: GameObject::m_startScaleX / m_startScaleY, the scale the level string gave the object (the game's +0x3dc / +0x3e0). scx / scy (+0x488 / +0x48c) are the scale the object holds NOW, and a
+    //   call's objrects is written at a reset, where an object a Scale trigger had resized may stand as the previous attempt left it: a custom level uid 16076 reads scx 0.019068 in a call's dump against 0.227
+    //   at the level's start. The dp trigger timeline's osx / osy is the ratio to the level-string scale, so scx / sscx is the ratio the dump already holds. Appended at the END.
+          "sscx,sscy\n";
     // PlayLayer's anti-cheat spike (id 8, created last, at 0,105) sits in m_objects but never
     // collides: GD only hands it to destroyPlayer as a check (hooks_playlayer.cpp). Written out,
     // the model read it as a hazard on the spawn point and a ship or ball start died on tick 2
@@ -663,6 +663,11 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
             multiAct = eg->m_isMultiActivate ? 1 : 0;
             noMultiAct = eg->m_isNoMultiActivate ? 1 : 0;
         }
+        // claim: a spawn / toggle orb's Claim Touch (RingObject::m_claimTouch, +0x740, property 445). RingObject::customObjectSetup (0x643d70) reads it only for a type 0x24 object;
+        // pushButton (0x4f6200) fires such a ring alone and clears the hold, playerTouchedRing (0x31f5a0) does not fire it on a touch. 0 on every other row.
+        int claim = 0;
+        if ((int)obj->m_objectType == 36)
+            if (auto* ro = geode::cast::typeinfo_cast<RingObject*>(obj)) claim = ro->m_claimTouch ? 1 : 0;
         double gmod = 0.0;
         int gpl = 0;
         if (obj->m_objectID == 2066) {
@@ -707,6 +712,13 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
            << "," << (obj->m_hasExtendedCollision ? 1 : 0)
            << "," << tpsave << "," << tprx << "," << tpry
            << "," << pcctl
+           // scx,scy: m_scaleX / m_scaleY (GameObject). w0,h0 are the unscaled sprite size, and a turned object's bound alone cannot
+           // give both scales when the turn is a multiple of 45 degrees (the two bound equations coincide), so a pad stretched along
+           // one axis only was rebuilt with the uniform factor. Appended at the END; a reader that knows the name reads them.
+           << "," << obj->m_scaleX << "," << obj->m_scaleY
+           << "," << obj->m_positionX << "," << obj->m_positionY
+           << "," << claim
+           << "," << obj->m_startScaleX << "," << obj->m_startScaleY
            << "\n";
     }
 }
@@ -733,10 +745,229 @@ inline void forgetObjRectsText() {
     g_objRectsText = std::string();
 }
 
+// (cfg stopdump=1) writes stopdump.txt once per layer: the Stop triggers' mode and control-ID flag, which triggers.txt does not carry, and the control ID of every trigger that has one.
+// TriggerControlGameObject::triggerObject (0x664310 in 2.209) reads the mode (0 stop, 1 pause, 2 resume) at +0x760 -- the 4 bytes after its std::string m_triggerControlFrame, a member the
+// bindings do not name -- and EffectGameObject::m_targetControlID (property 535): set, the trigger works on the commands whose creator carries m_controlID (property 534) == its target group id.
+// Rows: `uid,id,target,mode,usecontrol,controlid`; mode is -1 on a trigger that is not a Stop. Windows 2.209 only (the +0x760 read is that build's layout).
+inline void writeStopDump(GJBaseGameLayer* l) {
+    static GJBaseGameLayer* s_done = nullptr;
+    if (s_done == l) return;
+    s_done = l;
+#if defined(GEODE_IS_WINDOWS) && GEODE_COMP_GD_VERSION >= 22090
+    std::ofstream sf(std::string(DATA_DIR) + "/stopdump.txt", std::ios::trunc);
+    sf << "uid,id,target,mode,usecontrol,controlid\n";
+    // areaeffect.txt: the Effect ID of every Area trigger (EnterEffectObject::m_effectID, +0x7d8; 3006..3010 and the Edit Area 3011..3015), which an Area Stop (3024) matches on its own +0x5c8; `uid,id,effectid,useeffectid`
+    // multi.txt: every trigger object's m_isMultiTriggered (+0x690, property 87), spawn and touch flags; SpawnObject (GJBaseGameLayer 0x3227a0) fires a spawn-triggered trigger only when this is set or the object's virtual at +0x578 is 0; `uid,multi,spawn,touch`
+    std::ofstream mf(std::string(DATA_DIR) + "/multi.txt", std::ios::trunc);
+    mf << "uid,multi,spawn,touch\n";
+    std::ofstream af(std::string(DATA_DIR) + "/areaeffect.txt", std::ios::trunc);
+    af << "uid,id,effectid,useeffectid\n";
+    bool logged = false;
+    for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+        if (!obj) continue;
+        auto* e = geode::cast::typeinfo_cast<EffectGameObject*>(obj);
+        if (!e) continue;
+        mf << obj->m_uniqueID << "," << (e->m_isMultiTriggered ? 1 : 0) << "," << (e->m_isSpawnTriggered ? 1 : 0) << "," << (e->m_isTouchTriggered ? 1 : 0) << "\n";
+        if (obj->m_objectID >= 3006 && obj->m_objectID <= 3015)
+            if (auto* ee = geode::cast::typeinfo_cast<EnterEffectObject*>(obj)) af << obj->m_uniqueID << "," << obj->m_objectID << "," << ee->m_effectID << "," << (ee->m_useEffectID ? 1 : 0) << "\n";
+        const bool stop = obj->m_objectID == 1616;
+        if (!stop && e->m_controlID == 0) continue;
+        int mode = -1;
+        if (stop)
+            if (auto* tc = geode::cast::typeinfo_cast<TriggerControlGameObject*>(obj)) {
+                const char* base = reinterpret_cast<const char*>(tc);
+                const char* after = reinterpret_cast<const char*>(&tc->m_triggerControlFrame) + sizeof(std::string);
+                mode = *reinterpret_cast<const int*>(after);
+                if (!logged) {
+                    log::info("stopdump: m_triggerControlFrame=+{:#x} mode read at +{:#x}", (size_t)(reinterpret_cast<const char*>(&tc->m_triggerControlFrame) - base), (size_t)(after - base));
+                    logged = true;
+                }
+            }
+        sf << obj->m_uniqueID << "," << obj->m_objectID << "," << e->m_targetGroupID << "," << mode << "," << (e->m_targetControlID ? 1 : 0) << "," << e->m_controlID << "\n";
+    }
+#endif
+}
+// (cfg trigext=1) writes trigext.txt once per layer: the trigger objects triggers.txt does not carry (it lists only those with a target group) and the fields it lacks.
+// A row per object with GameObject::m_isTrigger set: `uid,id,cx,cy,ord,chan,spawn,touch,target,center,tp1,tp2,mva,ctr,item1,item2,i1mode,i2mode,tgtmode,mod1,mod2,res1,res2,res3,tol,rnd1,rnd2,sgn1,sgn2,actgrp`.
+//  - ord / chan / spawn / touch: the crossing array's inputs (m_ordValue, m_channelValue, m_isSpawnTriggered, m_isTouchTriggered), for every trigger object -- a trigger the dump omits (Color 899, Static
+//    Camera 2923, Item Compare 3620 ...) still holds the array back when the player has not reached it.
+//  - tp1 / tp2: m_targetPlayer1 / m_targetPlayer2 (properties 138 / 200): a Move-To whose destination is a player.
+//  - mva / ctr: the object GameObject-side the game takes for the Move-To's two groups (tryGetMainObject: the registered parent of the group first, else its only member; -1 none, 0 no group): mva for the
+//    group measured from (m_targetModCenterID when set, else the target group), ctr for the centre group.
+//  - the Item trigger columns (ItemTriggerGameObject: Item Edit 3619, Item Compare 3620): item modes, mods, result types, tolerance, rounding, signs; -1 / 0 on any other row. For an Item Compare the
+//    true / false groups are target / center.
+inline void writeTrigExt(GJBaseGameLayer* l) {
+    static GJBaseGameLayer* s_done = nullptr;
+    if (s_done == l) return;
+    s_done = l;
+#if GEODE_COMP_GD_VERSION >= 22090
+    std::ofstream tf(std::string(DATA_DIR) + "/trigext.txt", std::ios::trunc);
+    tf << "uid,id,cx,cy,ord,chan,spawn,touch,target,center,tp1,tp2,mva,ctr,item1,item2,i1mode,i2mode,tgtmode,mod1,mod2,res1,res2,res3,tol,rnd1,rnd2,sgn1,sgn2,actgrp,itemraw,tfscx,tfscy,tf450,tf451,tfonlymove,tfdivx,tfdivy,tfrelrot,tfrelscale,flxmod,flymod,arprio,aru7d8,arrange,aru7fc,arch,aruse,varidx\n";
+    auto mainObj = [&](int g) -> int {   // tryGetMainObject: the registered parent first, else the group's only member
+        if (g <= 0) return 0;
+        GameObject* m = nullptr;
+        if (l->m_parentGroupsDict)
+            if (auto* pa = static_cast<cocos2d::CCArray*>(l->m_parentGroupsDict->objectForKey(g)); pa && pa->count() > 0)
+                m = static_cast<GameObject*>(pa->objectAtIndex(0));
+        if (!m)
+            if (auto* gr = l->getGroup(g); gr && gr->count() == 1) m = static_cast<GameObject*>(gr->objectAtIndex(0));
+        return m ? m->m_uniqueID : -1;
+    };
+    long long n = 0, nE = 0;
+    std::ofstream af;   // areaedit.txt, opened by the first Edit Area trigger
+    for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+        if (!obj) continue;
+        auto* e = geode::cast::typeinfo_cast<EffectGameObject*>(obj);
+        if (e) ++nE;
+        if (!e || !obj->m_isTrigger) continue;
+        auto tr = obj->getObjectRect();
+        tf << obj->m_uniqueID << "," << obj->m_objectID << "," << (tr.origin.x + tr.size.width * 0.5f) << "," << (tr.origin.y + tr.size.height * 0.5f) << ","
+           << e->m_ordValue << "," << e->m_channelValue << "," << (e->m_isSpawnTriggered ? 1 : 0) << "," << (e->m_isTouchTriggered ? 1 : 0) << ","
+           << e->m_targetGroupID << "," << e->m_centerGroupID << "," << (e->m_targetPlayer1 ? 1 : 0) << "," << (e->m_targetPlayer2 ? 1 : 0) << ",";
+        const int ga = e->m_targetModCenterID > 0 ? e->m_targetModCenterID : e->m_targetGroupID;
+        tf << (e->m_useMoveTarget ? mainObj(ga) : 0) << "," << mainObj(e->m_centerGroupID) << "," << e->m_itemID << "," << e->m_itemID2 << ",";
+        if (auto* it = geode::cast::typeinfo_cast<ItemTriggerGameObject*>(obj))
+            tf << it->m_item1Mode << "," << it->m_item2Mode << "," << it->m_targetItemMode << "," << it->m_mod1 << "," << it->m_mod2 << "," << it->m_resultType1 << ","
+               << it->m_resultType2 << "," << it->m_resultType3 << "," << it->m_tolerance << "," << it->m_roundType1 << "," << it->m_roundType2 << "," << it->m_signType1 << ","
+               << it->m_signType2 << ",";
+        else
+            tf << "-1,-1,-1,0,0,-1,-1,-1,0,-1,-1,-1,-1,";
+        tf << (e->m_activateGroup ? 1 : 0) << ",";
+        {   // the Item trigger's words at +0x740 .. +0x770 as the game stores them (hex), so the bindings' member names can be checked against the offsets the game's own code reads (activateItemCompareTrigger 0x33d310)
+            if (geode::cast::typeinfo_cast<ItemTriggerGameObject*>(obj) || obj->m_objectID == 3022 || obj->m_objectID == 1817) {   // (a Teleport trigger's words from +0x740 to +0x7a0 too: GJBaseGameLayer::teleportPlayer 0x315f20 reads +0x748 (the exit object), +0x754, +0x759, +0x75c, +0x771/2, +0x774, +0x779..b)
+                const char* b = reinterpret_cast<const char*>(obj);
+                char buf[16];
+                // a Pickup trigger (1817, CountTriggerGameObject::triggerObject 0x65c2b0) reads count +0x740, mode +0x744, override byte +0x749, factor float +0x74c; an Item Persist (3641, activatePersistentItemTrigger 0x33d730)
+                // reads the flag bytes +0x774 .. +0x777 (enable, all, reset, timer): the words to +0x750 / +0x774 (T57)
+                const int offEnd = obj->m_objectID == 3022 ? 0x7a0 : obj->m_objectID == 1817 ? 0x750 : obj->m_objectID == 3641 ? 0x774 : 0x770;
+                for (int off = 0x740; off <= offEnd; off += 4) {
+                    std::snprintf(buf, sizeof(buf), "%08x", *reinterpret_cast<const unsigned*>(b + off));
+                    tf << (off == 0x740 ? "" : ":") << buf;
+                }
+            } else tf << "-";
+        }
+        // the Transform trigger's parameters (TransformTriggerGameObject, id 2067; named members): the object scale (properties 150 / 151), the skew (450 / 451), only-move (133), divide x / y (153 / 154), relative rotation (452),
+        // relative scale (577); "-" on every other row. Appended at the end of the row, after itemraw: the earlier columns keep their places.
+        if (auto* tt = geode::cast::typeinfo_cast<TransformTriggerGameObject*>(obj))
+            tf << "," << tt->m_objectScaleX << "," << tt->m_objectScaleY << "," << tt->m_property450 << "," << tt->m_property451 << "," << (tt->m_onlyMove ? 1 : 0) << ","
+               << (tt->m_divideX ? 1 : 0) << "," << (tt->m_divideY ? 1 : 0) << "," << (tt->m_relativeRotation ? 1 : 0) << "," << (tt->m_relativeScale ? 1 : 0);
+        else
+            tf << ",-,-,-,-,-,-,-,-,-";
+        // the Follow trigger (id 1347; EffectGameObject, properties 72 / 73) and the Area triggers' sort words (EnterEffectObject, ids 3006..3010: m_priority = property 341, m_unk7d8 and m_areaRange and m_unk7fc, which of the
+        // last three is the second sort key of processAreaEffects' comparator is read off the order file; m_enterChannel 344, m_useEffectID 355) and every object's variance index (GameObject::m_varianceIndex, 0 = none); "-" where
+        // the class has none. Appended after the Transform columns: the earlier columns keep their places.
+        if (obj->m_objectID == 1347) tf << "," << e->m_followXMod << "," << e->m_followYMod; else tf << ",-,-";
+        if (auto* en = geode::cast::typeinfo_cast<EnterEffectObject*>(obj); en && obj->m_objectID >= 3006 && obj->m_objectID <= 3010)
+            tf << "," << en->m_priority << "," << en->m_unk7d8 << "," << en->m_areaRange << "," << en->m_unk7fc << "," << en->m_enterChannel << "," << (en->m_useEffectID ? 1 : 0);
+        else
+            tf << ",-,-,-,-,-,-";
+        tf << "," << obj->m_varianceIndex;
+        tf << "\n";
+        ++n;
+        if (obj->m_objectID >= 3011 && obj->m_objectID <= 3015) {   // Edit Area (3011..3015): triggerAreaEffect 0x32fe50 -> EnterEffectInstance::loadTransitions 0x209ae0 reads these words
+            if (!af.is_open()) {
+                af.open(std::string(DATA_DIR) + "/areaedit.txt", std::ios::trunc);
+                af << "uid,id,cx,cy,target,effectid,useeffectid,dur,etype,erate,intype,inrate,inbuf,outtype,outrate,outbuf,raw5a0,raw740\n";
+            }
+            af << obj->m_uniqueID << "," << obj->m_objectID << "," << (tr.origin.x + tr.size.width * 0.5f) << "," << (tr.origin.y + tr.size.height * 0.5f) << "," << e->m_targetGroupID << ",";
+            if (auto* en = geode::cast::typeinfo_cast<EnterEffectObject*>(obj))
+                af << en->m_effectID << "," << (en->m_useEffectID ? 1 : 0) << "," << e->m_duration << "," << (int)e->m_easingType << "," << e->m_easingRate << "," << (int)en->m_easingInType << ","
+                   << en->m_easingInRate << "," << en->m_easingInBuffer << "," << (int)en->m_easingOutType << "," << en->m_easingOutRate << "," << en->m_easingOutBuffer << ",";
+            else
+                af << "-1,-1," << e->m_duration << ",0,0,0,0,0,0,0,0,";
+            const char* b = reinterpret_cast<const char*>(obj);
+            char buf[16];
+            for (int off = 0x5a0; off <= 0x5d0; off += 4) {
+                std::snprintf(buf, sizeof(buf), "%08x", *reinterpret_cast<const unsigned*>(b + off));
+                af << (off == 0x5a0 ? "" : ":") << buf;
+            }
+            af << ",";
+            for (int off = 0x740; off <= 0x800; off += 4) {
+                std::snprintf(buf, sizeof(buf), "%08x", *reinterpret_cast<const unsigned*>(b + off));
+                af << (off == 0x740 ? "" : ":") << buf;
+            }
+            af << "\n";
+        }
+    }
+    log::info("trigext: {} trigger objects of {} effect objects", n, nE);
+#endif
+}
+// (cfg areadump=1) writes areatargets.txt once per layer: see the note below
+inline void writeAreaTargets(GJBaseGameLayer* l) {
+    static GJBaseGameLayer* s_done = nullptr;
+    if (s_done == l) return;
+    s_done = l;
+    // ---- areatargets.txt (cfg areadump=1): what the layer holds for an Area that works on parents ----------------------------------------------------------------
+    // An Area trigger whose instance has a target-group index (EnterEffectInstance +0xc0, from the layer's key -> (index, count) map) is run by processAreaMoveGroupAction in two calls: the
+    // objects that have no parent (array [index - 1]) and the parents (array [index]), each parent carrying along the children its dictionary (array [index + 1], keyed by the parent's
+    // m_uniqueID) lists. The arrays are the layer's m_targetGroupsArray, filled when the level opens. Rows: `T trig key id` for every Area trigger (key = its entry in the map),
+    // `M key index count` for the map, `A i uid ...` for a CCArray element, `D i parent:kid,kid ...` (one token per parent) for a CCDictionary element. Windows 2.209 only (these offsets are that build's).
+#ifdef GEODE_IS_WINDOWS
+    {
+        std::ofstream tf(std::string(DATA_DIR) + "/areatargets.txt", std::ios::trunc);
+        tf << "# T trig index | A i uids | D i parent:kids ...\n";
+        for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+            if (!obj || obj->m_objectID < 3006 || obj->m_objectID > 3010) continue;
+            // the trigger's key into the layer's (key -> index, count) map: GJBaseGameLayer's FUN_140330110 builds it as ((+0x739) + ((+0x738) + 10) * 10) * 1000000 + target group (+0x5c8)
+            char* ob = reinterpret_cast<char*>(obj);
+            const unsigned key = ((unsigned)(unsigned char)ob[0x739] + ((unsigned)(unsigned char)ob[0x738] + 10u) * 10u) * 1000000u + (unsigned)*reinterpret_cast<int*>(ob + 0x5c8);
+            tf << "T " << obj->m_uniqueID << " " << key << " " << obj->m_objectID << "\n";
+        }
+        {   // ...and that map itself (std::unordered_map at the layer + 0x1060: its list head at +0x1068, a node = next, prev, key, index, count)
+            char* lay = reinterpret_cast<char*>(l);
+            char* head = *reinterpret_cast<char**>(lay + 0x1068);
+            long long guard = 0;
+            for (char* n = head ? *reinterpret_cast<char**>(head) : nullptr; n && n != head && guard < 100000; n = *reinterpret_cast<char**>(n), ++guard)
+                tf << "M " << *reinterpret_cast<unsigned*>(n + 0x10) << " " << *reinterpret_cast<int*>(n + 0x14) << " " << *reinterpret_cast<int*>(n + 0x18) << "\n";
+        }
+        {   // the three bytes of an object that processAreaMoveGroupAction / moveAreaObject read: +0x2c8 (an x displacement is dropped), +0x520 (a child is not moved), +0x305 (the section range is skipped)
+            std::string lx = "X", lk = "K", lp = "P";
+            for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
+                if (!obj) continue;
+                const char* ob = reinterpret_cast<const char*>(obj);
+                if (ob[0x2c8]) lx += " " + std::to_string(obj->m_uniqueID);
+                if (ob[0x520]) lk += " " + std::to_string(obj->m_uniqueID);
+                if (ob[0x305]) lp += " " + std::to_string(obj->m_uniqueID);
+            }
+            tf << lx << "\n" << lk << "\n" << lp << "\n";
+        }
+        auto* arr = *reinterpret_cast<cocos2d::CCArray**>(reinterpret_cast<char*>(l) + gdoff::kLayerTargetGroupsArray);
+        tf << "# targetGroupsArray " << (arr ? (int)arr->count() : -1) << " elements\n";
+        for (unsigned i = 0; arr && i < arr->count(); ++i) {
+            cocos2d::CCObject* o = arr->objectAtIndex(i);
+            if (auto* a = geode::cast::typeinfo_cast<cocos2d::CCArray*>(o)) {
+                tf << "A " << i;
+                for (unsigned k = 0; k < a->count(); ++k)
+                    if (auto* g = static_cast<GameObject*>(a->objectAtIndex(k))) tf << " " << g->m_uniqueID;
+                tf << "\n";
+            } else if (auto* d = geode::cast::typeinfo_cast<cocos2d::CCDictionary*>(o)) {
+                tf << "D " << i;
+                if (auto* keys = d->allKeys()) {
+                    for (unsigned q = 0; q < keys->count(); ++q) {
+                        auto* ki = geode::cast::typeinfo_cast<cocos2d::CCInteger*>(keys->objectAtIndex(q));
+                        if (!ki) continue;
+                        const int key = ki->getValue();
+                        tf << " " << key << ":";
+                        auto* kids = geode::cast::typeinfo_cast<cocos2d::CCArray*>(d->objectForKey(key));
+                        if (kids)
+                            for (unsigned k = 0; k < kids->count(); ++k) {
+                                if (auto* g = static_cast<GameObject*>(kids->objectAtIndex(k))) tf << (k ? "," : "") << g->m_uniqueID;
+                            }
+                    }
+                }
+                tf << "\n";
+            } else {
+                tf << "? " << i << "\n";
+            }
+        }
+    }
+#endif
+}
+
 // Extract orb POIs etc. from the level's live memory (m_objects).
 // No parser needed: the real coordinates, with rotation, scale and placement
 // already resolved, can be used as-is.
-inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
+inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTargets = false) {
     g_pois.clear();
     g_hazards.clear();
     g_solids.clear();
@@ -1371,7 +1602,17 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
                             size_t c2 = ss.find(',', c1 + 1);
                             if (c2 == std::string::npos) c2 = ss.size();
                             if (!advp.empty()) advp += "|";
-                            advp += ss.substr(p, c1 - p) + "=" + ss.substr(c1 + 1, c2 - c1 - 1);
+                            std::string val = ss.substr(c1 + 1, c2 - c1 - 1);
+                            // Key 57 (the groups): GD's save string writes more than the object has -- the real groups at both ends and, between them, words that change from one flight to the next
+                            // (666.32370.9457.27136.501.666 and 666.488.666 for the one trigger of c146917834, whose m_groups holds 666), which put a different triggers.txt in every flight and so a different input signature in dp. The object's
+                            // own groups (m_groupCount of them, as objgroups.txt reads them) are the value.
+                            if (ss.compare(p, c1 - p, "57") == 0 && c1 - p == 2) {
+                                val.clear();
+                                if (obj->m_groups)
+                                    for (int gi = 0; gi < std::min((int)obj->m_groupCount, 10); ++gi) val += (val.empty() ? "" : ".") + std::to_string((int)(*obj->m_groups)[gi]);
+                                if (val.empty()) val = "-";
+                            }
+                            advp += ss.substr(p, c1 - p) + "=" + val;
                             p = c2 + 1;
                         }
                         if (advp.empty()) advp = "-";
@@ -1499,6 +1740,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
         }
         if (n) log::info("areas: {} area triggers", n);
     }
+    if (areaTargets) writeAreaTargets(l);
+
     // ---- levelsettings.txt: the level's own compatibility flags -------------
     // Their own file rather than a column: they are ONE value per level, and
     // objrects is per object. Nothing reads it yet.
@@ -1534,10 +1777,25 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false) {
         // ...and a two-player level's own mode (kA10), written only then so that every other level's file is the bytes it was:
         // the solver gives the second body a button of its own and takes the gravity link away (dp frames.hpp g_twoPlayer).
         if (ls->m_twoPlayerMode) sf << "twoPlayer=1\n";
+        // ...and Enable Player Squeeze (kA31, LevelSettingsObject +0x1c9), likewise only when set: GJBaseGameLayer's level start stores `!(+0x1c9 || layer+0x317e)` into both
+        // players' +0xc48 and PlayerObject::postCollision's crush rule runs only while that is 0 (dp speed.hpp g_enablePlayerSqueeze).
+        if (ls->m_enablePlayerSqueeze) sf << "enablePlayerSqueeze=1\n";
         g_levelTwoPlayer = ls->m_twoPlayerMode;
         log::info("levelsettings: fixRadiusCollision={} platformer={} "
                   "reverse={}", (int)ls->m_fixRadiusCollision,
                   (int)ls->m_platformerMode, (int)ls->m_reverseGameplay);
+    }
+    // ---- levelflags.txt: the 2.2 changes flag of the level and of its players -------------
+    // PlayerObject::m_enable22Changes (+0xc4d in 2.209) is what ringJump tests before a spawn orb spends the press (dp --hsp22): the player's value is
+    // NOT a function of the level's (the official lv22 is 0 on a level whose own flag is 0; one custom level is 1 on a level whose flag is 0), so it is
+    // read from the player. Its own file and not a line of levelsettings.txt, which dp hashes into the input signature; dp reads it only with --levelflags,
+    // which the loop names whenever the shadow of the press bytes is on (it is, unless the run's dparg says --no-hsshadow; repair.hpp hsShadowOn).
+    {
+        const int ls22 = l->m_levelSettings ? (l->m_levelSettings->m_enable22Changes ? 1 : 0) : -1;
+        const int p22a = l->m_player1 ? (l->m_player1->m_enable22Changes ? 1 : 0) : -1;
+        const int p22b = l->m_player2 ? (l->m_player2->m_enable22Changes ? 1 : 0) : -1;
+        std::ofstream ff(std::string(DATA_DIR) + "/levelflags.txt", std::ios::trunc);
+        ff << "enable22Changes=" << ls22 << "\nplayer1Enable22Changes=" << p22a << "\nplayer2Enable22Changes=" << p22b << "\n";
     }
 }
 
@@ -1551,7 +1809,12 @@ inline long long g_anticheatCalls = 0;
 // and the object GD named (-1 = none) with its position.
 inline long long g_killTick = -1;
 inline int g_killUid = -1;
+// ...and the attempt (g_attempt) that call came from: the record is THIS death's when it matches (stage S2 of the wall-key design -- the loop binds a killer to a death by the attempt, not by a tick distance).
+inline int g_killAttempt = -1;
+// ...and the groups the killer object belongs to (the first ten, comma-joined; empty = none or no killer): a candidate for "the same wall" -- objects one Move trigger carries are one wall (printed in the [wallkey] line).
+inline std::string g_killGroups;
 inline float g_killX = 0.f, g_killY = 0.f;
+inline float g_killPy = 0.f;   // the PLAYER's y at the latched death (g_killY is the killer object's, 0 for a killer-less death); cfg skydeath
 
 // Diagnostics (emitted by cmd `diag`). serve/replay have no onDeath path, so
 // lastDeath/groundGap/injAtDeath stay 0

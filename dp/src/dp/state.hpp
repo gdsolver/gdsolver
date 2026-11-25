@@ -1,5 +1,7 @@
 #pragma once
 #include "dp/level_loader.hpp"
+#include "dp/shadow_lite.hpp"
+#include "dp/trigevent_world.hpp"
 
 namespace dp {
 
@@ -107,7 +109,7 @@ struct State {
     float snapDist;      // GD m_snapDistance: x - snapObj->cx at the last contact
     // --p2xoff: the second dual body's x minus the first's. A teleport
     // trigger moves player 1 alone, and the pair then runs apart for the rest of the dual. Written
-    // by stepBoth (fixup.hpp) only under the flag, 0 from a dual portal on, read only while dual,
+    // by the shadow's tick (shadow_step.hpp, the second body's x minus the first's), read only while dual,
     // seeded at an anchor from --startp2dx. It accumulates. HERE and not at the end: it fills the
     // padding before the next pointer, so sizeof is unchanged.
     float dx2 = 0.f;
@@ -206,7 +208,7 @@ struct State {
     // for a UFO -- the seat is collidedWithSlopeInternal, which writes m_isOnSlope and the ramp's
     // velocity whatever it then decides about landing -- when the ramp rises in the travel
     // direction, else 0. The next tick's flap reads it (step.hpp, the UFO flap). One tick of life
-    // (cleared at the top of stepOne), not seeded; single-player only (a dual's halves would share
+    // (written and cleared only by the removed old tick's stepOne; no code writes it now, so it stays 0), not seeded; single-player only (a dual's halves would share
     // it, as they share seatT).
     float lawSv = 0.f;
     // --followy only (0 otherwise): where each Follow Player Y's reference object is, per slot
@@ -227,13 +229,16 @@ struct State {
     uint16_t followN[kFollowYSlots] = {0, 0};
     // --teleportorb only (0 otherwise): the body arrived at a teleport orb's target on the last
     // tick, with GD's m_isOnGround still set from where it left. One tick of life (cleared at the
-    // top of stepOne): the jump and the ball's tap read that stale ground on the next tick, the
+    // top of the removed old tick's stepOne; no code writes it now): the jump and the ball's tap read that stale ground on the next tick, the
     // physics does not (calib_teleportorb). Not seeded, like lawSv.
     uint8_t tpArrive = 0;
     // --ctrltouch only (0 otherwise): a touch-triggered Options trigger this branch touched has
     // switched player 1's controls off (modifiers.hpp, CtrlTouchBox); the button is ignored while it
     // is set. It accumulates and is not seeded: an anchor inside a recorded window keeps --ctrlwin.
     uint8_t ctrlT = 0;
+    // --shadowp2dir only (0 otherwise): the second dual body runs LEFT (GD's m_isGoingLeft of player 2, +0x9ca), after a reverse portal on its side of a teleport. Seeded at an anchor from
+    // --startp2left, written back by the shadow's dual step each tick; in the search key while dual. (a custom level: player 2 runs left for 900 ticks while player 1 runs right.)
+    uint8_t rev2 = 0;
     // --seatspeed only (0 otherwise): the speed (speedCodeForDx) the ride's last ramp seat ran at,
     // which is what GD's stored rate (+0x938) and launch velocity (+0x9b4) were computed with; 0
     // when not riding. Rewritten on every riding tick, not seeded (an anchor on the tick after a
@@ -253,6 +258,9 @@ struct State {
     // not seeded: an anchor inside a released hold keeps the plan's level.
     uint8_t pcRel = 0;
     uint8_t pcTouch = 0;
+    // --reversetrig, the touch-started Reverse triggers: bit i = g_revTouchBoxes[i] has fired on this branch (GD fires one once per attempt: the triggered-ID set). It accumulates and is not seeded
+    // from the anchor (modifiers.hpp: an anchor inside a box is seeded as fired by the loader's seed, cli.hpp).
+    uint16_t revFired = 0;
     // Ticks since gravity last flipped, saturated at 24 -- the same 0.1 s at
     // 240 ticks/s as slopeT above, and read the same way: GD stamps the time in
     // flipGravity (player+0x800) and collidedWithObjectInternal (:1180-1226)
@@ -272,7 +280,7 @@ struct State {
     // GD writes 2 into its counter on the touch and decays it every tick, so
     // the arm holds for the touch tick and the one after (kArmTicks); while it
     // holds, a cube / robot / spider answers a ceiling with a bonk instead of
-    // dying on it (modifiers.hpp, armBoxTouch, three measured points).
+    // dying on it (modifiers.hpp, ArmBox, three measured points).
     // 255 for the same reason flipT uses it: a State built without saying
     // anything must come out UNARMED, and the step's increment clamps it back
     // to the cap. Carried by the anchor as --start field 29 (-1 = not said).
@@ -289,8 +297,8 @@ struct State {
     // armT uses it. NOT carried by --start yet: an anchor taken inside the arm's
     // 2-tick window would need it, and nothing has measured one.
     uint8_t slideT = 255;
-    // ...the SECOND body's, under --dualslide (frames.hpp g_dualSlide): GD's +0xb78 is per player.
-    // Swapped with slideT for p2's step only under the flag, so off it is inert and stays 255.
+    // ...the SECOND body's (--dualslide, removed: always so): GD's +0xb78 is per player.
+    // Swapped with slideT for p2's step.
     uint8_t slideT2 = 255;
     // Ticks since the SPIDER last teleported -- its tap, a spider pad or a spider orb --
     // saturating at kSpiderJumpGraceTicks. GD stamps the time in spiderTestJumpInternal
@@ -386,7 +394,7 @@ struct State {
     // same way `dx` is, so states with different masks can never merge.
     TouchMask trig{};
     int32_t trigT = -1;
-    // --tpmark: the uids of the last two teleports (747 and its kin) the body fired that have no latch bit, newest first (A, then B).
+    // --tpmark (removed): the uids of the last two teleports (747 and its kin) the body fired that have no latch bit, newest first (A, then B).
     // GD marks a teleport activated for the player for the rest of the attempt (teleportPlayer sets +0x558); a body that leaves the
     // box and comes back does not fire it again. The two take the 4-byte padding after trigT and after slopeUidNow2, so sizeof is
     // unchanged; they accumulate and are NOT seeded at an --start anchor (-1: none). -1 whenever the flag is off.
@@ -459,6 +467,10 @@ struct State {
     // recorded run's player path -- right for the plan that made it and wrong
     // by the whole difference for any other.
     float lockOff = 0.f;
+    // --camy (observation only, 0 whenever the flag is off): the static camera's tween START point (GD's +0x1dc) when a mode portal started it =
+    // the camera centre's y on that tick. Per state, not per timeline: it is the player's camera that sets it. NOT in the dedupe key, not read by the
+    // search, not seeded at an anchor; the 4 bytes after lockOff were padding (rotSpent is 8-aligned), so sizeof is unchanged.
+    float camTwStart = 0.f;
     // ---- the 2.2 trigger queue (frames.hpp) ----
     // Which queued triggers this state has consumed. One bit per entry of
     // g_rotQ, and the corpus's only level with any has 30 of them. Consumption
@@ -469,7 +481,7 @@ struct State {
     // dictionary, and `createCheckpoint` saves all three, which is what a
     // persistent value looks like -- so leaving and returning to a channel
     // resumes where it stopped, and the popcount stays honest.
-    uint32_t rotSpent = 0;
+    uint64_t rotSpent = 0;   // --rotq64: bit k = queue entry k consumed (64 entries; 32 without the flag)
     // The channel being walked. Not derivable: it is whatever the last 2900
     // with `swarm` set pointed at.
     uint8_t rotChan = 0;
@@ -479,13 +491,16 @@ struct State {
     // checkCollisions (0x21384e), which skips the band block while it is set.
     // One tick of life; not carried by --start; a dual's two bodies share it.
     // (Here because rotChan leaves a byte of padding before rotRev.)
-    // The 1 bit is that byte (a teleport portal). The 2 bit (--tptrigforce): a teleport trigger moved the body at
+    // The 1 bit is that byte (a teleport portal). The 2 bit (--tptrigforce (removed)): a teleport trigger moved the body at
     // the end of this tick from a place no force reached, so the next tick has no push (modifiers.hpp). The 4 bit
-    // (--tpjumpnext): a teleport moved x forward this tick, from tpFromX.
+    // (--tpjumpnext (removed)): a teleport moved x forward this tick, from tpFromX.
     uint8_t tpSkip = 0;
     // --ceilcrush (speed.hpp): the previous tick left the ship higher than the band ceiling allows (GD's flag at player+0xc38 sibling;
     // checkCollisions destroys with a NULL object when it is set on two ticks in a row).
     uint8_t ceilLatch = 0;
+    // --camy (observation only, 0 whenever the flag is off): GD's +0x2a0, "the static camera now running was started by a mode portal" (a 1914 trigger
+    // clears it). Not in the dedupe key, not read by the search, not seeded. The byte after ceilLatch was padding (rotRev is 2-aligned): sizeof unchanged.
+    uint8_t camPortal = 0;
     // Per-channel reverse, one bit per channel. Also not derivable -- lv22's
     // channel 1 is reached both from a 2900 with gnddir=2 (reverse) and from
     // five with gnddir=0 (not), so the value depends on which fired last.
@@ -548,7 +563,7 @@ struct State {
     // unconditionally at 0x38caa8, so the byte cannot change anything there).
     // It was swing-only until then, which is why lv16's flipped ship pinned
     // 6.400 on the tick after a ramp launch where GD decays 6.906 -> 6.390
-    // over six ticks first. Outside those three stepOne drops it so a stale
+    // over six ticks first. Outside those three the removed old tick's stepOne drops it so a stale
     // bit cannot cross a mode portal. PERSISTENT, unlike the p* one-shots
     // above, and carried by the anchor (--start field 25, read straight off
     // GD's own byte).
@@ -568,8 +583,8 @@ struct State {
     // a value because by the next tick the ride's information (slopeT) is
     // already gone.
     float pExitVy = 0.f;
-    // --tpjumpnext only (valid while tpSkip's 4 bit is set): x before the teleport that moved it forward this
-    // tick. The x crossings that jump passed fire on the NEXT tick (modifiers.hpp g_tpJumpNext), so this tick's
+    // --tpjumpnext (removed) only (valid while tpSkip's 4 bit is set): x before the teleport that moved it forward this
+    // tick. The x crossings that jump passed fire on the NEXT tick (modifiers.hpp, the teleport jump), so this tick's
     // crossings end here and the next tick's start here. One tick of life; not carried by --start.
     float tpFromX = 0.f;
     // [2026-08-19 night 3] THE UID OF THE RAMP THAT STARTED THE CURRENT RIDE.
@@ -588,12 +603,12 @@ struct State {
     int32_t slopeUidNow = -1;
     // Both take the same input and either one dying ends the run.
     uint8_t dual;
-    // the second body had nothing within reach this tick (see stepBoth)
+    // the second body had nothing within reach this tick (see the removed old tick's stepBoth)
     uint8_t freeHalf = 0;
     // --dualseatt: the second body's law-seat count (see seatT). It accumulates and is not seeded
     // (seatT is not either).
     uint8_t seatT2 = 0;
-    // --sticktie0: this tick's solid pass registered GD's stick fallback (+0x600) -- a support moving down
+    // --sticktie0 (removed): this tick's solid pass registered GD's stick fallback (+0x600) -- a support moving down
     // held the rider -- for the next tick's re-land. One tick of life, so nothing to seed; in the padding
     // after seatT2, so sizeof is unchanged.
     uint8_t stickFb = 0;
@@ -615,21 +630,21 @@ struct State {
     uint8_t boost2 = 0;
     // The second body's own MODE and its own ceiling-ramp push-down counters.
     // `mode` and `ceilT`/`ceilM4` used to be shared outright ("shared fields
-    // come from the first half", stepBoth), which is right only for as long as
+    // come from the first half", the removed old tick's stepBoth), which is right only for as long as
     // the two bodies meet everything on the same tick -- and they do not. Each
     // is tested at its own y, so one can clear a portal's window, or be pressed
     // by a ramp, while the other is not: measured on lv20 t=17,110, p1 clears
     // the mode portal uid13881 (cy=239 hh=43) by 0.16 px while p2 is 2.2 px
     // outside, and p1 has been pressed down the ceiling chain for 14 ticks while
     // p2 has just arrived from below.
-    // Everything inside stepOne reads these off the state it was handed, so
+    // Everything inside the removed old tick's stepOne reads these off the state it was handed, so
     // swapHalves carrying them is the whole of the mechanism -- and they cost
     // nothing: sizeof(State) is 232 either way, they land in existing padding.
     uint8_t mode2 = 0, ceilT2 = 0, ceilM42 = 0;
     // ...and its own SIZE, for exactly the same reason. `mini` stayed on the
     // shared list above long after `mode` left it, and that is wrong in both
     // directions: a size portal one half clears and the other misses resized
-    // NEITHER body (the swapped step's result was dropped by stepBoth's merge)
+    // NEITHER body (the swapped step's result was dropped by the removed old tick's stepBoth's merge)
     // when only the second took it, and BOTH when only the first did.
     // Measured on the calibration rig `dualmode` (py/mklevel.py; an input-free
     // dual ship separates by itself, so a portal at floor height is taken by one
@@ -642,7 +657,7 @@ struct State {
     // mini2: each half rides its own ramp, and the pair's ramps are mirror images that never
     // share a uid.
     int32_t slopeUid02 = -1, slopeUidNow2 = -1;
-    int32_t tpMarkB = -1;   // --tpmark (see tpMarkA)
+    int32_t tpMarkB = -1;   // --tpmark (removed) (see tpMarkA)
     const Obj* snapObj2;
     const Obj* usedOrb2;
     const Obj* usedPad2[4];
@@ -668,9 +683,9 @@ struct State {
     // frozen for 70 ticks until the release at t=280 -- gravity resumes on
     // t=282 with the usual -0.216 step. So the dash is not timed, it is held.
     uint8_t dashing = 0;
-    // --dualinlat: the button as the SECOND body saw it on the previous tick, in a dual whose second body has the longer
-    // input latency (stepBoth); 2 = not tracked (every other tick, and an anchor). One tick of memory, so nothing to seed;
-    // in the padding byte after dashing, so sizeof is unchanged. Not swapped: only stepBoth reads and writes it.
+    // --dualinlat (removed): the button as the SECOND body saw it on the previous tick, in a dual whose second body has the longer
+    // input latency (the removed old tick's stepBoth); 2 = not tracked (every other tick, and an anchor). One tick of memory, so nothing to seed;
+    // in the padding byte after dashing, so sizeof is unchanged. Not swapped: only the removed old tick's stepBoth reads and writes it.
     uint8_t action2 = 2;
     float dashSlope = 0.f;   // dy per px of x (0 for a rot=0 ring)
     // GAMEPLAY ROTATION (id 2900): which frame this state is playing in.
@@ -705,7 +720,7 @@ struct State {
     // The WAVE and the CUBE maintain it; every other mode leaves it at 0 and
     // keeps the old bound-only test, which is the conservative direction.
     float rot = 0.f;
-    // --waveportalsize: set (to the wave's rotation) by a size portal the wave met on the tick that produced this state, 1e9 otherwise.
+    // --waveportalsize (removed): set (to the wave's rotation) by a size portal the wave met on the tick that produced this state, 1e9 otherwise.
     // Not an accumulator: every step overwrites it, so an anchor needs no seed.
     float rotPrev = 1e9f;
     // Sign of the cube's spin. GD keeps it in m_rotationSpeed and NEGATES IT ON
@@ -999,7 +1014,7 @@ struct State {
     // 1859) had its decay measured explicitly ("set to 2 by the touch and
     // stepped down every tick"), so the assumption was never tested rather than
     // tested and confirmed.
-    // [2026-09-20] --fgarmlive REUSES THIS BYTE AS GD'S OWN COUNTER, rather
+    // [2026-09-20] --fgarmlive (removed) REUSES THIS BYTE AS GD'S OWN COUNTER, rather
     // than adding a field: GD's m_stateFlipGravity (player+0xb80) is set to 2
     // by the 2866 contact (0x215ba1) and decremented every tick by
     // PlayerObject::update (0x389f40), so 0..kArmTicks here means exactly what
@@ -1117,7 +1132,7 @@ struct State {
     // them here would hand the cube a ball's step or a stale zero. They can be
     // folded in on the day the cube gets a stake of its own; that is a change to
     // the cube's behaviour and belongs in its own landing, not this one.
-    // [2026-09-06] Those four now advance only under `--no-satrotraw`: the
+    // [2026-09-06] Those four now advance only under `--no-satrotraw (removed)`: the
     // advance was measured to be a sign inversion against the cube's own
     // rotation law and is deleted by default (constants.hpp, g_noSatRotRaw).
     // Nothing above changes -- the arm that keeps the expression keeps the
@@ -1139,6 +1154,12 @@ struct State {
     // the anchor sits after a seam the rider already crossed. Placed in the tail
     // padding, so sizeof is unchanged.
     int32_t groundUid = -1;
+    // --rotgmod: m_gravityMod (+0xb84) as the cube's spin was last staked. runNormalRotation (0x38d220) writes
+    // m_rotationSpeed = 180 * (signs) * [+0xb84] * arg / k, and updateRotation turns by it until the next call, so the
+    // airborne spin is 1.7307692 (2.25 mini) times the gravity value at the stake, not a constant. Set at the ticks
+    // the cube's spin is staked (the same ones that re-latch the size), seeded at an anchor from the turn the
+    // anchor's last two rows show (--start's 30th field). 1 = the constant step, as before the flag.
+    float rotGm = 1.f;
     // The ring fired BEFORE usedOrb, by uid (-1 = none), and the same for the second
     // body. GD does not fire a ring twice (a fired ring leaves m_touchedRings and is
     // not offered again while the player is still in it), and one pointer cannot
@@ -1150,12 +1171,12 @@ struct State {
     // gap usedOrb has (an orb is consumed by a press; the recording cannot say which).
     // At the END on purpose (positional State{...} initialisers, see jumpBuf).
     int32_t usedOrbOld = -1, usedOrbOld2 = -1;
-    // --upsidecoyote: GD's m_isOnGround is still set on an upside-down cube that has walked off
+    // --upsidecoyote (removed): GD's m_isOnGround is still set on an upside-down cube that has walked off
     // its surface (see g_upsideCoyote). Written and read only under the flag; the anchor does
     // not seed it, but an anchor inside the window arrives with `grounded` from GD's own og and
     // the gate reads either. At the END on purpose (positional State{...}, see jumpBuf).
     uint8_t ogLinger = 0;
-    // --holdlatch: the button is still down but GD's m_jumpBuffered (+0x985) is 0 -- a ball's tap
+    // --holdlatch (removed): the button is still down but GD's m_jumpBuffered (+0x985) is 0 -- a ball's tap
     // or a ball's or swing's ring cleared it and only a new press sets it again (pushButton). The
     // ship's thrust reads +0x985 (updateJump's ship arm), so a ball that taps and flies into a ship
     // portal with the button held does not thrust. Per body; 0 = live, which is also what an
@@ -1166,13 +1187,13 @@ struct State {
     // cleared the second's buffer too. In the padding after holdDead2, so sizeof is unchanged; the per-half sites
     // are swapHalves, fixup.hpp's merge and the dual's birth (step.hpp). Not seeded at an anchor (jumpBuf is not).
     uint8_t jumpBuf2 = 0;
-    // --ringonce: the rings fired before usedOrbOld, newest first, per body (-1 = empty). GD fires
+    // --ringonce (removed): the rings fired before usedOrbOld, newest first, per body (-1 = empty). GD fires
     // a ring once in a run, and two slots cannot hold a maze: a custom level fires gravity ring uid 378 at
     // t=2,528, then yellows 386 and 385, and on the next press refuses 378 while the model, down to
     // 386 and 385, fired it again (t=2,548). Written and read only under the flag; not seeded at an
     // anchor, the gap usedOrbOld has. At the END on purpose (positional State{...}, see jumpBuf).
     int32_t usedOrbHist[3] = {-1, -1, -1}, usedOrbHist2[3] = {-1, -1, -1};
-    // --portalonce: the uids of the mode/size portals this body overlapped on this tick (-1 = none).
+    // --portalonce (removed): the uids of the mode/size portals this body overlapped on this tick (-1 = none).
     // GD activates a portal on its first overlap, so one the body was already in on the previous
     // tick does not fire. Recorded from the portal loop's own overlap test rather than re-derived
     // from the previous position: the half that test used depends on the size before that tick's
@@ -1180,7 +1201,7 @@ struct State {
     // portal beside it overlaps only at the full half on t=5,139, where GD fires it). Written and
     // read only under the flag; not seeded (an anchor inside a portal sees it as new).
     int32_t portSeen[3] = {-1, -1, -1}, portSeen2[3] = {-1, -1, -1};
-    // --ringorder: GD's m_touchedRings for this body -- the rings in contact on this tick or the
+    // --ringorder (removed): GD's m_touchedRings for this body -- the rings in contact on this tick or the
     // one before, in first-contact order (uids, -1 = empty) -- and which of them this tick touched
     // (bit i for entry i). pushButton walks it front to back, so the ring touched first fires
     // first. Written and read only under the flag; not seeded (an anchor starts it empty, and
@@ -1210,18 +1231,18 @@ struct State {
     // the body is on the ground, a jump with the button held (the ball's tap) and propellPlayer
     // clear it, and nothing else touches it, so it outlives a walk off an edge or a repel. The
     // dual balls' repel (checkRepellPlayer) reads it to choose which body to flip (fixup.hpp
-    // stepBoth). It accumulates; the --start anchor seeds it from the grounded fields (cli.hpp),
+    // the removed old tick's stepBoth). It accumulates; the --start anchor seeds it from the grounded fields (cli.hpp),
     // which misses a body that left the ground without a tap or a pad. At the END on purpose.
     uint8_t hitG = 0, hitG2 = 0;
     // --rot2: the SECOND body's own sprite angle and spin stake (see rot / rotNeg / rotStep). The
     // pair used to share p1's, so every turned object p2 met was tested against p1's angle --
-    // the mirror of p2's own for a mirrored UFO. Swapped by swapHalves and merged by stepBoth
+    // the mirror of p2's own for a mirrored UFO. Swapped by swapHalves and merged by the removed old tick's stepBoth
     // under the flag only; seeded from the 31st-33rd --start fields (p1's when not said).
     // It accumulates. At the END on purpose.
     // (rotNeg2 first: it takes the byte after hitG2, so the two floats cost 8 bytes and not 16.)
     uint8_t rotNeg2 = 0;
     // --a1clatch: GD's +0xa1c, bit 0 for the body being stepped and bit 1 for the second body
-    // (swapHalves swaps the two bits, stepBoth merges bit 1 from the second half). updateJump's
+    // (swapHalves swaps the two bits, the removed old tick's stepBoth merges bit 1 from the second half). updateJump's
     // jump block (0x38bbda), ringJump for every impulse ring but the drop ring (0x3991fe),
     // propellPlayer (0x39f86e), boostPlayer (0x39feee), didHitHead's flip (0x393c7f) and
     // rotateGameplay (0x399fe0) raise it; updateJump lowers it the first tick
@@ -1232,37 +1253,37 @@ struct State {
     // rotNeg2, so sizeof is unchanged. 0 whenever the flag is off.
     uint8_t a1cLatch = 0;
     // --dualdash: the SECOND body's dash (see dashing / dashSlope), swapped by swapHalves and
-    // merged by stepBoth under the flag. Held, so it accumulates; NOT seeded at an --start anchor
+    // merged by the removed old tick's stepBoth under the flag. Held, so it accumulates; NOT seeded at an --start anchor
     // (the 17th/18th fields carry p1's only, as for boost2), and 0 whenever the flag is off.
     // dashing2 takes the padding byte after a1cLatch.
     uint8_t dashing2 = 0;
     // --dualflipclock: the SECOND body's own gravity-flip and mode-switch clocks (see flipT /
-    // modeT), swapped by swapHalves and merged by stepBoth under the flag. A body born at a dual
+    // modeT), swapped by swapHalves and merged by the removed old tick's stepBoth under the flag. A body born at a dual
     // portal starts both at 0 (it is spawned upside down, in its own mode). Like flipT, not
     // carried by --start (255 = no grace). In the padding after dashing2, so sizeof is unchanged.
     uint8_t flipT2 = 255, modeT2 = 255;
     // --dualhover: the SECOND body's robot hover budget (see rHover), swapped by swapHalves and
-    // merged by stepBoth under the flag. It accumulates and is NOT seeded at an --start anchor, as
+    // merged by the removed old tick's stepBoth under the flag. It accumulates and is NOT seeded at an --start anchor, as
     // rHover is not; 0 whenever the flag is off. In the padding after modeT2, so sizeof is unchanged.
     uint8_t rHover2 = 0;
     // --ballscaleair: GD's +0x728 per body -- runBallRotation (the ground stake: a landing, a roll, a
     // pad, a speed portal) raises it, toggleRollMode (0x39b570) clears it whenever the ball flag
     // changes and flipGravity before a ball's air stake (ringJump's own stake leaves it alone), and
     // togglePlayerScale (0x3a0cba) re-stakes the ball only while it is up. Bits 0-1 for
-    // the body being stepped, 2-3 for the second body (swapHalves swaps them, stepBoth merges 2-3 from
+    // the body being stepped, 2-3 for the second body (swapHalves swaps them, the removed old tick's stepBoth merges 2-3 from
     // the second half): 0 = not known, 1 = down, 2 = up. It accumulates and is NOT seeded at an
     // --start anchor (the dump has no column for it), so an anchor starts it unknown and the scale
     // falls back to reading the stake's value. 0 whenever the flag is off.
     uint8_t ball728 = 0;
-    // --dashsprite: the dash art's spin (PlayerObject::updateDashArt 0x3961c0 runs a CCRepeatForever of CCRotateBy on
+    // --dashsprite (removed): the dash art's spin (PlayerObject::updateDashArt 0x3961c0 runs a CCRepeatForever of CCRotateBy on
     // two child sprites at the dash's start and stopDashing 0x396650 hands the first one's angle to the player at
     // the end -- speed.hpp). dashNeg = the spin's sign, dashF = the scheduler frame (tick >> 2) the dash began in.
     // They take the padding after ball728, so sizeof is unchanged; they accumulate (a dash is held) and are NOT
     // seeded at an --start anchor (an anchor inside a dash reads the spin as not begun). 0 whenever the flag is off.
     uint8_t dashNeg = 0;
-    // --dualinlat: the button as the SECOND body saw it on the previous tick, in a dual whose second body has the longer
-    // input latency (stepBoth); 2 = not tracked (every other tick, and an anchor). One tick of memory, so nothing to seed;
-    // in the padding byte before dashF, so sizeof is unchanged. Not swapped: only stepBoth reads and writes it.
+    // --dualinlat (removed): the button as the SECOND body saw it on the previous tick, in a dual whose second body has the longer
+    // input latency (the removed old tick's stepBoth); 2 = not tracked (every other tick, and an anchor). One tick of memory, so nothing to seed;
+    // in the padding byte before dashF, so sizeof is unchanged. Not swapped: only the removed old tick's stepBoth reads and writes it.
     uint16_t dashF = 0;
     // --balldashsprite: the dash art's spin summed so far, in 1/16 degree (saturating), see speed.hpp. Same rules as dashF.
     uint16_t dashAng = 0;
@@ -1275,7 +1296,7 @@ struct State {
     // --spdsameonce: two more places in the speed portals' memory (see spdFired), per body, so the
     // memory is four deep: spdFired[0..1] then spdMore[0..1], newest first. GD keeps every speed
     // portal it activated (GJEffectManager's triggered-ID set, keyed by object and player); two
-    // stacked pairs under the body at once are four marks. Swapped by swapHalves, merged by stepBoth,
+    // stacked pairs under the body at once are four marks. Swapped by swapHalves, merged by the removed old tick's stepBoth,
     // not seeded at an anchor (as spdFired). -1 throughout whenever the flag is off. At the END on
     // purpose (positional State{...}).
     int32_t spdMore[2] = {-1, -1}, spdMore2[2] = {-1, -1};
@@ -1286,6 +1307,10 @@ struct State {
     // revOff -- so after a ring 25 px from the player the next 1,600 ticks run 2% fast. Both accumulate; the --start anchor
     // seeds them from GD's two members (--startrev), 0 without. At the END on purpose (positional State{...}).
     float revOff = 0.f, revCarry = 0.f;
+    // --camy (observation only, 0 whenever the flag is off): GD's camera y (the follow camera's base, updateCamera's +0x1e4 side) as the shadow
+    // in cam_y.hpp steps it along this state. Not in the dedupe key, not read by the search, not seeded at an anchor; the 4 bytes after revCarry
+    // were padding (spdSpill is 8-aligned), so sizeof is unchanged.
+    float camY = -1.f;   // -1 = no camera stepped yet (the camera Y is never below 0): the first step snaps, as a level start does
     // --spdseenall (speed.hpp): the speed portals the four places (spdFired, spdMore) gave up, newest first, a list whose nodes are never changed so that copying a state copies one pointer. Accumulates, not
     // seeded at an anchor (as spdFired); nullptr whenever the flag is off. Body one's only: a second body keeps the four places it has. At the END on purpose (positional State{...}).
     const struct SpdSpillNode* spdSpill = nullptr;
@@ -1304,7 +1329,65 @@ struct State {
     // --tap2: the counts of the SECOND, third and fourth counting Taps (State::taps is the first), the same six-bit count with 0x80 the window has opened and 0x40 it has shut. They accumulate over the
     // window and are not seeded at an anchor, for taps' reason (the presses before it reach the search as GD's own counter, --itembase). 0 without the flag. At the END on purpose (positional State{...}).
     uint8_t tapsX[3] = {0, 0, 0};
+    // --hsshadow (an observer, see constants.hpp g_hsShadow): GD's press bytes as the notes' table writes them, bit 0 H, 1 S, 2 Hm, 3 Sm, 4 RF (this press fired a class A ring),
+    // 5-7 the ring slots A / B / C. gdHS is the byte after the step's button pass -- the row the game's hstrace.csv takes; gdHSb is the step's scratch copy for the update
+    // / collision part (the shadow note in step.hpp); nothing reads it across steps. They accumulate, are NOT seeded at an anchor (0
+    // there), are not in keyOf, and are 0 whenever the flag is off. Player 1's only. At the END on purpose (positional State{...}).
+    uint8_t gdHS = 0, gdHSb = 0;
+    // --hsshadow: bit 0 = the no-control window held the button back on the previous step (the game's pushButton / releaseButton do nothing while
+    // m_controlsDisabled is up, and enablePlayerControls presses again if the button is still down)
+    uint8_t gdAux = 0;
+    // --hsshadow, the SECOND body's (a dual's player 2: a separate PlayerObject with bytes of its own): gdHS2 is gdHS of that body, and the high nibble of gdAux its
+    // persistent bits (the low nibble is the first body's). swapHalves puts them where the second body's the removed old tick's stepOne reads gdHS / the low nibble, and the removed old tick's stepBoth takes them
+    // back; born at the dual portal from player 1's H, S (copyAttributes), 0 in a two-player level (the new body gets releaseAllButtons there). Not in keyOf unless
+    // --ringslots. At the END on purpose (positional State{...}); four bytes in all, which is what the tail padding holds.
+    uint8_t gdHS2 = 0;
+    // --shadowstep (S2 stage 2, shadow_step.hpp): where the self-running shadow's state of this state is (shadow_lite.hpp SlStore: the player image's carried
+    // words, its sets and its layer words, 1000 B, kept beside the frontier and not in the State the search copies, sorts and dedupes). 0 = none: always 0
+    // with the flag off, and after any tick the model stepped. It accumulates and is seeded at an anchor from --shadowseedfile (the game's image), else from
+    // the model's own fields on the first tick the shadow steps; not printed in --seeddump, never read from a state file. At the END on purpose (positional
+    // State{...}).
+    uint32_t slRef = 0;
+    // --shadowdual: the same handle for player 2's block (0 = none; always 0 without the flag). It fills the 4 bytes of tail padding slRef left.
+    uint32_t slRef2 = 0;
+    // --worldkey (restructure draft section 7.6): the camera summary of the world key -- a hash of the speeds this lineage has been stepped with (dx), taking the next one only when dx CHANGES, so two lineages
+    // with the same speed history carry the same value whatever the path. 0 without the flag (never written). At the END on purpose (positional State{...}); adds 8 bytes.
+    uint64_t dxHist = 0;
+    // The world's tog (restructure draft section 7.7, trigevent_togstate.hpp): the current on / off of the level's toggleable groups (TogBits: bit = differs from the level's initial value, last write wins) and the digest of the
+    // x-crossings of the triggers that sit in them (xgate: a sum of H(trigger, fired)). Both ACCUMULATE along a lineage; both are 0 without the flag (never written), at an anchor they start at 0 (the seed slot is reserved,
+    // empty), and neither is printed in --seeddump or read from a state file. At the END on purpose (positional State{...}); adds 24 bytes.
+    dp::gdtrig::TogBits tog;
+    uint64_t xgate = 0;
+    // --camy S2.5 (observation only; the defaults whenever the flag is off): the camera Y of the last tick's CHANGE (camY after - before; a Camera Static trigger takes its bezier tangent from it, (c414[t-1] - c414[t-2]) * 240) and that tangent as the trigger
+    // took it (-1e30 = not known for both: no camera stepped yet / the trigger was not seen fire by this lineage). Not in the dedupe key, not read by the search, not seeded at an anchor. At the END on purpose (positional State{...}); two floats = the 8 bytes sizeof grows by.
+    float camDy = -1e30f, camTan = -1e30f;
+    // --camyband, branch B (a non-static camera: getMinPortalY = max(90, F + offY - 0.5 H / zoom), max = min + H / zoom): the camera Offset Y the stored band already carries. The state keeps its band at zoom 1 (every reader
+    // scales it about its centre by the zoom of its tick); the centre of that band is F + offY, and a mode portal writes it with offY 0 (the portal's own centre), so camyWriteBand moves the band by (offY of the tick - this) and
+    // stores the offY it moved to. 0 = a band a portal just wrote; 1e30 = an anchor band whose camera offset is not known (never moved). Read only by camyWriteBand; not in the dedupe key (two states with the same band
+    // after the move have the same one).
+    float bandOffY = 0.f;
+    // The game events this lineage's body raised that an Event trigger (3604) of the level listens for (dp/src/dp/game_event.hpp): the digest of the chain of (step, events), 0 = none. It ACCUMULATES along a lineage, like
+    // xgate; an anchor starts it at 0 (the seed slot is reserved, empty), it is not printed in --seeddump, not read from a state file, and 0 on every level that has no Event trigger. Written by the shadow's pass
+    // (shadow_step.hpp); the chain behind it is gdev::g_evChain. Not in the dedupe key and not read by the search yet (the next change feeds the timelines). At the END on purpose (positional State{...}); adds 8 bytes.
+    uint64_t evgate = 0;
+    // The key's share of evgate (game_event.hpp): evKey is the digest of the game EVENTS alone (the same sequence as evgate on a level whose chain holds no Tap press, so every such key is as it was), and a Tap's presses
+    // (State::evgate's chain also carries them, for the timelines) enter the key only as what can still change the world: tapN[slot] = the presses the chain Tap `slot` has heard, saturating at what that chain reads
+    // (TogTap::cap), and tapWin = the edges heard in the last g_tapWinTicks ticks (bit i = i ticks ago), the span over which a press's effect is still running. A press older than that is only counted. 0 / 0 / 0 on a
+    // level with no Tap chain; an anchor starts them at 0 (like evgate), never printed in --seeddump or read from a state file. At the END on purpose (positional State{...}); adds 24 bytes.
+    // A chain Tap whose group only feeds Counts (no effect of its own per press) is told by its count and by how long ago the count reached what the Counts read (tapAge, saturating at the span of what they start):
+    // the presses before that change nothing but the count, the ones after it nothing at all.
+    uint64_t evKey = 0;
+    uint8_t tapN[8] = {};
+    uint8_t tapAge[8] = {};
+    uint32_t tapWin = 0;
+    // Where the body stood at the START of the update that made this state, in the game's own frame (world x, y): GD's PrevX / PrevY (+0x4d0 / +0x4d4), which the once-per-contact test reads
+    // (selfshadow.hpp seedMemory: an object the body overlaps now counts as seen only if the rect it had at the start of the last update overlapped it too). The tick's step writes it (shadow_step.hpp,
+    // from the state it was stepped from); a shadow seeded from the State (shadowSeedFromModel) takes it as PrevX / PrevY. It cannot be derived from y / vy / dx: a pad or an orb replaces vy after the
+    // move (GB 23283: y 559.418, vy -4.49 after the pad, the move was -1.69 from 561.109), and the search has no parent to ask. -1e30 = not known (an anchor, a state file): the seed then keeps PrevX = x,
+    // PrevY = y as before. Not in the dedupe key (see the note at the key), never printed or read from a state file. At the END on purpose (positional State{...}); adds 8 bytes.
+    float prevWX = -1e30f, prevWY = -1e30f;
 };
+
 
 // THIS ASSERT IS A QUESTION, NOT A BUDGET. If you added a field and the build
 // stopped here, ask whether it ACCUMULATES -- whether its value at tick t
@@ -1372,11 +1455,11 @@ struct State {
 // two uint32 sat. The latch term is relative to 128, so the base holds at 128 and a
 // further widening moves the expected size (and its padding re-measured here).
 // Not seeded at an anchor beyond what the payload always did (see the field).
-// [2026-09-25] 392 -> 416: usedOrbHist / usedOrbHist2 (--ringonce, three older fired rings per
+// [2026-09-25] 392 -> 416: usedOrbHist / usedOrbHist2 (--ringonce (removed), three older fired rings per
 // body). They accumulate and are not seeded, for usedOrbOld's reason; printed in --seeddump.
-// [2026-09-25] 416 -> 440: portSeen / portSeen2 (--portalonce, the portals overlapped this tick).
+// [2026-09-25] 416 -> 440: portSeen / portSeen2 (--portalonce (removed), the portals overlapped this tick).
 // One tick of memory, rewritten every tick, so there is nothing to seed; printed in --seeddump.
-// [2026-09-25] 440 -> 480: touchRing / touchRing2 and their touched bits (--ringorder). Two ticks
+// [2026-09-25] 440 -> 480: touchRing / touchRing2 and their touched bits (--ringorder (removed)). Two ticks
 // of memory, not seeded (see the field); printed in --seeddump.
 // [2026-09-30] 480 -> 496: spdFired / spdFired2 (--spdonce, the last two speed portals fired per
 // body). They accumulate and are not seeded, for usedOrbOld's reason; printed in --seeddump.
@@ -1414,7 +1497,7 @@ struct State {
 // anchor past a box's teleport is past the box). Neither is printed in --seeddump.
 // [2026-10-13] tpBack (--tpback) landed in the padding after ceilMode: still 552. It accumulates; seeded at
 // an anchor from --startxhi (cli.hpp), not printed in --seeddump.
-// [2026-10-13] 552 -> 560: tpFromX (--tpjumpnext, x before this tick's forward teleport). One tick of life, so
+// [2026-10-13] 552 -> 560: tpFromX (--tpjumpnext (removed), x before this tick's forward teleport). One tick of life, so
 // nothing to seed.
 // [2026-10-18] 560 -> 568: revOff / revCarry (--revcarry, GD's reverse correction). They accumulate (a ring's correction
 // runs for up to 1,600 ticks) and are seeded at an anchor from --startrev; printed in --seeddump.
@@ -1427,10 +1510,28 @@ struct State {
 // GD's own counter, --itembase); printed in --seeddump under the flag.
 // [2026-10-23] 648 -> 656: spdSpill (--spdseenall, the speed portals the four places gave up, a pointer to a persistent list). It accumulates and is not seeded at an anchor, for spdFired's reason.
 // [2026-10-23] 656 -> 664: the merge of --spdseenall (spdSpill, +8) and --balldashsprite (dashAng, a uint16 that sat in padding on its own branch) leaves dashAng without a slot in the padding: one more 8-byte row.
+// [2026-10-27] 664 -> 672: rotGm (--rotgmod, m_gravityMod as the cube's spin was staked). It accumulates (an airborne arc keeps the value it was staked
+// at) and is seeded at an anchor from --start's 30th field; not printed in --seeddump. No 4-byte hole was left to take it.
+// [2026-10-27] 672 -> 680: rotSpent 32 -> 64 bits (--rotq64, a rotation queue of up to 64 entries; 33 or more were refused).
+// [2026-10-30] +1000 (memstat: 688 -> 1688 B): sl (--shadowstep, the self-running shadow's state, sizeof(gdcol::ShadowLite) = 1000). It accumulates; seeded at an anchor from
+// --shadowseedfile or from the model's fields, not printed in --seeddump (see the field).
+// [2026-10-31] 1688 -> 696: sl left the State for SlStore (shadow_lite.hpp); the State keeps slRef, a 4-byte handle into it (no 4-byte hole was left: one more row).
+// [2026-11-05] 696 -> 704: dxHist (--worldkey, the speed-history digest of the world key; observation only). It ACCUMULATES along a lineage; an anchor starts it at 0 (one game state has one history, so every state
+// of a call shares the part before the anchor and the digest is relative to it), it is never printed in --seeddump and never read from a state file. Written only under the flag, so 0 in every other run.
+// [2026-11-05] 704 -> 728: tog (16 B) and xgate (8 B) (the world's group on / off bits and x-gate digest). Both ACCUMULATE along a lineage and stay 0 on a level with no Taps or gates; an anchor starts them at 0.
+// [2026-11-05] 728 -> 752 -> 728: touchEvHash / touchEv / touchEvT (--shadowtouchev) were added (3a232db5, merged 1f635c2f) and taken out again: the collision pass's own touch calls add 2 of the 111 touch calls of a
+// mover-driving kind (Move / Toggle / Rotate / Spawn / Stop) over the model's latch and miss 16 the latch has (census_anchor.py, the flight's plans replayed from the nearest GD anchor; notes p4_touch_event_wiring_design
+// section 8.1), so 24 bytes a state buy nothing. The rest of that change stays (TrigShadow::fireTouchLate, the Event step fireB).
+// [2026-11-16] 728 -> 736: camDy / camTan (--camy S2.5, the camera Y's last change and the Camera Static trigger's bezier tangent; observation only, not in the dedupe key, not read by the search, not seeded at an anchor).
+// Both are per state (the camera follows the player's own y) and no 4-byte hole earlier in the struct can take them: a member inserted before the end shifts the positional State{...} initialisers.
+// [2026-11-18] 736 -> 744: bandOffY (--camyband branch B: the camera Offset Y the stored band carries; a portal's write resets it to 0, an anchor takes the anchor row's offset; read by camyWriteBand only).
+// [2026-11-19] 744 -> 752: evgate (the digest of the game events a lineage raised that an Event trigger listens for; accumulates, an anchor starts it at 0, 0 on a level with no Event trigger; not in the key, not serialized yet).
+// [2026-11-20] 752 -> 784: evKey (the events-only digest the key reads), tapN[8], tapAge[8] and tapWin (a Tap chain's presses as the key sees them: a count per chain Tap, saturating, the age of the count that reached what the
+// Counts read, and the edges of the last effect window). They accumulate along a lineage and are 0 on a level with no Tap whose group holds a trigger; an anchor starts them at 0.
 constexpr size_t kStateBytes =
-    (664u +(size_t)(kTouchBits - 32) * sizeof(uint16_t)
+    (680u +(size_t)(kTouchBits - 32) * sizeof(uint16_t)
           + (sizeof(TouchMask) - sizeof(uint32_t))
-          + 2u * (sizeof(GravLatch) - sizeof(Bits<128>)) + 7u) / 8u * 8u;
+          + 2u * (sizeof(GravLatch) - sizeof(Bits<128>)) + 7u) / 8u * 8u + 8u + 8u + 16u + 8u + 8u + 8u + 8u + 8u + 8u + 8u + 8u + 8u;
 static_assert(sizeof(State) == kStateBytes,
               "State changed size. If the new field ACCUMULATES over ticks, "
               "seed it in the --start anchor scan, print it in --seeddump, and "

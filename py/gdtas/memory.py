@@ -15,6 +15,8 @@ import argparse
 import sys
 import time
 
+from . import procscan
+
 MB = 1024 * 1024
 
 
@@ -22,8 +24,8 @@ def clear_steam_webhelper(max_working_set_mb: int = 3000,
                           min_free_mb: int = 4000) -> dict:
     """Kill the helpers if their total exceeds the limit, or free physical memory is below it."""
     import psutil
-    procs = [p for p in psutil.process_iter(["pid", "name"])
-             if (p.info["name"] or "").lower() == "steamwebhelper.exe"]
+    procs = [p for p, info in procscan.scan(["pid", "name"])
+             if (info["name"] or "").lower() == "steamwebhelper.exe"]
     if not procs:
         return {"killed": 0}
     ws_mb = 0

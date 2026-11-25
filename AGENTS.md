@@ -36,11 +36,10 @@ geode build                                        # mod + CLI
 python py/dev.py                                   # build, deploy, launch GD
 ```
 
-`mod.json` names the release build (`gd.win` 2.209). A build for the other game is chosen by the cmake options, not by editing the file: configure with
-`-DGEODE_GD_VERSION=2.2081 -DGEODE_COMP_GD_VERSION=22081` (the 2.2081 workers; with the 2.2081 bindings) and the package gets that version in its own
-`mod.json`. Pass the options as an array when the shell is PowerShell 5.1 (it splits `-D...=2.2081` at the dot). A 2.209 package needs bindings that
-carry `bindings/2.209`, the SDK with `tools/geode-sdk-2209.patch` and `GEODE_COMP_GD_VERSION` 22090 (the first 2.209 executable) or 22091 (the hotfix
-executable): `scripts/ci-build-2209.ps1` does all of it from nothing, and is what CI runs. The harness (`py/gdtas`) holds each worker to its own frozen
+`mod.json` names the release build: Geode `6.0.0` and `gd.win` 2.2091, the only game build Geode 6 supports, with the bindings of upstream
+`geode-sdk/bindings` (the SDK fetches them itself; nothing here depends on a fork). A build against a checked-out SDK on MSVC 19.44 needs
+`tools/geode6_sdk_file_hpp.patch` (the SDK's `loader/include/Geode/utils/file.hpp`); CI builds with clang and does not. The workers run Geode 6.0.0
+(`py/gdtas/geode_pin.json`, `py/gdtas/geode_switch.py` moves one with a backup). The harness (`py/gdtas`) holds each worker to its own frozen
 base and to a package built for that game.
 
 ## Rules that are not negotiable

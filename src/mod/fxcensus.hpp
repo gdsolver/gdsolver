@@ -118,12 +118,12 @@ inline int g_uiMode = UI_MODE_NORMAL;
 // separate files (Config::coinFiles), so neither mode overwrites the other's.
 inline bool g_uiCoins = false;
 // ...and the third, shown only in Solve: search without the routes that need frame-level precision
-// (the glitch-avoid mode, Config::glitchPortal / glitchWave). A choice about how to solve, not a
+// (the glitch-avoid mode, Config::glitchDeco). A choice about how to solve, not a
 // kind of solution: the plan it finds is filed where Solve always files it.
 inline bool g_uiGlitch = false;
 // ...which has three values since the Options popup stopped being a checkbox: off, the glitch-avoid
 // margins alone (what the checkbox was), and those plus the wave's behaviour (an input-interval floor
-// for the wave and a clearance from the terrain, Config::wavePulse / waveCentre). g_uiGlitch stays
+// for the wave, Config::wavePulse). g_uiGlitch stays
 // "any of the last two". Numbered for the saved value ("play-glitch-mode"), append-only.
 inline constexpr int UI_GLITCH_OFF = 0;
 inline constexpr int UI_GLITCH_ONLY = 1;

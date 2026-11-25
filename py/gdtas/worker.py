@@ -42,6 +42,7 @@ from pathlib import Path
 from . import plan as P
 from . import results as R
 from . import gdsave
+from . import procscan
 from .gdsave import MINIMAL_SAVE_XML as _MINIMAL_SAVE_XML
 from .gdsave import decode_save as _decode_save
 from .gdsave import encode_save as _encode_save
@@ -173,12 +174,12 @@ def processes_under(directory: Path) -> list[int]:
     import psutil
     root = str(directory).lower()
     pids = []
-    for p in psutil.process_iter(["pid", "exe"]):
-        exe = p.info.get("exe")
+    for p, info in procscan.scan(["pid", "exe"]):
+        exe = info.get("exe")
         if exe and exe.lower().startswith(root):
             try:
                 if p.is_running() and p.status() != psutil.STATUS_ZOMBIE:
-                    pids.append(p.info["pid"])
+                    pids.append(info["pid"])
             except psutil.Error:
                 pass
     return pids
@@ -326,9 +327,9 @@ def _wer_handled_pids() -> set[int]:
     """The processes a WerFault.exe that is running right now reports on. Cheap while there is none: only the image name is read."""
     import psutil
     argvs = []
-    for p in psutil.process_iter(["name"]):
+    for p, info in procscan.scan(["name"]):
         try:
-            if (p.info.get("name") or "").lower() == "werfault.exe":
+            if (info.get("name") or "").lower() == "werfault.exe":
                 argvs.append(p.cmdline())
         except psutil.Error:
             pass
@@ -708,8 +709,8 @@ def _stall_snapshot(quiet_s: float, last_line: str) -> dict:
     info = {"quiet_s": round(quiet_s), "last_line": last_line, "gd_running": None, "mem_free_gb": None}
     try:
         import psutil
-        info["gd_running"] = sum(1 for p in psutil.process_iter(["name"])
-                                 if (p.info.get("name") or "").lower().startswith("geometrydash"))
+        info["gd_running"] = sum(1 for _p, pinfo in procscan.scan(["name"])
+                                 if (pinfo.get("name") or "").lower().startswith("geometrydash"))
         info["mem_free_gb"] = round(psutil.virtual_memory().available / 2**30, 1)
     except Exception:       # noqa: BLE001  a snapshot is evidence, never a reason for the launch to fail
         pass
@@ -969,6 +970,14 @@ class Worker(_WorkerBase):
         # Running to completion kills the session (the MOD's cmd polling is inside
         # sessionOver). No later rerun ever lands, so this is the signal to reopen.
         self.finished = False
+        # cfg serverearm=1: a clear does not end the session (the mod stops at it like at a
+        # death and the next rerun resets in place), so `finished` is never raised by one.
+        self.rearm = False
+        # A plan has run on the level in hand since it was entered. Such a level is not the one a
+        # launch gives (a reset in place leaves the objects' cached rects as the last run had
+        # them -- see mcp/gdmcp/equiv.py), so reenter() is what brings it back.
+        self.dirty = False
+        self.mod_file: Path = BUILD_MOD
 
     # ---------- lifecycle ----------
 
@@ -1010,9 +1019,17 @@ class Worker(_WorkerBase):
 
         self.level = level
         self.finished = False
+        self.dirty = False
+        self.mod_file = Path(mod_file)
         self.cfg = dict(BASE_CFG, level=str(level), **(extra_cfg or {}))
-        (self.data / "autorun.cfg").write_bytes(
-            "\n".join(f"{k}={v}" for k, v in self.cfg.items()).encode("ascii"))
+        self.rearm = self.cfg.get("serverearm") == "1"
+        lines = [f"{k}={v}" for k, v in self.cfg.items()]
+        # A level that is not a main one is read from cfg `leveldir` by the level suite's own
+        # lookup, so it is entered as a one-level suite -- as switch() enters every level. It stays
+        # out of self.cfg: that is what a relaunch is rebuilt from.
+        if "leveldir" in self.cfg and "levels" not in self.cfg:
+            lines.append(f"levels={level}")
+        (self.data / "autorun.cfg").write_bytes("\n".join(lines).encode("ascii"))
 
         if initial_plan is None:
             text = ""
@@ -1056,6 +1073,64 @@ class Worker(_WorkerBase):
         """Stop every GD under this worker's root, whoever started it."""
         stop_worker_processes(self.root, self.image)
         self.proc = None
+
+    def switch(self, level: int, extra_cfg: dict | None = None,
+               mod_file: Path = BUILD_MOD, timeout_s: float = 120.0) -> dict:
+        """Move this resident game to another level without relaunching it.
+
+        Only when that is the same game open() would have given: the process is alive and
+        accepting commands (serverearm), runs the same .geode, and every setting other than the
+        level is identical -- a key the new cfg leaves out would otherwise survive from the old
+        one, because the mod parses cfg keys into globals that no reset puts back. Anything else
+        is an ordinary open(), a full relaunch. `switched` in the result says which happened.
+        """
+        new_cfg = dict(BASE_CFG, level=str(level), **(extra_cfg or {}))
+
+        def keep(c: dict) -> dict:
+            return {k: v for k, v in c.items() if k != "level"}
+
+        if (not self.is_alive() or self.finished or not self.rearm
+                or snapshot_mod(mod_file)[1] != self.mod_digest
+                or keep(new_cfg) != keep(self.cfg) or "levelfile" in new_cfg):
+            return dict(self.open(level, extra_cfg, mod_file, timeout_s), switched=False)
+        before = len(self._read_result())
+        for name in ("cmd.txt", "plan_in.txt"):
+            (self.data / name).unlink(missing_ok=True)
+        # `levels=<id>` makes the next level a one-level suite, the path the mod's own
+        # level-to-level machinery takes (SuiteKeeper). It never enters self.cfg, so a later
+        # relaunch is an ordinary open().
+        (self.data / "autorun.cfg").write_bytes(
+            "\n".join([f"{k}={v}" for k, v in new_cfg.items()] + [f"levels={level}"])
+            .encode("ascii"))
+        P.write_plan(self.data / "plan_in.txt", "")
+        (self.data / "cmd.txt").write_text("switch", encoding="ascii")
+        entered = f"suite: level={level} "
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            time.sleep(0.12)
+            if not self.is_alive():
+                break
+            new = self._read_result()[before:]
+            if any(l.startswith(entered) for l in new):
+                self.level = level
+                self.cfg = new_cfg
+                self.finished = False
+                self.dirty = False
+                return dict(self.info(), switched=True)
+            if any("could not be entered" in l or l.startswith("suite: refused")
+                   or l.startswith("switch: refused") for l in new):
+                break
+        wall_event("switch-failed",
+                   f"worker={self.worker_id} level={level} - relaunching")
+        return dict(self.open(level, extra_cfg, mod_file, timeout_s), switched=False)
+
+    def reenter(self, timeout_s: float = 120.0) -> dict:
+        """Put the level in hand back as a launch gives it, without the launch: leave it and
+        enter it again (switch to the same level, same cfg, same .geode). Falls back to a
+        relaunch exactly where switch() does."""
+        extra = {k: v for k, v in self.cfg.items()
+                 if k != "level" and BASE_CFG.get(k) != v}
+        return self.switch(self.level, extra, self.mod_file, timeout_s)
 
     def info(self) -> dict:
         return {
@@ -1140,7 +1215,8 @@ class Worker(_WorkerBase):
                                      injected=fired, lines=after)
                 if l.startswith(R.COMPLETE):
                     d = R.parse_complete(l)
-                    self.finished = True   # this session accepts no more commands
+                    # without serverearm this session accepts no more commands
+                    self.finished = not self.rearm
                     return RunResult("complete", d["tick"], d["x"],
                                      pct=d["pct"] or 0.0, goal_x=d["goal_x"],
                                      attempt=d["attempt"], lines=after)
@@ -1171,7 +1247,9 @@ class Worker(_WorkerBase):
                     raise WorkerError("no session is open (call open first)")
                 self._reopen()
             try:
-                return self._supply(text, timeout_s, load_timeout_s)
+                res = self._supply(text, timeout_s, load_timeout_s)
+                self.dirty = True
+                return res
             except _Reopen as e:
                 if attempt or not relaunch:
                     raise WorkerError(f"worker-{self.worker_id}: {e}")

@@ -322,7 +322,7 @@ def main(argv=None) -> int:
     # invisible to it however many families it moved.
     ap.add_argument("--extra-flag", action="append", default=[], metavar="FLAG",
                     help="extra leveldp flag for every section, repeatable; "
-                         "write it as --extra-flag=--slopelaw, or argparse "
+                         "write it as --extra-flag=--no-areaadd, or argparse "
                          "reads the value as an option of its own. Refused "
                          "with --bless: a baseline is the default's")
     ap.add_argument("--tmp", default=None,

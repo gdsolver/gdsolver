@@ -1,9 +1,9 @@
 {
-  "version": "v5.11.2",
-  "files": {
-    "Geode.dll": "0c34f50454c102637038cae48c8c7dd685da3582fe474358024b1eb6833684d3",
-    "GeodeUpdater.exe": "2f8c1343aed63bed3d3ac06886d2b27aed506b5b17bfa5999a2cb004a35ff5a2",
-    "XInput1_4.dll": "20d6f0ac61ec820895ff25bc26558ddb877f37cc939d303257099ad5fc51e76c"
-  },
-  "note": "The Geode loader the workers run (see gdtas/gdbase.py). Changing it means updating every idle worker first."
+    "version":  "v6.0.0",
+    "files":  {
+                  "Geode.dll":  "03957f271967146333df0567d3694506a9232289a3ab3a509b53c93606b7ffc5",
+                  "GeodeUpdater.exe":  "b81947cf2dbf0d55c98642d377a5e539450a215a395a7b2d9f1633b0cb581bc6",
+                  "XInput1_4.dll":  "88abbd2313ebd194a980981fbb9a59aca3f560352a758df08aeaba4b5720cf55"
+              },
+    "note":  "The Geode loader the workers run (see gdtas/gdbase.py, gdtas/geode_switch.py). Changing it means updating every idle worker first. Before 2026-11-25 the pin was v5.11.2 (Geode.dll 0c34f504...)."
 }

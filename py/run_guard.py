@@ -25,6 +25,8 @@ import threading
 import time
 from pathlib import Path
 
+from gdtas import procscan
+
 FP_LINE = re.compile(r"\[fp\] it=\d+.*")
 DEATH_LINE = re.compile(r"^(?:killer: |death: ).*", re.M)
 COIN_LINE = re.compile(r"^coin(?:gd)?: .*", re.M)
@@ -46,10 +48,10 @@ def _working_set_mb(worker_root: Path) -> float:
         import psutil
         root = str(worker_root).lower()
         total = 0
-        for p in psutil.process_iter(["exe", "memory_info"]):
-            exe = (p.info.get("exe") or "").lower()
-            if exe.startswith(root) and p.info.get("memory_info"):
-                total += p.info["memory_info"].rss
+        for _p, info in procscan.scan(["exe", "memory_info"]):
+            exe = (info.get("exe") or "").lower()
+            if exe.startswith(root) and info.get("memory_info"):
+                total += info["memory_info"].rss
         return total / (1024 * 1024)
     except Exception:            # noqa: BLE001
         return -1.0

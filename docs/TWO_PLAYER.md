@@ -39,7 +39,7 @@ plans in the game and reading the per-tick dump; the calibration rigs in `data/r
   trigger (3022) that a Spawn loop fires again on 5 of every 6 ticks, onto a target a Move trigger carries, until a Stop halts the loop: player 1 stands at
   x 644.5 for 165 ticks (y 2085 -> 2055, vy reading 0) while player 2 runs on, 550 px behind. The model fires a teleport trigger once, at its crossing.
   `--pinrows <file>` (lines `tick,x,y`) puts player 1 at the recorded spot at the end of those ticks (the loop writes them from its own recording: a tick
-  whose x equals the previous or the next tick's, in a run of three or more); in a swapped pass that is the second slot. `--p2secx` reads the second body's
+  whose x equals the previous or the next tick's, in a run of three or more); in a swapped pass that is the second slot. The old tick's `--p2secx` (removed with it) read the second body's
   section cell (the follow-copies pass, a level with dynamicLevelHeight) at its own x, `K.x + dx2`, not the group's: player 2's gravity portal 550 px away was
   "far" and sent off. With both, and `--startp2dx`, the model follows both bodies to 0.0000 for the 376 ticks until player 1 meets a wall, where the game kills it.
   `--p2taps`: a Tap trigger (1595) of a two-player level is fired by the second player's press edge and armed by the first player's x (a mask-1 press at the same

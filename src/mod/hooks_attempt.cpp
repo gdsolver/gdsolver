@@ -1,7 +1,8 @@
 // The attempt pin (cfg `attemptone`, see g_attemptOne in config.hpp): while the mod drives, the
 // attempt count reads what it reads on a session's first attempt, and the items Item Persistence
 // keeps are not carried into the next attempt. cfg `attemptcount=k` (g_attemptCount) pins the count
-// alone to k on every attempt.
+// alone to k on every attempt. cfg `attemptauto` (on) does the count part for a level the scan finds
+// attempt-dependent and, where the kept items reach play too (g_attemptAutoKeeps, T58), the items part as well.
 // Windows only: the addresses and the two callers of getItemValue were read from this build.
 #include "mod/playlayer_helpers.hpp"
 #include <Geode/modify/GJBaseGameLayer.hpp>
@@ -53,8 +54,38 @@ class $modify(AttemptPinEffects, GJEffectManager) {
     GDSOLVER_HOOK_GUARD()
     // Called by resetEffects (every attempt) and loadFromState (every checkpoint restore) to copy
     // the kept items back. Not copying them leaves those items where a first attempt has them.
+    // cfg itemlog (observation only): what the transfer meets and leaves, sorted item=value, from the first 200 calls that see something
+    template <class M> static std::string itemsText(const M& m) {
+        std::map<int, int> s;
+        for (const auto& kv : m) s[(int)kv.first] = (int)kv.second;
+        std::string t; int n = 0;
+        for (const auto& kv : s) { if (n++ >= 12) { t += " ..."; break; } t += " " + std::to_string(kv.first) + "=" + std::to_string(kv.second); }
+        return t.empty() ? " -" : t;
+    }
     void transferPersistentItems() {
+        if (g_itemLog && botDriving()) {
+            const bool pin = attemptPinActive();
+            const std::string kept = itemsText(m_persistentItemCountMap), before = itemsText(m_itemCountMap);
+            if (g_itemLogLines < 200 && (kept != " -" || before != " -")) {
+                ++g_itemLogLines;
+                // the live map is read after the (skipped or real) transfer below
+                if (pin) ++g_persistTransfersSkipped;
+                else GJEffectManager::transferPersistentItems();
+                writeResult(std::string("itemlog: transfer pin ") + (pin ? "on" : "off") + " | kept:" + kept + " | live before:" + before + " | live after:" + itemsText(m_itemCountMap));
+                return;
+            }
+        }
         if (attemptPinActive()) {
+            // the first few skips say what was NOT carried (the kept table holds the values the previous attempt left: item=value)
+            if (g_persistTransfersSkipped < 5) {
+                std::string kept;
+                int n = 0;
+                for (const auto& kv : m_persistentItemCountMap) {
+                    if (n++ >= 8) { kept += " ..."; break; }
+                    kept += " " + std::to_string(kv.first) + "=" + std::to_string(kv.second);
+                }
+                writeResult("attemptpin: kept items not carried over (" + std::to_string(m_persistentItemCountMap.size()) + " kept:" + kept + ")");
+            }
             ++g_persistTransfersSkipped;
             return;
         }

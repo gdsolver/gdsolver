@@ -120,6 +120,14 @@ def start(out_dir: Path, *, mod: Path, cfg: list[str], levels: list[int], arrang
          "dirty": bool(build["dirty"]) if build else driver_dirty,
          "driver_head": driver_head, "driver_dirty": driver_dirty,
          "build": build,
+         # The solver core a cold runs is the dp compiled into the package (dp_bridge2.cpp,
+         # in-process), never the checkout's leveldp.exe: GDSOLVER_LEVELDP reaches the py tools
+         # only. So the dp's identity is the package's build commit, and it is unknown without
+         # the build's provenance -- `head` then names only the driver checkout.
+         "dp_core": ({"commit": build["commit"], "dirty": bool(build["dirty"]),
+                      "source": "provenance.json"} if build else
+                     {"commit": None, "dirty": None,
+                      "source": "unknown: no provenance.json beside the package"}),
          "mod": str(mod), "mod_sha256": hashlib.sha256(Path(mod).read_bytes()).hexdigest(),
          "cfg": list(cfg), "coins": {True: "on", False: "off", None: "neither"}[coins],
          "arrangement": arrangement, "resolution": resolution,

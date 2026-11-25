@@ -6875,11 +6875,21 @@ TELEPORT_ORB = 3027
 def teleportorb_unit(x: float, i: int, mode: str = "cube", mini: bool = False,
                      flip: bool = False, ty: float = 200.0, dx: float = 0.0,
                      ignx: bool = False, igny: bool = False, grav: int = 0,
-                     hold_through: bool = False, press_len: int = 3
-                     ) -> tuple[list[str], float, dict]:
+                     hold_through: bool = False, press_len: int = 3,
+                     force: float | None = None, add: bool = False,
+                     redirect: tuple[float, float, float] | None = None,
+                     exit_kind: str = "mark", exit_rot: float = 0.0, exit_fx: bool = False,
+                     ceiling: bool = True) -> tuple[list[str], float, dict]:
     """One teleport orb at floor height 14 blocks in, pressed 12 px past its
     centre's x minus the contact distance (3 ticks), or with `hold_through` held
-    from 20 px before contact for 40 ticks; its target is `dx` further on at `ty`."""
+    from 20 px before contact for 40 ticks; its target is `dx` further on at `ty`.
+
+    The velocity the orb sets (teleportPlayer's force block, the portal rig's units):
+    `force` is the static force (None: off), `add` adds it to the velocity, `redirect`
+    is (mod, min, max). The exit is a marker (`exit_kind` "mark", a Spawn trigger) or a
+    No Touch teleport orb ("orb": a custom level's exit is one), turned `exit_rot` and
+    flipped in x by `exit_fx`: the force's direction is read off it. `ceiling` False
+    leaves the unit without the ceiling a flip needs (a force up must not meet one)."""
     objs: list[str] = []
     for py in SP_PORTAL_YS:
         objs.append(obj(GRAV_NORM, x, py))
@@ -6898,8 +6908,23 @@ def teleportorb_unit(x: float, i: int, mode: str = "cube", mini: bool = False,
         props[K_IGNORE_Y] = "1"
     if grav:
         props[K_GRAV_MODE] = str(grav)
+    if force is not None:
+        props[K_STATIC_FORCE_ON] = "1"
+        props[K_STATIC_FORCE] = f"{force:g}"
+        if add:
+            props[K_FORCE_ADD] = "1"
+    if redirect is not None:
+        props[K_REDIRECT_ON] = "1"
+        props[K_REDIRECT_MOD] = f"{redirect[0]:g}"
+        props[K_REDIRECT_MIN] = f"{redirect[1]:g}"
+        props[K_REDIRECT_MAX] = f"{redirect[2]:g}"
     objs.append(obj(TELEPORT_ORB, x_o, oy, extra=props))
-    objs.append(obj(TP_MARK, x_o + dx, ty, extra={K_GROUPS: str(g)}))
+    if exit_kind == "orb":
+        objs.append(obj(TELEPORT_ORB, x_o + dx, ty, rot=exit_rot, flip_x=exit_fx,
+                        extra={K_GROUPS: str(g), K_NO_TOUCH: "1"}))
+    else:
+        objs.append(obj(TP_MARK, x_o + dx, ty, rot=exit_rot, flip_x=exit_fx,
+                        extra={K_GROUPS: str(g)}))
     contact = 18.0 + (9.0 if mini else 15.0)
     if hold_through:
         tp = tick_at(x_o - contact - 20.0)
@@ -6912,17 +6937,21 @@ def teleportorb_unit(x: float, i: int, mode: str = "cube", mini: bool = False,
     # Every unit has the ceiling and normal gravity back at its end: a press still held after the
     # teleport flips a ball or a spider (measured), and a body left upside down with nothing above
     # it misses every later unit's preamble.
-    cx = x
-    while cx < x + TP_PITCH:
-        objs.append(obj(BLOCK, cx, TP_CEIL_BOTTOM + GRID / 2))
-        cx += GRID
-    for py in (105.0, 195.0, 285.0):
-        objs.append(obj(GRAV_NORM, x + TP_PITCH - 2 * GRID, py))
+    if ceiling:
+        cx = x
+        while cx < x + TP_PITCH:
+            objs.append(obj(BLOCK, cx, TP_CEIL_BOTTOM + GRID / 2))
+            cx += GRID
+        for py in (105.0, 195.0, 285.0):
+            objs.append(obj(GRAV_NORM, x + TP_PITCH - 2 * GRID, py))
     meta = {"x0": x, "x1": x + TP_PITCH, "mode": mode, "mini": int(mini), "flip": int(flip),
-            "ceil_bottom": TP_CEIL_BOTTOM, "orb": [x_o, oy],
+            "ceil_bottom": TP_CEIL_BOTTOM if ceiling else None, "orb": [x_o, oy],
             "target": [x_o + dx, ty], "dx": dx, "ignx": int(ignx), "igny": int(igny), "grav": grav,
             "hold_through": int(hold_through), "press_len": 40 if hold_through else press_len,
             "t_press": tp, "t_pad": tick_at(x_o - contact)}
+    if force is not None or redirect is not None:   # (only the force rig's units say so: the older rig's table keeps its keys)
+        meta.update({"force": force, "add": int(add), "redirect": list(redirect) if redirect else None,
+                     "exit_kind": exit_kind, "exit_rot": exit_rot, "exit_fx": int(exit_fx)})
     return objs, x + TP_PITCH, meta
 
 
@@ -6945,6 +6974,43 @@ def build_teleportorb() -> str:
         dict(press_len=2),                        # released on the tick after it
         dict(dx=60.0, ignx=True),                 # sideways, x kept
         dict(dx=60.0),                            # sideways, x not kept
+    ]
+    objs: list[str] = []
+    x = 300.0
+    for i, kw in enumerate(units):
+        u, x, meta = teleportorb_unit(x, i, **kw)
+        objs += u
+        UNITS.append(meta)
+    return header() + ";" + ";".join(objs) + ";"
+
+
+def build_tporbforce() -> str:
+    """Teleport orb velocity rig (calib_tporbforce): the orb's force, which the portal rig
+    measured for the portals and the trigger. PlayerObject::ringJump hands the ring to the same
+    teleportPlayer (0x315f20 in the 22091 project), whose force block reads the ring's own
+    fields: a static force along the exit's direction (a marker turned or flipped, or a No Touch
+    teleport orb as a custom level's exit), set, added or 0; the redirected force; with ignoreY,
+    the forced gravity mode, every mode and mini. Units without a flip keep no ceiling: a
+    force up must not meet one."""
+    flat = dict(ceiling=False)
+    units = [
+        dict(force=10.0, **flat),                                       # 0 marker 0 deg -> +10
+        dict(force=10.0, exit_rot=45.0, **flat),                        # 1 -> 10 sin 45
+        dict(force=10.0, exit_rot=-30.0, **flat),                       # 2 -> 10 sin 120
+        dict(force=10.0, exit_fx=True, **flat),                         # 3 -> 10 sin 270
+        dict(force=10.0, add=True, **flat),                             # 4 added to the press's own vy
+        dict(force=0.0, **flat),                                        # 5 stops
+        dict(force=10.0, exit_kind="orb", **flat),                      # 6 a 3027 exit is not portal-like: 90 deg
+        dict(force=10.93, exit_kind="orb", exit_rot=-180.0, ignx=True, grav=2, ty=150.0),   # 7 a custom level's shape
+        dict(redirect=(1.0, 0.0, 0.0), **flat),                         # 8 on the floor
+        dict(redirect=(1.0, 10.0, 0.0), **flat),                        # 9 min 10
+        dict(redirect=(2.0, 0.0, 0.0), **flat),                         # 10 x2
+        dict(igny=True, force=10.0, **flat),                            # 11 y kept, pushed
+        dict(mode="ship", force=10.0, **flat), dict(mode="ufo", force=10.0, **flat),
+        dict(mode="wave", force=10.0, **flat), dict(mode="robot", force=10.0, **flat),
+        dict(mini=True, force=10.0, **flat),                            # 16
+        dict(mode="ball", force=10.0), dict(mode="spider", force=10.0),
+        dict(mode="swing", force=10.0),                                 # 19 (the flippers keep their ceiling)
     ]
     objs: list[str] = []
     x = 300.0
@@ -7180,6 +7246,52 @@ def build_p2death() -> str:
     return header(dual=True, two_player=True) + ";" + ";".join(objs) + ";"
 
 
+TAPGATE = {"n0": None}   # --n0 FILE: {unit index: the tick the unit's pad is first overlapped}, read from the first pass's `padact:` lines
+
+
+def build_tapgate() -> str:
+    u"""WHICH PASS DOES A TAP'S TOGGLE FIRST REACH? (the shadow's Tap gate, T70)
+
+    GD's handleButton (0x33c5b0) calls GJEffectManager::playerButton in the head, which toggles the Tap's
+    (Touch trigger 1595) group on the spot; the model switches the objects of that group off for the pass of
+    the SAME tick for a ship / UFO (head before the pass) and from the NEXT tick for the other modes (head
+    after it). This rig asks the game. A unit is: a Tap far enough back to be armed (x - 300), a yellow pad
+    in the Tap's group on the floor, and one press at P = N0 + j, where N0 is the tick the same pad is first
+    overlapped (pass 1: no press at all, the pad fires at N0 and `padact:` says when; pass 2: --n0 reads
+    that and writes the presses). The Tap: press = group off (key 82 = 2), no hold mode (key 81 = 0).
+
+      j = -1  the press is before the overlap: the pad is off at N0 whatever the rule      -> never fires
+      j =  0  the press is AT the overlap's first tick: fires only if the toggle comes after that pass
+      j = +1  the press is one tick after the first overlap: fires whatever the rule         -> fires at N0
+
+    Cube units, then (a ship portal) ship units: the ship's plan edge is taken one step later.
+    """
+    objs: list[str] = []
+    n_per = 5   # j = -2 .. 2
+    mode_x = {"cube": 900.0, "ship": 900.0 + (n_per + 1) * 700.0}
+    u_idx = 0
+    pad_y = GROUND_TOP + 1.0
+    y0 = GROUND_TOP + 15.0
+    for mode in ("cube", "ship"):
+        if mode == "ship":
+            objs.append(obj(MODE_PORTAL["ship"], mode_x["ship"] - 450.0, y0))
+        for k in range(n_per):
+            j = k - 2
+            x = mode_x[mode] + k * 700.0
+            g = 100 + u_idx
+            objs.append(obj(TRIG_TOUCH, x - 300.0, GROUND_TOP + 150.0, extra={K_TARGET: str(g), 81: "0", 82: "2"}))
+            objs.append(obj(PAD["yellow"][0], x, pad_y, extra={K_GROUPS: str(g)}))
+            UNITS.append({"unit": u_idx, "mode": mode, "j": j, "pad_x": x, "group": g, "tap_x": x - 300.0, "pad_y": pad_y})
+            if TAPGATE["n0"] and str(u_idx) in TAPGATE["n0"]:
+                PLAN.append((int(TAPGATE["n0"][str(u_idx)]) + j, 1))
+                PLAN.append((int(TAPGATE["n0"][str(u_idx)]) + j + 2, 0))
+            u_idx += 1
+    objs += floor_run(0, mode_x["ship"] + (n_per + 1) * 700.0)
+    if not PLAN:
+        PLAN.append((0, 0))   # pass 1: no press at all
+    return header() + ";" + ";".join(objs) + ";"
+
+
 BUILDERS = {"p2mask": build_p2mask, "p2mask_solo": build_p2mask_solo, "p2hold": build_p2hold, "p2grav": build_p2grav, "p2orb": build_p2orb,
             "p2death": build_p2death,
             "p2bandgrav": build_p2bandgrav, "p2bandgrav_dual": lambda: build_p2bandgrav(two_player=False),
@@ -7355,7 +7467,7 @@ BUILDERS = {"p2mask": build_p2mask, "p2mask_solo": build_p2mask_solo, "p2hold": 
             "teleporttrig": build_teleporttrig, "tpback": build_tpback,
             "gravtrig": build_gravtrig, "gravtrig2": build_gravtrig2,
             "followy": build_followy, "teleportorb": build_teleportorb,
-            "tpportal": build_tpportal,
+            "tpportal": build_tpportal, "tporbforce": build_tporbforce, "tapgate": build_tapgate,
             "rotslide_00": lambda: build_rotslide(False, False),
             "rotslide_01": lambda: build_rotslide(False, True),
             "rotslide_10": lambda: build_rotslide(True, False),
@@ -7391,7 +7503,11 @@ def main() -> int:
                     help="write kA39,1 (fixRadiusCollision) into the header -- "
                          "the lv22 flag world. Record it with the rig's "
                          "measurements: sawcal history is all kA39=0")
+    ap.add_argument("--n0", default=None,
+                    help="tapgate only: a JSON {unit index: tick} of the first pass's pad activations; the presses are put at N0 + j")
     a = ap.parse_args()
+    if a.n0:
+        TAPGATE["n0"] = json.loads(Path(a.n0).read_text(encoding="utf-8"))
     if a.ka39:
         global KA39
         KA39 = True

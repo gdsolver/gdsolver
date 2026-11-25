@@ -3,6 +3,7 @@
 #pragma once
 #include <atomic>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -68,6 +69,7 @@ inline std::string modCfg() {
     put(s, "areaenv", g_cfg.areaEnv);
     put(s, "framebudgetms", g_cfg.frameBudgetMs);
     put(s, "snapnodesync", g_cfg.snapNodeSync);
+    put(s, "grouptracksmartaudit", g_cfg.gtQuietAudit);
     put(s, "snapnodelog", g_cfg.snapNodeLog);
     put(s, "resetlog", g_cfg.resetLog);
     put(s, "resetdump", g_cfg.resetDump);
@@ -76,6 +78,9 @@ inline std::string modCfg() {
     put(s, "persistitems", g_cfg.persistItems);
     put(s, "voidband", g_cfg.voidBand);
     put(s, "voidcredit", g_cfg.voidCredit);
+    put(s, "skydeath", g_cfg.skyDeath);
+    put(s, "dpheadguard", g_cfg.dpHeadGuard);
+    put(s, "dpsecfirst", g_cfg.dpSecFirst);
     put(s, "stallbound", g_cfg.stallBound);
     put(s, "uishow", g_cfg.uiShow);
     put(s, "f10auto", itermap::g_f10Auto);
@@ -172,6 +177,7 @@ inline std::string modCfg() {
     put(s, "secwsnapgroups", secsolve::g_wsnapGroups);
     put(s, "levelfiletype", g_cfg.levelFileMain);
     put(s, "leveldir", suite::g_levelDir);
+    put(s, "levelcfgdir", suite::g_cfgDir);
     put(s, "suiteplans", suite::g_planDir);
     put(s, "enabled", g_cfg.enabled);
     put(s, "level", g_cfg.levelId);
@@ -180,6 +186,7 @@ inline std::string modCfg() {
     put(s, "attempts", g_cfg.maxAttempts);
     put(s, "delay", g_cfg.delaySec);
     put(s, "quitwhendone", g_cfg.quitWhenDone);
+    put(s, "leaveat", g_cfg.leaveAt);
     put(s, "fps", g_cfg.fps);
     put(s, "cbs", g_cfg.cbs);
     put(s, "cos", g_cfg.cos);
@@ -207,6 +214,7 @@ inline std::string modCfg() {
     put(s, "gatetrace", solver::g_gateX1);
     put(s, "gatestride", solver::g_gateStride);
     put(s, "servemode", g_serveMode);
+    put(s, "serverearm", g_serveRearm);
     put(s, "colprobe", solver::g_cpT, solver::g_cpY0, solver::g_cpYStep, solver::g_cpVy, solver::g_cpN);
     put(s, "gatetick", solver::g_gateT1);
     put(s, "lagms", g_lagMs);
@@ -216,6 +224,20 @@ inline std::string modCfg() {
     put(s, "hud", g_hudOn);
     put(s, "retryafter", g_retryAfterSec);
     put(s, "notrace", g_cfg.noTrace);
+    put(s, "hstrace", g_cfg.hsTrace);
+    put(s, "ctrace", g_cfg.ctTrace);
+    put(s, "trigfire", g_cfg.trigFire);
+    put(s, "trigfirestack", g_cfg.trigFireStack);
+    put(s, "trigfirey", g_cfg.trigFireY);
+    put(s, "areadump", g_cfg.areaDump);
+    put(s, "follow", g_cfg.follow);
+    put(s, "areaorder", g_cfg.areaOrder);
+    put(s, "areavar", g_cfg.areaVar);
+    put(s, "stopdump", g_cfg.stopDump);
+    put(s, "trigext", g_cfg.trigExt);
+    put(s, "ctrawp2", g_cfg.ctRawP2);
+    put(s, "btrawp2", g_cfg.btRawP2);
+    put(s, "btslots", g_cfg.btSlots);
     put(s, "hitboxes", hitbox::g_mode);
     put(s, "dumpearly", g_cfg.dumpEarly);
     put(s, "endtrace", g_cfg.endTrace);
@@ -228,8 +250,16 @@ inline std::string modCfg() {
     put(s, "capture", g_cfg.researchCapture);
     put(s, "histride", g_cfg.histRide);
     put(s, "anchorframe2dir", g_cfg.anchorFrame2Dir);
+    put(s, "histball728", g_cfg.histBall728);
+    put(s, "histseed2", g_cfg.histSeed2);
+    put(s, "histslope2", g_cfg.histSlope2);
+    put(s, "histctrl", g_cfg.histCtrl);
+    put(s, "everpayload", g_cfg.everPayload);
+    put(s, "rngtrace", g_cfg.rngTrace);
+    put(s, "histrng", g_cfg.histRng);
     put(s, "snaptrace", g_cfg.snapTrace);
     put(s, "hitboxtrace", g_cfg.hitboxTrace);
+    put(s, "hbstate", g_cfg.hbState);
     put(s, "fieldprobe", g_cfg.fieldProbe);
     put(s, "killersite", g_cfg.killerSite);
     put(s, "dppin", g_cfg.dpPin);
@@ -241,18 +271,9 @@ inline std::string modCfg() {
     put(s, "dpareaadd", g_cfg.dpAreaAdd);
     put(s, "dpcrosscx", g_cfg.dpCrossCx);
     put(s, "dpcrossbehind", g_cfg.dpCrossBehind);
-    put(s, "dpdualbornlinked", g_cfg.dpDualBornLinked);
     put(s, "dpbirthrung", g_cfg.dpBirthRung);
-    put(s, "dpwaveflipcap", g_cfg.dpWaveFlipCap);
     put(s, "dpportalobbmode", g_cfg.dpPortalObbMode);
-    put(s, "dprampseatall", g_cfg.dpRampSeatAll);
-    put(s, "dpslopelagplain", g_cfg.dpSlopeLagPlain);
-    put(s, "dpwaveflipcapfloor", g_cfg.dpWaveFlipCapFloor);
-    put(s, "dpwaveflipceilup", g_cfg.dpWaveFlipCeilUp);
-    put(s, "dpwaveportalrotmini", g_cfg.dpWavePortalRotMini);
-    put(s, "dpballseatground", g_cfg.dpBallSeatGround);
-    put(s, "dprobotslopenohover", g_cfg.dpRobotSlopeNoHover);
-    put(s, "dpridesupgrace", g_cfg.dpRideSupGrace);
+    put(s, "dpwidefirst", g_cfg.dpWideFirst);
     put(s, "hbfrom", g_cfg.hbFrom);
     put(s, "dprlbound", g_cfg.dpRlBound);
     put(s, "dpcrossminlag", g_cfg.dpCrossMinLag);
@@ -260,7 +281,13 @@ inline std::string modCfg() {
     put(s, "watchuid", g_cfg.watchUid);
     put(s, "standtrace", g_cfg.standTrace);
     put(s, "grouptrace", grouptrace::g_on);
+    put(s, "wtrace", grouptrace::g_wtOn);
+    put(s, "wscale", grouptrace::g_wsOn);
+    put(s, "gtscaleoff", grouptrace::g_soOn);
+    put(s, "wtlast", grouptrace::g_wtLast);
     put(s, "grouptraceall", grouptrace::g_all);
+    put(s, "bootstrapgate", grouptrace::g_bootGate);
+    put(s, "grouptracksmart", grouptrace::g_smart);
     put(s, "groupstride", grouptrace::g_stride);
     put(s, "nodeath", g_cfg.noDeathCode);
     put(s, "clearance", clearance::g_on);
@@ -301,6 +328,9 @@ inline std::string modCfg() {
     put(s, "secnokill", secsolve::g_killOverride);
     put(s, "seckilllog", secsolve::g_killLog);
     put(s, "secvis", secsolve::g_visRefresh);
+    put(s, "dpstephorizonlong", g_cfg.dpStepHorizonLong);
+    put(s, "dpportalwalk", g_cfg.dpPortalWalk);
+    put(s, "dppinx", g_cfg.dpPinX);
     put(s, "secpos", psnap::g_keepSnapPos);
     put(s, "secoverlay", secsolve::g_overlay);
     put(s, "secmasklo", psnap::g_maskLo);
@@ -352,6 +382,8 @@ inline std::string modCfg() {
     put(s, "worldgates", g_cfg.worldGates);
     put(s, "toggle", g_cfg.toggles);
     put(s, "input", g_cfg.inputs);
+    put(s, "callverify", callverify::g_on);
+    put(s, "dpshadowstep", g_cfg.dpShadowStep);
     put(s, "dpselftest", g_cfg.dpSelfTest);
     put(s, "dpsolve", g_cfg.dpSolve);
     put(s, "dphorizon", g_cfg.dpHorizon);
@@ -363,7 +395,6 @@ inline std::string modCfg() {
     put(s, "dpsearch", g_cfg.dpSearch);
     put(s, "dpfastvetoall", g_cfg.dpFastVetoAll);
     put(s, "dprejoinfull", g_cfg.dpRejoinFull);
-    put(s, "dpoffboardkill", g_cfg.dpOffBoardKill);
     put(s, "offboardfree", g_cfg.offBoardFree);
     put(s, "offboardband", g_cfg.offBoardBand);
     put(s, "dpmaxiters", g_cfg.dpMaxIters);
@@ -405,6 +436,9 @@ inline std::string modCfg() {
     put(s, "dpsecwallbudget", g_cfg.dpSecWallBudget);
     put(s, "dpunseenfirst", g_cfg.dpUnseenFirst);
     put(s, "dpseedpickups", g_cfg.dpSeedPickups);
+    put(s, "dpseedrings", g_cfg.dpSeedRings);
+    put(s, "dumpp2dir", g_cfg.dumpP2Dir);
+    put(s, "dumpride", g_cfg.dumpRide);
     put(s, "obbnolatch", g_cfg.obbNoLatch);
     put(s, "exportdigits", solver::g_exportDigits);
     put(s, "dpseccoinrung", g_cfg.dpSecCoinRung);
@@ -424,16 +458,12 @@ inline std::string modCfg() {
     put(s, "dpseedplan", g_cfg.dpSeedPlan);
     put(s, "dpshow", g_cfg.dpShow);
     put(s, "dpcoinwin", g_cfg.dpCoinWin);
-    put(s, "glitchavoid", g_cfg.glitchPortal, g_cfg.glitchWave, g_cfg.glitchEmbed, g_cfg.glitchDeco);
-    put(s, "avoidwave", g_cfg.wavePulse, g_cfg.waveCentre, g_cfg.waveTidy, g_cfg.waveToggle);
+    put(s, "glitchavoid", g_cfg.glitchDeco);
+    put(s, "avoidwave", g_cfg.wavePulse, g_cfg.waveTidy, g_cfg.waveToggle);
     put(s, "wavepulse", g_cfg.wavePulse);
-    put(s, "wavecentre", g_cfg.waveCentre);
     put(s, "wavetidy", g_cfg.waveTidy);
     put(s, "wavetoggle", g_cfg.waveToggle);
     put(s, "glitchdeco", g_cfg.glitchDeco);
-    put(s, "glitchportal", g_cfg.glitchPortal);
-    put(s, "glitchwave", g_cfg.glitchWave);
-    put(s, "glitchembed", g_cfg.glitchEmbed);
     put(s, "dpbandtrack", g_cfg.dpBandTrack);
     put(s, "dprotseed", g_cfg.dpRotSeed);
     put(s, "dprotseedanchor", g_cfg.dpRotSeedAnchor);
@@ -447,6 +477,7 @@ inline std::string modCfg() {
     put(s, "gtrollcheck", g_cfg.gtRollCheck);
     put(s, "gtdeathrow", g_cfg.gtDeathRow);
     put(s, "gtrestrow", g_cfg.gtRestRow);
+    put(s, "gteps", g_cfg.gtEps);
     put(s, "recenteredfire", g_cfg.recEnteredFire);
     put(s, "windowguard", g_cfg.windowGuard);
     put(s, "dpplainbeside", g_cfg.dpPlainBeside);
@@ -458,9 +489,11 @@ inline std::string modCfg() {
     put(s, "dpfingerprint", g_cfg.dpFingerprint);
     put(s, "dptouchseednow", g_cfg.dpTouchSeedNow);
     put(s, "dparg", g_cfg.dpArgs);
+    put(s, "trigshadow", g_cfg.trigShadow);
     put(s, "presstrace", g_pressT0, g_pressT1);
     put(s, "rngfresh", g_rngFresh);
     put(s, "rngfix", g_rngFix);
+    put(s, "rngearly", g_rngEarlySeed);
     put(s, "attemptone", g_attemptOne);
     put(s, "attemptcount", g_attemptCount);
     put(s, "rotdbg", g_rotDbg0, g_rotDbg1);
@@ -472,11 +505,244 @@ inline std::string modCfg() {
     put(s, "camrand", g_camRand);
     put(s, "vtime", g_vtime);
     put(s, "attemptauto", g_attemptAuto);
+    put(s, "itemlog", g_itemLog);
     put(s, "rngseed", g_rngSeedEE0, g_rngSeedEF8);
     put(s, "areatrace", g_areaUids);
+    put(s, "postcol", g_cfg.postColT0, g_cfg.postColT1);
+    put(s, "ctupd", g_cfg.ctUpdT0, g_cfg.ctUpdT1);
+    put(s, "payloadat", g_cfg.payloadAtT0, g_cfg.payloadAtT1);
+    put(s, "anchorsweep", g_cfg.anchorSweep);
+    put(s, "anchorsweepfrom", g_cfg.anchorSweepFrom);
+    put(s, "rcuid", g_cfg.rcUid);
+    put(s, "hwmodules", hwwatch::g_anyModule);
+    put(s, "hwdepth", hwwatch::g_depth);
+    put(s, "hwderef", hwwatch::g_deref);
+    put(s, "hwfrom", hwwatch::g_from);
+    put(s, "hwuid", hwwatch::g_uid);
+    put(s, "hwabs", hwwatch::g_absRva);
+    put(s, "hwto", hwwatch::g_to);
+    put(s, "hwwatch", g_cfg.hwWatch);
+    put(s, "rectcache", g_cfg.rcT0, g_cfg.rcT1);
+    put(s, "ctraw", g_cfg.ctRawT0, g_cfg.ctRawT1);
+    put(s, "btraw", g_cfg.btRawT0, g_cfg.btRawT1);
     put(s, "sticktrace", g_stickT0, g_stickT1);
     put(s, "slopetrace", g_slopeT0, g_slopeT1);
     return s;
+}
+
+inline std::vector<std::function<void()>>& restorers() {
+    static std::vector<std::function<void()>> r;
+    return r;
+}
+
+template <class T> inline void snapOne(T&& var) {
+    using V = std::remove_reference_t<T>;
+    if constexpr (std::is_lvalue_reference_v<T> && !std::is_const_v<V>) {
+        if constexpr (IsAtomic<V>::value) {
+            auto v = var.load();
+            restorers().push_back([&var, v] { var.store(v); });
+        } else if constexpr (std::is_copy_assignable_v<V>) {
+            V v = var;
+            restorers().push_back([&var, v] { var = v; });
+        }
+    }
+}
+
+inline void snapshotGlobals() {
+    restorers().clear();
+    snapOne(itermap::g_f10Auto);
+    snapOne(itermap::g_panelMouseAuto);
+    snapOne(psnap::g_snapAct);
+    snapOne(psnap::g_snapEM);
+    snapOne(psnap::g_snapEMFrom);
+    snapOne(psnap::g_actKey);
+    snapOne(secsolve::g_cpPlayer);
+    snapOne(psnap::g_cpCheck);
+    snapOne(secsolve::g_cover);
+    snapOne(secsolve::g_sizeFam);
+    snapOne(secsolve::g_p2Key);
+    snapOne(secsolve::g_forceP1Size);
+    snapOne(secsolve::g_keepP1Size);
+    snapOne(secsolve::g_p2Extras);
+    snapOne(secsolve::g_trailClear);
+    snapOne(secsolve::g_graceFly);
+    snapOne(secsolve::g_leafMid);
+    snapOne(secsolve::g_leafLife);
+    snapOne(secsolve::g_driftLog);
+    snapOne(itermap::g_seekVisEvery);
+    snapOne(itermap::g_seekBlind);
+    snapOne(itermap::g_profSample);
+    snapOne(itermap::g_sectionHookLazy);
+    snapOne(itermap::g_seekCpEvery);
+    snapOne(itermap::g_seekCpFrom);
+    snapOne(itermap::g_seekCpTo);
+    snapOne(itermap::g_seekCpKeep);
+    snapOne(itermap::g_latchAt);
+    snapOne(itermap::g_headCheck);
+    snapOne(itermap::g_regionAt);
+    snapOne(itermap::g_pauseAtTick);
+    snapOne(itermap::g_groupCheck);
+    snapOne(itermap::g_actCensus);
+    snapOne(itermap::g_objWatch);
+    snapOne(secsolve::g_boundOn);
+    snapOne(secsolve::g_shaderSkip);
+    snapOne(secsolve::g_shaderSig);
+    snapOne(secsolve::g_secCoins);
+    snapOne(secsolve::g_rungCoinOff);
+    snapOne(secsolve::g_bookFirst);
+    snapOne(secsolve::g_jbKeep);
+    snapOne(secsolve::g_headDash);
+    snapOne(secsolve::g_headAccel);
+    snapOne(psnap::g_snapRing);
+    snapOne(secsolve::g_graceDash);
+    snapOne(secsolve::g_wsnapAuto);
+    snapOne(secsolve::g_wsnapGate);
+    snapOne(secsolve::g_lieSkipPsnap);
+    snapOne(secsolve::g_wsnapSet);
+    snapOne(secsolve::g_wsnapAny);
+    snapOne(psnap::g_layerInput);
+    snapOne(secsolve::g_wsnapGroups);
+    snapOne(g_slowmo);
+    snapOne(g_watchIdx);
+    snapOne(g_watchAtTick);
+    snapOne(g_watchAtX);
+    snapOne(g_watchBackTicks);
+    snapOne(g_watchAfterSec);
+    snapOne(g_watchCycleSec);
+    snapOne(g_fxSweep);
+    snapOne(g_visRefreshOn);
+    snapOne(g_watchPurge);
+    snapOne(g_endPurge);
+    snapOne(g_endzoneBurnOn);
+    snapOne(g_syncProbe);
+    snapOne(itermap::g_mapPref);
+    snapOne(g_trigTrace);
+    snapOne(solver::g_gateX1);
+    snapOne(solver::g_gateStride);
+    snapOne(g_serveMode);
+    snapOne(g_serveRearm);
+    snapOne(solver::g_cpT);
+    snapOne(solver::g_cpY0);
+    snapOne(solver::g_cpYStep);
+    snapOne(solver::g_cpVy);
+    snapOne(solver::g_cpN);
+    snapOne(solver::g_gateT1);
+    snapOne(g_lagMs);
+    snapOne(g_lagAtTick);
+    snapOne(speedgate::g_gate);
+    snapOne(g_deathFx);
+    snapOne(g_hudOn);
+    snapOne(g_retryAfterSec);
+    snapOne(hitbox::g_mode);
+    snapOne(grouptrace::g_on);
+    snapOne(grouptrace::g_wtOn);
+    snapOne(grouptrace::g_wsOn);
+    snapOne(grouptrace::g_soOn);
+    snapOne(grouptrace::g_wtLast);
+    snapOne(grouptrace::g_all);
+    snapOne(grouptrace::g_bootGate);
+    snapOne(grouptrace::g_smart);
+    snapOne(grouptrace::g_stride);
+    snapOne(clearance::g_on);
+    snapOne(secsolve::g_on);
+    snapOne(secsolve::g_startTick);
+    snapOne(secsolve::g_targetX);
+    snapOne(secsolve::g_horizon);
+    snapOne(secsolve::g_cap);
+    snapOne(secsolve::g_verify);
+    snapOne(secsolve::g_spineOn);
+    snapOne(secsolve::g_deadlineSec);
+    snapOne(secsolve::g_spineOff);
+    snapOne(secsolve::g_log);
+    snapOne(secsolve::g_dt);
+    snapOne(secsolve::g_off);
+    snapOne(secsolve::g_snapCmp);
+    snapOne(secsolve::g_snapReps);
+    snapOne(secsolve::g_snapMode);
+    snapOne(secsolve::g_rephase);
+    snapOne(secsolve::g_worldDiff);
+    snapOne(secsolve::g_maxMoving);
+    snapOne(secsolve::g_killOverride);
+    snapOne(secsolve::g_killLog);
+    snapOne(secsolve::g_visRefresh);
+    snapOne(psnap::g_keepSnapPos);
+    snapOne(secsolve::g_overlay);
+    snapOne(psnap::g_maskLo);
+    snapOne(psnap::g_maskHi);
+    snapOne(psnap::g_skipExtras);
+    snapOne(secsolve::g_memAt);
+    snapOne(psnap::g_maskExLo);
+    snapOne(psnap::g_maskExHi);
+    snapOne(psnap::g_snapCollideObj);
+    snapOne(secsolve::g_winShift);
+    snapOne(secsolve::g_colLog);
+    snapOne(secsolve::g_verifyEvery);
+    snapOne(secsolve::g_verifyTol);
+    snapOne(secsolve::g_anchor);
+    snapOne(secsolve::g_yq);
+    snapOne(secsolve::g_vq);
+    snapOne(secsolve::g_secBands);
+    snapOne(secsolve::g_xq);
+    snapOne(secsolve::g_jumpBuf);
+    snapOne(secsolve::g_targetY);
+    snapOne(secsolve::g_targetYDir);
+    snapOne(secsolve::g_targetDepth);
+    snapOne(secsolve::g_grace);
+    snapOne(secsolve::g_maxDoomed);
+    snapOne(secsolve::g_maxY);
+    snapOne(secsolve::g_sliceMs);
+    snapOne(notify::g_test);
+    snapOne(notify::g_fix);
+    snapOne(g_heapCheckEvery);
+    snapOne(g_netCatchTestOnly);
+    snapOne(g_netTraceTestOnly);
+    snapOne(g_deathTestTestOnly);
+    snapOne(g_heapPhaseTestOnly);
+    snapOne(g_phaseFileTestOnly);
+    snapOne(solver::ckpttrace::g_on);
+    snapOne(g_pauseAtX);
+    snapOne(g_clearMargin);
+    snapOne(g_uiSession);
+    snapOne(g_uiMode);
+    snapOne(callverify::g_on);
+    snapOne(solver::g_exportDigits);
+    snapOne(g_pressT0);
+    snapOne(g_pressT1);
+    snapOne(g_rngFresh);
+    snapOne(g_rngFix);
+    snapOne(g_rngEarlySeed);
+    snapOne(g_attemptOne);
+    snapOne(g_attemptCount);
+    snapOne(g_rotDbg0);
+    snapOne(g_rotDbg1);
+    snapOne(g_replayStepDiagDt);
+    snapOne(g_replayStep);
+    snapOne(g_stopFollowers);
+    snapOne(g_vtScale);
+    snapOne(g_nodeDbg0);
+    snapOne(g_nodeDbg1);
+    snapOne(g_camRand);
+    snapOne(g_vtime);
+    snapOne(g_attemptAuto);
+    snapOne(g_itemLog);
+    snapOne(g_rngSeedEE0);
+    snapOne(g_rngSeedEF8);
+    snapOne(g_areaUids);
+    snapOne(hwwatch::g_anyModule);
+    snapOne(hwwatch::g_depth);
+    snapOne(hwwatch::g_deref);
+    snapOne(hwwatch::g_from);
+    snapOne(hwwatch::g_uid);
+    snapOne(hwwatch::g_absRva);
+    snapOne(hwwatch::g_to);
+    snapOne(g_stickT0);
+    snapOne(g_stickT1);
+    snapOne(g_slopeT0);
+    snapOne(g_slopeT1);
+}
+
+inline void restoreGlobals() {
+    for (auto& f : restorers()) f();
 }
 
 }  // namespace effcfg

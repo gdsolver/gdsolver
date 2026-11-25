@@ -239,6 +239,9 @@ def same_build(base_version: str, mod_version: str) -> bool:
     """Is a base frozen as `base_version` a game that a mod packaged for `mod_version` runs on? Equal, or the base is a later
     build of the same version (the 2.209 hotfix is frozen as 2.209b and the mod stays gd.win 2.209: which of the two executables
     it is built for is the mod's own exe guard's business)."""
+    # Geode 6 names the 2.209 hotfix build "2.2091" in gd.win; the base is frozen as 2.209b.
+    if base_version == "2.209b" and mod_version == "2.2091":
+        return True
     return base_version == mod_version or re.fullmatch(re.escape(mod_version) + r"[a-z]+", base_version) is not None
 
 

@@ -1,5 +1,5 @@
 #pragma once
-#include "dp/step.hpp"
+#include "dp/step_shared.hpp"
 
 // ---------------------------------------------------------------------------
 // CLEARANCE PROBE -- instrumentation only, off unless --clearprobe.

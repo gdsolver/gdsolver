@@ -1,20 +1,13 @@
-# The Windows package for Geometry Dash 2.209, built by scripts/ci-build-2209.ps1; Android is a manual run only (docs/ANDROID.md). Only the
-# Windows package is attached to a release, and only to a full one: the Android build is published by hand as a separate pre-release, and a
-# pre-release gets no Windows package (it would sit beside, or overwrite, the Android one).
-# The other platforms in Geode's example workflow cannot build this.
+# The Windows package for Geometry Dash 2.2091 on Geode 6.0.0 (mod.json names both), built with geode-sdk/build-geode-mod: upstream's own action,
+# Ninja + clang + Release + LTO, the SDK of the version mod.json asks for and the bindings of geode-sdk/bindings pinned to the commit below.
+# Android is a manual run only (docs/ANDROID.md; it is not part of this release). Only the Windows package is attached to a release, and only to a
+# full one: a pre-release gets no Windows package.
 #
-# Why the Windows job does not use geode-sdk/build-geode-mod: the mod is made for a 2.209 executable. That needs the bindings of a fork of
-# geode-sdk/bindings that carries bindings/2.209 (repository variables GDSOLVER_BINDINGS_REPO and GDSOLVER_BINDINGS_REF name the fork and the
-# ref to build against) and the Geode SDK with the header changes in tools/geode-sdk-2209.patch. The script clones the SDK at the pinned
-# commit, applies the patch, installs the SDK's binaries, clones the fork and builds with what build-geode-mod passes on Windows (Ninja,
-# clang, Release, LTO). The same script runs on a desk (see its header), so the job is nothing a person cannot reproduce.
+# The point of building here rather than locally is that the binary attached to a release can be traced to a commit of the public tree. The pitfalls
+# page asks for it for that reason ("makes it easier for us to verify that a mod has not been tampered with").
 #
-# The point of building here rather than locally is that the binary attached to a release can be
-# traced to a commit of the public tree. The pitfalls page asks for it for that reason ("makes it
-# easier for us to verify that a mod has not been tampered with").
-#
-# This can only prove the mod compiles. The behaviour bar -- py/quick_regress.py and the cold
-# regression -- needs Geometry Dash itself, so it stays a local step.
+# This can only prove the mod compiles. The behaviour bar -- py/quick_regress.py and the cold regression -- needs Geometry Dash itself, so it stays a
+# local step.
 name: Build
 
 on:
@@ -32,65 +25,27 @@ permissions:
 
 jobs:
   windows:
-    name: Windows (GD 2.209)
+    name: Windows (GD 2.2091, Geode 6)
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install the Geode CLI
-        uses: geode-sdk/cli/.github/actions/setup@main
-
-      # The CLI wants a profile before it installs SDK binaries; a file standing in for the game is enough (what build-geode-mod does).
-      - name: Set up a Geode profile
-        shell: pwsh
-        run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'gd'
-          New-Item -ItemType Directory -Force $dir | Out-Null
-          New-Item -ItemType File -Force (Join-Path $dir 'GeometryDash.exe') | Out-Null
-          geode profile add --name GithubActions (Join-Path $dir 'GeometryDash.exe') win
-
-      - name: Install Ninja
-        run: python -m pip install ninja
-
-      # The Codegen is built from the bindings' own source (the prebuilt one the bindings' CMake downloads is a rolling release that has moved on to
-      # a newer bindings layout than the one pinned here), which takes about half a minute on a desk; the built Codegen.exe is cached under a key that names the
-      # bindings commit, the OS and the compiler, and the script restores it only when its codegen.id says the same. The commit is looked up here
-      # because the key has to be known before the script clones anything. Not yet exercised on GitHub (that needs a push): the first release run after
-      # this change is the check, and the script's log says "Codegen restored from the cache" or "Codegen built from the bindings source".
-      - name: Look up the bindings commit
-        id: bindings
-        shell: pwsh
-        env:
-          REPO: ${{ vars.GDSOLVER_BINDINGS_REPO }}
-          REF: ${{ vars.GDSOLVER_BINDINGS_REF }}
-        run: |
-          if ($env:REF -match '^[0-9a-f]{40}$') { $sha = $env:REF }
-          else {
-            $sha = (git ls-remote $env:REPO "refs/heads/$env:REF" "refs/tags/$env:REF" "refs/tags/$env:REF^{}" | Select-Object -Last 1) -replace '\s.*$', ''
-          }
-          if (-not $sha) { throw "the bindings fork has no ref $env:REF" }
-          "commit=$sha" >> $env:GITHUB_OUTPUT
-
-      - name: Restore the Codegen
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/codegen-cache
-          key: codegen-${{ runner.os }}-clang-${{ steps.bindings.outputs.commit }}-v1
-
-      - name: Build the package
+      # The solver CLI (leveldp and its test drivers) is a desktop tool; only the mod is built. bindings-ref pins the bindings: the SDK would take the latest
+      # main otherwise, and a release must build from what was tested (the commit the release candidate was built and run with).
+      - name: Build the mod
         id: build
-        shell: pwsh
-        env:
-          GDSOLVER_BINDINGS_REPO: ${{ vars.GDSOLVER_BINDINGS_REPO }}
-          GDSOLVER_BINDINGS_REF: ${{ vars.GDSOLVER_BINDINGS_REF }}
-        run: ./scripts/ci-build-2209.ps1 -Work "$env:RUNNER_TEMP/ci-work" -Out "$env:GITHUB_WORKSPACE/output" -CodegenCache "$env:RUNNER_TEMP/codegen-cache"
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: given
+          bindings-ref: d14587bf6c08b9114b5605ec6a3c42cc16b02de6   # the upstream bindings commit the measured v0.8.0 candidate was built with (2026-11-25)
+          configure-args: -DGDSOLVER_BUILD_DP=OFF
 
       - name: Upload the package
         uses: actions/upload-artifact@v7
         with:
           name: geode-package
-          path: output
+          path: ${{ steps.build.outputs.build-output }}
 
       # The file is named after the mod id, so it is matched rather than spelled out -- the id
       # changed once already and took four hardcoded copies of the old name with it.
@@ -99,8 +54,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          OUT: ${{ steps.build.outputs.build-output }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" output/*.geode --clobber
+          gh release upload "${{ github.event.release.tag_name }}" "$OUT"/*.geode --clobber
 
   # Manual only: Android is not part of the release (it is built for 2.2081, the version mod.json's gd.android names, and published by hand).
   android:

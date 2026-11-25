@@ -70,7 +70,7 @@ inline std::unordered_map<int, ObbBox> g_obb;
 // How many comma fields of an objrects row the loader reads. The dump has 49
 // columns (rev is the last); the headroom is deliberate, and a column read by
 // NAME past this bound is refused rather than read out of range.
-inline constexpr int kObjFields = 72;
+inline constexpr int kObjFields = 74;
 
 // A row's comma fields into f[0..n), exactly as a loop of
 // `std::getline(std::stringstream(line), f[i], ',')` fills them -- an empty field between two
@@ -97,6 +97,9 @@ inline int splitCommaFields(const std::string& line, std::string* f, int n) {
 // Everything loadLevelFrom prints goes through here, byte for byte what std::printf would have
 // written. With a sink set, the text is also kept: the ladder's level cache (cli.hpp) prints it
 // again when it hands back a level it did not build.
+// Since 2026-11-18 the text goes out through lputs (constants.hpp): a line this process has
+// already printed is not printed again (--listfull: every line, as before). The kept text is
+// whole either way.
 inline std::string* g_loadPrinted = nullptr;
 inline void loadPrintf(const char* fmt, ...) {
     va_list ap, again;
@@ -115,7 +118,7 @@ inline void loadPrintf(const char* fmt, ...) {
     }
     va_end(again);
     if (n <= 0) return;
-    std::fwrite(s, 1, (size_t)n, stdout);
+    lputs(s, (size_t)n);
     if (g_loadPrinted) g_loadPrinted->append(s, (size_t)n);
 }
 
@@ -317,7 +320,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
     std::vector<std::pair<int, std::pair<double, double>>> rotObjPos;
     // --tpexitmove (modifiers.hpp): ...and each object an x-crossing Move carries
     std::vector<std::pair<int, std::pair<double, double>>> movedObjPos;
-    // --dynseamlen: the level's length in x (the furthest base x of any row), for the seam rule below
+    // --dynseamlen (removed): the level's length in x (the furthest base x of any row), for the seam rule below
     double lvMaxBaseCx = 0.0;
     if (fast) {
         for (const CsvRows::Place& pl : kept->places) lvMaxBaseCx = std::max(lvMaxBaseCx, pl.cx);
@@ -444,15 +447,18 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
     g_pressRings.clear();
     g_forceBoxes.clear();
     g_flipHeadBoxes.clear();
+    g_nojumpBoxes.clear();
     g_dashStopBoxes.clear();
     g_ctrlTouchBoxes.clear();
     g_pcTrigs.clear();
     g_pcTouchBoxes.clear();
     g_revTrigs.clear();
+    g_revTouchBoxes.clear();
     g_timeWarps.clear();
     g_tpTrigs.clear();
     g_tpSpawned.clear();
     g_gravTrigs.clear();
+    g_gravTrigs2.clear();
     g_gravSpawned.clear();
     g_gravTouchBoxes.clear();
     g_tpTouchBoxes.clear();
@@ -478,8 +484,9 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
     int colTpFm = -1, colTpF = -1, colTpAng = -1, colTpRMod = -1, colTpRMin = -1, colTpRMax = -1;
     int colOptUdg = -1;
     int colExtCol = -1;   // --bigsection: Extended Collision (Obj::extCol)
-    int colTpSave = -1, colTpXOff = -1, colTpRY = -1;   // --tpsaveoff (Obj::tpSave, tpXOff, tpRY)
+    int colTpSave = -1, colTpXOff = -1, colTpRY = -1;   // --tpsaveoff (removed) (Obj::tpSave, tpXOff, tpRY)
     int colPcCtl = -1;   // --stopjump: the Player Control trigger's components and targets
+    int colScX = -1, colScY = -1;   // --objscale (removed): m_scaleX / m_scaleY (a dump that predates them reads as before)
     {
         std::stringstream hs(line);
         std::string name;
@@ -511,9 +518,12 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             else if (name == "tprx") colTpXOff = i;
             else if (name == "tpry") colTpRY = i;
             else if (name == "pcctl") colPcCtl = i;
+            else if (name == "scx") colScX = i;
+            else if (name == "scy") colScY = i;
         }
     }
     if (colPcCtl >= kObjFields) colPcCtl = -1;
+    if (colScX >= kObjFields || colScY >= kObjFields) colScX = colScY = -1;
     if (g_stopJump && colPcCtl < 0)
         loadPrintf("objrects: --stopjump asked, but the dump predates the pcctl column -- no Player Control "
                    "trigger is read (re-dump to read it)\n");
@@ -590,7 +600,6 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             return;
         }
     };
-    g_tpForceCol = tpForceCols;
     // The portals whose force or kept height the model reads, and whether the level also turns
     // its gameplay (2900) or goes dual (type 23) -- said at the end of the load (see there).
     std::vector<int> tpActUids;
@@ -679,7 +688,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         // recording was replayed 14 ticks late. Its real anchor is a toggle
         // that moves nothing at all -- lag 0.
         float andx = 0, andy = 0; double andur = 0;
-        int aAnchorMove = -1;   // --anchormove: the earliest-crossed controller that moves it
+        int aAnchorMove = -1;   // --anchormove (removed): the earliest-crossed controller that moves it
         double aMinCx = 1e18;   // --recleads: the smallest cx over its autonomous controllers
         int anease = 0; double anerate = 2.0;
         // --touchretimelag: the same threshold lag for a TOUCH-only object,
@@ -888,7 +897,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                     e.parts.push_back({(int)b, cdx, c.dy, c.durTicks,
                                        c.ease, c.erate});
             }
-        // --anchormove: anchor on the earliest controller whose effect the recording can SEE at its
+        // --anchormove (removed): anchor on the earliest controller whose effect the recording can SEE at its
         // crossing: an offset, a move-to or a lock (position), a Rotate about a pivot (an orbit moves
         // the object), or a Toggle root (on/off). The earliest-crossed one can be none of these -- a
         // Rotate with no pivot turns objects about their own position, a Stop, a Move with no offset
@@ -900,12 +909,14 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         for (auto& kv : trigOf) {
             TrigOf& e = kv.second;
             if (e.aAnchor < 0 || e.aAnchorMove < 0 || e.aAnchorMove == e.aAnchor) continue;
+            // (always on: the switch --anchormove is removed)
+            // --anchormove (removed): see level_loader.hpp, the pass before the anchor's own move.
             if (g_shiftStat)
                 loadPrintf("anchormove: uid=%d anchor=%d (x %.1f) moving=%d (x %.1f) applied=%d\n", kv.first,
                            e.aAnchor, (*at)[(size_t)e.aAnchor].cx, e.aAnchorMove,
-                           (*at)[(size_t)e.aAnchorMove].cx, g_anchorMove ? 1 : 0);
+                           (*at)[(size_t)e.aAnchorMove].cx, 1);
             // --anchorrot (speed.hpp): the recording's first change is a turn in place, the earliest controller's
-            if (g_anchorMove && gt) {
+            if (gt) {
                 const auto rit = gt->find(kv.first);
                 if (rit != gt->end() && rit->second.size() > 1) {
                     const auto& rows = rit->second;
@@ -920,7 +931,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                     if (turnFirst) continue;
                 }
             }
-            if (g_anchorMove) e.aAnchor = e.aAnchorMove;
+            e.aAnchor = e.aAnchorMove;
         }
         // Second pass for the anchor's own move: the anchor is only known once
         // every controller has been seen. This accumulates because a group can
@@ -1071,10 +1082,15 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         // then loses its mask, which is what --needtrig-unseen steers by.
         // Measured 2026-08-11: the un-narrowed form left lv20 stuck at x=8,457
         // for 28 iterations (baseline: CLEARED in 42).
-        // --autolockmoves (speed.hpp): a lockToPlayer Move moves the object too, with no offset of its own
+        // (always on: the switch --autolockmoves is removed)
+        // --autolockmoves (removed): an object an x-crossing Move locks to the player's x (alock / alockY, level_loader.hpp) counts as
+        // moved by its autonomous controller, so a touch box that only switches it on or off (no offset) does not make it a
+        // touch-controlled object held at its first row until the box fires. The same custom level: block uid 51884 is
+        // locked to the player's x from the trigger at x 315 (its recording follows the player to x 9,712) and box 1 only
+        // turns it off; the model kept it at x 315, and the upside-down spider GD lands on it 588 px down missed it.
         const bool autoMoves = (tit != trigOf.end())
                                && (tit->second.adx != 0.f || tit->second.ady != 0.f
-                                   || (g_autoLockMoves && (tit->second.alock > 0.0 || tit->second.alockY > 0.0)));
+                                   || tit->second.alock > 0.0 || tit->second.alockY > 0.0);
         // --autopartsmove: for the no-op test only, any one of the Moves having an offset counts (a -90 then a +90 sum to nothing, and the object moved by them was
         // read as moved by nothing but its no-op touch box). Everything else keeps the net sum: a block with a target-mode touch (a garbage dy) and cancelling
         // auto Moves fell into the formula path and vanished (measured on two custom levels).
@@ -1204,7 +1220,9 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 if (rotComputable) ++g_rotRouted;
             }
         }
-        if (!controlled && !autoCtl && !timed && !rotComputable) {
+        // --trigsupply-all: an object only a Spawn's chain moves (a recording-free level: no row of its own, no walk of the loader reaches it) is a mover all the same; the shadow's supply places it
+        const bool supplyMover = !g_supplyMoverUids.empty() && o.uid >= 0 && bucket != Dynamics::COIN && g_supplyMoverUids.count(o.uid) > 0;
+        if (!controlled && !autoCtl && !timed && !rotComputable && !supplyMover) {
             switch (bucket) {
                 case Dynamics::NEAR:  L.objs.push_back(o); break;
                 case Dynamics::PORT:  L.portals.push_back(o); break;
@@ -1231,15 +1249,20 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         // Provisional until the real size is measured by a sweep; only affects
         // runs that pass the flag.
         {
-            std::vector<DynSample> sm =
-                timed ? trows
-                      : std::vector<DynSample>{{0, (float)o.cx, (float)o.cy,
-                                                (float)o.hw, (float)o.hh, 1}};
-            // --portalrot: a portal or speed portal with no recording rows is placed by this one row, and
+            // (a recorded object's rows are read where the timeline holds them, DynRows; the cuts and pads below make them its own)
+            DynRows sm = timed ? DynRows::ref(trows)
+                               : DynRows(std::vector<DynSample>{{0, (float)o.cx, (float)o.cy,
+                                                                 (float)o.hw, (float)o.hh, 1}});
+            // --portalrot (removed): a portal or speed portal with no recording rows is placed by this one row, and
             // the row's angle was 0 -- so the first redraw (turnedBox) turned its box back to upright. A
             // turned portal a trigger group acts on stood as a vertical strip, wherever GD had it slanted.
-            if (g_portalRot && !timed && (bucket == Dynamics::PORT || bucket == Dynamics::SPEED))
-                sm[0].rot = (float)o.rot;
+            // The same holds for a pad and an orb (turnedBox redraws them from the row's angle as well): a turned pad of a group no recording follows (a norec window: a custom level t=5412, the yellow pad uid 402, rot 45,
+            // 25 x 4) was redrawn upright, its rotated-box test fell away and its bound (20.5 square) fired on a 0.8 px overlap that GD's thin 45 degree box does not make.
+            // (always on: the switch --portalrot is removed)
+            // --portalrot (removed): a portal or speed portal with no recording rows keeps its own angle in the
+            // one row that places it (the row's angle was 0, so its first redraw stood the turned box upright).
+            if (!timed && (bucket == Dynamics::PORT || bucket == Dynamics::SPEED || bucket == Dynamics::PAD || bucket == Dynamics::ORB))
+                sm.mut()[0].rot = (float)o.rot;
             // A recording from ANOTHER attempt can land in the same uid's row as
             // a continuation (the MOD's tick keeps counting across attempts).
             // Within one run the recording is dense tick by tick, so a jump of
@@ -1256,14 +1279,16 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             // 20,600 ticks, so no gap that large occurs inside one run. At
             // 20,000 it cut a legitimate lv19 recording and the regression
             // failed (follow 232 -> 107).
-            // --dynseamlen: a run cannot be longer than the level at its slowest speed (0.7x, about 1.01 px a tick), so a gap
+            // --dynseamlen (removed): a run cannot be longer than the level at its slowest speed (0.7x, about 1.01 px a tick), so a gap
             // inside one run is at most that; only a longer one is a seam. The fixed 30000 stays as the floor.
-            const double seamGap = g_dynSeamLen ? std::max((double)g_dynSeamGap, std::ceil(lvMaxBaseCx / kSeamMinPxPerTick))
-                                                 : (double)g_dynSeamGap;
+            // (always on: the switch --dynseamlen is removed)
+            // --dynseamlen (removed): the seam rule's threshold is the level's own length in ticks (its furthest x over the slowest speed, 0.7x = 1.01 px a tick) when that is longer
+            // than g_dynSeamGap. Official levels stay under 30000 ticks, so for them the rule does not change.
+            const double seamGap = std::max((double)g_dynSeamGap, std::ceil(lvMaxBaseCx / kSeamMinPxPerTick));
             for (size_t k = 1; k < sm.size(); ++k)
-                if ((double)(sm[k].t - sm[k - 1].t) > seamGap) { sm.resize(k); ++g_dynSeamCut; break; }
+                if ((double)(sm[k].t - sm[k - 1].t) > seamGap) { sm.mut().resize(k); ++g_dynSeamCut; break; }
             if (o.type == 2 && g_dynHazPad > 0.0) {
-                for (DynSample& ds : sm) {
+                for (DynSample& ds : sm.mut()) {
                     ds.hw += (float)g_dynHazPad;
                     ds.hh += (float)g_dynHazPad;
                 }
@@ -1285,6 +1310,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         L.dyn.baseTpY.push_back(o.tpY);
         L.dyn.baseSy0.push_back((float)o.sy0);
         L.dyn.baseSy1.push_back((float)o.sy1);
+        L.dyn.baseHw.push_back(-1.f); L.dyn.baseHh.push_back(-1.f); L.dyn.baseOhw.push_back(-1.f); L.dyn.baseOhh.push_back(-1.f);   // --obbscale
         L.dyn.on.push_back(1);
         L.dyn.prevCy.push_back((float)o.cy);
         L.dyn.trigMask.push_back(controlled ? tit->second.mask : TouchMask{});
@@ -1383,7 +1409,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         L.dyn.partsAny.push_back(tit != trigOf.end() ? tit->second.parts : std::vector<Dynamics::AutoPart>{});
         L.dyn.touchParts.push_back(controlled ? tit->second.tparts
                                               : std::vector<Dynamics::AutoPart>{});
-        L.dyn.rotSplit.push_back(0);   // set by the g_rotSplit stage below
+        L.dyn.rotSplit.push_back(0);   // set by the rotation-split stage below
         L.dyn.bootRows.push_back(bootRows ? 1 : 0);
         // When did this object first move in the recording? That tick is what
         // the replayed trajectory is re-timed against (see applyTriggers).
@@ -1398,12 +1424,12 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                     || sm[k].on != sm[0].on) { recFire = sm[k].t; break; }
         }
         L.dyn.trigRecFire.push_back(recFire);
-        // --touchrecleads (Dynamics::touchLeads): touch-controlled, the box chains move it nowhere, no autonomous
+        // --touchrecleads (removed) (Dynamics::touchLeads): touch-controlled, the box chains move it nowhere, no autonomous
         // controller, and the recording's first change of position comes before the recorded attempt entered any
         // of its boxes (--rectouch; a box it never entered counts as later).
         {
             uint8_t lead = 0;
-            if (g_touchRecLeads && g_recTouchGiven && controlled && !formulaDriven && !autoMoves
+            if (g_recTouchGiven && controlled && !formulaDriven && !autoMoves
                 && tit->second.aAnchor < 0 && tit->second.tlock <= 0.0 && recFire >= 0) {
                 bool still = true;
                 for (const auto& p : tit->second.tparts)
@@ -1610,9 +1636,13 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                     const double err = std::fabs(recLagCurve(full, e) - moved);   // --reclagabs
                     if (err < bestErr) { bestErr = err; bestN = n; }
                 }
-                lag = recLagUpN(bestN, lag, full, moved, dur, easeL, erateL);   // --reclagup
+                lag = recLagUpN(bestN, lag, full, moved, dur, easeL, erateL);   // --reclagup (removed)
             }
         }
+        // A Move with lockToPlayerX shows its first recorded row on the lock's x, which is the tick the trigger takes effect (the player advances more than the 0.05 px threshold in a tick), where an eased
+        // translation shows its first row one tick after: recordLag above reads the first row as the eased kind and gives 1, the anchored fire came out one tick before the effect and a section anchored behind it ran
+        // its mover one tick ahead (lv-a custom level, Move uid 18 at x = 15, lockX with an eased oy -120: GD crossing row 13, first x row 14, first y row 15; FIRSTDIV 101 / 201 on :100 / :200, none from tick 1).
+        if (autoCtl && tit->second.alock > 0.0 && tit->second.aAnchor >= 0 && tit->second.alockTrig == tit->second.aAnchor && lag == 1) lag = 0;
         L.dyn.recLag.push_back(lag);
         // Autonomous lag: a formula-driven object's recLag is its TOUCH move's (the
         // branch above), but its autonomous trigger is dated from the same first
@@ -1643,7 +1673,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                     if (err < bestErr) { bestErr = err; bestN = n; }
                 }
                 aLag = recLagUpN(bestN, aLag, full, moved, e.andur, e.anease,
-                                 e.anerate);   // --reclagup
+                                 e.anerate);   // --reclagup (removed)
             }
             // --lagfit (print only): does the first motion belong to
             // the autonomous curve at all? The first row of a two-controller object is
@@ -1884,7 +1914,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         // activation runs two conjuncts and only the first one is axis-aligned;
         // `prect` is that first conjunct, and an instrument printing it cannot
         // see the angle the second one turns the square by. See
-        // g_noPadPlayerRot in constants.hpp for the disassembly and the
+        // the note above the pad branch in cli.hpp (--no-padplayerrot, removed) for the disassembly and the
         // witness. Only the default was wrong in the paragraph above; the
         // history below is kept because it is still the reason the rule is
         // called incomplete.
@@ -1932,8 +1962,13 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                     loadPrintf("teleport: uid %d at (%.0f,%.0f) moves x to %.0f "
                                "- NOT modelled\n", o.uid, o.cx, o.cy, o.tpEx);
             }
-            // --tpkeepy: the portal pass reads the keep (Obj::tpKeep)
-            if (igy && g_tpKeepY) {
+            // --tpkeepy (removed): the portal pass reads the keep (Obj::tpKeep)
+            // (always on: the switch --tpkeepy is removed)
+            // --tpkeepy (removed): a teleport portal with ignoreY (353) keeps the body's height and only does the rest:
+            // the gravity, the force, x where it moves x (step.hpp, the portal pass). On by default since
+            // 2026-10-06 (calib_tpportal's three units)
+            // the portal as NOT modelled and the body goes to the exit's y.
+            if (igy) {
                 o.tpKeep = (uint8_t)((igx ? 1 : 0) | 2);
                 loadPrintf("teleport: uid %d at (%.0f,%.0f) keeps y\n", o.uid, o.cx, o.cy);
             } else if (igy) {
@@ -1941,8 +1976,14 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                            "- NOT modelled\n", o.uid, o.cx, o.cy);
             }
             if (movesX) o.tpKeep = (uint8_t)(o.tpKeep | 4 | (o.tpEx < o.cx ? 8 : 0));
-            // --tpsaveoff: m_saveOffset keeps the body's height above the portal and moves x back
-            if (g_tpSaveOff && o.id == 747 && colTpSave >= 0 && colTpXOff >= 0 && colTpRY >= 0
+            // --tpsaveoff (removed): m_saveOffset keeps the body's height above the portal and moves x back
+            // (always on: the switch --tpsaveoff is removed)
+            // --tpsaveoff (removed): an id-747 teleport portal with m_saveOffset (objrects tpsave, tprx, tpry) keeps the
+            // body's place relative to the entry's REAL position: y' = exit y + (y - real y), x' = exit x + (x - real x).
+            // A custom level t=3,193: GD takes the cube from y 705 to 1,355.95 (1,371 - 15) and x back 14.70 (3,347 -
+            // 3,361.7; cx holds the bounding box centre 3,369), the same x shift whatever height it enters at (press sweep:
+            // entry y 705 to 762); the model put it at 1,371 and left x alone, then died 13 ticks before GD.
+            if (o.id == 747 && colTpSave >= 0 && colTpXOff >= 0 && colTpRY >= 0
                 && f[colTpSave] == "1") {
                 o.tpSave = 1;
                 o.tpRY = std::atof(f[colTpRY].c_str());
@@ -1996,7 +2037,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                        (o.tpEx == 0.0 && o.tpEy == 0.0) ? " - NO target in the dump" : "");
         }
         if (o.id == 2900) tpLevelTurns = true;
-        if (type == 23) tpLevelDual = true;
+        if (type == 23) { tpLevelDual = true; g_levelHasDualOn = true; }
         // --ctrltouch (modifiers.hpp): a touch-triggered Options trigger that switches player 1's
         // controls
         // --dualunlink (frames.hpp): an Options trigger that raises or lowers Unlink Dual Gravity, on the
@@ -2011,19 +2052,26 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                            queued ? "" : " - touch/spawn-triggered, IGNORED");
             }
         }
-        // --ctrlwintrig (frames.hpp): every optp1 2899, the gated ones as such
+        // --ctrlwintrig (removed) (frames.hpp): every optp1 2899, the gated ones as such
         if (o.id == 2899 && !f[28].empty()) {
             const int p1 = std::atoi(f[28].c_str());
-            if (p1 != 0)
+            if (p1 != 0) {
                 g_ctrlTrigs.push_back({o.cx, (int8_t)(p1 == 1 ? 1 : -1),
                                        (uint8_t)(g_trigGateCol && (f[colTouch] == "1" || f[colSpawn] == "1"))});
+                if (colChan >= 0 && !f[colChan].empty()) g_ctrlTrigs.back().chan = std::atoi(f[colChan].c_str());   // --ctrlwinx (removed)
+            }
         }
         if (o.id == 2899 && g_trigGateCol && f[colTouch] == "1" && !f[28].empty()) {
             const int p1 = std::atoi(f[28].c_str());
             if (p1 != 0) {
                 g_ctrlTouchBoxes.push_back({o.cx, o.cy, o.hw, o.hh, o.uid, (uint8_t)(p1 == 1 ? 1 : 0)});
-                loadPrintf("ctrltouch: uid %d at (%.0f,%.0f) %.1fx%.1f %s player 1's controls\n", o.uid,
-                           o.cx, o.cy, o.hw * 2.0, o.hh * 2.0, p1 == 1 ? "disables" : "enables");
+                {   // a trigger placed off a right angle is met as its own turned box, by the body's turned box (shadow_step.hpp ctrlBoxAt); the bound is not its shape
+                    const double mr = std::fabs(std::fmod(o.rot, 90.0));
+                    const auto ob = (mr > 0.5 && mr < 89.5 && o.uid >= 0) ? g_obb.find(o.uid) : g_obb.end();
+                    if (ob != g_obb.end()) { CtrlTouchBox& cb = g_ctrlTouchBoxes.back(); cb.turned = 1; for (int q = 0; q < 8; ++q) cb.g[q] = ob->second.g[q]; }
+                }
+                loadPrintf("ctrltouch: uid %d at (%.0f,%.0f) %.1fx%.1f %s player 1's controls%s\n", o.uid,
+                           o.cx, o.cy, o.hw * 2.0, o.hh * 2.0, p1 == 1 ? "disables" : "enables", g_ctrlTouchBoxes.back().turned ? " (turned: GD's corners)" : "");
             }
         }
         // --stopjump (speed.hpp): Player Control (1932) with Stop Jump, aimed at player 1 or at both. The `pcctl`
@@ -2057,7 +2105,10 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             const bool touch = g_trigGateCol && f[colTouch] == "1";
             const bool spawn = g_trigGateCol && f[colSpawn] == "1";
             const bool chan = colChan >= 0 && !f[colChan].empty() && std::atoi(f[colChan].c_str()) != 0;
-            if (touch || spawn || chan) {
+            if (touch && !spawn && !chan && !o.multiAct && g_revTouchBoxes.size() < 16) {
+                g_revTouchBoxes.push_back({o.cx, o.cy, o.hw, o.hh, o.uid});   // (modifiers.hpp: fires once, when a body's rect overlaps it)
+                loadPrintf("reversetrig: uid %d at (%.0f,%.0f) %.1fx%.1f turns the player round once, when touched\n", o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0);
+            } else if (touch || spawn || chan) {
                 loadPrintf("reversetrig: uid %d at x=%.0f is %s - NOT modelled\n", o.uid, o.cx,
                            touch ? "touch-triggered" : spawn ? "spawn-triggered" : "on a rotate channel");
             } else {
@@ -2098,6 +2149,19 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                             if (Wi > 1.0 && Hi > 0.5) { W = Wi; H = Hi; }
                         }
                     }
+                    // --objscale (removed) (constants.hpp): a turned pad's real box is the sprite size times the two scales,
+                    // when the dump has them -- the bound cannot give both at a 45-degree turn
+                    // (always on: the switch --objscale is removed)
+                    // --objscale (removed): a turned pad is rebuilt with the objrects `scx,scy` columns (m_scaleX / m_scaleY) when the dump has them.
+                    // The sprite size w0,h0 times the two scales is the real box; the bound alone gives both only off the 45-degree turns (the two
+                    // bound equations coincide at 45), so a pad stretched along one axis was rebuilt with the uniform factor and, at 45, came out
+                    // 7.2 thick where GD's turned boxes fit 5 or less (a custom level t=2,658: GD fires the pad three ticks after the model).
+                    if (colScX >= 0 && colScY >= 0
+                        && (type == 8 || type == 9 || type == 10 || type == 34 || type == 44)) {
+                        const double sxS = std::fabs(std::atof(f[colScX].c_str()));
+                        const double syS = std::fabs(std::atof(f[colScY].c_str()));
+                        if (sxS > 0.01 && syS > 0.01) { W = w0 * sxS; H = h0 * syS; }
+                    }
                     // The old rule here refused to believe any inversion that
                     // did not land on 34x86 -- see git for the three stacked
                     // lv18 portals (k = 1) and lv16's (12,122.9,556.7), bound
@@ -2113,7 +2177,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                         // rebuilt from the bound; rc/rs below are cos/sin of the first edge's angle
                         const auto obbIt = (g_portalObb && o.uid >= 0 && (type == 4 || type == 5 || type == 17 || type == 18
                                                            || (g_portalObbMode && (type == 6 || type == 16 || type == 19 || type == 26 || type == 27
-                                                                                   || type == 33 || type == 41))))
+                                                                                   || type == 33 || type == 41)) || type == 42))
                                                ? g_obb.find(o.uid) : g_obb.end();
                         const bool useObb = obbIt != g_obb.end();
                         if (useObb) {
@@ -2221,7 +2285,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 o.bc = 1.0;   o.bs = 0.0;
             }
         }
-        // --ringpresseat (speed.hpp): every toggle ring, with its recorded rows; the flag decides at run time
+        // --ringpresseat (removed) (speed.hpp): every toggle ring, with its recorded rows; the flag decides at run time
         if (o.id == 1594) {
             PressRing pr{o.cx, o.cy, o.hw, o.hh, o.uid, o.multiAct, {}, {}, {}, {}};
             if (gt && o.uid >= 0) {
@@ -2234,6 +2298,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                         pr.liveOn.push_back(r.on);
                     }
             }
+            pr.sup = o.uid >= 0 && (trigOf.count(o.uid) > 0 || g_supplyMoverUids.count(o.uid) > 0);
             g_pressRings.push_back(std::move(pr));
         }
         if (o.type == 0 || type == 2 || type == 47) {
@@ -2348,7 +2413,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         // every other portal uses -- measured on a full nodeath pass of lv20:
         // all four portals the player's box entered fired, the sixteen it
         // missed did not, nearest miss 3.96 px. What it does is not a mode
-        // change though; see Obj::tpY and the teleport block in stepOne.
+        // change though; see Obj::tpY, and teleportPortal (collide.hpp) for the move.
                  || type == 28
         // 42 = GRAVITY TOGGLE portal (2.2, id 2926), --gravtoggle: reverses gravity whichever way
         // it points. Measured on a custom level (uid 3526): a cube put at rest in it at t=60 rises
@@ -2387,7 +2452,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         // only two in lv1-22 (x=13,965 and x=14,325, both cy=975), so adding it
         // cannot move a level that already clears. It fires like every other
         // orb (tap while the box overlaps) and teleports like the spider --
-        // see the type 43 branch in stepOne.
+        // see the spider orb's arm of ringJump (buttons.hpp, type 0x2b).
         // 46 = TELEPORT ORB (id 3027, --teleportorb): fires as a ring, moves the body instead of
         // pushing it (the type 46 branch in applyOrb; modifiers via Obj::tpEx / tpEy / tpKeep).
         else if (type == 11 || type == 12 || type == 13 || type == 29
@@ -2614,7 +2679,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 loadPrintf("timewarp: uid %d at x=%.0f is touch/spawn-triggered, not on "
                            "the crossing queue - NOT modelled\n", o.uid, o.cx);
             } else {
-                g_timeWarps.push_back({o.cx, tw});
+                g_timeWarps.push_back({o.cx, tw, (colChan >= 0 && !f[colChan].empty()) ? std::atoi(f[colChan].c_str()) : 0});
                 loadPrintf("timewarp: uid %d at x=%.0f mod=%.4f\n",
                            o.uid, o.cx, tw);
             }
@@ -2628,20 +2693,22 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         else if (o.id == 3022 && g_teleportTrig) {
             const double tx = f[34].empty() ? 0.0 : std::atof(f[34].c_str());
             const double ty = f[35].empty() ? 0.0 : std::atof(f[35].c_str());
-            const uint8_t igx = (uint8_t)(!f[19].empty() && std::atoi(f[19].c_str()) ? 1 : 0);
-            const uint8_t igy = (uint8_t)(!f[20].empty() && std::atoi(f[20].c_str()) ? 1 : 0);
+            // --tpforceonly: no exit object but a force on: the force alone, the body kept in x and y (as the touch-triggered one below)
+            const bool forceOnly = g_shadowSupply && g_shadowStepModes && tx == 0.0 && ty == 0.0 && tpForceAt(f, tx, ty).fm != 0;
+            const uint8_t igx = (uint8_t)(forceOnly || (!f[19].empty() && std::atoi(f[19].c_str())) ? 1 : 0);
+            const uint8_t igy = (uint8_t)(forceOnly || (!f[20].empty() && std::atoi(f[20].c_str())) ? 1 : 0);
             const uint8_t grav = (uint8_t)(f[18].empty() ? 0 : std::atoi(f[18].c_str()));
             const char* dropped = nullptr;
             if (g_trigGateCol && (f[colTouch] == "1" || f[colSpawn] == "1"))
                 dropped = "touch/spawn-triggered, not on the crossing queue";
-            else if (tx == 0.0 && ty == 0.0)
+            else if (tx == 0.0 && ty == 0.0 && !forceOnly)
                 dropped = "without a target in the dump (no tpex/tpey)";
             else if (!igx && std::fabs(tx - o.cx) > 0.5 && !(tx > o.cx)
                      && !(g_tpBack && tx < o.cx))   // --tpback (modifiers.hpp)
                 dropped = "moving x backwards";
             tpExitMovesOf(o.uid, tx, ty);   // --tpexitmove
             if (dropped) {
-                // --tptrigspawn (modifiers.hpp): a spawned one with a target goes to cli.hpp's chain walk
+                // --tptrigspawn (removed) (modifiers.hpp): a spawned one with a target goes to cli.hpp's chain walk
                 const bool spawned = g_trigGateCol && f[colSpawn] == "1" && f[colTouch] != "1"
                                      && (tx != 0.0 || ty != 0.0);
                 if (spawned) g_tpSpawned.push_back({o.cx, tx, ty, igx, igy, grav, o.uid, tpForceAt(f, tx, ty)});
@@ -2652,12 +2719,19 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 if (touched)
                     g_tpTouchBoxes.push_back({o.cx, o.cy, o.hw, o.hh,
                                               TpTrig{o.cx, tx, ty, igx, igy, grav, o.uid, tpForceAt(f, tx, ty)}, o.uid});
+                // --shadowsupply: a touched one with no exit object (tpex / tpey 0) still gives its force (GJBaseGameLayer::teleportPlayer: no target group, the force branch alone; a custom level
+                // t=5391, yvel 7.96 * sin 66 = 7.2718) and moves nothing: kept in x and y, so the old step leaves the body where it is as well
+                else if (g_shadowSupply && g_shadowStepModes && g_trigGateCol && f[colTouch] == "1" && tx == 0.0 && ty == 0.0 && tpForceAt(f, tx, ty).fm != 0) {
+                    g_tpTouchBoxes.push_back({o.cx, o.cy, o.hw, o.hh, TpTrig{o.cx, tx, ty, 1, 1, grav, o.uid, tpForceAt(f, tx, ty)}, o.uid});
+                    loadPrintf("teleporttrig: uid %d at x=%.0f is a touch trigger with a force and no exit: the force only (--shadowsupply)\n", o.uid, o.cx);
+                }
                 loadPrintf("teleporttrig: uid %d at x=%.0f is %s - NOT modelled%s\n",
                            o.uid, o.cx, dropped,
-                           spawned ? " (a crossing chain may fire it: --tptrigspawn)"
+                           spawned ? " (a crossing chain may fire it: --tptrigspawn, removed)"
                            : touched ? " (a state that touches it is moved: --tptouch)" : "");
             } else {
                 g_tpTrigs.push_back({o.cx, tx, ty, igx, igy, grav, o.uid, tpForceAt(f, tx, ty)});
+                if (colChan >= 0 && !f[colChan].empty()) g_tpTrigs.back().chan = std::atoi(f[colChan].c_str());
                 loadPrintf("teleporttrig: uid %d at x=%.0f -> (%.1f, %.1f)%s%s grav %d\n",
                            o.uid, o.cx, tx, ty, igx ? " keepX" : "", igy ? " keepY" : "",
                            (int)grav);
@@ -2678,8 +2752,9 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 dropped = "touch/spawn-triggered, not on the crossing queue";
             else if (gpl & 2)
                 dropped = "for player 2 only";
+            if (colGMod >= 0 && (gpl & 2) && !(g_trigGateCol && (f[colTouch] == "1" || f[colSpawn] == "1"))) g_gravTrigs2.push_back({o.cx, gm, o.uid});   // --shadowp2grav
             if (dropped) {
-                // --gravspawn (modifiers.hpp): a spawned one goes to cli.hpp's Spawn lookup
+                // --gravspawn (removed) (modifiers.hpp): a spawned one goes to cli.hpp's Spawn lookup
                 const bool spawned = g_trigGateCol && colGMod >= 0 && f[colSpawn] == "1"
                                      && f[colTouch] != "1" && !(gpl & 2);
                 if (spawned) g_gravSpawned.push_back({gm, o.uid, o.cx});
@@ -2688,16 +2763,23 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 if (touched) g_gravTouchBoxes.push_back({o.cx, o.cy, o.hw, o.hh, gm, o.uid});
                 loadPrintf("gravtrig: uid %d at x=%.0f is %s - NOT modelled%s\n",
                            o.uid, o.cx, dropped,
-                           spawned ? " (a crossing Spawn may fire it: --gravspawn)"
+                           spawned ? " (a crossing Spawn may fire it: --gravspawn, removed)"
                            : touched ? " (a state that touches it fires it: --gravtouch)" : "");
             } else {
-                g_gravTrigs.push_back({o.cx, gm, o.uid});
+                g_gravTrigs.push_back({o.cx, gm, o.uid, colChan >= 0 ? (f[colChan].empty() ? 0 : std::atoi(f[colChan].c_str())) : -1});   // --gravtrigchan reads the channel
                 loadPrintf("gravtrig: uid %d at x=%.0f gravity x%.3f%s\n", o.uid, o.cx, gm,
                            (gpl & 4) ? " (the player that crosses it)" : "");
             }
         }
-        // CAMERA MODE (id 2925, --camfree; bands.hpp): its Free Mode on the crossing queue
-        else if (o.id == 2925 && g_camFree && g_freeModeCol) {
+        // CAMERA MODE (id 2925, --camfree (removed); bands.hpp): its Free Mode on the crossing queue
+        // (always on: the switch --camfree is removed)
+        // --camfree (removed): a Camera Mode trigger (id 2925) on the crossing queue writes the Free Mode byte too, from its
+        // m_cameraIsFreeMode (the objrects `free` column), on the tick its x is crossed -- after that tick's
+        // collisions, like every crossing trigger, so the band it frees is the next tick's (step.hpp, at the step's
+        // end). A custom level's ball, mode unchanged: GD's dump turns `freemode` 0 -> 1 on the tick it crosses a
+        // 2925 at x 6,180 with free=1, and from there the ball rises past its band's ceiling 1,110 (pmax still
+        // reads 1,110), where the model stood it on that ceiling (ground/flipceil).
+        else if (o.id == 2925 && g_freeModeCol) {
             if (g_trigGateCol && (f[colTouch] == "1" || f[colSpawn] == "1"))
                 loadPrintf("camfree: uid %d at x=%.0f is touch/spawn-triggered - NOT modelled\n", o.uid, o.cx);
             else {
@@ -2705,8 +2787,25 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 loadPrintf("camfree: uid %d at x=%.0f free mode %d\n", o.uid, o.cx, (int)o.freeMode);
             }
         }
+        else if (o.id == 1813) {   // --shadownajbox: the 2866's record, for the id-1813 Special
+            FlipHeadBox nb{o.cx, o.cy, o.hw, o.hh, o.uid, {}};
+            if (gt && o.uid >= 0) {
+                const auto fit = gt->find(o.uid);
+                if (fit != gt->end()) {
+                    nb.live.reserve(fit->second.size());
+                    for (const auto& r : fit->second)
+                        nb.live.push_back({r.t, r.cx, r.cy, r.on});
+                }
+            }
+            const size_t nrows = nb.live.size();
+            nb.sup = o.uid >= 0 && (trigOf.count(o.uid) > 0 || g_supplyMoverUids.count(o.uid) > 0);   // a trigger moves it: with no rows the trigger shadow's supply places it (shadow_step.hpp placeBox)
+            rideWindow(o, nb.live, nb.rides, nb.rideT0, nb.rideT1, "nojump");
+            g_nojumpBoxes.push_back(std::move(nb));
+            loadPrintf("nojump: uid %d at (%.0f,%.0f) %.1fx%.1f (%zu recorded rows)\n",
+                       o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0, nrows);
+        }
         else if (o.id == 2866) {
-            // ...and the box's own motion, for --fgarmlive. Taken here because
+            // ...and the box's own motion, for --fgarmlive (removed). Taken here because
             // this is where the timeline is in scope; the flag decides at run
             // time whether the arm reads it or the parked position above.
             FlipHeadBox fh{o.cx, o.cy, o.hw, o.hh, o.uid, {}};
@@ -2715,10 +2814,11 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 if (fit != gt->end()) {
                     fh.live.reserve(fit->second.size());
                     for (const auto& r : fit->second)
-                        fh.live.push_back({r.t, r.cx, r.cy});
+                        fh.live.push_back({r.t, r.cx, r.cy, r.on});
                 }
             }
             const size_t nrows = fh.live.size();
+            fh.sup = o.uid >= 0 && (trigOf.count(o.uid) > 0 || g_supplyMoverUids.count(o.uid) > 0);
             rideWindow(o, fh.live, fh.rides, fh.rideT0, fh.rideT1, "fliphead");
             g_flipHeadBoxes.push_back(std::move(fh));
             loadPrintf("fliphead: uid %d at (%.0f,%.0f) %.1fx%.1f "
@@ -2731,20 +2831,21 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                        o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0);
         }
         // CEILING ARM (id 1859): what lets a cube family player answer a
-        // ceiling with a bonk instead of dying on it (see armBoxTouch).
+        // ceiling with a bonk instead of dying on it (modifiers.hpp ArmBox).
         else if (o.id == 1859) {
             // ...and its recorded motion, as the 2866 above: an 1859 can ride
-            // the player (lv22's switch band; see armBoxTouch).
+            // the player (lv22's switch band; modifiers.hpp ArmBox).
             ArmBox ab{o.cx, o.cy, o.hw, o.hh, o.uid, {}};
             if (gt && o.uid >= 0) {
                 const auto fit = gt->find(o.uid);
                 if (fit != gt->end()) {
                     ab.live.reserve(fit->second.size());
                     for (const auto& r : fit->second)
-                        ab.live.push_back({r.t, r.cx, r.cy});
+                        ab.live.push_back({r.t, r.cx, r.cy, r.on});
                 }
             }
             const size_t nrows = ab.live.size();
+            ab.sup = o.uid >= 0 && (trigOf.count(o.uid) > 0 || g_supplyMoverUids.count(o.uid) > 0);
             rideWindow(o, ab.live, ab.rides, ab.rideT0, ab.rideT1, "ceilarm");
             g_armBoxes.push_back(std::move(ab));
             loadPrintf("ceilarm: uid %d at (%.0f,%.0f) %.1fx%.1f "
@@ -2756,25 +2857,26 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         // already carries in w,h -- the raw 30x30 does not reach the player on
         // the arming tick.
         else if (o.id == 1755) {
-            // ...with its recorded motion, for --slidelive (taken here, where the timeline is in
-            // scope; the flag decides at run time, as --fgarmlive does for the 2866).
+            // ...with its recorded motion, for --slidelive (removed) (taken here, where the timeline is in
+            // scope; the flag decides at run time, as --fgarmlive (removed) does for the 2866).
             SlideBox sb{o.cx, o.cy, o.hw, o.hh, o.uid, {}, {}};
             if (gt && o.uid >= 0) {
                 const auto fit = gt->find(o.uid);
                 if (fit != gt->end()) {
                     sb.live.reserve(fit->second.size());
                     for (const auto& r : fit->second) {
-                        sb.live.push_back({r.t, r.cx, r.cy});
-                        sb.liveOn.push_back(r.on);   // --slideon
+                        sb.live.push_back({r.t, r.cx, r.cy, r.on});
+                        sb.liveOn.push_back(r.on);   // --slideon (removed)
                     }
                 }
             }
+            sb.sup = o.uid >= 0 && (trigOf.count(o.uid) > 0 || g_supplyMoverUids.count(o.uid) > 0);
             loadPrintf("dartslide: uid %d at (%.0f,%.0f) %.1fx%.1f (%zu recorded rows)\n",
                        o.uid, o.cx, o.cy, o.hw * 2.0, o.hh * 2.0, sb.live.size());
             g_slideBoxes.push_back(std::move(sb));
         }
         // FORCE FIELD (id 3645): a circular pusher, not a collider -- see
-        // forceFieldAcc at the top. Not stored in L; stepOne reads the global.
+        // ForceField (modifiers.hpp). Not stored in L. The push is the collision pass's (collide.hpp, forceBlockPush).
         // The radius block above has already scaled o.radius by w/w0.
         else if (o.id == 3645) {
             double rm = std::fmod(std::fabs(o.rot), 360.0);
@@ -2786,10 +2888,10 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             else {
                 ForceField ff{o.cx, o.cy, o.radius, (rm >= 90.0) ? -1 : +1};
                 ff.uid = o.uid;
-                ff.force = f[41].empty() ? 0.0 : std::atof(f[41].c_str());   // --forcecircle
+                ff.force = f[41].empty() ? 0.0 : std::atof(f[41].c_str());   // --forcecircle (removed)
                 ff.dirY = (o.flipY ? -1.0 : 1.0) * std::cos(o.rot * 3.14159265358979 / 180.0);
-                // --forcelive: its recorded motion, taken here where the timeline is in scope (as the
-                // 1755's for --slidelive); the flag decides at run time
+                // --forcelive (removed): its recorded motion, taken here where the timeline is in scope (as the
+                // 1755's for --slidelive (removed)); the flag decides at run time
                 if (gt && o.uid >= 0) {
                     const auto fit = gt->find(o.uid);
                     if (fit != gt->end()) {
@@ -2858,6 +2960,25 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                 force = std::atof(f[41].c_str());
             }
             g_forceBoxes.push_back({o.cx, o.cy, o.hw, o.hh, force, o.uid, 0});
+            if (gt && o.uid >= 0) {   // --forceboxon: the group trace's on / off for this box
+                const auto ri = gt->find(o.uid);
+                if (ri != gt->end() && !ri->second.empty()) {
+                    auto& tl = g_forceBoxes.back().onT;
+                    for (const DynSample& s : ri->second)
+                        if (tl.empty() || tl.back().second != s.on) tl.push_back({s.t, s.on});
+                    if (tl.size() == 1 && tl.front().second != 0) tl.clear();   // never switched: always on
+                    if (g_forceBoxOn && !tl.empty())
+                        loadPrintf("forcebox: uid %d switches %d time(s) in the group trace (first row on=%d)\n", o.uid, (int)tl.size() - 1, (int)tl.front().second);
+                    // --forceboxlive: the rows when the box MOVES (any row away from the first one's place)
+                    bool moves = false;
+                    for (const DynSample& s : ri->second) if (std::fabs((double)s.cx - (double)ri->second.front().cx) > 1e-3 || std::fabs((double)s.cy - (double)ri->second.front().cy) > 1e-3) { moves = true; break; }
+                    if (moves) {
+                        auto& lv = g_forceBoxes.back().live;
+                        for (const DynSample& s : ri->second) lv.push_back({s.t, s.cx, s.cy, s.on});
+                        loadPrintf("forcebox: uid %d is carried (%zu rows in the group trace; --forceboxlive reads them)\n", o.uid, lv.size());
+                    }
+                }
+            }
             // --forceboxdir (default off): the push points where the box does.
             // ForceBlockGameObject::calculateForceToTarget (0x4c1ec0), outside the
             // target mode (+0x74c): angle = (isFlipY ? 180 : 0) + 90 - getRotation()
@@ -3084,13 +3205,13 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                    "NOT modelled in a turned frame, not measured for a dual's second body\n",
                    tpActUids.size(), tpActUids.front(), tpLevelTurns ? "turns its gameplay" : "",
                    (tpLevelTurns && tpLevelDual) ? " and " : "", tpLevelDual ? "goes dual" : "");
-    // The teleport trigger's move is taken for one body in a plain frame moving right (step.hpp,
-    // the end of stepOne): elsewhere it is skipped.
-    if (!g_tpTrigs.empty() && (tpLevelTurns || tpLevelDual))
-        loadPrintf("teleporttrig: %zu trigger(s) (uid %d first) in a level that %s%s%s - NOT "
-                   "modelled in a dual, a turned frame or moving backwards\n",
-                   g_tpTrigs.size(), g_tpTrigs.front().uid, tpLevelTurns ? "turns its gameplay" : "",
-                   (tpLevelTurns && tpLevelDual) ? " and " : "", tpLevelDual ? "goes dual" : "");
+    // The x-crossing Teleport trigger is run by the shadow (shadow_step.hpp, the doTeleport after the pass) in a plain frame only: a turned frame is skipped there (its x is not the State's travel coordinate).
+    // A dual's second body takes the move as player 1's (--shadowp2dx) and the crossing is read in the travel coordinate (crossXOf with State::tpBack), so neither a dual level nor a body moving backwards is a limit.
+    if (!g_tpTrigs.empty() && tpLevelTurns)
+        loadPrintf("teleporttrig: %zu trigger(s) (uid %d first) in a level that turns its gameplay - NOT "
+                   "modelled in a turned frame\n",
+                   g_tpTrigs.size(), g_tpTrigs.front().uid);
+    std::sort(g_gravTrigs2.begin(), g_gravTrigs2.end(), [](const GravTrig& a, const GravTrig& b) { return a.cx < b.cx; });
     std::sort(g_gravTrigs.begin(), g_gravTrigs.end(),
               [](const GravTrig& a, const GravTrig& b) { return a.cx < b.cx; });
     std::stable_sort(g_camFrees.begin(), g_camFrees.end(),
@@ -3103,6 +3224,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                      [](const CtrlTrig& a, const CtrlTrig& b) { return a.cx < b.cx; });
     std::sort(g_zoomTrigs.begin(), g_zoomTrigs.end(),
               [](const ZoomTrig& a, const ZoomTrig& b) { return a.cx < b.cx; });
+    for (ZoomTrig& z : g_zoomTrigs) buildZoomFrac(z);
     zoomCrossReset(g_zoomTrigs.size());   // --zoomchain: no crossing seen yet
     // Which moving objects does a trigger ROTATE? Read off the recording rather
     // than derived from the trigger chain: the recording is what this run
@@ -3216,7 +3338,15 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             // --rottailmove (dynamics.hpp): an object a Move also carries stays in when every Rotate turns
             // it about itself (checked below)
             const bool moveParts = i < L.dyn.autoParts.size() && !L.dyn.autoParts[i].empty();
-            if (moveParts && !g_rotTailMove) continue;
+            // (always on: the switch --rottailmove is removed)
+            // --rottailmove (with --rottail): ...and an object a Move also carries, when every Rotate turns it about itself (no centre
+            // group). Such a turn moves nothing, so the position stays whatever the Move tails make of it and the angle alone
+            // goes on by the closed form from the recording's last tick; the box is the object's own box at that angle. The
+            // steady-step extension still extends the position, not the angle. Official lv22: a spider portal (34 x 86) that an
+            // x-crossing Move carries 15 px left and a Rotate turns -90 degrees about itself over 0.5 s, both at x 975, fired
+            // after the recording the search read had ended (t=662). The model held it upright and the cube's edge met its top
+            // by 0.02 px at t=774; GD's portal, 5 degrees into the turn, was clear of it, and the model's spider flew on to 937
+            // where GD's cube died at 817. --no-rottailmove is the off arm.
             const auto& sm = L.dyn.samples[i];
             if (sm.empty()) continue;
             std::vector<Dynamics::RotTail> parts;
@@ -3289,7 +3419,11 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
     // The decomposition needs the object and its centre to share their move
     // controllers. Measured on lv21: all 66 collidable turned objects do (0
     // differ). An object that does not is refused and keeps its recording.
-    if (g_rotSplit && !g_rotSpec.empty()) {
+    // (always on: the switch --rotsplit is removed)
+    // stage 1': put the ORBIT into samples[] and leave the translation analytic.
+    // --no-rotsplit for the A/B. See the block in level_loader.hpp for why this is
+    // the insertion point and adding a rotation to placement is not.
+    if (!g_rotSpec.empty()) {
         size_t done = 0, refusedFit = 0, refusedNoAuto = 0;
         double worstFit = 0.0;
         std::unordered_map<int, size_t> idx;
@@ -3420,7 +3554,8 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             const auto io = idx.find(kv.first);
             if (io == idx.end()) continue;
             const size_t i = io->second, ci = (size_t)R.centreIdx;
-            std::vector<DynSample>& sm = L.dyn.samples[i];
+            DynRows& smr = L.dyn.samples[i];
+            const DynRows& sm = smr;   // (read; the rows carried past the recording below make them the object's own)
             if (sm.size() < 2 || L.dyn.samples[ci].empty()) continue;
             const double ex = L.dyn.samples[ci][0].cx, ey = L.dyn.samples[ci][0].cy;
             const bool split = i < L.dyn.rotSplit.size() && L.dyn.rotSplit[i];
@@ -3533,7 +3668,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                     s.hw = (float)(uhw * c + uhh * sn);
                     s.hh = (float)(uhw * sn + uhh * c);
                 }
-                sm.push_back(s);
+                smr.mut().push_back(s);
                 ++rows;
             }
             ++done;
@@ -3662,7 +3797,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
         std::vector<int> first((size_t)kTouchBits, -1);   // uid giving the entry
         for (size_t i = 0; i < L.dyn.objs.size(); ++i) {
             if (L.dyn.trigRecFire[i] < 0 || L.dyn.autoAnchor[i] >= 0 || L.dyn.recAuto[i]
-                || L.dyn.autoReach[i] || L.dyn.touchLeads[i])   // --touchrecleads: no box moved it
+                || L.dyn.autoReach[i] || L.dyn.touchLeads[i])   // --touchrecleads (removed): no box moved it
                 continue;
             int box = -1, bits = 0;
             for (int b = 0; b < kTouchBits; ++b)
@@ -3689,9 +3824,9 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
     // them off the recording is a different change from this one.
     if (tt && !L.dyn.objs.empty()) {
         std::unordered_set<int> switched;   // uids some activator switches
-        std::unordered_map<int, std::vector<uint8_t>> offBy;   // --boxoff: uid -> off boxes
+        std::unordered_map<int, std::vector<uint8_t>> offBy;   // --boxoff (removed): uid -> off boxes
         for (size_t b = 0; b < tt->size() && b < (size_t)kTouchBits; ++b) {
-            if (!(*tt)[b].activator && !(*tt)[b].countAct) continue;   // --countactgrp
+            if (!(*tt)[b].activator && !(*tt)[b].countAct) continue;   // --countactgrp (removed)
             for (const TouchTrig::TogEv& e : (*tt)[b].togEv) {
                 if ((*tt)[b].offSwitch) offBy[e.uid].push_back((uint8_t)b);
                 else switched.insert(e.uid);
@@ -3807,7 +3942,7 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
                        "without a reset snapshot stay on their recording)\n", n, noSnap);
         }
     }
-    // --recendquiet (dynamics.hpp): the tick the recording's run reached, for the tails past the last row
+    // --recendquiet (removed) (dynamics.hpp): the tick the recording's run reached, for the tails past the last row
     L.dyn.groupsEnd = (int)g_groupsEndT;
     // --recendtail: each recorded object's switches past its last row, and the rigs --
     // the objects an x-crossing lock or a Rotate about a centre reaches -- simulated from the reset the way GD
@@ -4095,9 +4230,16 @@ inline Level loadLevelFrom(std::istream& inRaw, const GroupTimeline* gt = nullpt
             // offset is small, and the simulation stood still where the recording did.
             for (const Chk& c : chk) {
                 Dynamics::RigTail& T = D.rigTail[c.i];
-                // --recendheldrot: every recorded row at one angle -- GD did not turn it, whatever the rig says
+                // --recendheldrot (removed): every recorded row at one angle -- GD did not turn it, whatever the rig says
                 bool heldRot = false;
-                if (g_recEndHeldRot && c.worstR > kRecEndTailRotTol) {
+                // (always on: the switch --recendheldrot is removed)
+                // --recendheldrot (removed) (with --recendtail): a rig candidate whose recording holds one angle in every row while the
+                // simulated rig turns it is armed on its position alone, and keeps the recorded angle past its last row. GD did not
+                // turn it: a custom level's 12 x 12 block uid 6040 orbits its centre (an 11-turn Rotate, lockrot 0, plus a -60 degree
+                // one) for 1,095 rows at 0.008 px from the simulation, every row at 0.000 degrees and 12 x 12. The angle spread
+                // (99 degrees) left it unarmed, so past the recording's end (t=10,571) it stood still while GD's carried on its
+                // orbit, and an upside-down ship GD bonked on it 46 ticks later flew on in the model.
+                if (c.worstR > kRecEndTailRotTol) {
                     const auto& sm = D.samples[c.i];
                     heldRot = std::all_of(sm.begin(), sm.end(), [&](const DynSample& s) {
                         return std::fabs((double)s.rot - (double)sm.back().rot) < 0.001;
@@ -4176,6 +4318,7 @@ inline bool loadLevelSettings(const std::string& path) {
         else if (k == "endPortalX")         g_endPortalX = std::atof(ln.c_str() + eq + 1);   // --goalgd
         else if (k == "endPortalFlipX")     g_endPortalFlipX = v;
         else if (k == "reverseSync")        g_reverseSync = v;   // revReflect (step.hpp)
+        else if (k == "enablePlayerSqueeze") g_enablePlayerSqueeze = v;   // +0xc48 of the shadow's template (shadow_step.hpp)
         else if (k == "twoPlayer")          g_twoPlayer = v;   // frames.hpp: a second button, no gravity link
     }
     return true;
@@ -4230,15 +4373,18 @@ struct LoadLevelWrites {
     decltype(g_forceFields) forceFields;
     decltype(g_forceBoxes) forceBoxes;
     decltype(g_flipHeadBoxes) flipHeadBoxes;
+    decltype(g_nojumpBoxes) nojumpBoxes;
     decltype(g_dashStopBoxes) dashStopBoxes;
     decltype(g_ctrlTouchBoxes) ctrlTouchBoxes;
     decltype(g_pcTrigs) pcTrigs;
     decltype(g_pcTouchBoxes) pcTouchBoxes;
     decltype(g_revTrigs) revTrigs;
+    decltype(g_revTouchBoxes) revTouchBoxes;
     decltype(g_timeWarps) timeWarps;
     decltype(g_tpTrigs) tpTrigs;
     decltype(g_tpSpawned) tpSpawned;
     decltype(g_gravTrigs) gravTrigs;
+    decltype(g_gravTrigs2) gravTrigs2;
     decltype(g_gravSpawned) gravSpawned;
     decltype(g_gravTouchBoxes) gravTouchBoxes;
     decltype(g_tpTouchBoxes) tpTouchBoxes;
@@ -4259,19 +4405,31 @@ struct LoadLevelWrites {
     decltype(g_lockTicks) lockTicks{};
     decltype(g_rotSeen) rotSeen{};
     decltype(g_rotRouted) rotRouted{};
+    // Written by loadLevelFrom and missing from the first reading of it (2026-09-26): found 2026-11-23 by diffing defaultsProfile() after the load of a cached attempt against a loaded one (a custom level, a level with a dual-ON portal: the
+    // ladder's attempts with the cache on answered another search from the second attempt on; g_levelHasDualOn is read at the anchor's two-body test, cli.hpp). The counters are printed after the load (rotlag / rottail / the recording-end tail / nanslope).
+    decltype(g_levelHasDualOn) levelHasDualOn{};
+    decltype(g_nanSlopeDropped) nanSlopeDropped{};
+    decltype(g_rotLagN) rotLagN{};
+    decltype(g_rotTailN) rotTailN{};
+    decltype(g_recEndTailN) recEndTailN{};
+    decltype(g_recEndTailTried) recEndTailTried{};
+    decltype(g_recEndTailOnN) recEndTailOnN{};
     void take() {
         forceFields = g_forceFields;
         forceBoxes = g_forceBoxes;
         flipHeadBoxes = g_flipHeadBoxes;
+        nojumpBoxes = g_nojumpBoxes;
         dashStopBoxes = g_dashStopBoxes;
         ctrlTouchBoxes = g_ctrlTouchBoxes;
         pcTrigs = g_pcTrigs;
         pcTouchBoxes = g_pcTouchBoxes;
         revTrigs = g_revTrigs;
+        revTouchBoxes = g_revTouchBoxes;
         timeWarps = g_timeWarps;
         tpTrigs = g_tpTrigs;
         tpSpawned = g_tpSpawned;
         gravTrigs = g_gravTrigs;
+        gravTrigs2 = g_gravTrigs2;
         gravSpawned = g_gravSpawned;
         gravTouchBoxes = g_gravTouchBoxes;
         tpTouchBoxes = g_tpTouchBoxes;
@@ -4292,20 +4450,30 @@ struct LoadLevelWrites {
         lockTicks = g_lockTicks;
         rotSeen = g_rotSeen;
         rotRouted = g_rotRouted;
+        levelHasDualOn = g_levelHasDualOn;
+        nanSlopeDropped = g_nanSlopeDropped;
+        rotLagN = g_rotLagN;
+        rotTailN = g_rotTailN;
+        recEndTailN = g_recEndTailN;
+        recEndTailTried = g_recEndTailTried;
+        recEndTailOnN = g_recEndTailOnN;
     }
     void put() const {
         g_forceFields = forceFields;
         g_forceBoxes = forceBoxes;
         g_flipHeadBoxes = flipHeadBoxes;
+        g_nojumpBoxes = nojumpBoxes;
         g_dashStopBoxes = dashStopBoxes;
         g_ctrlTouchBoxes = ctrlTouchBoxes;
         g_pcTrigs = pcTrigs;
         g_pcTouchBoxes = pcTouchBoxes;
         g_revTrigs = revTrigs;
+        g_revTouchBoxes = revTouchBoxes;
         g_timeWarps = timeWarps;
         g_tpTrigs = tpTrigs;
         g_tpSpawned = tpSpawned;
         g_gravTrigs = gravTrigs;
+        g_gravTrigs2 = gravTrigs2;
         g_gravSpawned = gravSpawned;
         g_gravTouchBoxes = gravTouchBoxes;
         g_tpTouchBoxes = tpTouchBoxes;
@@ -4326,6 +4494,13 @@ struct LoadLevelWrites {
         g_lockTicks = lockTicks;
         g_rotSeen = rotSeen;
         g_rotRouted = rotRouted;
+        g_levelHasDualOn = levelHasDualOn;
+        g_nanSlopeDropped = nanSlopeDropped;
+        g_rotLagN = rotLagN;
+        g_rotTailN = rotTailN;
+        g_recEndTailN = recEndTailN;
+        g_recEndTailTried = recEndTailTried;
+        g_recEndTailOnN = recEndTailOnN;
     }
 };
 

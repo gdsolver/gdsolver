@@ -112,10 +112,9 @@ inline std::vector<BandSrcRow> g_bandSrcRows;
 // it2 is the same shape (ball portal at t=14,150, stale ceiling 390, model 375 vs GD
 // 397). Past the end the lookups answer "no row", so the State's portal band decides.
 inline long long g_bandTrackEnd = -1;
-inline thread_local bool g_bandHoldNow = false;
 constexpr uint8_t kBandPastEnd = 32;
 inline bool bandTrackPastEnd(long long t) {
-    return g_bandTrackEnd >= 0 && t > g_bandTrackEnd && !g_bandHoldNow;
+    return g_bandTrackEnd >= 0 && t > g_bandTrackEnd;   // (a third term, `&& !g_bandHoldNow`, read a flag nothing set: always true, removed)
 }
 // [2026-08-22 r107] **Look up the row at t+1.** The 36 fixups at lv22's vertical
 // entrance (x 20,000..20,090, the section where the band rises at +1.4px/tick)
@@ -145,38 +144,7 @@ inline bool bandTrackRowAt(long long t, double& fl, double& ce) {
     ce = (double)r.ce;
     return true;
 }
-// The same search over EVERY row, answering with the kind and with how stale
-// the answer is. `age` is t minus the row's tick, so a caller can tell "the
-// band is this" from "the band was this, `age` ticks ago". No age limit is
-// imposed here: which staleness is acceptable is the caller's question, and
-// today every caller accepts any.
-inline bool bandTrackKindAt(long long t, BandKind& kind, double& fl, double& ce,
-                            long long& age, int* src = nullptr) {
-    if (g_bandTrack.empty()) return false;
-    if (bandTrackPastEnd(t)) return false;
-    size_t lo = 0, hi = g_bandTrack.size();
-    while (lo + 1 < hi) {
-        const size_t m = (lo + hi) / 2;
-        if (g_bandTrack[m].t <= t) lo = m; else hi = m;
-    }
-    if ((long long)g_bandTrack[lo].t > t) return false;
-    kind = g_bandTrack[lo].kind;
-    fl = (double)g_bandTrack[lo].fl;
-    ce = (double)g_bandTrack[lo].ce;
-    age = t - (long long)g_bandTrack[lo].t;
-    if (src) {
-        *src = g_bandTrack[lo].src;
-        // ...unless the source changed since that row (an S row at or before t, after the row).
-        size_t a = 0, b = g_bandSrcRows.size();
-        while (a < b) {
-            const size_t m = (a + b) / 2;
-            if ((long long)g_bandSrcRows[m].t <= t) a = m + 1; else b = m;
-        }
-        if (a > 0 && g_bandSrcRows[a - 1].t >= g_bandTrack[lo].t) *src = g_bandSrcRows[a - 1].src;
-    }
-    return true;
-}
-// [2026-10-04] --bandowntrack: State::bandBranch bit 4 (kBandOwn) says this worldline's band
+// [2026-10-04] --bandowntrack (removed): State::bandBranch bit 4 (kBandOwn) says this worldline's band
 // was written by a portal the recording behind --bandtrack never saw fire. The recording is one
 // route's camera; up to --bandtrackend it is read as truth for every route, so a route that
 // leaves the recorded one and takes a portal the recording passed below or above keeps the
@@ -185,14 +153,9 @@ inline bool bandTrackKindAt(long long t, BandKind& kind, double& fl, double& ce,
 // 630..930 (GD: 840..1140), rode its ceiling at y=915, and was called SOLVED, while GD sank onto
 // a spike at y=862. The anchor at t=18,000 carried GD's band and agreed with GD to the tick, so
 // the replay instruments never saw it. What "seen" means is bandTrackSawBand (below); an anchor
-// whose --startband the recording does not hold at t0 starts with the bit (cli.hpp). On by default
-// (2026-10-18; --no-bandowntrack is the off arm, where the bit is never set).
+// whose --startband the recording does not hold at t0 starts with the bit (cli.hpp). Always so
+// (--bandowntrack (removed), on by default since 2026-10-18).
 constexpr uint8_t kBandOwn = 16;
-constexpr int kBandOwnNear = 3;   // GD's band changes on the portal's own tick
-inline bool g_bandOwnTrack = true;
-inline bool bandTrackAt(long long t, double& fl, double& ce) {
-    return bandTrackRowAt(t + 1, fl, ce);
-}
 // [2026-08-24] The FLY FLOOR reads the row at t-1 -- the camera pans AFTER the
 // clamp, so the dump's pmin on row t is post-pan and the value the clamp itself
 // used is the previous row's. Measured at the same shaft entrance as r107, on a
@@ -203,9 +166,7 @@ inline bool bandTrackAt(long long t, double& fl, double& ce) {
 // r107's representation (row t+1 with an effective offset 12.15) is the same
 // line under a constant 1.44 rise -- 12.15 + 2*1.44 = 15.03 = pHalf -- so both
 // fits agree everywhere the pan speed is constant, and this one keeps pHalf.
-inline bool bandTrackFloorAt(long long t, double& fl, double& ce) {
-    return bandTrackRowAt(t - 1, fl, ce);
-}
+// (The one-line helper that read it, bandTrackFloorAt(t) = bandTrackRowAt(t - 1), has no caller left; a fly floor reads bandTrackRowAt(t - 1) directly.)
 // [2026-08-25] IS THE RECORDED BAND THE CAMERA'S, OR A PORTAL'S? Only a
 // PORTAL-set limit is a physical ceiling; the camera's is not, and the two are
 // told apart by the shape of the whole recording rather than by any one value.
@@ -335,55 +296,7 @@ inline bool loadBandTrack(const char* path) {
                     g_bandTrack.size(), kn[0], kn[1], kn[2], kn[3], skipped, path);
     return true;
 }
-// --bandowntrack: did the recording see THIS band written near tick t? On a portal-set track a
-// row within kBandOwnNear ticks must also carry the band itself, or it is another portal's -- a
-// second lane's portal firing within the window, which the presence test alone would take as
-// this one. The track holds CHANGES only, so a portal that rewrote the band the recording already
-// held leaves no row: a band equal to the row in force at t is seen too (a custom level's UFO
-// portal rewrote [300, 600] over [300, 600], and the old test made the band the state's own and
-// dropped the recording's for the rest of the track).
-// A camera-driven track is always "seen": its rows are the camera's pans, not portal writes, so
-// their presence near t says nothing about which portal fired (a custom level's anchor re-fired
-// the ship portal GD had just taken, on a tick the camera did not move, and the bit threw away
-// the camera ceiling GD stopped the ship on).
-inline bool bandTrackSawBand(long long t, double fl, double ce) {
-    if (g_bandTrack.empty()) return false;
-    if (bandTrackIsCamera()) return true;
-    size_t lo = 0, hi = g_bandTrack.size();
-    while (lo < hi) {
-        const size_t m = (lo + hi) / 2;
-        if ((long long)g_bandTrack[m].t < t - kBandOwnNear) lo = m + 1; else hi = m;
-    }
-    for (size_t i = lo; i < g_bandTrack.size() && (long long)g_bandTrack[i].t <= t + kBandOwnNear;
-         ++i) {
-        const BandTrackRow& r = g_bandTrack[i];
-        if (r.kind == BandKind::Interval && std::fabs((double)r.fl - fl) <= 1.0
-            && std::fabs((double)r.ce - ce) <= 1.0)
-            return true;
-    }
-    double f0 = 0.0, c0 = 0.0;
-    return bandTrackRowAt(t, f0, c0) && std::fabs(f0 - fl) <= 1.0 && std::fabs(c0 - ce) <= 1.0;
-}
-// [2026-10-05] --portalstarty: a mode portal's band is centred on where the portal was PLACED,
-// not where a group has since moved it. animateInDualGroundNew (0x140213370) reads the portal's
-// y through vtable slot 0x670, GameObject::getStartPos (0x140137ca0), which copies
-// m_startPosition (+0x3c8); the current position (m_positionX/Y, +0x3b8/+0x3c0) is
-// getRealPosition, slot 0x4a8. Measured on a custom level: a UFO portal placed at y=450 and moved
-// to 510 at t=3 left GD's band at [300, 600] = bandFor(450) for the next 300 ticks, while the
-// model's bandFor(510) put the floor at 360 and stopped the UFO on it as GD fell past. A static
-// portal has never moved, so its cy is its start. On by default since 2026-10-05 (also five moved
-// mode portals crossed in GD, every band at the placed position; a kitref of 0 fixed and 0 broken in
-// 1,773 episodes on one exe); --no-portalstarty is the off arm, the portal's current cy (step.hpp
-// portalBandY).
-inline bool g_portalStartY = true;
-// Calibration factor for the band height (height asked of GD via --startband / the
-// value computed from the zoom). 0 = uncalibrated. Fixed once, at the first tick
-// where the band is evaluated (= the anchor).
-inline double g_bandK = 0.0;
 inline bool g_slopeDbg = false;  // --slopedbg: one line per ramp acquisition
-// --slopereldbg: the downhill-RELEASE branch only (step.hpp). Separate from
-// --slopedbg because that one turns on forty-two sites and buries a cold run.
-inline bool g_slopeRelDbg = false;
 // (frame, rev) censuses. Declared here rather than in fixup.hpp because step.hpp
 // is upstream of that header and does the counting.
 //
@@ -418,40 +331,6 @@ inline long long frameRevReach(int f, int r) {
 // Declared here rather than in fixup.hpp for the same reason as the counters
 // above: reset.hpp has to see it.
 inline long long g_fxWatchT = -1;
-inline char g_fxWhy[1600] = "";
-// (the fixup lookups and hits by the same (frame, rev) pair are counted in
-// fixup.hpp, g_fixupCensus)
-// --dcydbg: one line every time a SURFACE'S OWN SPEED is stamped into vy as
-// `dcy / 0.25`, tagged with which of the four sites did it. Separate from
-// --slopedbg only because that one prints per ramp tick and buries these.
-// This measures REACH -- how many ticks in the corpus each site actually
-// decides -- which is the number that says whether a rule about one of them is
-// worth anything. Counting it off whole-run traces does not work: past a
-// level's first divergence the model is on its own timeline.
-//
-// `dcy` and the stamped value print at FULL precision (%.17g), deliberately and
-// not for tidiness. Whether dcy is a round 0.25 -- and so whether dividing by
-// 0.25 lands on a round 1.0 -- is itself the claim being argued at the lv19
-// 21,4xx sites, and at 4 decimals both -0.250040 and -0.249996 print as
-// `-0.2500`, manufacturing the very roundness that was supposed to be the
-// finding. Do not narrow these back.
-inline bool g_dcyDbg = false;
-// --supdbg: every solid the cube's support scan looks at, with the gap and the x
-// test that decide it. Written for 4002 t=22,768, where the player stood on a
-// platform GD has at y=1,648.5 and the model had at 2,248.5: printing the scan is
-// what showed the object was in the wrong PLACE rather than the rule being wrong.
-inline bool g_supDbg = false;
-inline bool g_bandDbg = false;   // --banddbg: one line per wave tick near the band ceiling
-// --spddbg: one line per SPEED PORTAL CANDIDATE per tick, naming the gate that
-// rejected it. The three gates (x overlap / oriented hit / y gap) each `continue`
-// on their own, so a portal that never fires says nothing about WHY -- and on
-// lv21 the arithmetic says all three should have passed 48 px before the model
-// actually fired. This prints what each gate computed, so the answer is read
-// rather than inferred.
-inline bool g_spdDbg = false;
-// Was "--shipceil given: pin the band by hand". The flag is gone (2026-08-31),
-// so this is false for the whole run and every reader of g_shipCeil is dead.
-inline bool g_shipCeilSet = false;
 // --rotport: treat a portal that a trigger ROTATES as a turned object even
 // while its angle still reads 0, so it is tested with the two-box SAT against
 // the player's turned box. Measured right (see Dynamics::turnedBox) but OFF by
@@ -509,33 +388,6 @@ inline bool g_freeModeCol = false;
 // the old behaviour exactly, which is what the anchored suites were built on.
 constexpr uint8_t kBandFreeKnown = 4;
 constexpr uint8_t kBandFree = 8;
-// (--bandowntrack's bit is kBandOwn, declared with the track above.)
-inline bool bandIsWall(uint8_t branch, bool legacyGridTest) {
-    if (branch & kBandFreeKnown) return (branch & kBandFree) == 0;
-    return legacyGridTest;
-}
-// --flyfree: ...and the flying modes ask it too. The cube family's band faces went through
-// bandIsWall from the start; the ship / UFO / swing branch and the wave's own branch clamped to
-// the band whatever the byte said. Measured on a custom level whose first ship portal carries Free
-// Mode (band [7804, 8126] in GD's own pmin/pmax): GD's ship falls straight past 7819 = floor + 15
-// at -6.4 a tick and dies on a hazard strip at 7800 that rides along beneath it, which is where
-// that level's runs keep dying; the model sat on 7819 (fly/bandfloor) and lived thousands of ticks
-// longer. Known and set only -- an unknown byte keeps the old clamp. On by default since 2026-10-06;
-// --no-flyfree is the off arm.
-inline bool g_flyFree = true;
-// --groundbandzoom: ...and a single ball's or spider's (outside a dual) the same way, branch B only. A custom level's
-// spider under a zoom of 0.8: GD's pmin/pmax read 116.25 / 453.75 = 285 -+ 135 / 0.8, and at a block's end
-// (t=14,721) it walked off and fell past 163.5 (the zoom-1 band's seat, floor 150); the model stood it on 150 and
-// ran on along it.
-inline bool g_groundBandZoom = true;
-// --camfree: a Camera Mode trigger (id 2925) on the crossing queue writes the Free Mode byte too, from its
-// m_cameraIsFreeMode (the objrects `free` column), on the tick its x is crossed -- after that tick's
-// collisions, like every crossing trigger, so the band it frees is the next tick's (step.hpp, at the step's
-// end). A custom level's ball, mode unchanged: GD's dump turns `freemode` 0 -> 1 on the tick it crosses a
-// 2925 at x 6,180 with free=1, and from there the ball rises past its band's ceiling 1,110 (pmax still
-// reads 1,110), where the model stood it on that ceiling (ground/flipceil). On by default; --no-camfree is
-// the off arm.
-inline bool g_camFree = true;
 struct CamFree {
     double cx;
     uint8_t free;
@@ -543,7 +395,15 @@ struct CamFree {
 };
 inline std::vector<CamFree> g_camFrees;   // sorted by cx at load
 inline bool flyBandFree(uint8_t branch) {
-    return g_flyFree && (branch & kBandFreeKnown) && (branch & kBandFree);
+    // (always on: the switch --flyfree is removed)
+    // --flyfree (removed): ...and the flying modes ask it too. The cube family's band faces went through
+    // bandIsWall from the start; the ship / UFO / swing branch and the wave's own branch clamped to
+    // the band whatever the byte said. Measured on a custom level whose first ship portal carries Free
+    // Mode (band [7804, 8126] in GD's own pmin/pmax): GD's ship falls straight past 7819 = floor + 15
+    // at -6.4 a tick and dies on a hazard strip at 7800 that rides along beneath it, which is where
+    // that level's runs keep dying; the model sat on 7819 (fly/bandfloor) and lived thousands of ticks
+    // longer. Known and set only -- an unknown byte keeps the old clamp.
+    return (branch & kBandFreeKnown) && (branch & kBandFree);
 }
 // The same for the trigger queue's admission gate: PlayLayer::addObject only
 // enqueues a trigger when it is neither touch- nor spawn-triggered, so those
@@ -568,6 +428,15 @@ inline bool g_trigGateCol = false;
 struct StaticCam { double cx; uint8_t exit_; };
 inline std::vector<StaticCam> g_staticCams;   // sorted by cx at load
 inline bool g_staticCamCol = false;
+// STATIC CAMERA EXIT (GameLayer 0x349410, 22091): when a Static Camera releases its Y axis, a band that a mode portal holds (+0x310) is written again by
+// updateDualGround in branch B -- the portal's own centre and height -- where until then getMin / MaxPortalY read branch A (the ground sprites: +0x23c != 0).
+// An anchor taken while branch A is in force carries GD's A reading (the dump's pmin / pmax, --startband) as the state's band, and the portal's band exists
+// nowhere in the state. kBandAnchorA (State::bandBranch bit 6) says "this worldline's band is still the anchor's branch A reading": the first Static Camera exit it crosses
+// puts the portal band of the anchor's replay (g_anchorBandB, a band at zoom 1 as the state keeps it) in its place and clears the bit; a mode portal it overlaps first
+// writes its own band and clears it too. It is in the dedupe key (search_key.hpp): two states that differ in it have different futures.
+constexpr uint8_t kBandAnchorA = 64;
+struct AnchorBandB { bool have = false; float floorY = 0.f, ceilY = 0.f; double exitX = 1e18; };   // exitX: the x of the first Static Camera exit (Y axis) past the anchor
+inline AnchorBandB g_anchorBandB;
 // The band animation, packed into State::bandAnim: bit 7 = target (1 = in),
 // bits 0-6 = ticks elapsed, 127 = settled. Measured on lv22's 21,140 ticks
 // against GD's own sprite column: 119 ticks in on ease-in-out rate 2, 95 out
@@ -581,9 +450,6 @@ inline uint8_t bandAnimStep(uint8_t a) {
     const int e = a & 0x7f;
     return (uint8_t)((a & 0x80) | (e >= 127 ? 127 : e + 1));
 }
-// --dualzoomband: in a dual animateInDualGroundNew (0x213370) tweens the band in over 0.4 s, not 0.5
-// (its duration is 0.4 when the dual byte +0x422 or +0x310 is set): 96 ticks.
-constexpr int kBandAnimInDual = 96;
 inline double bandProgress(uint8_t a, int inTicks = kBandAnimIn) {
     const bool in = (a & 0x80) != 0;
     const int e = a & 0x7f;
@@ -603,41 +469,7 @@ inline FlyBand bandFor(double cy, double H) {
     b.ceilY = b.floorY + H;
     return b;
 }
-// The invisible ceiling is NOT ship-only. Measured on lv9: a flipped ball taps
-// off the ground at x=9,212, rises, and at x=9,354 stops dead at y=315.00 with
-// onGround=1 -- its top is 330 -- then rides that for 460 px straight over the
-// spiked wall at x=9,480 that has no other way past. Only TWO 30 px blocks
-// exist in that stretch, so it is not riding geometry.
-// Same story as the ship's: per level, not derivable from the geometry. Default
-// is "none"; `--ceil` sets it for levels that need it (lv9 = 330).
-//
-// It is not one number per level either. lv14 is built high (its ship corridors
-// are at y=735 and its geometry reaches 1065), and its ball section at
-// x=13,100..13,600 has a ceiling at 420: a flipped mini ball stops dead at
-// y=411.000 with onGround=1 and rides it, and a ball injected ABOVE it at
-// y=500 is put straight back to 411. A single global 420 would nail the cube to
-// the floor of the pad corridor at x=9,165, which GD plays at y=700..735. So
-// the knob carried an optional x window: `--ceil 420@13100:13600`, repeatable,
-// and a bare `--ceil 330` meant "everywhere" (lv9).
-//
-// [2026-08-31] THE FLAG IS GONE AND THIS LIST IS ALWAYS EMPTY, so playerCeilAt
-// returns 1e9 at every x and the two sites in step.hpp that call it are asking
-// about a ceiling nobody set. Nothing in the pipeline had been passing --ceil,
-// so lv9 and lv14 have been solving WITHOUT the numbers above for as long as
-// anyone has measured -- the readings are real, but the paragraph reads as
-// though they were in force, and they were not. Kept, unchanged, as the record
-// of two measurements and as dead code that is easy to remove on purpose.
-struct CeilBand {
-    double y;
-    double x0, x1;   // inclusive; -inf..+inf for a bare value
-};
-inline std::vector<CeilBand> g_playerCeils;
-inline double playerCeilAt(double x) {
-    double best = 1e9;
-    for (const CeilBand& b : g_playerCeils)
-        if (x >= b.x0 && x <= b.x1 && b.y < best) best = b.y;
-    return best;
-}
+;
 // Support persistence past a block's edge. This is just the hitbox: the cube
 // stays grounded while its 30-wide box still overlaps the block, i.e. while
 // |x - cx| <= hw + 15.0. The old 13.0 was a deliberate under-estimate chosen
@@ -659,13 +491,5 @@ inline double playerCeilAt(double x) {
 // With 15 the model stood ~5 px of x too long and then "jumped" off a ledge GD
 // had already dropped it from, which is why its trace and GD's split there.
 constexpr double kSupportReach = 15.0;
-// TRIED AND REVERTED (2026-07-31): 0.01 here, to absorb the ~0.003 px by which
-// the model's float x misses GD's. The motivating case was real -- lv5 t=8482
-// sits at |x - cx| = 30.0000 exactly, GD stays grounded, and a 0.003 px
-// overshoot let go one tick early. But widening EVERY contact test by 0.01 px
-// broke all five levels at once (lv1/2/3 went from cleared to stuck). Ledge
-// boundaries are dense enough that a uniform bias walks the cube one tick too
-// far again and again. Fix the x reproduction instead of padding the test.
-constexpr double kContactEps = 0.0;
 
 }  // namespace dp
