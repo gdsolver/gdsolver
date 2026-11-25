@@ -810,7 +810,7 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
         const int cUid = need("uid"), cId = need("id"), cCx = need("cx"), cTarget = need("target"), cCenter = need("center"), cTouch = need("touch"), cSpawn = need("spawn"), cDur = need("dur"),
                   cOx = need("ox"), cOy = need("oy"), cEase = need("ease"), cRate = need("erate"), cDeg = need("deg"), cT360 = need("t360"), cChan = need("chan"), cTogon = need("togon"), cActgrp = need("actgrp"),
                   cItem = need("item"), cCount = need("count"), cCmode = need("cmode"), cActg = need("actgrp"), cLx = need("lockx"), cLy = need("locky"), cLcx = need("lockcamx"), cLcy = need("lockcamy"), cLrot = need("lockrot"), cMmx = need("movemodx"), cMmy = need("movemody"),
-                  cCy2 = need("cy"), cSdelay = need("sdelay"), cSord = need("sord"), cSordd = need("sordd"), cOrd = need("ord"), cRemap = need("remap"), cSilent = need("silent"),
+                  cCy2 = need("cy"), cSdelay = need("sdelay"), cSord = need("sord"), cSordd = need("sordd"), cOrd = need("ord"), cRemap = need("remap"), cResetRemap = need("resetremap"), cSilent = need("silent"),
                   cCtrobj = need("ctrobj"), cMvtgt = need("mvtgt"), cMvaxis = need("mvaxis"), cTmodctr = need("tmodctr"), cDynmode = need("dynmode"), cDirdist = need("dirdist"), cEvents = need("events"), cEvx = need("evextra");
         while (std::getline(f, line)) {
             const auto c = tsSplit(tsTrim(line), ',');
@@ -835,6 +835,10 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
         t.lockCX = I(cLcx) != 0; t.lockCY = I(cLcy) != 0; t.camLockOk = o.camLock;
             t.lockrot = I(cLrot) != 0;
             t.sdelay = D(cSdelay); t.sord = I(cSord) != 0; t.sordd = I(cSordd) != 0; t.ord = I(cOrd); t.silent = I(cSilent) != 0; t.remap = cRemap >= 0 && c[(size_t)cRemap] != "-" && !c[(size_t)cRemap].empty();
+            if (t.id == 1268 && cResetRemap >= 0 && cResetRemap < (int)c.size()) {
+                const std::string& reset = c[(size_t)cResetRemap];
+                if (reset == "0" || reset == "1") t.resetRemap = I(cResetRemap);
+            }
             t.ctrCol = cCtrobj >= 0; t.ctrObj = I(cCtrobj);
             if (t.id == 3604 && cEvents >= 0 && cEvx >= 0 && (int)c.size() > std::max(cEvents, cEvx)) {   // an Event trigger: its events (';'-separated, '-' none) and the extra IDs (a:b); run when it listens for something with the extra IDs 0 / 0 (EffectGameObject +0x754 * 10000 + +0x758 is the key)
                 const std::string& es = c[(size_t)cEvents];

@@ -1396,7 +1396,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
               //               "key=value|key=value" over every key it writes (position and layer included), '-' on any other row. Which of those keys the trigger sets decides
               //               what it follows (138 = Target Player 1, 306 = X only, 307 = Y only, 71 = a group, 200 = Player 2, ...), and none of them is a column above.
               //               Read only by dp's Advanced Follow model; a dump without the column leaves it with nothing to act on.
-              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj,movemodx,movemody,advp\n";
+              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj,movemodx,movemody,advp,resetremap\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -1475,8 +1475,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
             // m_delayRange, property 556, which is not dumped). EffectGameObject::m_spawnTriggerDelay is another
             // field: it read 0 on every Spawn of the cov126 kits (14,736 rows; the level strings give 5,726 of
             // them a delay) and on all 141 of lv22's (34 with one).
-            float sdelay = e->m_spawnTriggerDelay;
-            if (auto* sp = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj)) sdelay = sp->m_spawnDelay;
+            auto* spawn = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj);
+            const float sdelay = spawn ? spawn->m_spawnDelay : e->m_spawnTriggerDelay;
             tf << obj->m_uniqueID << "," << obj->m_objectID << ","
                << (tr.origin.x + tr.size.width * 0.5f) << ","
                << (tr.origin.y + tr.size.height * 0.5f) << ","
@@ -1521,8 +1521,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                << (obj->m_objectID == 1049 ? (e->m_activateGroup ? 1 : 0) : -1) << ",";
             {
                 std::string rm;
-                if (auto* sp = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj)) {
-                    for (auto const& c : sp->m_remapObjects) {
+                if (spawn) {
+                    for (auto const& c : spawn->m_remapObjects) {
                         if (!rm.empty()) rm += ";";
                         rm += std::to_string(c.m_groupID) + ":"
                             + std::to_string(c.m_oldGroupID) + ":"
@@ -1619,7 +1619,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                         }
                         if (advp.empty()) advp = "-";
                     }
-                    tf << "," << ctr << "," << e->m_moveModX << "," << e->m_moveModY << "," << advp << "\n";
+                    tf << "," << ctr << "," << e->m_moveModX << "," << e->m_moveModY << "," << advp
+                       << "," << (spawn ? (int)spawn->m_resetRemap : -1) << "\n";
                 }
             }
             ++nTrig;

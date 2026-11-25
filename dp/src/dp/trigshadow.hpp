@@ -116,6 +116,7 @@ struct TrigDef {
     double dirDist = 0.0;   // m_directionModeDistance (key 396): a Move with a distance is in the game's Direction mode, a displacement the shadow does not compute (kindRuns: not run)
     bool mvtgt = false, dynmode = false; int mvaxis = 0, tmodctr = 0;   // a Move in the target mode (m_useMoveTarget), the dynamic one, which axis (m_moveTargetMode: 1 x, 2 y), the centre-modifier group (m_targetModCenterID)
     std::vector<std::pair<int, int>> remapTo;   // a Spawn's group remap (triggers.txt `remap`, source:source:target:flag; entries by ';'): a trigger it spawns acts on the target group in place of the source one
+    int resetRemap = -1;   // Spawn property 581; -1 means an old dump did not record the flag
     std::string raw;   // a trigger that moves the player (Teleport 3022): its objrects.txt columns, as `name=value` text, for whoever reads the event
     double gmod = 1.0; int gpl = 0;   // a Gravity trigger (2066): the value it sets (objrects.txt gmod) and the player it is for (gpl)
     int optp1 = 0, optp2 = 0, optudg = 0;   // an Options trigger (2899): disable (1) / enable (-1) player 1's / 2's controls, unlink dual gravity (objrects.txt)
@@ -440,15 +441,26 @@ public:
             for (const TrigDef& t : trigs_) if (kindRuns(t) && !t.spawn && t.id != 1268) modelled_.insert(t.uid);
         }
         if (gtogFed_) for (const TrigDef& t : trigs_) if (t.id == 1595 && (gtogTaps_.empty() || gtogTaps_.count(t.uid))) modelled_.insert(t.uid);   // its on / off calls are handed over (addGroupToggleEvent)
-        for (const TrigDef& t : trigs_)   // an ordered Spawn is run only when the group it spawns keeps the level's order (no order value, no channel on the triggers in it)
-            if (t.id == 1268 && t.sordd && modelled_.count(t.uid)) {
-                const auto m = members.find(t.target);
-                if (m != members.end())
-                    for (size_t i : m->second) {
-                        const auto ti = trigByUid_.find(objs[i].uid);
-                        if (ti != trigByUid_.end() && (trigs_[ti->second].ord != 0 || trigs_[ti->second].chan != 0)) { modelled_.erase(t.uid); break; }
-                    }
+        auto checkOrderedGroup = [&](const TrigDef& t, int g) {   // only when the spawned group keeps the level's order
+            if (!t.sordd || !modelledT(t)) return;
+            const auto m = members.find(g);
+            if (m == members.end()) return;
+            for (size_t i : m->second) {
+                const auto ti = trigByUid_.find(objs[i].uid);
+                if (ti != trigByUid_.end() && (trigs_[ti->second].ord != 0 || trigs_[ti->second].chan != 0)) { modelled_.erase(t.uid); break; }
             }
+        };
+        std::map<int, std::set<int>> remappedSpawners;
+        for (const TrigDef& sp : trigs_) {
+            if (sp.id != 1268) continue;
+            checkOrderedGroup(sp, sp.target);
+            if (sp.remapTo.empty()) continue;
+            forSpawnRemap(sp, [&](const TrigDef& t, int g, bool centre) {
+                if (centre || t.id != 1268 || !t.spawn) return;
+                remappedSpawners[g].insert(t.uid);
+                checkOrderedGroup(t, g);
+            });
+        }
         for (const TrigDef& t : trigs_)   // a Stop by control ID is not run; a pause / resume of a group that holds an Area trigger is not run either (an Area instance's pause is not ported)
             if (t.id == 1616 && modelled_.count(t.uid)) {
                 bool bad = t.stopCtrl;
@@ -472,6 +484,13 @@ public:
                 const auto bi = byUid.find(x.uid);
                 bool ok = bi != byUid.end();   // a trigger in no group (the shadow only keeps grouped objects) is never spawned by anything: nothing can fire it, so nothing is waited for
                 if (!ok) continue;
+                for (int g : objs[bi->second].groups) {
+                    const auto it = remappedSpawners.find(g);
+                    if (it == remappedSpawners.end()) continue;
+                    for (int uid : it->second)
+                        if (!modelled(uid)) { ok = false; spawnBlockers_.mut()[x.uid].insert(1268); break; }
+                    if (!ok) break;
+                }
                 if (ok)
                     for (const TrigDef& y : trigs_) {
                         if (!kActivators.count(y.id) || modelled_.count(y.uid)) continue;
@@ -499,6 +518,8 @@ public:
                         if (!kActivators.count(y.id) || modelled_.count(y.uid)) continue;
                         for (int g : objs[bi->second].groups) if (g == y.target || ((y.id == 3607 || y.id == 2068) && namesGroup(y, g))) { r.insert(actName(y)); break; }
                     }
+                const auto blockers = spawnBlockers_.find(x.uid);
+                if (blockers != spawnBlockers_.end() && blockers->second.count(1268) && r.empty()) r.insert("remap");
                 if (r.empty()) r.insert("other");
             }
         }
@@ -568,30 +589,12 @@ public:
             // shadow runs) was "not covered" because a Follow of group 681 names it as its leader, so its Transform was not supplied and the blocks it scales stood still: window 5000 left the game at 5274.
             if (t.center && t.id != 1347) other.insert(t.center);
         }
-        // a Spawn with a group remap hands the triggers it spawns other groups than the ones the table names: a trigger that is not run, in what such a Spawn spawns, acts on the NEW group of the key that names its target
-        // or centre (the table only holds the old one, so the new group would pass for covered). The keys of the Spawns met on the way (a nested Spawn) count as well: a superset, never less.
+        // Do not vouch for a remapped target or centre of a trigger the shadow cannot run.
         for (const TrigDef& sp : trigs_) {
             if (sp.id != 1268 || sp.remapTo.empty()) continue;
-            RemapKeys keys = sp.remapTo;
-            std::set<int> seenG;
-            std::vector<int> work{sp.target};
-            std::vector<const TrigDef*> unrun;
-            while (!work.empty()) {
-                const int g = work.back();
-                work.pop_back();
-                if (!seenG.insert(g).second) continue;
-                const auto m = members.find(g);
-                if (m == members.end()) continue;
-                for (size_t oi : m->second) {
-                    const auto ti = trigByUid_.find(objs[oi].uid);
-                    if (ti == trigByUid_.end()) continue;
-                    const TrigDef& y = trigs_[ti->second];
-                    if (y.id == 1268) { work.push_back(y.target); keys.insert(keys.end(), y.remapTo.begin(), y.remapTo.end()); }
-                    if (!ignT(y) && !modelledT(y)) unrun.push_back(&y);
-                }
-            }
-            for (const TrigDef* y : unrun)
-                for (const auto& kv : keys) if ((y->target == kv.first && y->target) || (y->center == kv.first && y->center)) other.insert(kv.second);
+            forSpawnRemap(sp, [&](const TrigDef& t, int g, bool) {
+                if (!ignT(t) && !modelledT(t)) other.insert(g);
+            });
         }
         // a trigger that is not run and acts on the group an Area Move trigger sits in (an Edit Area, a Pause / Resume, a Stop that is not plain ...) changes what that Area does to its objects:
         // those objects are not vouched for either. A plain Stop is run (fire() ends the Area); a Toggle of the group is read from the Area trigger's own counter.
@@ -893,30 +896,12 @@ public:
         std::set<int> r;
         const auto mover = [](int id) { return id == 901 || id == 1346 || id == 2067 || id == 3006 || id == 3008 || id == 1049 || id == 1594; };   // 1594: only a touch Toggle Block the live path told the shadow to run (setToggleBoxes) is modelled
         for (const TrigDef& t : trigs_) if (t.target && modelled_.count(t.uid) && mover(t.id)) r.insert(t.target);
-        // a Spawn with a group remap run in the shadow's own chain moves the NEW group of the key that names a spawned Move / Rotate / Scale's target (lv22: Spawn 17647 remap 100:100:443:0 over the
-        // chain of group 436 = Move target 100 -> group 443). The keys of the nested Spawns met on the way count as well (a superset, never less: the tests that follow decide per group).
+        // Include remapped Move / Rotate / Scale targets (lv22: Spawn 17647 remaps Move target 100 to 443).
         for (const TrigDef& sp : trigs_) {
             if (sp.id != 1268 || !sp.remapOk || sp.remapTo.empty()) continue;
-            RemapKeys keys = sp.remapTo;
-            std::set<int> seenG;
-            std::vector<int> work{sp.target};
-            std::vector<const TrigDef*> moved;
-            while (!work.empty()) {
-                const int g = work.back();
-                work.pop_back();
-                if (!seenG.insert(g).second) continue;
-                const auto m = members.find(g);
-                if (m == members.end()) continue;
-                for (size_t oi : m->second) {
-                    const auto ti = trigByUid_.find(objs[oi].uid);
-                    if (ti == trigByUid_.end()) continue;
-                    const TrigDef& y = trigs_[ti->second];
-                    if (y.id == 1268) { work.push_back(y.target); keys.insert(keys.end(), y.remapTo.begin(), y.remapTo.end()); }
-                    if (y.target && modelled_.count(y.uid) && mover(y.id)) moved.push_back(&y);
-                }
-            }
-            for (const TrigDef* y : moved)
-                for (const auto& kv : keys) if (y->target == kv.first) r.insert(kv.second);
+            forSpawnRemap(sp, [&](const TrigDef& t, int g, bool centre) {
+                if (!centre && modelledT(t) && mover(t.id)) r.insert(g);
+            });
         }
         return r;
     }
@@ -1287,16 +1272,73 @@ private:
     SharedConst<std::unordered_map<int, std::vector<int>>> spawnersOf_;   // trigger uid -> the Spawn triggers whose group holds it
     SharedConst<std::unordered_map<int, std::vector<long long>>> fireSteps_;   // trigger uid -> the steps the record has it called at
     using RemapKeys = std::vector<std::pair<int, int>>;   // (source group, target group), the first match of a source wins
+    // Coverage is conservative: follow both raw and remapped group calls, and close over aliases learned later.
+    // Native spawnObject remaps the next Spawn's target at 0x3228c6 before it calls updateRemapKeys at 0x3228ec.
+    template <class F> void forSpawnRemap(const TrigDef& root, F visit) const {
+        std::map<int, std::set<int>> aliases;
+        std::set<int> groups;
+        std::set<size_t> reached;
+        std::vector<int> work;
+        auto addGroup = [&](int g) { if (g > 0 && groups.insert(g).second) work.push_back(g); };
+        auto addKeys = [&](const RemapKeys& keys) {
+            for (const auto& [from, to] : keys)
+                if (from > 0 && to > 0 && aliases[from].insert(to).second && groups.count(from)) addGroup(to);
+        };
+        addKeys(root.remapTo);
+        addGroup(root.target);
+        while (!work.empty()) {
+            const int g = work.back(); work.pop_back();
+            const auto ai = aliases.find(g);
+            if (ai != aliases.end()) for (int to : ai->second) addGroup(to);
+            const auto m = members.find(g);
+            if (m == members.end()) continue;
+            for (size_t oi : m->second) {
+                const auto ti = trigByUid_.find(objs[oi].uid);
+                if (ti == trigByUid_.end() || !reached.insert(ti->second).second) continue;
+                const TrigDef& t = trigs_[ti->second];
+                if (t.id == 1268) { addGroup(t.target); addKeys(t.remapTo); }
+            }
+        }
+        for (size_t i : reached) {
+            const TrigDef& t = trigs_[i];
+            auto report = [&](int g, bool centre) {
+                if (g <= 0 || !aliases.count(g)) return;
+                std::set<int> seen{g};
+                std::vector<int> todo{g};
+                while (!todo.empty()) {
+                    const int from = todo.back(); todo.pop_back();
+                    const auto ai = aliases.find(from);
+                    if (ai == aliases.end()) continue;
+                    for (int to : ai->second) if (seen.insert(to).second) { visit(t, to, centre); todo.push_back(to); }
+                }
+            };
+            report(t.target, false);
+            report(t.center, true);
+        }
+    }
     struct PendingSpawn { int group = 0; int objUid = 0; bool ordered = false; double delay = 0, time = 0; bool done = false; int trigUid = 0; bool paused = false; RemapKeys remap; };   // trigUid: the Spawn trigger that made it (a Stop of its group erases it)   // objUid != 0: one trigger of an ordered spawn   // remap: the keys the call carries
     int curSpawnUid_ = 0;         // the Spawn trigger whose spawn is being done
-    // The remap keys of the spawn call that is running (GJBaseGameLayer::spawnGroup / spawnObject / triggerObject all carry a `remapKeys` argument). A Spawn trigger with a remap hands its own keys followed by the
-    // ones it was called with (SpawnTriggerGameObject::updateRemapKeys 0x65a140); a Spawn with none hands nothing down. A trigger a call spawns acts on the remapped groups (applyRemapKeys). Empty outside a spawn chain.
+    // Effective group map of the running call, empty outside a remapped spawn chain.
     RemapKeys curRemap_;
+    static int remappedGroup(int group, const RemapKeys& keys) {
+        for (const auto& kv : keys) if (group == kv.first) return kv.second;
+        return group;
+    }
+    static RemapKeys spawnRemapOf(const TrigDef& t, const RemapKeys& inherited) {
+        // GD Win 2.2091: 0x65a19a and 0x65a21b test Reset Remap even when the Spawn has no map of its own.
+        if (t.resetRemap == 1 || (t.resetRemap < 0 && t.remapTo.empty())) return t.remapTo;
+        RemapKeys keys = t.remapTo;
+        // 0x322ad0..0x322bf1 applies each key to the group's value left by the preceding key.
+        if (t.resetRemap == 0 && !inherited.empty())
+            for (auto& kv : keys) kv.second = remappedGroup(kv.second, inherited);
+        keys.insert(keys.end(), inherited.begin(), inherited.end());
+        return keys;
+    }
     static void applyRemapKeys(TrigDef& x, const RemapKeys& keys, bool remapMainObj) {
         const int ga0 = x.tmodctr > 0 ? x.tmodctr : x.target, center0 = x.center;
-        for (const auto& kv : keys) if (x.target == kv.first) { x.target = kv.second; break; }
-        for (const auto& kv : keys) if (x.center == kv.first) { x.center = kv.second; break; }
-        for (const auto& kv : keys) if (x.tmodctr == kv.first) { x.tmodctr = kv.second; break; }
+        x.target = remappedGroup(x.target, keys);
+        x.center = remappedGroup(x.center, keys);
+        x.tmodctr = remappedGroup(x.tmodctr, keys);
         if (remapMainObj) {
             if ((x.tmodctr > 0 ? x.tmodctr : x.target) != ga0) x.mvaCol = false;
             if (x.center != center0) x.ctrCol = false;
@@ -2395,8 +2437,7 @@ private:
             }
         } else if (t.id == 1268) {   // Spawn: no delay spawns its group now, a delay waits (spawnGroup of the effect manager 0x36c4f0)
             const float d = (float)((double)(float)t.sdelay - curOvershoot_);   // SpawnTriggerGameObject::triggerObject 0x65a240
-            RemapKeys keys;   // what the call it makes carries: its own keys, then the ones it was called with; nothing for a Spawn with no keys of its own
-            if (!t.remapTo.empty()) { keys = t.remapTo; keys.insert(keys.end(), curRemap_.begin(), curRemap_.end()); }
+            const RemapKeys keys = spawnRemapOf(t, curRemap_);
             if (!(d > 0.0f)) { const int keepSp = curSpawnUid_; const RemapKeys keepR = curRemap_; curSpawnUid_ = t.uid; curRemap_ = keys; spawnGroup(t.target, t.sordd, d < 0.0f ? -(double)d : 0.0); curRemap_ = keepR; curSpawnUid_ = keepSp; }
             else { PendingSpawn p; p.group = t.target; p.ordered = t.sordd; p.delay = (double)d; p.trigUid = t.uid; p.remap = keys; pendPush(p); }
         } else if (t.id == 3607) {   // Sequence (0x655c50): the count per remap key (the trigger's maps +0x758 last call [float, -1 none], +0x798 count), then the group of the list that holds that count
