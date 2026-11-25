@@ -46,6 +46,15 @@ inline bool levelAttemptDependent(std::string s, bool* keeps = nullptr) {
     return (w.unmodelled & levelwarn::kAttemptDependent) != 0;
 }
 
+// The level's kA42 for a level the play menu started (enterConfiguredLevel sets it for a level the mod names itself, and the menu's route never went through
+// there): levelsettings.txt then carries `reverseSync=` and dp reads the debt as known, as a cfg-driven solve's does. The string is the one attemptAutoForLevel reads.
+inline void reverseSyncForLevel(GJGameLevel* level) {
+    if (!level) return;
+    solver::g_levelReverseSync = levelHeaderReverseSync(level->m_levelType == GJLevelType::Main
+        ? std::string(LocalLevelManager::sharedState()->getMainLevelString(level->m_levelID.value()))
+        : std::string(level->m_levelString));
+}
+
 // cfg attemptauto for a level the play menu started: the same decision enterConfiguredLevel makes for a
 // level the mod names itself, from the level object the game is entering. Called after the session is
 // configured (its result file is open).

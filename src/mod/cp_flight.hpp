@@ -91,7 +91,7 @@ inline const std::vector<CamMem>& gameStateScalars() {
         CPF_GS(m_middlegroundSpeedY), CPF_GS(m_cameraAngle), CPF_GS(m_targetCameraAngle),
         CPF_GS(m_playerStreakBlend), CPF_GS(m_timeWarp), CPF_GS(m_queuedTimeWarp),
         CPF_GS(m_timeWarpRelated), CPF_GS(m_currentChannel), CPF_GS(m_rotateChannel),
-        CPF_GS(m_totalTime), CPF_GS(m_levelTime), CamMem{560, 8}, CPF_GS(m_commandIndex),
+        CPF_GS(m_totalTime), CPF_GS(m_levelTime), CPF_GS(m_bestTime), CPF_GS(m_commandIndex),
         CPF_GS(m_unkUint3), CPF_GS(m_currentProgress), CPF_GS(m_stepCommandIndex), CPF_GS(m_positionHistoryTime),
         CPF_GS(m_positionHistoryClock), CPF_GS(m_areaEffectCounter), CPF_GS(m_advancedFollowCounter),
         // two objects of the same layer, which a restore of the loop never re-creates
@@ -101,10 +101,10 @@ inline const std::vector<CamMem>& gameStateScalars() {
         CPF_GS(m_cameraEdgeValue1), CPF_GS(m_cameraEdgeValue2), CPF_GS(m_cameraEdgeValue3),
         CPF_GS(m_unkUint10), CPF_GS(m_positionHistoryIndex), CPF_GS(m_cameraHistorySlot), CPF_GS(m_cameraStepDiff),
         CPF_GS(m_backgroundWidth), CPF_GS(m_timeModRelated), CPF_GS(m_timeModRelated2),
-        CPF_GS(m_teleportCameraEaseTimer), CamMem{860, 8}, cameraLastPoint<GJGameState>(), CPF_GS(m_player1GoingSideways),
+        CPF_GS(m_teleportCameraEaseTimer), CPF_GS(m_lastCameraEase), cameraLastPoint<GJGameState>(), CPF_GS(m_player1GoingSideways),
         CPF_GS(m_player1GoingLeft), CPF_GS(m_audioOnDeath), CPF_GS(m_respawnTime), CPF_GS(m_noDeathSFX),
         CPF_GS(m_cameraShakeEnabled), CPF_GS(m_cameraShakeDuration), CPF_GS(m_cameraShakeStrength),
-        CPF_GS(m_cameraShakeInterval), CPF_GS(m_lastShakeTime), CamMem{912, 8},
+        CPF_GS(m_cameraShakeInterval), CPF_GS(m_lastShakeTime), CPF_GS(m_cameraShakeOffset),
         CPF_GS(m_dualRelated), CPF_GS(m_advancedFollowNeedsSort), CPF_GS(m_instantExitStaticCameraX), CPF_GS(m_instantExitStaticCameraY),
         CPF_GS(m_maxPortalY), CPF_GS(m_mainSongStopped), CPF_GS(m_background), CPF_GS(m_ground),
         CPF_GS(m_middleground), CPF_GS(m_unlinkDualGravity), CPF_GS(m_points), CPF_GS(m_hasObtainedPoints),
@@ -113,6 +113,13 @@ inline const std::vector<CamMem>& gameStateScalars() {
 #undef CPF_GS
     return v;
 }
+// The entries above that are still written as an offset (16 .. 232 and 268, every one an 8-byte CCPoint) are where they are on both platforms. The three that were 
+// written as 560, 860 and 912 are Windows offsets: on android64 (where GJGameState is 0x60 shorter before its containers) those bytes are a container's, and writing them
+// back corrupted a map the next assignment destroyed (cpRestoreState -> restoreCamera). They are named now; the asserts hold each number to what it was on Windows.
+static_assert(offsetof(GJGameState, m_cameraOffsetTarget) == 16 && offsetof(GJGameState, m_lastInternalCameraOffsetTarget) == 232 && offsetof(GJGameState, m_snapInternalCameraOffset) == 268);
+#if defined(GEODE_IS_WINDOWS) && GEODE_COMP_GD_VERSION >= 22091
+static_assert(offsetof(GJGameState, m_bestTime) == 560 && offsetof(GJGameState, m_lastCameraEase) == 860 && offsetof(GJGameState, m_cameraShakeOffset) == 912);
+#endif
 
 // ...and the layer's own: its camera scalars, its clocks, and what resetLevel re-arms -- found with cfg
 // cpflightlayerdiff on a custom level, where a restore that had everything above still let the camera part from

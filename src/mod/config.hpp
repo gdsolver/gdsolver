@@ -284,16 +284,6 @@ struct Config {
     // budget), while an actually-unsolvable wall still gives up in well under a minute of extra
     // wall clock rather than running unbounded.
     int dpMaxIters = 200;
-    // cfg `dptopstop=K` (0 = off): the same report, reached when the search has spent K rounds at
-    // its largest capacity (the last of kCapTiers) without getting deeper. Without it such a run
-    // is stopped by the harness' wall clock, and a round at that size is the slowest there is
-    // (SubZero 4002 spent 4,410 s on 20 of them and got nowhere). K is derived rather than
-    // chosen: over 129 SubZero cold logs, all 18 visits to the top tier that got deeper did so
-    // within 8 rounds -- nine of them on the way to clearing the level -- so K <= 8 would have
-    // cut one of those. Of the 28 visits that never got deeper, four stayed 12 to 60 rounds.
-    // A round count since the last new depth was measured too and rejected: 4003 has cleared 76
-    // rounds after its last new depth, which leaves no useful N.
-    int dpTopStop = 0;
     // cfg `dpcapenvrepeat=K` (default 3, 0 = off): from the K-th death of this run at the same wall (the same 4-tick bucket,
     // counted by g_deathRuns) the searches are asked for --capenvelope as well, until the run gets deeper. The cap
     // keeps a layer's states by a stride in layer order; the envelope keeps the extremes of each class first
@@ -308,12 +298,6 @@ struct Config {
     // nothing needs to take). A custom level dies 8+ times in a row at a wall whose cause is the
     // spider branch taken at a cube portal 2,000 ticks earlier, while every rung of the ladder finds some tail.
     int dpMissedPortalRepeat = 3;
-    // cfg `dpportalwalk` (off; 1 = on): the missed-portal question walks BACK. missedPortalTick names the newest portal the run
-    // crossed without coming out in its mode -- the one nearest the wall, which on a wave level is often a portal the route
-    // could never take (a custom level-style: ten rounds in a row forced the same ball portal 200 ticks before the wall). With this
-    // on, a portal that was forced and did not move the wall (the deepest death within kPortalWalkProgress ticks of the wall
-    // it was forced at) is not named again, and the next older one is.
-    bool dpPortalWalk = false;
     // cfg `dpcaptiers=0` (1 = on, the default): escalate() skips the capacity tiers (kCapTiers in
     // repair.hpp), so the restart from the start comes next and runs at the base setting instead
     // of inheriting the top tier's 40,000 states for the whole level. Asked because, over the
@@ -729,11 +713,6 @@ struct Config {
     // (--pinrows, built from the anchor source's x column in addWorldArgs): a Teleport trigger a Spawn loop fires
     // again every tick, onto a target something is moving. The model fires a teleport trigger once, at its crossing.
     bool dpPin = false;
-    // cfg `dppinx` (OFF): the same, for a spot GD holds only in x (a Spawn / Item Compare loop firing an ignore-Y teleport every tick: x stays,
-    // y and vy are the physics' own), handed over as `tick,x` rows (dp --pinrows, repair.hpp pinRowsAgreed). A tick is pinned only where x is
-    // constant AND identical in two finished attempts that played DIFFERENT plans -- GD's own evidence that the inputs do not move it; one
-    // recording is never enough. The pinned span and the two attempts are printed (`[pinx]`).
-    bool dpPinX = false;
     // cfg `dptap` (OFF): on a two-player level, press the second player's button a few ticks after the first player's plan passes a Tap trigger
     // (dp --p2tappress): what the Tap opens is not in the level data, so the press is made blind and the game's own recording of the attempt
     // shows the door to every later call.
@@ -763,9 +742,6 @@ struct Config {
     bool dpPortalObbMode = true;
     // cfg `dpcrossminlag` (1 since 2026-10-22; was 3, which stuck the official lv22): ticks late below which a crossing under --statecross reads the leader's date (dp --crossminlag). Measured on a long ship/wave level: 1 clears in 349-381 s (16 rounds, no model re-anchor), 2 in 855 s, 3 in 667 s; on the official lv20 1 takes 19 rounds against 10, and on a custom level it stops at two same-tick deaths.
     long long dpCrossMinLag = 1;
-    // cfg `dpbirthrung` (OFF): on a two-player level, a death after a dual portal made the second body is first tried again from an anchor 3 ticks after that birth, where the anchor has the
-    // second body and the search is the two-body one (the first body's pass, then the second's against it); a rung of its own, tried once per wall, before the usual back-off.
-    bool dpBirthRung = false;
     // cfg `dpwidefirst` (ON; dpwidefirst=0 is the off arm): once per run, before the first section solve (the dpsecauto rule's why and escalate()'s dpsecfirst), solve the level again from the start in one search at the plain cap (--cap, no --capladder) over the
     // whole level; the deepest verified plan is kept. The ladder raises the cap only around the wall, and a branch that a small cap dropped far ahead of it (a slow-speed lane: behind in x at the same tick) is not there for it.
     // a custom level (custom): every cold since 11-20 stands at the wall t=12071; the 10-21 clear took the slow lane (82..92 ticks later at every x past 3200).
@@ -1168,15 +1144,13 @@ struct Config {
     // and the loop's deepest-first takes that as progress until a catch at the end of the stretch
     // kills it.
     bool voidBand = true;
+    // cfg wallkeyself (default on since 2026-11-25; 0 = the off arm, the old key): a death the mod caused itself (the player is its own killer: a coin cut, the stall guard, the stop directive) names its
+    // reason in the wall key -- `self/coin<uid>/...` for a coin the attempt cannot get, `self/<why>/.../s<section>` for the others -- instead of the dummy uid 1
+    // every one of them shares, which put two different coins' cuts, thousands of ticks apart, at one wall.
+    bool wallKeySelf = true;
     // cfg voidcredit (default off): a closed void run that also wedges credits the tick it began as the depth to beat (repair.hpp,
     // voidCredit): GD flew the plan alive to there, and a wedge never ranks, so without it the loop rewinds past that ground.
     bool voidCredit = true;   // on by default (release flags, 2026-10-17); cfg voidcredit=0 is the off arm
-    // cfg dpheadguard (default off): two guards for an attempt that does not start at the level's head. (1) A reset that checkpoint flight (cp_flight) asked for as 'flying the plan
-    // from the head' is never skipped by singlereset: its restore had failed and left the body where the last attempt ended, and 'no physics since the last reset' is then the
-    // restore's doing, not the head's (lv22 R14, 2026-11-04: attempt 30 began at x=3106.5 and died at t=21). (2) harvestGroups' groupsretime does not replace the kept
-    // recording with one that parted from it at its very first ticks: that is an attempt that began somewhere else, not a recording on another clock (the same run: a 22-tick
-    // record replaced 3.2 MB of the real one).
-    bool dpHeadGuard = false;
     // cfg dpsecfirst (default off; needs dpsecauto): when the ladder finds no anchor, the section solve is the FIRST escalation, ahead of the doors the search has not entered, the
     // whole-level horizon, the released doors and the no-death re-recording (repair.hpp escalate). Each of those re-runs the whole anchor ladder (lv22 R11, 2026-11-04: five
     // passes of 88 to 219 s at the wall t=2824, 1,500 s of a 2,301 s run), and the wall was then crossed by the section solve (secsolve SOLVED in 31 s from t=2624, foundX 4087)
@@ -1261,6 +1235,7 @@ struct Config {
     // every S ticks, and a plan whose inputs agree with an earlier attempt's up to one of them flies
     // from it instead of from tick 0 (mod/cp_flight.hpp).
     int cpFlight = 600;
+    // (A MEASURING INSTRUMENT, not a solving switch: it compares a checkpoint flight with a flight from the head and books nothing.)
     // cfg `cpflightprobe=1` (with cpflight=S): the loop keeps flying from the head, and each death
     // is flown again from its own latest checkpoint while the solve runs and compared with the head
     // flight (`cpflight: probe` lines). Print only.

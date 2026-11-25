@@ -1544,6 +1544,44 @@ inline bool g_incAnchor = true;
 // --incplacecheck (off): every incremental placement is also made the plain way from the same starting
 // state, and the two are compared byte for byte (objects, prevCy, on). The plain result is the one kept.
 inline bool g_incCheck = false;
+// TEST ONLY (the positive control of --incplacecheck): env DP_INCNARROW=e0,e1,u0,u1,d0,d1,k0,k1 takes one tick off that margin of the spans below (e/u/d: the slot's active
+// spans, k: the quiet touch boxes' clear margin of sqGateAnchored's window). A margin that is needed shows as a disagreement of the check; unset = the margins as derived.
+inline std::array<int, 8> incNarrowInit() {
+    std::array<int, 8> r{};
+    static const char* const names[8] = {"e0", "e1", "u0", "u1", "d0", "d1", "k0", "k1"};
+    const char* e = std::getenv("DP_INCNARROW");   // `name` = 1 tick, `name=N` = N ticks
+    if (!e) return r;
+    const std::string s = e;
+    size_t p = 0;
+    while (p < s.size()) {
+        size_t q = s.find(',', p);
+        if (q == std::string::npos) q = s.size();
+        const std::string tok = s.substr(p, q - p);
+        const size_t eq = tok.find('=');
+        const std::string nm = tok.substr(0, eq);
+        const int n = eq == std::string::npos ? 1 : std::atoi(tok.c_str() + eq + 1);
+        for (int i = 0; i < 8; ++i) if (nm == names[i]) r[(size_t)i] = n;
+        p = q + 1;
+    }
+    return r;
+}
+inline const std::array<int, 8> g_incNarrow = incNarrowInit();
+// The margins of the incremental placement's spans (incAddSlot, incPRecompute, sqGateAnchored's K2 window), each written as the reads it adds to the row or date it hangs
+// from. The sums are the numbers these places used to carry; the terms say where each comes from:
+constexpr int kReadEdge = 1;     // a row's edge is read a tick either side (the interpolation takes the row before, the extension the one after)
+constexpr int kReadPrev = 1;     // the previous-place pass places at t - 1: the tick after a change holds it as its previous place
+constexpr int kReadSettle = 1;   // dcy / prevCy settle a tick after the last change
+// MEASURED (2026-11-26, T220 O2; tools/check_getenv.py's DP_INCNARROW / DP_INCLOG, --incplacecheck over the official 22 levels, 1,119 calls, 824,272 ticks): a margin cut by 1
+// or by 3 ticks (e0, e1, u0, u1, d0, d1, k0, k1) disagrees with the plain placement only for d1, the date span's late end (F + 3 cut to F + 0: 2,107 disagreements; cut to F + 1:
+// none). e0, e1, u0, u1, d0 and the K2 margins show nothing even cut by 10 ticks: the official corpus does not show them NEEDED, which is not the same as showing them loose
+// (another span, a force or a switch may cover them there), so none is narrowed.
+constexpr int kSpanEdgeLo = kReadEdge;                            // e0: the first row's tick - 1
+constexpr int kSpanEdgeHi = kReadEdge + kReadPrev;                // e1: the first row's tick + 2
+constexpr int kSpanRowsLo = 2 * kReadEdge;                        // u0 and the dates' row stretch: the second row's tick - 2 (the row before it, and its edge)
+constexpr int kSpanRowsHi = kReadEdge + kReadPrev + kReadSettle;  // u1, d1: the last row's (or the fire tick's) tick + 3
+constexpr int kSpanDateLo = 2 * kReadEdge;                        // d0: the fire tick - 2
+// K2's window (sqGateAnchored): the tick must be this far inside the first row's stretch. The tail is the same three reads; the lead is one more (the stretch's own first row).
+constexpr int kK2Lead = 3 * kReadEdge + kReadPrev, kK2Tail = kReadEdge + kReadPrev + kReadSettle;
 // Bumped by the CLI after the per-call fills of the purity-relevant vectors (areaArmed, armDep), so an index
 // built for a cached Level under the last call's fills is rebuilt.
 inline uint64_t g_dynPlaceGen = 1;
@@ -2399,7 +2437,7 @@ struct Dynamics {
         if (!sq.trBox.empty()) {
             const FireTicks fireB(fireBRaw, fireSink);
             for (const Quiet::TrBox& B : sq.trBox) {
-                bool ok = (long long)t >= (long long)B.t0 + 4 && (long long)t + 3 < (long long)B.r1;
+                bool ok = (long long)t >= (long long)B.t0 + kK2Lead - g_incNarrow[6] && (long long)t + kK2Tail - g_incNarrow[7] < (long long)B.r1;
                 if (ok && mask.test(B.box)) ok = fireB && (long long)t - (long long)fireB[(size_t)B.box] + 3 < B.q;
                 for (size_t q = 0; ok && q < B.sw.size(); ++q) {
                     const int b = B.sw[q];
@@ -4811,9 +4849,9 @@ struct Dynamics {
         s.rows = trigRecFire[i] >= 0 && sm.size() > 1;
         s.rowT1 = sm.size() > 1 ? sm[1].t : sm[0].t;
         s.rowTL = sm.back().t;
-        s.e0 = sm[0].t - 1;
-        s.e1 = sm[0].t + 2;
-        if (sm.size() > 1) { s.u0 = sm[1].t - 2; s.u1 = sm.back().t + 3; }
+        s.e0 = sm[0].t - kSpanEdgeLo + g_incNarrow[0];
+        s.e1 = sm[0].t + kSpanEdgeHi - g_incNarrow[1];
+        if (sm.size() > 1) { s.u0 = sm[1].t - kSpanRowsLo + g_incNarrow[2]; s.u1 = sm.back().t + kSpanRowsHi - g_incNarrow[3]; }
         s.p0 = (uint32_t)inc.pPartTrig.size();
         if (autoParts[i].empty()) {
             inc.pPartTrig.push_back(s.anchor);
@@ -4862,26 +4900,26 @@ struct Dynamics {
         int lo = INT_MAX, hi = INT_MIN;
         const int F = g_autoTrig[(size_t)s.anchor].fireT;
         if (F >= 0) {
-            lo = F - 2;
-            hi = F + 3;
+            lo = F - kSpanDateLo;
+            hi = F + kSpanRowsHi;
             if (s.rows) {
                 const size_t o = s.obj;
                 int recAnchor = trigRecFire[o] - (o < autoLag.size() ? autoLag[o] : recLag[o]);
                 if (o < anchorUnrec.size() && anchorUnrec[o]) recAnchor = F;
                 else if (o < recAnchorX.size() && recAnchorX[o] >= 0) recAnchor = recAnchorX[o];
                 const int shift = F - recAnchor;
-                lo = std::min(lo, s.rowT1 + shift - 2);
-                hi = std::max(hi, s.rowTL + shift + 3);
+                lo = std::min(lo, s.rowT1 + shift - kSpanRowsLo);
+                hi = std::max(hi, s.rowTL + shift + kSpanRowsHi);
             }
         }
         for (uint32_t q = s.p0; q < s.p1; ++q) {
             const int f = g_autoTrig[(size_t)inc.pPartTrig[q]].fireT;
             if (f < 0) continue;
-            lo = std::min(lo, f - 2);
+            lo = std::min(lo, f - kSpanDateLo);
             hi = std::max(hi, f + inc.pPartDur[q]);
         }
-        s.d0 = lo;
-        s.d1 = hi;
+        s.d0 = lo == INT_MAX ? lo : lo + g_incNarrow[4];
+        s.d1 = hi == INT_MIN ? hi : hi - g_incNarrow[5];
     }
     // every object has just been placed under the current dates
     void incPSyncAll() {

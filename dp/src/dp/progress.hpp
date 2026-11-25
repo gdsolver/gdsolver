@@ -397,6 +397,7 @@ struct SearchOutcome {
     // it chose did not move, call by call.
     std::string ladder;
     std::string camy;   // --camy: the call's camera counters, one line (cam_y_obs.hpp camySummary), for the mod to relay (dp's printf does not reach result.txt)
+    std::string shstep;   // --shadowstep: the call's tick counts (eligible / stepped / declined by cause), one line (shadow_step.hpp shadowStepSummary), for the mod to relay; observation only
     // This call wrote its plan file (--out), and the trace beside it. An early return and a
     // cancelled search write neither, and a ladder's files then still hold the search before.
     bool planWritten = false;
@@ -435,6 +436,7 @@ struct SearchOutcome {
         unsupported.clear();
         ladder.clear();
         camy.clear();
+    shstep.clear();
         dumpT = -1;
         dumpStart.clear();
         startStateT = -1;

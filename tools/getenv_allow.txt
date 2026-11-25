@@ -42,3 +42,6 @@ dp/src/dp/trigshadow_live.hpp	const char* dbgUid = std::getenv("TSEV_UID");   //
 dp/src/dp/trigshadow_live.hpp	if (const char* tp = std::getenv("TSGD_TYPEOUT")) { std::ofstream tf(tp); tf << "uid,A,B,C,S,N,n1,n2,n3,m1,m2,m3,max_d0_milli,sum_d0_milli,covered,shadow_far,shadow_far_max_milli,both_far\n"; for (const auto& kv : tyUid) { tf << kv.first; for (int k = 0; k < 17; ++k) tf << ',' << kv.second[(size_t)k]; tf << '\n'; } }
 # dp/src/dp/shadow_step.hpp: EVDUMP is read in a static initializer (once per process)
 dp/src/dp/shadow_step.hpp	const char* e = std::getenv("EVDUMP");
+# dp/src/dp/cli.hpp, dynamics.hpp: the test knobs of the incremental placement (T220 O2); read once per process / once per call, never per step
+dp/src/dp/cli.hpp	if (const char* lg = std::getenv("DP_INCLOG"))   // test only: the totals of every call, for a corpus run that discards stdout
+dp/src/dp/dynamics.hpp	const char* e = std::getenv("DP_INCNARROW");   // `name` = 1 tick, `name=N` = N ticks

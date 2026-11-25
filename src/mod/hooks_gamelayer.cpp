@@ -2529,12 +2529,12 @@ class $modify(GJBaseGameLayer) {
             // which bounds the query's walk.
             for (auto& [o, last] : s_objs) {
                 const auto* ob = reinterpret_cast<const uint8_t*>(o);
-                const int b305 = ob[0x305], b28e = ob[0x28e];
+                const int b305 = ob[gdoff::kObjIsActivated], b28e = ob[gdoff::kObjGroupDisabled];
                 // the slot and the live count of its section (removeObjectFromSection: +0x278 / +0x27c /
                 // +0x270; staticObjectsInRect: counts at layer+0x3658, sections at layer+0x35b0)
-                const int outer = *reinterpret_cast<const int*>(ob + 0x278);
-                const int inner = *reinterpret_cast<const int*>(ob + 0x27c);
-                const int slot = *reinterpret_cast<const int*>(ob + 0x270);
+                const int outer = *reinterpret_cast<const int*>(ob + gdoff::kObjOuterSectionIndex);
+                const int inner = *reinterpret_cast<const int*>(ob + gdoff::kObjMiddleSectionIndex);
+                const int slot = *reinterpret_cast<const int*>(ob + gdoff::kObjSomeOtherIndex);
                 int liveCount = -1;
                 {
                     const auto* lb = reinterpret_cast<const uint8_t*>(this);
@@ -2672,8 +2672,8 @@ class $modify(GJBaseGameLayer) {
     }
     // The object's collision section cell, x and y (GJBaseGameLayer::updateObjectSection 0x227f50
     // compares (int)(scale * m_positionX / Y) with these two and re-buckets on a difference).
-    static int& sectionCellX(GameObject* o) { return *reinterpret_cast<int*>(reinterpret_cast<char*>(o) + 0x278); }
-    static int& sectionCellY(GameObject* o) { return *reinterpret_cast<int*>(reinterpret_cast<char*>(o) + 0x27c); }
+    static int& sectionCellX(GameObject* o) { return *reinterpret_cast<int*>(reinterpret_cast<char*>(o) + gdoff::kObjOuterSectionIndex); }
+    static int& sectionCellY(GameObject* o) { return *reinterpret_cast<int*>(reinterpret_cast<char*>(o) + gdoff::kObjMiddleSectionIndex); }
 
     // The state GD's checkpoint does not carry, taken where the physics stands.
     void cpCaptureState(PlayLayer* pl, cpflight::Rec& r) {
@@ -3132,7 +3132,7 @@ class $modify(GJBaseGameLayer) {
                 cocos2d::CCArray* a = kind == 0 ? staticObjectsInRect(q, true) : damagingObjectsInRect(q, true);
                 if (!a) continue;
                 for (auto* o : CCArrayExt<GameObject*>(a)) {
-                    if (!o || !reinterpret_cast<const uint8_t*>(o)[0x28e]) continue;
+                    if (!o || !reinterpret_cast<const uint8_t*>(o)[gdoff::kObjGroupDisabled]) continue;
                     any = true;
                     auto& e = c.objs[o->m_uniqueID];
                     if (e.first < 0) {
@@ -3733,8 +3733,8 @@ class $modify(GJBaseGameLayer) {
             {"m_disabledObjects", [&] { return (long long)this->m_disabledObjects.size(); }},
             {"m_areaObjects", [&] { return (long long)this->m_areaObjects.size(); }},
             {"m_processedAreaObjects", [&] { return (long long)this->m_processedAreaObjects.size(); }},
-            {"m_visibleObjects", [&] { return (long long)gdraw::at<std::vector<GameObject*>>(static_cast<GJBaseGameLayer*>(this), 3768).size(); }},
-            {"m_visibleObjects2", [&] { return (long long)gdraw::at<std::vector<GameObject*>>(static_cast<GJBaseGameLayer*>(this), 3800).size(); }},
+            {"m_visibleObjects", [&] { return (long long)static_cast<GJBaseGameLayer*>(this)->m_linkedVisibleObjects.size(); }},
+            {"m_visibleObjects2", [&] { return (long long)static_cast<GJBaseGameLayer*>(this)->m_lastLinkedVisibleObjects.size(); }},
             {"m_groups", [&] { return (long long)this->m_groups.size(); }},
             {"m_staticGroups", [&] { return (long long)this->m_staticGroups.size(); }},
             {"m_sections", [&] { return (long long)this->m_sections.size(); }},
@@ -7310,7 +7310,7 @@ class $modify(GJBaseGameLayer) {
                 if (g_tick == solver::g_cpEndTick && !m_player1->m_isDead) {
                     // Observation done. If still alive, kill and advance to the next attempt
                     if (auto* pl = PlayLayer::get())
-                        pl->destroyPlayer(m_player1, m_player1);
+                        { solver::g_selfKillWhy = "cprobe"; pl->destroyPlayer(m_player1, m_player1); }
                 }
             }
         }
@@ -7378,7 +7378,7 @@ class $modify(GJBaseGameLayer) {
                 writeResult(sb);
                 g_stopFired = true;   // never twice per attempt (the directive itself is kept)
                 if (auto* pl = PlayLayer::get())
-                    pl->destroyPlayer(m_player1, m_player1);
+                    { solver::g_selfKillWhy = "stop"; pl->destroyPlayer(m_player1, m_player1); }
             }
         }
         // Observing the trigger of automatic checkpoint placement (cfg `ckpttrace=1`).
@@ -7549,7 +7549,7 @@ class $modify(GJBaseGameLayer) {
                 writeResult(ob2);
                 g_verdict = AttemptVerdict{AttemptEnd::Overlong, g_attempt, (long long)g_tick};   // what ended this attempt, for dpsolve::onDeath of the same attempt (config.hpp)
                 if (auto* pl = PlayLayer::get()) {
-                    pl->destroyPlayer(m_player1, m_player1);
+                    { solver::g_selfKillWhy = "overlong"; pl->destroyPlayer(m_player1, m_player1); }
                     g_stallResetPending = true;
                 }
             }
@@ -7570,7 +7570,7 @@ class $modify(GJBaseGameLayer) {
                 g_verdict = AttemptVerdict{(g_tick - s_stallSince >= 3000 && !endzoneGrace) ? AttemptEnd::StallStill : AttemptEnd::EndzoneHung, g_attempt, (long long)s_stallSince};
                 s_stallSince = -1;
                 if (auto* pl = PlayLayer::get()) {
-                    pl->destroyPlayer(m_player1, m_player1);
+                    { solver::g_selfKillWhy = "still"; pl->destroyPlayer(m_player1, m_player1); }
                     // ...and destroyPlayer alone is NOT a guarantee, so a reset is
                     // forced as well. In the glitch state this guard exists for,
                     // the level believes itself finished and GD's destroy books the
@@ -7760,7 +7760,7 @@ class $modify(GJBaseGameLayer) {
                 solver::g_coinMissFired = true;   // once per attempt, however GD answers
                 solver::g_coinMissIdx = (int)i;
                 if (g_cfg.dpSolve) dpsolve::g_coinMissPending = true;   // only onDeath reads it
-                if (auto* pl = PlayLayer::get()) pl->destroyPlayer(m_player1, m_player1);
+                if (auto* pl = PlayLayer::get()) { solver::g_selfKillWhy = "coin" + std::to_string(c.uid); pl->destroyPlayer(m_player1, m_player1); }
                 break;
             }
         }
@@ -7811,7 +7811,7 @@ class $modify(GJBaseGameLayer) {
                 writeResult(mb);
                 solver::g_coinMissFired = true;   // once per attempt, as the miss above
                 if (g_cfg.dpSolve) dpsolve::g_coinMissPending = true;
-                if (auto* pl = PlayLayer::get()) pl->destroyPlayer(m_player1, m_player1);
+                if (auto* pl = PlayLayer::get()) { solver::g_selfKillWhy = "coingate" + std::to_string(g.uid); pl->destroyPlayer(m_player1, m_player1); }
                 break;
             }
         }
@@ -8300,7 +8300,11 @@ class $modify(GJBaseGameLayer) {
                 if (v == 0) return -1;
                 if (v < 0x10000 || (v & 7) != 0 || v > 0x00007fffffffffffull) return -2;
                 int uid = -2;
+#ifdef GEODE_IS_WINDOWS
                 __try { uid = (int)reinterpret_cast<GameObject*>(v)->m_uniqueID; } __except (1) { uid = -2; }
+#else
+                (void)v;   // no SEH on Android: a pointer that may be stale is not followed
+#endif
                 return uid;
             };
             auto uidOf = [](GameObject* o) { return o ? (int)o->m_uniqueID : -1; };
@@ -8318,8 +8322,8 @@ class $modify(GJBaseGameLayer) {
                  << ',' << uidOf(static_cast<GameObject*>(p->m_objectSnappedTo))
                  // ...and the words around the slope pointer (+0x668..+0x680, each read as an object pointer: its uid, -1 null, -2 not an object) and the byte at +0x671: the model's
                  // preSlopeCollision keeps a ramp in its po::Cf across ticks (collide.hpp, +0x678); a custom level t=5082 needs to know whether the game's word is still set at the tick start
-                 << ',' << rawObjUid(p, 0x668) << ',' << rawObjUid(p, 0x670) << ',' << rawObjUid(p, 0x678) << ',' << rawObjUid(p, 0x680)
-                 << ',' << (int)*(reinterpret_cast<unsigned char*>(p) + 0x671)
+                 << ',' << rawObjUid(p, gdoff::kPlayerDashFireSprite) << ',' << rawObjUid(p, gdoff::kPlayerIsBallRotating) << ',' << rawObjUid(p, gdoff::kPlayerCurrentPotentialSlope) << ',' << rawObjUid(p, gdoff::kPlayerCurrentSlope)
+                 << ',' << (int)*(reinterpret_cast<unsigned char*>(p) + gdoff::kPlayerNoPotentialSlope)
                  << '\n';
         }
     }

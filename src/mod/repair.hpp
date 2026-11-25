@@ -483,7 +483,7 @@ inline void record(GJBaseGameLayer* l, long long t) {
     // points back: GD -0.0, the old form -0.81; the three the clamp already holds).
     r.dashSlope = 0.f;
     if (r.dashing && p->m_dashRing)
-        r.dashSlope = (float)*reinterpret_cast<double const*>(reinterpret_cast<char const*>(p) + 0x578);
+        r.dashSlope = (float)*reinterpret_cast<double const*>(reinterpret_cast<char const*>(p) + gdoff::kPlayerDashY);
     // p2's by its ring's uid: the hist payload carries integers, and dp rebuilds the slope from
     // that ring's angle as its own dash start does.
     if (r.dual && l->m_player2 && l->m_player2->m_isDashing) {
@@ -1136,7 +1136,6 @@ inline std::string g_ladderAnswers;      // the ladder of the job in flight (wri
 inline std::string g_exhaustedAnswers;   // ...and of the last ladder that found no anchor
 // cfg dpsearch: the run has said which search answers its calls, and why a chosen one was not used (baseArgs); once per run.
 inline bool g_searchNoted = false;
-inline int g_topTierIter = 0;  // the round the ladder reached its last tier (cfg dptopstop)
 // MEASURED AND REJECTED (2026-08-23): the driver retries a doomed anchor with more capacity on
 // a coarser grid (16,000 then 40,000 states, yq 0.5 / vq 2.5), and that ladder is what carries
 // lv16 there. Ported here it cost 4-20x and changed no outcome:
@@ -1484,7 +1483,7 @@ inline bool g_showRequest = false;
 //              itself a moving part: you cannot record past a wall you cannot pass, and you
 //              cannot pass it without the recording.
 //   Deep       the deepest verified plan, later, to record what THAT route sets in motion.
-enum RecordKind { RecNone = 0, RecBootstrap = 1, RecDeep = 2, RecProbe = 3, RecPinProbe = 4 };
+enum RecordKind { RecNone = 0, RecBootstrap = 1, RecDeep = 2, RecProbe = 3 };
 inline int g_recordKind = RecNone;
 inline bool g_recordRequest = false;
 // The `killer:` lines the bootstrap pass did not write (hooks_playlayer.cpp destroyPlayer): a no-death pass swallows every kill, so the
@@ -2792,117 +2791,6 @@ inline std::string pinRowsText(const std::vector<AnchorRow>& v) {
 // The no-death pass's own recording (the first call has no finished attempt to read): set when that pass is adopted (finishDeepRecord), cfg dppin only.
 inline std::string g_bootPinRows;
 
-// cfg `dppinx`: x held by the level, shown by two attempts that played different inputs.
-// An attempt's x column and the button edges it played, kept per distinct plan (the longer record wins); the pin rows are the ticks where x is held in
-// one of them (its own neighbour's, a run of three or more) AND the same in another whose edges up to that span's end are not the same.
-// A held stretch shorter than this is the physics' or an ordinary trigger's (a wall, a stop portal), not a level that re-sets x every tick; the probe
-// pass also ignores a stretch that runs to the end of the recording (the end zone, or a stall guard cutting the pass).
-constexpr size_t kPinXMinRun = 120;
-constexpr size_t kPinXTail = 300;
-inline bool pinStillStretch(const std::vector<AnchorRow>& v) {
-    size_t run = 0;
-    for (size_t t = 1; t < v.size(); ++t) {
-        if (v[t].valid && v[t - 1].valid && std::fabs(v[t].x - v[t - 1].x) < 1e-3f) ++run;
-        else {
-            if (run >= kPinXMinRun && t + kPinXTail < v.size()) return true;
-            run = 0;
-        }
-    }
-    return false;   // (a stretch still running at the end of the rows is not counted)
-}
-struct PinRun {
-    std::string plan, tag;
-    std::vector<InputCmd> edges;
-    std::vector<float> x;
-};
-inline std::vector<PinRun> g_pinRuns;
-inline std::string g_pinxSaid;
-inline void pinRunNote(const std::vector<InputCmd>& plan, const char* tag, const std::vector<AnchorRow>& v) {
-    if (!g_cfg.dpPinX) return;
-    writeResult(std::string("dpsolve:   [pinx] run ") + tag + ": " + std::to_string(v.size()) + " ticks, " + std::to_string(plan.size()) + " input edges");
-    if (v.size() < 8) return;
-    PinRun r;
-    r.plan = planFnv(plan);
-    r.tag = tag;
-    r.edges = plan;
-    r.x.assign(v.size(), std::numeric_limits<float>::quiet_NaN());
-    for (size_t t = 0; t < v.size(); ++t)
-        if (v[t].valid) r.x[t] = v[t].x;
-    for (PinRun& e : g_pinRuns)
-        if (e.plan == r.plan) {
-            if (r.x.size() > e.x.size()) e = std::move(r);
-            return;
-        }
-    if (g_pinRuns.size() >= 8) g_pinRuns.erase(g_pinRuns.begin() + std::min<size_t>(2, g_pinRuns.size() - 1));   // keep the first two (the passes), drop the oldest after them
-    g_pinRuns.push_back(std::move(r));
-}
-// Do the two edge lists differ at or before `upTo`?
-inline bool pinEdgesDiffer(const std::vector<InputCmd>& a, const std::vector<InputCmd>& b, long long upTo) {
-    size_t i = 0, j = 0;
-    for (;;) {
-        const bool ia = i < a.size() && a[i].step <= upTo, jb = j < b.size() && b[j].step <= upTo;
-        if (!ia && !jb) return false;
-        if (ia != jb) return true;
-        if (a[i].step != b[j].step || a[i].down != b[j].down || a[i].p2 != b[j].p2) return true;
-        ++i; ++j;
-    }
-}
-inline std::set<long long> g_pinxTicks;   // the ticks the last pinRowsAgreed pinned
-inline std::string pinRowsAgreed() {
-    g_pinxTicks.clear();
-    if (g_pinRuns.size() < 2) return std::string();
-    std::map<long long, float> rows;
-    std::string who;
-    for (size_t i = 0; i < g_pinRuns.size(); ++i)
-        for (size_t j = i + 1; j < g_pinRuns.size(); ++j) {
-            const PinRun& A = g_pinRuns[i];
-            const PinRun& B = g_pinRuns[j];
-            if (A.plan == B.plan) continue;
-            const size_t n = std::min(A.x.size(), B.x.size());
-            auto ok = [&](size_t t) { return t < n && !std::isnan(A.x[t]) && !std::isnan(B.x[t]) && std::fabs(A.x[t] - B.x[t]) < 1e-3f; };
-            auto held = [&](size_t t) {
-                return ok(t) && ((t > 0 && ok(t - 1) && std::fabs(A.x[t] - A.x[t - 1]) < 1e-3f)
-                                 || (ok(t + 1) && std::fabs(A.x[t] - A.x[t + 1]) < 1e-3f));
-            };
-            std::vector<size_t> run;
-            auto flush = [&]() {
-                // (a stretch that runs to the end of either recording is not evidence of a hold: the end zone, or a stall guard cutting the attempt)
-                if (run.size() >= kPinXMinRun && run.back() + 3 < A.x.size() && run.back() + 3 < B.x.size()
-                    && pinEdgesDiffer(A.edges, B.edges, (long long)run.back())) {
-                    for (const size_t tt : run) rows[(long long)tt] = A.x[tt];
-                    who += " [" + A.tag + " " + A.plan + " / " + B.tag + " " + B.plan + ": " + std::to_string(run.front()) + ".."
-                           + std::to_string(run.back()) + " x=" + std::to_string((double)A.x[run.front()]) + "]";
-                }
-                run.clear();
-            };
-            for (size_t t = 1; t < n; ++t) {
-                if (held(t)) run.push_back(t);
-                else flush();
-            }
-            flush();
-        }
-    // ...and no recorded attempt may disagree: a tick where ANY attempt that reached it was not on the pinned x is not pinned (an input pattern
-    // that frees the player is a pattern the pair above did not play). The attempts that died earlier say nothing past their death.
-    for (auto it = rows.begin(); it != rows.end();) {
-        bool bad = false;
-        for (const PinRun& R : g_pinRuns) {
-            const size_t t = (size_t)it->first;
-            if (t < R.x.size() && !std::isnan(R.x[t]) && std::fabs(R.x[t] - it->second) >= 1e-3f) { bad = true; break; }
-        }
-        it = bad ? rows.erase(it) : std::next(it);
-    }
-    g_pinxTicks.clear();
-    for (const auto& kv : rows) g_pinxTicks.insert(kv.first);
-    if (rows.empty()) return std::string();
-    std::string out;
-    for (const auto& kv : rows) out += std::to_string(kv.first) + "," + std::to_string((double)kv.second) + "\n";
-    if (who != g_pinxSaid) {
-        g_pinxSaid = who;
-        writeResult("dpsolve:   [pinx] x held by the level on " + std::to_string(rows.size()) + " ticks, identical in attempts that played different "
-                    "inputs:" + who);
-    }
-    return out;
-}
 // cfg dpswitch (see the probe passes below): the table written for the body whose presses moved the world, and whose
 inline std::string g_switchTablePath;
 inline int g_switchTableBody = 2;
@@ -3103,17 +2991,6 @@ inline void addWorldArgs(std::vector<std::string>& a) {
     // call, with no finished attempt -- from the no-death pass's own recording (g_bootPinRows).
     if (g_cfg.dpPin) {
         const std::string rowsTxt = (n > 1) ? pinRowsText(*anchors::g_src) : g_bootPinRows;
-        if (!rowsTxt.empty()) {
-            const std::string pp = std::string(DATA_DIR) + "/dp_pin.txt";
-            std::ofstream pf(pp, std::ios::trunc);
-            pf << rowsTxt;
-            pf.close();
-            a.push_back("--pinrows");
-            a.push_back(pp);
-        }
-    } else if (g_cfg.dpPinX) {
-        // cfg `dppinx`: x only, and only where two attempts with different inputs agree (pinRowsAgreed)
-        const std::string rowsTxt = pinRowsAgreed();
         if (!rowsTxt.empty()) {
             const std::string pp = std::string(DATA_DIR) + "/dp_pin.txt";
             std::ofstream pf(pp, std::ios::trunc);
@@ -3448,6 +3325,8 @@ inline int timedSolve(const std::string& csv, const std::vector<std::string>& a,
         if (!lad.empty()) writeResult(std::string("dpsolve:   [ladder] ") + kind + " " + lad);
         const std::string cam = dpbridge::outcome().camy;   // --camy (default with the camera model): the call's camera counters
         if (!cam.empty()) writeResult(std::string("dpsolve:   [camy] ") + kind + " " + cam);
+        const std::string shs = dpbridge::outcome().shstep;   // --shadowstep (default): the ticks the shadow stepped and the ones it declined, by cause
+        if (!shs.empty()) writeResult(std::string("dpsolve:   [shadowstep] ") + kind + " " + shs);
     }
     if (g_plainBesideMode == 2) {
         const std::string c = dpbridge::besideCheckTaken();
@@ -6272,6 +6151,36 @@ inline void stateRungDone(int kind, bool found) {
     }
 }
 
+// Observation only: why a section solve was entered, in one line, to result.txt and the Geode log. The `dpsolve: [secauto]` line below says which rule fired
+// (`why`) and the wall; this one adds the state the rule judged -- the iteration, the deepest plan and the last death (its kind and the killer GD named),
+// the rounds since the run last got deeper (stall), the unrecorded-death count and the window -- so a run on another machine can be lined up against a
+// reference's [fp] lines at the iteration where its loop first chose differently. Nothing here is read back.
+inline void logSecEnter(const char* why, long long level, const AutoWindow& w, int cap, bool coinRung, bool retry) {
+    int kind = -1, killerId = -1, killerUid = -1;
+    long long dTick = -1;
+    float dX = 0.f;
+    {
+        std::lock_guard<std::mutex> lk(itermap::g_mu);
+        if (!itermap::g_deaths.empty()) {
+            const auto& d = itermap::g_deaths.back();
+            kind = d.kind;
+            dTick = d.tick;
+            dX = d.x;
+            killerId = d.killerId;
+            killerUid = d.killerUid;
+        }
+    }
+    char b[640];
+    snprintf(b, sizeof(b),
+             "secsolve-enter: why=\"%s\" it=%d wall t=%lld best t=%lld x=%.1f last t=%lld phys=%lld lastdeath t=%lld x=%.1f kind=%s killer=%d/uid %d "
+             "stall=%d wallrounds=%d norec=%d head=%lld pin=%lld ladderlevel=%lld window t0=%lld depth=%lld horizon=%lld cap=%d coin=%d retry=%d",
+             why, g_iter, (long long)rungWall(), g_bestDeath, (double)g_bestDeathX, g_lastDeath, g_lastDeathPhys, dTick, (double)dX,
+             kind < 0 ? "-" : itermap::kindName(kind), killerId, killerUid, g_stallRuns, g_autoWallRounds, g_autoNoRec, (long long)g_autoHead,
+             (long long)g_secPin, level, (long long)w.t0, (long long)w.depth, (long long)w.horizon, cap, coinRung ? 1 : 0, retry ? 1 : 0);
+    writeResult(b);
+    geode::log::info("{}", b);
+}
+
 // Queue the rung the way the `secrung` command does; poll() hands over at the next frame boundary
 // with no job in flight. Returns whether it was queued.
 inline bool autoFire(const char* why) {
@@ -6390,6 +6299,7 @@ inline bool autoFire(const char* why) {
              g_autoWallRounds, g_autoNoRec, g_autoHead, level + 1, w.t0, w.from.c_str(),
              w.t0 + w.depth, w.depth, w.horizon, cap);
     writeResult(b);
+    logSecEnter(why, level, w, cap, coinRung, retry);
     if (retry) {
         snprintf(b, sizeof(b), "dpsolve:   [secauto] the same window again (cfg dpseccaptiers): at "
                  "cap %d it found nothing", g_cfg.dpSecCap << (g_autoCapTier - 1));
@@ -6551,25 +6461,6 @@ constexpr long long kPortalSettle = 30;
 inline double g_missedPortalX = 0.0;
 inline int g_missedPortalMode = -1;
 
-// cfg dpportalwalk: the portals the question has forced (x) and the deepest death at that time. A forced portal that did not move the
-// wall is not named again until the wall has moved kPortalWalkProgress ticks past where it was forced.
-constexpr long long kPortalWalkProgress = 2000;
-struct PortalTried {
-    double x;
-    long long wall;
-};
-inline std::vector<PortalTried> g_portalTried;
-inline bool portalTriedAlready(double x) {
-    for (const PortalTried& p : g_portalTried)
-        if (std::fabs(p.x - x) < 1.0 && g_bestDeath <= p.wall + kPortalWalkProgress) return true;
-    return false;
-}
-// Called where the forcing band is built from g_missedPortalX.
-inline void notePortalForced() {
-    if (!g_cfg.dpPortalWalk) return;
-    g_portalTried.push_back({g_missedPortalX, g_bestDeath});
-}
-
 inline long long missedPortalTick() {
     if (g_modePortals.empty() || !anchors::g_src) return -1;
     const long long end = (long long)anchors::g_src->size();
@@ -6581,7 +6472,7 @@ inline long long missedPortalTick() {
         const AnchorRow* r = anchors::row(t);
         if (!r) continue;
         if (crossT >= 0 && t >= crossT + kPortalSettle) {
-            if (r->mode != wantMode && !(g_cfg.dpPortalWalk && portalTriedAlready(crossX))) {
+            if (r->mode != wantMode) {
                 best = crossT;
                 g_missedPortalX = crossX;
                 g_missedPortalMode = wantMode;
@@ -6612,7 +6503,6 @@ inline long long missedPortalAtMismatch() {
         while (idx < g_modePortals.size() && (double)r->x >= g_modePortals[idx].x) {
             if (t >= g_modeMismatchT) {
                 if (g_modePortals[idx].mode != g_modeMismatchGd) return -1;
-                if (g_cfg.dpPortalWalk && portalTriedAlready(g_modePortals[idx].x)) return -1;
                 g_missedPortalX = g_modePortals[idx].x;
                 g_missedPortalMode = g_modePortals[idx].mode;
                 return t;
@@ -6686,31 +6576,6 @@ inline bool runLadder(long long dt) {
             g_spentAnchors.erase(at);   // never tried for this reason
             speedRung = nForced;
             ++nForced;
-        }
-    }
-    // cfg dpbirthrung: a death after a dual portal made the second body of a two-player level is tried first from an anchor
-    // just after that birth. An anchor before it has no second body (the search is the one-body one, which presses the
-    // second body's button with the first's); an anchor after it does, and the call searches the two bodies one after the
-    // other. The birth is read off the recorded game rows (the first row with the dual set), the anchor is 3 ticks later
-    // (not on the portal's own tick: an anchor there lets the portal fire again). Not a forced rung (a partial is taken
-    // only if it outlives the death, as for the usual ones) and tried once per wall: a rung that led nowhere is in
-    // g_spentAnchors, which a new wall clears.
-    if (g_cfg.dpBirthRung && solver::g_levelTwoPlayer) {
-        long long tb = -1;
-        for (long long t = dt; t >= 2; --t) {
-            const AnchorRow* a = anchors::row(t);
-            const AnchorRow* b = anchors::row(t - 1);
-            if (a && b && a->dual && !b->dual) { tb = t; break; }
-        }
-        const long long at = tb + 3;
-        const AnchorRow* dr = anchors::row(dt - 1);   // the death is inside the dual (one that ended since is not this rung's)
-        if (tb > 0 && at < dt - kBackOff && dr && dr->dual && !g_spentAnchors.count(at)) {
-            const AnchorRow* ar = anchors::row(at);
-            if (ar && ar->dual) {
-                writeResult("dpsolve:   [birthrung] the second body was made at t=" + std::to_string(tb)
-                            + ", the death is at t=" + std::to_string(dt) + " - trying the anchor t=" + std::to_string(at) + " first");
-                rungs.insert(rungs.begin() + (std::ptrdiff_t)nForced, (int)(dt - at));
-            }
         }
     }
     // One-shot: the slit belongs to this hint's rung alone.
@@ -8096,6 +7961,16 @@ inline void start(GJBaseGameLayer* l) {
         }
         writeResult("dprun: begin level=" + std::to_string(g_cfg.levelId) + " seed="
                     + std::to_string(g_cfg.dpSeed));
+        // dp's --camtrack is one file per (deepest-buffer serial, rows) and camtrackArg() returns an existing one as it is. The serial starts again from a small
+        // number in every session, so a file left in the data root by an earlier session -- another level, or another window (another camera) -- would be handed
+        // to this one as its own. Within a session the reuse is wanted; a new run starts without any.
+        {
+            std::error_code ec;
+            try {
+                for (const auto& e : std::filesystem::directory_iterator(DATA_DIR, ec))
+                    if (e.path().filename().string().rfind("dp_camtrack_", 0) == 0) std::filesystem::remove(e.path(), ec);
+            } catch (const std::exception&) {}
+        }
     }
     // The level table. In the reset that built the POIs it was already made, for objrects.txt, from the same
     // objects in the same state (nothing runs between the two), and is taken from there; any other start makes it.
@@ -8133,9 +8008,6 @@ inline void start(GJBaseGameLayer* l) {
     }
     g_triedMissedPortal = false;
     g_modeMismatchT = -1; g_modeMismatchGd = -1;
-    g_portalTried.clear();
-    g_pinRuns.clear();
-    g_pinxSaid.clear();
     g_forceAnchorT = -1;
     // Subscribe (or not) for the whole session. With no subscriber the solver publishes no
     // checkpoint and waits for nothing, so a session with `dpcheck` off runs the search it has
@@ -8236,7 +8108,6 @@ inline void start(GJBaseGameLayer* l) {
     g_ladderAnswers.clear();
     g_exhaustedAnswers.clear();
     g_searchNoted = false;
-    g_topTierIter = 0;
     g_needTrigDropped = 0;
     g_needTrigSuspect = 0;
     g_spentAnchors.clear();
@@ -8561,6 +8432,7 @@ inline void logFingerprint(long long dt, double deathX) {
              g_horizonNow, g_curBackoff, fileSig(g_groupsPath).c_str(),
              fileSig(g_groupsDeepPath).c_str());
     writeResult(b);
+    geode::log::info("{}", b);   // the same line in the Geode log: the data root is not always within reach (Android)
     memCensus("round");   // cfg memcensus (print only)
     // KEEP THE PLAN THAT DIED -- **from memory, not from the file**. `g_plan` at
     // this point is the plan GD just replayed; the rewind that can replace it
@@ -8777,12 +8649,6 @@ inline void harvestGroups(bool fresh = true) {
                 xNow = v[t].x;
             }
         if (partT < 0) return;
-        // cfg dpheadguard: parted at the very first ticks = this attempt began somewhere else, not a recording on another clock.
-        if (g_cfg.dpHeadGuard && partT <= 2) {
-            writeResult("dpsolve:   [headguard] moving geometry: this attempt parted from the kept record at t=" + std::to_string(partT)
-                        + " (it did not start at the head) - the kept record stands");
-            return;
-        }
     }
     if (!copyRecording(std::string(DATA_DIR) + "/grouptrace_last.txt", g_groupsPath)) return;
     g_groupsDepth = r.depth;
@@ -9818,7 +9684,6 @@ inline void onDeath(long long dt, float deathX) {
             deathX = offX;
         }
     }
-    pinRunNote(g_plan, ("it" + std::to_string(g_iter)).c_str(), anchors::g_dead);   // cfg dppinx: this attempt's x column, before the wedge test reads it
     bool wasWedged = false;
     // The discrete state the attempt died in, for the wall key (stage S2; read from the last recorded row below). -1 = no row.
     int wkMode = -1, wkFlip = 0, wkMini = 0, wkDual = 0;
@@ -9857,21 +9722,11 @@ inline void onDeath(long long dt, float deathX) {
                     break;
                 --k;
             }
-            // cfg dppinx: a still stretch the LEVEL holds (x pinned on two attempts that played different inputs, from its first tick on) is the
-            // level's own wait, not a wedge: the attempt is credited where it really died
-            bool heldByLevel = false;
-            if (g_cfg.dpPinX && stallEnd) {
-                pinRowsAgreed();
-                heldByLevel = g_pinxTicks.count(k + 1) && g_pinxTicks.count(k + 100);
-                if (heldByLevel)
-                    writeResult("dpsolve:   [pinx] still since t=" + std::to_string(k) + " (x=" + std::to_string((long long)rd->x)
-                                + ") but x is held by the level there - not a wedge, the death stays at t=" + std::to_string(dt));
-            }
             // THE GUARD'S VERDICT decides, not a count of still ticks: the stall guard ended this attempt because the player did not move (StallStill) or the end sequence never completed
             // (EndzoneHung), and said where the stillness began. `k` is still found by the scan above (the 0.5 px tolerance of the recorded rows). The old rule -- 900 still rows -- is printed
             // beside it when the two disagree (a death that came after a long stand, not from the guard, or a hung end zone that stood fewer than 900 ticks).
-            const bool wedgeOld = dt - k >= 900 && !heldByLevel;
-            const bool wedgeNow = stallEnd && !heldByLevel;
+            const bool wedgeOld = dt - k >= 900;
+            const bool wedgeNow = stallEnd;
             if (wedgeOld != wedgeNow) {
                 char vd[256];
                 snprintf(vd, sizeof(vd), "dpsolve:   [verdict] wedge: the old rule (>= 900 still rows: %lld) says %d, the guard's verdict (%d, since t=%lld) says %d",
@@ -10000,10 +9855,15 @@ inline void onDeath(long long dt, float deathX) {
         if (wasWedged) {
             snprintf(kk, sizeof(kk), "guard%d", (int)verdict.kind);
         } else {
+            // cfg wallkeyself: the player was its own killer (a coin cut, the stall guard, ...): the reason is the key, and a reason with no object of its own is told apart by the section
+            const bool wkSelf = g_cfg.wallKeySelf && wkHaveKill && !solver::g_killSelf.empty();
+            const bool wkSelfCoin = wkSelf && solver::g_killSelf.rfind("coin", 0) == 0;
             int sect = 0;
-            if (!wkHaveKill || solver::g_killUid < 0)
+            if (!wkHaveKill || solver::g_killUid < 0 || (wkSelf && !wkSelfCoin))
                 for (const ModePortal& mp : g_modePortals) if ((double)wkX >= mp.x) ++sect;
             if (!wkHaveKill) snprintf(kk, sizeof(kk), "norec/m%df%dz%dd%d/s%d", wkMode, wkFlip, wkMini, wkDual, sect);
+            else if (wkSelfCoin) snprintf(kk, sizeof(kk), "self/%s/m%df%dz%dd%d", solver::g_killSelf.c_str(), wkMode, wkFlip, wkMini, wkDual);
+            else if (wkSelf) snprintf(kk, sizeof(kk), "self/%s/m%df%dz%dd%d/s%d", solver::g_killSelf.c_str(), wkMode, wkFlip, wkMini, wkDual, sect);
             else if (solver::g_killUid < 0) snprintf(kk, sizeof(kk), "none/m%df%dz%dd%d/s%d", wkMode, wkFlip, wkMini, wkDual, sect);
             else snprintf(kk, sizeof(kk), "u%d/m%df%dz%dd%d", solver::g_killUid, wkMode, wkFlip, wkMini, wkDual);
         }
@@ -10031,7 +9891,7 @@ inline void onDeath(long long dt, float deathX) {
     // cfg dpmissedportalrepeat: the same wall again and again -- ask where the run crossed a mode portal without
     // coming out in its mode, once per wall (g_triedMissedPortal), the way the wedge below and the exhausted
     // ladder (escalate) do. The next ladder goes first to the tick before that crossing, with the crossing forced.
-    if (g_cfg.dpMissedPortalRepeat > 0 && (!g_triedMissedPortal || g_cfg.dpPortalWalk) && sameDeaths >= g_cfg.dpMissedPortalRepeat) {
+    if (g_cfg.dpMissedPortalRepeat > 0 && !g_triedMissedPortal && sameDeaths >= g_cfg.dpMissedPortalRepeat) {
         anchors::ladderOn(false);
         // On evidence only (missedPortalAtMismatch): a [fixup] record at this wall whose model mode differed from GD's names the portal; without one the retry is not fired.
         const long long mt = missedPortalAtMismatch();
@@ -10042,7 +9902,6 @@ inline void onDeath(long long dt, float deathX) {
             snprintf(fb, sizeof(fb), "%.1f,%.1f,%d,-1e18,1e18",
                      g_missedPortalX + 45.0, g_missedPortalX + 75.0, g_missedPortalMode);
             g_forcePortalBand = fb;
-            notePortalForced();
             char mb[256];
             snprintf(mb, sizeof(mb), "dpsolve:   [portalretry] the same wall %d times (t=%lld) - a [fixup] record at t=%lld has the model in another mode than GD (%d); the next ladder goes back to the mode portal at "
                      "t=%lld and forces the crossing (--deadband %s)", sameDeaths, (long long)dt, g_modeMismatchT, g_modeMismatchGd, mt, fb);
@@ -10107,7 +9966,7 @@ inline void onDeath(long long dt, float deathX) {
     // other idea first (measured: the previous run reached that escalation at round 334).
     // Same one-shot as the escalation path; if the crossing was actually taken,
     // missedPortalTick returns -1 and this stays silent.
-    if (wasWedged && (!g_triedMissedPortal || g_cfg.dpPortalWalk)) {
+    if (wasWedged && !g_triedMissedPortal) {
         anchors::ladderOn(false);
         const long long mt = missedPortalTick();
         if (mt > 0) {
@@ -10117,7 +9976,6 @@ inline void onDeath(long long dt, float deathX) {
             snprintf(fb, sizeof(fb), "%.1f,%.1f,%d,-1e18,1e18",
                      g_missedPortalX + 45.0, g_missedPortalX + 75.0, g_missedPortalMode);
             g_forcePortalBand = fb;
-            notePortalForced();
             char mb[256];
             snprintf(mb, sizeof(mb), "dpsolve:   the wedge names it - the run crossed a mode "
                      "portal at t=%lld in the wrong mode; going back there and forcing the "
@@ -10233,23 +10091,6 @@ inline void onDeath(long long dt, float deathX) {
         writeResult(sb3);
     }
     const bool deeper = (tickDeeper || coinOver >= 0 || voidCredit) && (!wasWedged || voidCredit) && !skyDeath;
-    // cfg dptopstop: the same stop, reached by the search sitting at its largest capacity without
-    // getting deeper. Only going deeper takes the ladder back down (the first branch below), so a
-    // round that is about to do that is let through.
-    if (g_cfg.dpTopStop > 0 && g_capTier == (int)(sizeof(kCapTiers) / sizeof(kCapTiers[0]))
-        && !deeper && g_iter - g_topTierIter >= g_cfg.dpTopStop) {
-        // HEURISTIC-STALLED, NOT UNSOLVABLE: this is an empirical cut of the search, not a proof
-        // that the level has no solution from here, so it says so in its own words -- a verdict
-        // or a baseline must not be taken from a run stopped this way.
-        writeResult("dpsolve: " + std::to_string(g_iter - g_topTierIter) + " rounds at "
-                    + std::to_string(kCapTiers[g_capTier - 1]) + " states without getting deeper"
-                    + " (best " + std::to_string(g_bestDeath) + ") - stopping (heuristic)");
-        g_stop = true;
-        g_hudPhase = "heuristic-stalled: no progress at the largest search";
-        giveUp("heuristic-stalled: no deeper at the largest search (dptopstop)",
-               "dpsolve_topstop");
-        return;
-    }
     long long useT = dt;
     // How this round gets scored, kept for the iteration map (itermap.hpp). A column of deaths
     // says where the loop spent its rounds; the kind is what says whether it was working through
@@ -10844,29 +10685,6 @@ inline bool startSwitchProbe(int body) {
     return true;
 }
 
-// ---- cfg dppinx: the second run that shows x is held ------------------------------------------------------------------------------------------------
-// The bootstrap pass (nothing pressed) held x still for a stretch. One more no-death pass, with the button pressed for two ticks every kPinProbeSpacing
-// ticks, tells whether the inputs move it: pinRowsAgreed pins only the ticks where the two passes' x is the same. Run only when the bootstrap pass
-// shows a still stretch, so a level that never holds x pays nothing.
-constexpr long long kPinProbeSpacing = 90, kPinProbeFirst = 20;
-inline bool startPinProbe(long long depth) {
-    if (!g_cfg.dpPinX || depth < kPinProbeFirst + 2 * kPinProbeSpacing) return false;
-    if (!pinStillStretch(anchors::g_live)) return false;   // x never held still for long, and then moved on, in the no-input pass
-    g_recordKind = RecPinProbe;
-    g_deepActive = true;
-    g_cfg.noDeath = true;
-    g_cfg.inputs.clear();
-    for (long long t = kPinProbeFirst; t + 4 < depth; t += kPinProbeSpacing) {
-        g_cfg.inputs.push_back(InputCmd{(int)t, true, false});
-        g_cfg.inputs.push_back(InputCmd{(int)t + 2, false, false});
-    }
-    g_recordRequest = true;
-    g_hudPhase = "pressing the button every few ticks, to see whether x still holds";
-    writeResult("dpsolve:   [pinx] x held still in the no-input pass - a second no-death pass presses every " + std::to_string(kPinProbeSpacing)
-                + " ticks to see whether the inputs move it");
-    return true;
-}
-
 struct SwProbeRow { long long t; double cx, cy, w, h, rot; int on; };
 inline bool readGroupsFile(const std::string& path, std::unordered_map<int, std::vector<SwProbeRow>>& out) {
     std::ifstream f(path);
@@ -11004,12 +10822,6 @@ inline void finishDeepRecord(const char* why) {
         finishSwitchProbe(why);
         return;
     }
-    if (kind == RecPinProbe) {   // cfg dppinx: the pressed pass is over; its x column is the second run
-        pinRunNote(g_cfg.inputs, "probe", anchors::g_live);
-        g_cfg.inputs.clear();
-        beginFirstAttempt();
-        return;
-    }
     if (kind == RecBootstrap && g_bootKillerQuiet > 0) {
         writeResult("dpsolve:   bootstrap record: " + std::to_string(g_bootKillerQuiet) + " swallowed killer line(s) not written");
         g_bootKillerQuiet = 0;
@@ -11043,7 +10855,6 @@ inline void finishDeepRecord(const char* why) {
                  what, why, r.rows);
     }
     writeResult(b);
-    if (kind == RecBootstrap) pinRunNote(std::vector<InputCmd>(), "boot", anchors::g_live);   // cfg dppinx: the no-input pass, the one run no plan touched
     if (kind == RecBootstrap && g_cfg.dpPin) {
         // cfg dppin: this pass's own rows (nothing banks them) for the first call's --pinrows
         g_bootPinRows = pinRowsText(anchors::g_live);
@@ -11055,7 +10866,6 @@ inline void finishDeepRecord(const char* why) {
         g_probeDepth = r.depth;
         if (startSwitchProbe(1)) return;
     }
-    if (kind == RecBootstrap && !g_bootSpawnOnly && startPinProbe((long long)anchors::g_live.size())) return;   // cfg dppinx
     if (kind == RecBootstrap) {
         // Now solve (or verify the seed), in a world that is already known to move.
         beginFirstAttempt();
@@ -11168,7 +10978,7 @@ inline bool escalate() {
         writeResult(b);
     } else if (startDeepRecord()) {
         return true;    // that one drives the level itself; it will come back through poll
-    } else if (!g_triedMissedPortal || (g_cfg.dpPortalWalk && missedPortalTick() > 0)) {
+    } else if (!g_triedMissedPortal) {
         // Everything that changes HOW the search is set up has been tried. Ask WHERE instead:
         // if the run went past a mode portal and did not come out in that mode, it has been
         // flying a section built for something else, and the place to go back to is the
@@ -11195,7 +11005,6 @@ inline bool escalate() {
             snprintf(fb, sizeof(fb), "%.1f,%.1f,%d,-1e18,1e18",
                      g_missedPortalX + 45.0, g_missedPortalX + 75.0, g_missedPortalMode);
             g_forcePortalBand = fb;
-            notePortalForced();
             char b[256];
             snprintf(b, sizeof(b), "dpsolve:   no anchor - it crossed a mode portal at t=%lld "
                      "and came out in the wrong mode; going back there and forcing the "
@@ -11214,7 +11023,6 @@ inline bool escalate() {
                && g_capTier < (int)(sizeof(kCapTiers) / sizeof(kCapTiers[0]))) {
         // (cfg dpcaptiers: off, this is skipped and the restart below runs at the base setting)
         ++g_capTier;
-        if (g_capTier == (int)(sizeof(kCapTiers) / sizeof(kCapTiers[0]))) g_topTierIter = g_iter;
         char b[192];
         snprintf(b, sizeof(b), "dpsolve:   no anchor - trying again with room for %lld states "
                  "on a coarser grid", kCapTiers[g_capTier - 1]);

@@ -34,8 +34,13 @@ REPO = Path(__file__).resolve().parent.parent
 HEADER = REPO / "src" / "mod" / "gd_offsets.hpp"
 CHECK = REPO / "src" / "mod" / "gd_offsets_check.cpp"
 DEFAULT_BINDINGS = REPO / "build" / "_deps" / "bindings-src" / "bindings"
-GD_VERSION = "2.2081"
-KNOWN_SHA256 = "dda3752ab3a912fd2293561e157ecc98eca799056abd9223a331c1c514175df7"
+# Bindings folder of each game version the tool knows, and the libcocos2dcpp.so (arm64-v8a) the android64
+# values were measured on. 2.2081 is the v0.5.0 build; 2.2091 is the v0.8.0 Android build (versionCode 43).
+GD_VERSION = "2.2091"   # --gd-version overrides
+KNOWN_SHA256 = {
+    "2.2081": "dda3752ab3a912fd2293561e157ecc98eca799056abd9223a331c1c514175df7",
+    "2.2091": "700588a06cc17cc963cc480cac4294f5cd55ee4cace062e69383e38c61b3b291",
+}
 
 # Where each modelled class's own members start. Windows: the literals the mod used before
 # the header existed (m_gameState at +0x1a8 is getMaxPortalY's camera-zoom divisor; GameObject
@@ -44,7 +49,7 @@ KNOWN_SHA256 = "dda3752ab3a912fd2293561e157ecc98eca799056abd9223a331c1c514175df7
 # section indices at +0x26c..+0x278. Everything else, PlayerObject and the GameObject
 # subclasses included, is derived from these.
 ROOTS = {
-    "GJBaseGameLayer": {"win": 0x1A0, "a64": 0x1A0},
+    "GJBaseGameLayer": {"win": 0x1A0, "a64": 0x1A8},
     "GameObject": {"win": 0x270, "a64": 0x26C},
     "EnterEffectInstance": {"win": 0, "a64": 0},
     "GJGameState": {"win": 0, "a64": 0},
@@ -124,6 +129,13 @@ class Bindings:
              "ccColor4B": (4, 1), "ccColor4F": (16, 4), "ccBlendFunc": (8, 4),
              "ccHSVValue": (16, 4), "CCAffineTransform": (24, 4)}
     unknown: set = set()
+    # Sizes of the STL types per android64 build. 2.2081 (Geode 5): the GNU STL clones Geode used for GD.
+    # 2.2091 (Geode 6): libc++ (NDK r29), the sizes the compiler reports for the instantiations the
+    # bindings use (clang -Xclang -fdump-record-layouts over a TU that includes Geode.hpp).
+    A64_STL = {
+        "2.2081": {"vector_bool": 40, "map": 48, "unordered": 56, "deque": 80, "function": 32, "string": 8},
+        "2.2091": {"vector_bool": 24, "map": 24, "unordered": 40, "deque": 48, "function": 32, "string": 24},
+    }
 
     @staticmethod
     def _args(s: str) -> list[str]:
@@ -153,23 +165,23 @@ class Bindings:
             kind, args = m.group(2), self._args(m.group(3))
             if kind == "vector":
                 if args[0] == "bool":
-                    return (32, 8) if plat == "win" else (40, 8)
+                    return (32, 8) if plat == "win" else (self.A64_STL[GD_VERSION]["vector_bool"], 8)
                 return 24, 8
             if kind in ("map", "set"):
-                return (16, 8) if plat == "win" else (48, 8)
+                return (16, 8) if plat == "win" else (self.A64_STL[GD_VERSION]["map"], 8)
             if kind in ("unordered_map", "unordered_set"):
-                return (64, 8) if plat == "win" else (56, 8)
+                return (64, 8) if plat == "win" else (self.A64_STL[GD_VERSION]["unordered"], 8)
             if kind == "array":
                 s, a = self.size_align(args[0], plat)
                 return s * int(args[1], 0), a
             if kind in ("pair", "tuple"):
                 return self._struct([(x, None) for x in args], plat)[:2]
             if kind == "deque":
-                return (40, 8) if plat == "win" else (80, 8)
+                return (40, 8) if plat == "win" else (self.A64_STL[GD_VERSION]["deque"], 8)
             if kind == "function":
-                return (64, 8) if plat == "win" else (32, 8)
+                return (64, 8) if plat == "win" else (self.A64_STL[GD_VERSION]["function"], 8)
         if t in ("gd::string", "std::string"):
-            return (32, 8) if plat == "win" else (8, 8)
+            return (32, 8) if plat == "win" else (self.A64_STL[GD_VERSION]["string"], 8)
         if re.match(r"^geode::SeedValue\w+$", t):
             return 4 * len(t.split("SeedValue")[1]), 4
         tn = t.split("::")[-1]
@@ -248,18 +260,44 @@ class Bindings:
 # ---------------------------------------------------------------------------- header + checks
 
 
-def read_constants() -> dict[str, tuple[int, int]]:
-    text = HEADER.read_text(encoding="utf-8")
-    # GDOFF(win2081, win209, android64): this tool compares the 2.2081 Windows value with the android64 one
-    return {m.group(1): (int(m.group(2), 16), int(m.group(4), 16))
-            for m in re.finditer(r"constexpr std::\w+ (k\w+) = GDOFF\((0x[0-9a-fA-F]+), "
-                                 r"(0x[0-9a-fA-F]+), (0x[0-9a-fA-F]+)\)", text)}
+def _split_args(s: str) -> list[str]:
+    out, depth, cur = [], 0, ""
+    for ch in s:
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    return out + ([cur.strip()] if cur.strip() else [])
 
+
+def _num(expr: str, pick: int) -> int:
+    """A literal, or GD209(earlier, update): `pick` 0 takes the earlier one, 1 the update."""
+    expr = expr.strip()
+    m = re.fullmatch(r"GD209\((.*)\)", expr)
+    if m:
+        return _num(_split_args(m.group(1))[pick], pick)
+    return int(expr, 16)
+
+
+def read_constants() -> dict[str, tuple[int, int]]:
+    """name -> (windows value for GD_VERSION, android64 value) of every GDOFF / GD_WIN_LITERAL constant.
+
+    Both macros are (win2081, win209, android64); the last column is the android64 value. A
+    constant that exists on Windows only (android64 written as 0) is read as 0."""
+    text = HEADER.read_text(encoding="utf-8") + "\n" + HEADER.with_name("gd_globals.hpp").read_text(encoding="utf-8")
+    out = {}
+    for m in re.finditer(r"constexpr std::\w+ (k\w+) = (?:GDOFF|GD_WIN_LITERAL)\((.*)\);", text):
+        a = _split_args(m.group(2))
+        if len(a) == 3:
+            out[m.group(1)] = (_num(a[0], 0) if GD_VERSION == "2.2081" else _num(a[1], 1), _num(a[2], 1))
+    return out
 
 def read_asserts() -> list[tuple[str, int, str, str, int]]:
     """(constant, +n, class, member path, extra) for every static_assert in the check file."""
     out = []
-    text = CHECK.read_text(encoding="utf-8")
+    text = "\n".join(l for l in CHECK.read_text(encoding="utf-8").split("\n") if not l.lstrip().startswith("//"))
     for m in re.finditer(r"static_assert\((k\w+)(?: \+ (\d))?\s*==\s*(.*?)\);", text, re.S):
         expr = " ".join(m.group(3).split())
         plus = int(m.group(2) or 0)
@@ -278,6 +316,40 @@ def read_asserts() -> list[tuple[str, int, str, str, int]]:
 # ---------------------------------------------------------------------------- the binary
 
 
+def demangle(mangled: str) -> str:
+    """Itanium names _ZN[K]<len><id>...E<params> and _Z<len><id><params> -> "A::B(...)".
+
+    Enough for GD's own member functions: "()" when the parameter list is `v`, "(?)" otherwise (the
+    parameters are not decoded). Anything else (a template, a std:: substitution) comes back as it
+    was, which never matches a class prefix.
+    """
+    if not mangled.startswith("_Z"):
+        return mangled
+    s, i, nested = mangled, 2, False
+    if s[i] == "N":
+        nested = True
+        i += 1
+        while s[i] in "KVr":
+            i += 1
+    parts = []
+    while i < len(s) and s[i].isdigit():
+        j = i
+        while s[j].isdigit():
+            j += 1
+        k = int(s[i:j])
+        parts.append(s[j:j + k])
+        i = j + k
+        if not nested:
+            break
+    if not parts:
+        return mangled
+    if nested:
+        if i >= len(s) or s[i] != "E":
+            return mangled
+        i += 1
+    tail = s[i:]
+    return "::".join(parts) + ("()" if tail == "v" else "(?)")
+
 class Binary:
     def __init__(self, path: Path):
         import capstone
@@ -292,7 +364,7 @@ class Binary:
         self.syms: dict[int, str] = {}
         for s in self.elf.dynamic_symbols:
             if s.is_function and s.value:
-                self.syms[s.value] = s.demangled_name or s.name
+                self.syms[s.value] = s.demangled_name or demangle(s.name)
         self.addrs = sorted(self.syms)
         self.cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
         self._acc: dict[int, list] = {}
@@ -311,11 +383,18 @@ class Binary:
     def accesses(self, a: int):
         if a not in self._acc:
             acc = []
+            hi: dict[str, int] = {}   # register -> k << 12 after `add xD, xS, #k, lsl #12`
             for i in self.dis(a):
+                # a byte / half access past the 4 KiB its immediate reaches goes through such an add:
+                # PlayLayer::checkForEnd reads its latch as `add x21, x20, #3, lsl #12; ldrb w1, [x21, #0x798]`
+                am = re.match(r"(x\d+), (x\d+), #(\w+), lsl #12$", i.op_str)
+                if i.mnemonic == "add" and am:
+                    hi[am.group(1)] = int(am.group(3), 0) << 12
                 m = re.search(r"\[(x\d+), #(0x[0-9a-f]+)\]", i.op_str)
                 if m and i.mnemonic.startswith(("ldr", "str", "ldp", "stp")) \
                         and not i.op_str.startswith(("x29", "x30")):
-                    acc.append((int(m.group(2), 16), i.mnemonic, i.op_str.split(",")[0].strip()))
+                    acc.append((int(m.group(2), 16) + hi.get(m.group(1), 0), i.mnemonic,
+                                i.op_str.split(",")[0].strip()))
             self._acc[a] = acc
         return self._acc[a]
 
@@ -373,6 +452,32 @@ def width_ok(t: str, mnemonic: str, reg: str) -> bool:
     return reg.startswith(("x", "q", "d", "s", "w"))
 
 
+# Raw constants no static_assert ties to a member: name -> (the functions of the classes that use it,
+# the member's type, bytes added to the header value). Each must be read or written in those functions
+# with that width. kLayerGateMap is a std::map: the code reads its root (map + 8).
+RAW = {
+    "kPlayLayerEndLatch": (("PlayLayer::",), "bool", 0),         # checkForEnd tests and sets it, resetLevel clears it
+    "kPlayerBallStake": (("PlayerObject::",), "bool", 0),        # runBallRotation raises it, stopRotation clears it
+    "kLayerUnkPoint17Y": (("GJBaseGameLayer::",), "float", 0),   # getMinPortalY / getMaxPortalY
+    "kLayerGateMap": (("GJBaseGameLayer::",), "ptr", 8),         # playerWasTouchingObject / playerTouchedTrigger
+}
+
+
+# Named members the code reaches through gdoff:: constants or gdraw:: (psnap's ring set and jump-pad map, the
+# diagnostics' dash / slope words, the head reset's m_maxPortalY): each must be accessed in its class's functions.
+NAMED_MEMBERS = [
+    ("PlayerObject", "m_usedRings", ("PlayerObject::",)),            # pushButton, ringJump
+    ("PlayerObject", "m_touchedForceIds", ("PlayerObject::",)),      # resetStateVariables, updateStateVariables
+    ("PlayerObject", "m_dashY", ("PlayerObject::",)),
+    ("PlayerObject", "m_slopeVelocity", ("PlayerObject::",)),
+    ("PlayerObject", "m_gameLayer", ("PlayerObject::",)),
+    ("GameObject", "m_middleSectionIndex", ("GJBaseGameLayer::", "GameObject::")),
+    ("GameObject", "m_outerSectionIndex", ("GJBaseGameLayer::", "GameObject::")),
+    ("GameObject", "m_isGroupDisabled", ("GJBaseGameLayer::", "GameObject::")),
+    ("GJBaseGameLayer", "m_gameState.m_maxPortalY", ("GJBaseGameLayer::", "PlayLayer::")),
+]
+
+
 # The functions whose inlined LCG reads and writes each seed: the trigger seed is
 # GameToolbox::fast_rand's state, the variance-index seed the one resetObject draws from, the
 # variance-table seed the one GJBaseGameLayer::init fills m_varianceValues from.
@@ -384,34 +489,42 @@ SEED_SITES = {
 
 
 def main() -> int:
+    global GD_VERSION
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--bindings", type=Path, default=DEFAULT_BINDINGS,
                     help="the bindings/ directory of geode-sdk/bindings (default: the build's)")
     ap.add_argument("--so", type=Path, help="android64 libcocos2dcpp.so to check against")
     ap.add_argument("--all", action="store_true", help="print every row, not only problems")
+    ap.add_argument("--gd-version", default=GD_VERSION, choices=sorted(KNOWN_SHA256),
+                    help="bindings folder / game version the header is checked for")
     args = ap.parse_args()
+    GD_VERSION = args.gd_version
 
     model = Bindings(args.bindings)
     consts = read_constants()
     asserts = read_asserts()
     binary = Binary(args.so) if args.so else None
     if binary:
-        note = "" if binary.sha256 == KNOWN_SHA256 else "  (NOT the binary the header was measured on)"
+        note = "" if binary.sha256 == KNOWN_SHA256.get(GD_VERSION) else "  (NOT the binary the header was measured on)"
         print(f"binary sha256 {binary.sha256}{note}")
 
     failures = unseen = 0
     for name, plus, cls, path, extra in asserts:
-        win, a64 = consts[name]
-        win, a64 = win + plus, a64 + plus
-        row = f"{name}{'+%d' % plus if plus else ''}: {cls}::{path} win {win:#x} a64 {a64:#x}"
-        problems = []
+        modelled = cls not in UNMODELLED
+        mw = ma = 0
         t = "?"
-        if cls not in UNMODELLED:
+        if modelled:
             mw, t = model.member(cls, path, "win")
             ma, _ = model.member(cls, path, "a64")
             mw, ma = mw + extra, ma + extra
-            if (mw, ma) != (win, a64):
-                problems.append(f"model win {mw:#x} a64 {ma:#x}")
+        if name in consts:   # a raw offset: the header holds the numbers
+            win, a64 = consts[name][0] + plus, consts[name][1] + plus
+        else:                # a member the bindings name: the header holds offsetof, the model is the value
+            win, a64 = mw, ma
+        row = f"{name}{'+%d' % plus if plus else ''}: {cls}::{path} win {win:#x} a64 {a64:#x}"
+        problems = []
+        if modelled and (mw, ma) != (win, a64):
+            problems.append(f"model win {mw:#x} a64 {ma:#x}")
         hits = None
         if binary and cls in OWNERS:
             hits = 0
@@ -428,6 +541,20 @@ def main() -> int:
             h = "" if hits is None else f"  hits {hits}"
             print(f"{tag:6s} {row}{h}  {'; '.join(problems)}")
     if binary:
+        for name, (owners, typ, delta) in RAW.items():
+            a64 = consts[name][1] + delta
+            hits = sum(1 for f in binary.functions(owners) for o, mn, reg in binary.accesses(f)
+                       if o == a64 and width_ok(typ, mn, reg))
+            failures += hits == 0
+            if hits == 0 or args.all:
+                print(f"{'ok' if hits else 'FAIL':6s} {name}: a64 {consts[name][1]:#x}"
+                      f" (+{delta:#x}) read or written {hits}x in {owners}")
+        for cls, path, owners in NAMED_MEMBERS:   # members the code reaches by offset, which the bindings name
+            a64 = model.member(cls, path, "a64")[0]
+            hits = sum(1 for f in binary.functions(owners) for o, mn, reg in binary.accesses(f) if o == a64)
+            failures += hits == 0
+            if hits == 0 or args.all:
+                print(f"{'ok' if hits else 'FAIL':6s} {cls}::{path}: a64 {a64:#x} accessed {hits}x in {owners}")
         for name, fn in SEED_SITES.items():
             a64 = consts[name][1]
             found = binary.lcg_globals(fn)
@@ -438,7 +565,7 @@ def main() -> int:
                       f"{sorted(hex(g) for g in found)}, header {a64:#x}")
     if model.unknown:
         print("types the model could not size:", sorted(model.unknown))
-    print(f"{len(asserts)} member offsets, {len(SEED_SITES) if binary else 0} seeds: "
+    print(f"{len(asserts)} member offsets, {len(RAW) if binary else 0} raw offsets, {len(SEED_SITES) if binary else 0} seeds: "
           f"{failures} failed" + (f", {unseen} without a matching access in the binary"
                                   if binary else " (no --so: binary not checked)"))
     return 1 if failures else 0

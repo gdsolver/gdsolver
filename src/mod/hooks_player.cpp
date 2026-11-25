@@ -146,13 +146,19 @@ class $modify(PadTraceGameObject, EnhancedGameObject) {
 // enablePlayerControls / resetTouchedRings on player 1 (player 2 with btrawp2=1): the call's arguments, its return value, and a snapshot at entry and at exit -- the player's bytes [0, 0xc80) in hex, then the
 // array m_touchingRings (uid:type:reverse:byte740 per ring, in order), the set m_ringRelatedSet (+0x850), the set m_touchedRings (+0xa48) and m_holdingButtons[1..3]. Observation only.
 // (the set at +0x850 is reached by gdraw::ringRelatedSet: Geode 6's bindings do not name it)
+#ifdef GEODE_IS_WINDOWS   // the snapshot's offsets are the Windows layout's; on Android the cfg is a diagnostic of the Windows build only
 static_assert(offsetof(PlayerObject, m_touchingRings) == 0xa40, "btraw: the array pushButton scans");
 static_assert(offsetof(PlayerObject, m_touchedRings) == 0xa48, "btraw: the set resetTouchedRings reads");
+#endif
 // cfg btslots=1: the pointer slots of the image (+0x5e8 slope, +0x5f0 slope B, +0x600 collided, +0x608 ground, +0x610 left, +0x618 right, +0x680 Cd0, +0x890 snapped-to) hold heap addresses; "off:uid" for each
 // that is non-null and reads as a GameObject (m_uniqueID, +0x39c), in hex offsets. A guarded read: a slot can outlive the object it named.
 static int btSlotUid(const void* ptr) {
     int uid = -2;
+#ifdef GEODE_IS_WINDOWS
     __try { uid = *reinterpret_cast<const int*>(reinterpret_cast<const char*>(ptr) + 0x39c); } __except (EXCEPTION_EXECUTE_HANDLER) { uid = -2; }
+#else
+    (void)ptr;   // no SEH on Android: a slot that may outlive its object is not read
+#endif
     return uid;
 }
 static std::string btSlotsText(PlayerObject* p) {
@@ -273,7 +279,7 @@ static void postColRow(PlayerObject* p, GJBaseGameLayer* l, float dt, bool betwe
     const unsigned char* b = reinterpret_cast<const unsigned char*>(p);
     f.precision(10);
     f << g_attempt << ',' << g_tick << ',' << (p == l->m_player1 ? 1 : 2) << ',' << dt << ',' << (betweenSteps ? 1 : 0) << ',' << (int)b[gdoff::kPlayerOnSlope] << ',' << (int)b[gdoff::kPlayerOnSlope + 1] << ','
-      << (int)b[gdoff::kPlayerAccelerating] << ',' << *reinterpret_cast<const float*>(b + 0x9bc) << '\n';
+      << (int)b[gdoff::kPlayerAccelerating] << ',' << *reinterpret_cast<const float*>(b + gdoff::kPlayerSlopeVelocity) << '\n';
     f.flush();
 }
 class $modify(PlayerObject) {
@@ -331,7 +337,7 @@ class $modify(PlayerObject) {
         // cfg nodedbg=t0,t1 (print only): the node stopDashing (0x4f4cc7 in the 2.2091 exe) reads its rotation from, this+0x740.
         // One line a tick: the update-call counter, the player's and the node's rotation, the node's running actions and vtable.
         if (isP1 && g_nodeDbg1 >= g_nodeDbg0 && (long long)g_tick >= g_nodeDbg0 && (long long)g_tick <= g_nodeDbg1 && botDriving()) {
-            auto* node = *reinterpret_cast<cocos2d::CCNode**>(reinterpret_cast<char*>(this) + 0x740);
+            auto* node = *reinterpret_cast<cocos2d::CCNode**>(reinterpret_cast<char*>(this) + gdoff::kPlayerIconSprite);
             char b[320];
             if (node) {
                 const uintptr_t vt = *reinterpret_cast<uintptr_t*>(node);
@@ -902,13 +908,13 @@ class $modify(PlayerObject) {
             const char* ob = reinterpret_cast<const char*>(obj);
             snprintf(stBuf, sizeof(stBuf),
                      " st=(b84=%d b88=%d s9b9=%d up=%d plat=%d fly=%d%d%d%d%d pass=%d inact=%d vy=%.4f)",
-                     *reinterpret_cast<const int*>(me + 0xb84), *reinterpret_cast<const int*>(me + 0xb88),
-                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9b9), (int)*reinterpret_cast<const unsigned char*>(me + 0x9c7),
-                     (int)*reinterpret_cast<const unsigned char*>(me + 0x16f * 8),
-                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9c1), (int)*reinterpret_cast<const unsigned char*>(me + 0x9c2),
-                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9c4), (int)*reinterpret_cast<const unsigned char*>(me + 0x9cc),
-                     (int)*reinterpret_cast<const unsigned char*>(me + 0x9c3),
-                     (int)*reinterpret_cast<const unsigned char*>(ob + 0x515), (int)*reinterpret_cast<const unsigned char*>(ob + 0x28e),
+                     *reinterpret_cast<const int*>(me + gdoff::kPlayerStateHitHead), *reinterpret_cast<const int*>(me + gdoff::kPlayerStateFlipGravity),
+                     (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerWasOnSlope), (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerUpsideDown),
+                     (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerPlatformer),
+                     (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerIsShip), (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerIsBird),
+                     (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerIsDart), (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerIsSwing),
+                     (int)*reinterpret_cast<const unsigned char*>(me + gdoff::kPlayerIsBall),
+                     (int)*reinterpret_cast<const unsigned char*>(ob + gdoff::kObjPassable), (int)*reinterpret_cast<const unsigned char*>(ob + gdoff::kObjGroupDisabled),
                      (double)this->m_yVelocity);
         }        // cfg `sticktrace`: a dt = 0 collision inside P1's postCollision is the stick
         // re-land (see g_stickT0).

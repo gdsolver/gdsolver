@@ -305,6 +305,13 @@ def wipe(worker_id: int) -> None:
             (d / name).unlink(missing_ok=True)
         except OSError:
             pass
+    # dp_camtrack_<serial>_<rows>.txt is written once and then reused by name (repair.hpp camtrackArg: if (exists(path)) return path), so a camtrack
+    # left by an earlier run on this worker -- with another window, hence another camera -- would be fed to this one as its own.
+    for f in d.glob("dp_camtrack_*"):
+        try:
+            f.unlink()
+        except OSError:
+            pass
     for f in d.glob("solution_lv*_dp.txt"):
         try:
             f.unlink()

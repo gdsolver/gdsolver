@@ -1723,7 +1723,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
             af << obj->m_uniqueID << "," << obj->m_objectID << ","
                << (tr.origin.x + tr.size.width * 0.5f) << "," << (tr.origin.y + tr.size.height * 0.5f) << ","
                << e->m_targetGroupID << "," << e->m_specialTarget << ","
-               << *reinterpret_cast<int*>(reinterpret_cast<char*>(e) + 0x614) << "," << e->m_centerGroupID << ","
+               << *reinterpret_cast<int*>(reinterpret_cast<char*>(e) + gdoff::kEffSpecialTarget) << "," << e->m_centerGroupID << ","
                << e->m_directionType << "," << (e->m_xyMode ? 1 : 0) << "," << (e->m_inbound ? 1 : 0) << ","
                << (e->m_twoDirections ? 1 : 0) << "," << e->m_length << "," << e->m_lengthVariance << ","
                << e->m_offset << "," << e->m_offsetVariance << "," << e->m_offsetY << "," << e->m_offsetYVariance
@@ -1809,6 +1809,10 @@ inline long long g_anticheatCalls = 0;
 // and the object GD named (-1 = none) with its position.
 inline long long g_killTick = -1;
 inline int g_killUid = -1;
+// cfg wallkeyself: what the mod itself killed the player for. The six places that call destroyPlayer(player1, player1) (the coin cuts, the stall guard,
+// the stop directive, the checkpoint probe) set g_selfKillWhy first; the destroyPlayer hook takes it, and g_killSelf is then that reason for a call whose
+// object IS the player (what GD's `killer:` line shows as uid=1 id=0 type=0 at the player's own position), empty for any other kill.
+inline std::string g_selfKillWhy, g_killSelf;
 // ...and the attempt (g_attempt) that call came from: the record is THIS death's when it matches (stage S2 of the wall-key design -- the loop binds a killer to a death by the attempt, not by a tick distance).
 inline int g_killAttempt = -1;
 // ...and the groups the killer object belongs to (the first ten, comma-joined; empty = none or no killer): a candidate for "the same wall" -- objects one Move trigger carries are one wall (printed in the [wallkey] line).

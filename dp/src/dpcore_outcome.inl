@@ -48,6 +48,7 @@ o.trigMapSig = dp::g_outcome.trigMapSig;
 o.unsupported = dp::g_outcome.unsupported;
 o.ladder = dp::g_outcome.ladder;
 o.camy = dp::g_outcome.camy;
+o.shstep = dp::g_outcome.shstep;
 o.dumpT = dp::g_outcome.dumpT;
 o.dumpStart = dp::g_outcome.dumpStart;
 o.startStateT = dp::g_outcome.startStateT;

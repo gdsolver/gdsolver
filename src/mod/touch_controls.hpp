@@ -7,8 +7,8 @@
 // steps once per press -- and there is no second copy of any of that behaviour to drift. A button
 // whose key would be refused right now is dimmed and takes no press.
 //
-// The pad is a column of buttons down the right edge, under GD's own pause button, and only
-// while the mod is driving (the same condition as the key legend it replaces). A touch that lands
+// The pad is a block of buttons in the bottom-left corner, under the text column and clear of the replay panel at the top right and of the death
+// breakdown at the bottom right, and only while the mod is driving (the same condition as the key legend it replaces). A touch that lands
 // on a button is taken; any other touch goes on to the game. The top button folds the pad away.
 // Icons are GD's own sprites; a frame the game has not loaded falls back to the text label.
 #include <Geode/platform/cplatform.h>
@@ -25,7 +25,7 @@ struct ButtonSpec {
     const char* icon;    // a sprite frame of GD's, or nullptr
     bool flipIcon;       // mirror the icon (one arrow sprite serves both directions)
 };
-// Two columns, top to bottom. Pairs sit side by side: the pair is the same kind of thing.
+// In reading order. Pairs sit side by side: the pair is the same kind of thing (the layout fills whole pairs, an even number of buttons to a row).
 inline constexpr ButtonSpec kButtons[] = {
     {-1, "MENU", nullptr, false},   // the fold handle: a chevron and the word (makeHandle)
     {(int)Key::Overlay, "TEXT", "GJ_infoIcon_001.png", false},
@@ -44,8 +44,21 @@ inline constexpr ButtonSpec kButtons[] = {
 };
 constexpr int kCount = (int)(sizeof(kButtons) / sizeof(kButtons[0]));
 constexpr float kW = 46.f, kH = 24.f, kGap = 4.f;
-// Below GD's pause button in the top-right corner.
-constexpr float kTopMargin = 44.f, kRightMargin = 6.f;
+// The block's place, from the window and not from a device: its left edge is the text column's (hud.hpp overlayLabel puts every line at x = 10, and that x is inside
+// the view whatever the notch or the corner radius, which is why it is reused rather than a margin of its own); it stands a fraction of the height above the bottom;
+// and it may reach as far right as a fraction of the width (the death breakdown at the bottom right starts past the middle of the screen at every aspect seen).
+constexpr float kLeftEdge = 10.f;
+constexpr float kBottomFrac = 0.04f;    // of the window's height
+constexpr float kReachFrac = 0.5f;      // of the window's width, the block's right limit
+
+// Buttons to a row for a window this wide: as many whole pairs as fit under the reach, at least one pair, never more than there are buttons; the rows then split the
+// buttons evenly (14 buttons: 6 + 6 + 2 on a wide screen, 4 + 4 + 4 + 2 on a narrow one).
+inline int columnsFor(float winWidth) {
+    const float room = winWidth * kReachFrac - kLeftEdge;
+    int cols = (int)((room + kGap) / (kW + kGap));
+    cols -= cols % 2;
+    return std::max(2, std::min(cols, kCount + kCount % 2));
+}
 
 // Whether a key does anything right now. The polls apply their own conditions too; these are
 // the ones a person watching can tell apart, and a button outside them neither lights nor acts.
@@ -94,11 +107,12 @@ public:
         this->setID("touch-pad"_spr);
         this->setZOrder(1 << 20);
         const auto win = CCDirector::sharedDirector()->getWinSize();
-        const float xRight = win.width - kRightMargin - kW;
-        const float xLeft = xRight - kGap - kW;
+        const int cols = columnsFor(win.width);
+        const int rows = (kCount + cols - 1) / cols;
+        const float bottom = win.height * kBottomFrac;
         for (int i = 0; i < kCount; ++i) {
-            const float x = (i % 2) ? xRight : xLeft;
-            const float y = win.height - kTopMargin - kH - (float)(i / 2) * (kH + kGap);
+            const float x = kLeftEdge + (float)(i % cols) * (kW + kGap);
+            const float y = bottom + (float)(rows - 1 - i / cols) * (kH + kGap);
             auto* bg = CCLayerColor::create({0, 0, 0, 140}, kW, kH);
             bg->setPosition({x, y});
             bg->setTag(i);
@@ -193,10 +207,10 @@ public:
             if (m_label[i]) m_label[i]->setOpacity(live ? 255 : 70);
         }
         // The fold button: the arrow points the way the pad will go.
-        // The handle's chevron points the way a press moves the pad: in (right) while it is out,
-        // out (left) while it is folded.
+        // The handle's chevron points the way a press moves the pad: in (left) while it is out,
+        // out (right) while it is folded.
         if (m_chevron) {
-            const char* want = m_folded ? "edit_leftBtn_001.png" : "edit_rightBtn_001.png";
+            const char* want = m_folded ? "edit_rightBtn_001.png" : "edit_leftBtn_001.png";
             if (want != m_chevronFrame) {
                 if (auto* frame = cocos2d::CCSpriteFrameCache::sharedSpriteFrameCache()
                                       ->spriteFrameByName(want)) {
@@ -227,7 +241,7 @@ private:
     bool m_folded = false;
     const char* m_pauseFrame = "GJ_pauseEditorBtn_001.png";
     cocos2d::CCSprite* m_chevron = nullptr;
-    const char* m_chevronFrame = "edit_rightBtn_001.png";
+    const char* m_chevronFrame = "edit_leftBtn_001.png";
     static constexpr cocos2d::ccColor3B kHandleColor{70, 70, 90};
 
     // The fold handle reads as one: a chevron on the left and the word beside it, on a background
@@ -235,7 +249,7 @@ private:
     void makeHandle(cocos2d::CCLayerColor* bg) {
         using namespace cocos2d;
         float textLeft = 4.f;
-        if (auto* chev = CCSprite::createWithSpriteFrameName("edit_rightBtn_001.png")) {
+        if (auto* chev = CCSprite::createWithSpriteFrameName("edit_leftBtn_001.png")) {
             const auto sz = chev->getContentSize();
             chev->setScale((kH - 8.f) / std::max(sz.height, 1.f));
             chev->setPosition({4.f + chev->getScaledContentSize().width / 2.f, kH / 2.f});

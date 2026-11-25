@@ -134,6 +134,7 @@ struct SolveOutcome {
     // plan's. Empty for a call that was not a ladder.
     std::string ladder;
     std::string camy;   // --camy: the call's camera counters (dp/cam_y_obs.hpp camySummary)
+    std::string shstep;   // --shadowstep: the call's tick counts, one line (dp/shadow_step.hpp shadowStepSummary)
     // --dumpstate / --start-state (dp statefile.hpp, progress.hpp has the fields' meaning).
     long long dumpT = -1;
     std::string dumpStart;

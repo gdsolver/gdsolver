@@ -179,10 +179,10 @@ inline std::string run(const std::string& inPath, const std::string& outPath) {
     }
     std::memcpy(pb, workP.data(), psz);
     if (sb) std::memcpy(sb, workS.data(), ssz);
-    std::memset(pb + 0xc28, 0, 8);   // m_gameLayer: none, whatever a patch laid there
+    std::memset(pb + gdoff::kPlayerGameLayer, 0, 8);   // m_gameLayer: none, whatever a patch laid there
     // collidedWithObjectInternal 0x4efd50 reaches the SINGLETON PlayLayer (destroyPlayer) when a hazard is hit and +0x7ed is 0 (decompile line 1198; +0x7ed is read nowhere else in it);
     // with +0x7ed = 1 the same branch only sets +0x98c. The real level is never reached, and player_in shows the 1 the function was entered with.
-    if (fn == "collidedWithObjectInternal") pb[0x7ed] = 1;
+    if (fn == "collidedWithObjectInternal") pb[gdoff::kPlayerCanRunIntoBlocks] = 1;
     // collidedWithSlopeInternal reaches PlayLayer::destroyPlayer on a lethal (spiked) slope contact: a slope with m_slopeIsHazard set is refused here, after the patches, before the call
     if (fn == "collidedWithSlopeInternal" && slope && slope->m_slopeIsHazard) {
         slope->release();

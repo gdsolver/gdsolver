@@ -84,7 +84,6 @@ SHARED = {
     "dpcrossbehind": ["g_cfg.dpCrossBehind"],
     "dpportalobbmode": ["g_cfg.dpPortalObbMode"],
     "dpcrossminlag": ["g_cfg.dpCrossMinLag"],
-    "dpbirthrung": ["g_cfg.dpBirthRung"],
     "dpwidefirst": ["g_cfg.dpWideFirst"],
     "hbfrom": ["g_cfg.hbFrom"],
     "coins": ["g_cfg.coinMode"],

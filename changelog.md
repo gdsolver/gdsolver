@@ -1,3 +1,26 @@
+# v0.8.1
+
+ * **One package for Windows and Android.** `gdsolver.solver.geode` now holds both builds, for Geometry Dash 2.2091
+   on Geode 6.0.0: the Windows one and an Android one (android64). Install the same file on either. The Android
+   build is experimental. The results and solutions published here were measured on Windows (GD 2.2091, Geode 6.0.0) in a 1706x960 (16:9) window. At another resolution or texture quality, or on another platform (Android included), the same level can be solved differently and take a different time. See docs/ANDROID.md.
+ * **The play menu's Solve now gives the solver the trigger shadow.** A solve started from the play menu ran without
+   the trigger shadow's arguments (the ones a solve started from a cfg has always had), so the model did not run the
+   level's triggers and its first plan on some levels died early (on official level 22 at tick 470, where the same
+   solve with the trigger shadow reaches tick 1871). Solves started from a cfg were not affected. The play menu's
+   Solve also passes the level's reverse-sync setting now.
+ * **A new solve no longer reuses an earlier run's camera.** The camera recording the solver reads was kept under a
+   name a later run could repeat, so after the window changed size a solve could read the old camera. A solving run
+   now starts without the earlier run's recordings.
+ * **A ball turned by Rotate Gameplay spins as the game has it.** When the rotation queue turned a ball, the model kept
+   the airborne spin rate where the game switches to the ground one; official level 22's ball section now matches the
+   game's rotation (the plans are unchanged).
+ * **The wall key tells apart the deaths the mod causes itself** (a missed coin, a stall, a stop), which all used to
+   look like one wall. On by default; `wallkeyself=0` is the off arm. The official 22 levels solve with the same
+   plans either way.
+ * **Five switches that did nothing by default are gone** (`dppinx`, `dpheadguard`, `dpportalwalk`, `dptopstop`,
+   `dpbirthrung`); a cfg that still names one is refused by name.
+ * The play menu's red warning for Teleport triggers no longer counts a group named only by a Pulse, an Alpha, a
+   Stop or a Toggle that does not activate. Each solver call's shadow-step counts are written to `result.txt`.
 # v0.8.0
 
  * **Geode 6.0.0 and Geometry Dash 2.2091 (Windows), and nothing else.** This

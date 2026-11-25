@@ -5,11 +5,23 @@
 // Every offset the mod reads without a bindings name lives here, as GDOFF(win, android64).
 // The Windows value is the 2.2081 literal the code used before this header existed, unchanged,
 // so the Windows build compiles to the same instructions. The android64 value was measured on
-// libcocos2dcpp.so, arm64-v8a, 2.2081, sha256
-//   dda3752ab3a912fd2293561e157ecc98eca799056abd9223a331c1c514175df7
+// libcocos2dcpp.so, arm64-v8a, 2.2091 (store version code 43), sha256
+//   700588a06cc17cc963cc480cac4294f5cd55ee4cace062e69383e38c61b3b291
 // by finding each field in the Android function the Windows comment names (the Windows
-// function and address are given where the value is used). tools/android_offsets.py re-checks
-// every value against the bindings and that binary.
+// function and address are given where the value is used), not by applying a Windows delta.
+// tools/android_offsets.py re-checks every value against the bindings and that binary.
+//
+// android64 values, how well each is known (2.2091):
+//   strong -- found in the Android functions that use the member, with the member's width, and equal to the compiler's offset where
+//   the bindings name it: kLayerUnkPoint17Y (getMinPortalY / getMaxPortalY), kLayerGateMap (playerWasTouchingObject, init, resetLevelVariables),
+//   kLayerCollisionBlockSectionSizes (addToSection, removeObjectFromSection), kLayerSectionSizeX / Y (updateObjectSection, addToSection,
+//   staticObjectsInRect), kLayerLevelEndAnimStarted (playEndAnimationToPos, levelComplete, resetLevel), kPlayLayerEndLatch (checkForEnd,
+//   resetLevel), kPlayerBallStake (runBallRotation, stopRotation, togglePlayerScale, save/loadFromCheckpoint), and the three seeds (the global
+//   the inlined LCG in fast_rand / resetObject / GJBaseGameLayer::init loads and stores back).
+//   by the bindings -- every offsetof() member: the compiler's layout of the Geode 6 bindings, which the binary agreed with wherever it was
+//   looked at (the five sizes gd_offsets_check.cpp asserts, the members above, the tool's per-member access counts), not read member by member.
+//   absent -- kPlayerPendingCheckpoint and kObjPositionVtblSlot: their only sites are Windows-only, so there is no android64 value.
+// The weak list below is the Windows 2.209 column's.
 //
 // The member each offset belongs to is named beside it. src/mod/gd_offsets_check.cpp holds
 // each value against offsetof(<class>, <member>) on both platforms, so a bindings update or
@@ -62,8 +74,9 @@
 #include <cstdint>
 
 // GDOFF(win2081, win209, android64): the Windows value for GD 2.2081, the Windows value for GD 2.209 and
-// later (GEODE_COMP_GD_VERSION >= 22090), and the android64 value, which is 2.2081's -- there is no 2.209
-// Android binary here, so an Android build of 2.209 stops rather than read 2.2081's layout.
+// later (GEODE_COMP_GD_VERSION >= 22090), and the android64 value, which is GD 2.2091's (versionCode 43,
+// libcocos2dcpp.so sha256 700588a06cc17cc963cc480cac4294f5cd55ee4cace062e69383e38c61b3b291). The android64 values
+// of 2.2081 (v0.5.0) are in the history of this file; an Android build is only made for 2.2091.
 //
 // 2.209 exists as two builds of the executable: 524265B3 (2026-10-13) and the hotfix 4EEE06D5 (2026-10-17, Steam build
 // 26002420), which moved every function and took 0x40 bytes out of GJBaseGameLayer at m_effectManager. A build for the
@@ -85,17 +98,14 @@
 #if defined(GEODE_IS_WINDOWS)
 #if GEODE_COMP_GD_VERSION >= 22090
 #define GDOFF(win, win209, android64) (win209)
-#define GD_WIN_LITERAL(win, win209) (win209)
+#define GD_WIN_LITERAL(win, win209, android64) (win209)
 #else
 #define GDOFF(win, win209, android64) (win)
-#define GD_WIN_LITERAL(win, win209) (win)
+#define GD_WIN_LITERAL(win, win209, android64) (win)
 #endif
 #elif defined(GEODE_IS_ANDROID64)
-#if GEODE_COMP_GD_VERSION >= 22090
-#error "gd_offsets.hpp: no android64 offsets for GD 2.209 (measure them on that binary first)"
-#endif
 #define GDOFF(win, win209, android64) (android64)
-#define GD_WIN_LITERAL(win, win209) (win)
+#define GD_WIN_LITERAL(win, win209, android64) (android64)
 #else
 #error "gd_offsets.hpp: no raw offsets for this platform (Windows and android64 only)"
 #endif
@@ -113,7 +123,7 @@ inline constexpr std::size_t kGameState = offsetof(GJBaseGameLayer, m_gameState)
 // ---- GJBaseGameLayer (m_gameState is embedded at +0x1a8 on both) ----
 inline constexpr std::size_t kLayerCameraZoom = GDOFF_STATE(m_cameraZoom);        // m_gameState.m_cameraZoom
 inline constexpr std::size_t kLayerCameraOffsetY = GDOFF_STATE(m_cameraOffset) + offsetof(cocos2d::CCPoint, y);     // m_gameState.m_cameraOffset.y
-inline constexpr std::size_t kLayerUnkPoint17Y = GDOFF(0x23c, 0x23c, 0x23c);       // m_gameState.m_unkPoint17.y
+inline constexpr std::size_t kLayerUnkPoint17Y = GDOFF(0x23c, 0x23c, 0x23c);       // m_gameState.m_staticCameraActive.y (the bindings' name for the point the band code reads)
 inline constexpr std::size_t kLayerUnkBool1 = GDOFF_STATE(m_dualStaticCamera);          // m_gameState.m_unkBool1
 inline constexpr std::size_t kLayerFreeMode = GDOFF_STATE(m_isFreeMode);          // m_gameState.m_isFreeMode
 inline constexpr std::size_t kLayerCurrentChannel = GDOFF_STATE(m_currentChannel);    // m_gameState.m_currentChannel
@@ -133,13 +143,15 @@ inline constexpr std::size_t kLayerVarianceValues = offsetof(GJBaseGameLayer, m_
 inline constexpr std::size_t kLayerEnterEasingValues = offsetof(GJBaseGameLayer, m_enterEasingValues); // m_enterEasingValues
 inline constexpr std::size_t kLayerShaderLayer = offsetof(GJBaseGameLayer, m_shaderLayer);     // m_shaderLayer
 // The once-per-contact gate's std::map<std::pair<int,int>, int> (key: the object's m_uniqueID and the player's, value: the layer's +0x3e0 counter when the pair was last seen), which FUN_14031ef50 reads at layer+0x4f0:
-// read off the 2.209b decompilation (11-14); the other builds carry the value over (weak: no named member to assert it against).
-inline constexpr std::size_t kLayerGateMap = GDOFF(0x4f0, 0x4f0, 0x4f0);
+// read off the 2.209b decompilation (11-14). It is m_gameState.m_activatedObjectIDs in the 2.2091 bindings (gd_offsets_check.cpp holds it to that).
+// android64 (2.2091): state+0x2e8, not the Windows number -- GJGameState is 0x60 shorter before it there; the map's root is read by
+// GJBaseGameLayer::playerWasTouchingObject and playerTouchedTrigger at +0x498, and init / resetLevelVariables construct and clear it at +0x490.
+inline constexpr std::size_t kLayerGateMap = GDOFF(0x4f0, 0x4f0, 0x490);
 inline constexpr std::size_t kLayerRandomSeed = offsetof(GJBaseGameLayer, m_randomSeed);      // m_randomSeed
 inline constexpr std::size_t kLayerNonEffectObjects = offsetof(GJBaseGameLayer, m_nonEffectObjects);       // m_nonEffectObjects
 inline constexpr std::size_t kLayerCollisionBlockSections = offsetof(GJBaseGameLayer, m_collisionBlockSections); // m_collisionBlockSections
 inline constexpr std::size_t kLayerNonEffectObjectsSizes = offsetof(GJBaseGameLayer, m_nonEffectObjectsSizes);  // m_nonEffectObjectsSizes
-inline constexpr std::size_t kLayerCollisionBlockSectionSizes = GDOFF(0x3670, GD209(0x37b0, 0x3770), 0x3658); // m_collisionBlockSectionSizes
+inline constexpr std::size_t kLayerCollisionBlockSectionSizes = GDOFF(0x3670, GD209(0x37b0, 0x3770), 0x3510); // m_collisionBlockSectionSizes
 inline constexpr std::size_t kLayerMaxGameplayY = offsetof(GJBaseGameLayer, m_maxGameplayY);    // m_maxGameplayY
 
 // ---- PlayerObject ----
@@ -157,8 +169,10 @@ inline constexpr std::size_t kPlayerSlopeFlipGravity = offsetof(PlayerObject, m_
 inline constexpr std::size_t kPlayerRotationSpeed = offsetof(PlayerObject, m_rotationSpeed);      // m_rotationSpeed
 // The ball's ground-stake byte, the one right after m_rotationSpeed (the double above): runBallRotation raises it, toggleRollMode
 // clears it, togglePlayerScale re-stakes the ball only while it is up (dp State::ball728). No bindings name; the 2.209 and Android
-// values follow m_rotationSpeed's shift and are checked against the dump's b728 column.
-inline constexpr std::size_t kPlayerBallStake = GDOFF(0x728, 0x730, 0x708);
+// values follow m_rotationSpeed's shift and are checked against the dump's b728 column. The 2.2091 bindings call it m_isRotating (gd_offsets_check.cpp).
+// android64 (2.2091): runBallRotation raises it, stopRotation clears it, togglePlayerScale and updateRotation read it, and PlayerObject::
+// saveToCheckpoint / loadFromCheckpoint copy it.
+inline constexpr std::size_t kPlayerBallStake = GDOFF(0x728, 0x730, 0x6f8);
 inline constexpr std::size_t kPlayerLastSpiderFlipTime = offsetof(PlayerObject, m_lastSpiderFlipTime); // m_lastSpiderFlipTime
 inline constexpr std::size_t kPlayerAccelerating = offsetof(PlayerObject, m_isAccelerating);       // m_isAccelerating
 inline constexpr std::size_t kPlayerCollidedBottomMaxY = offsetof(PlayerObject, m_collidedBottomMaxY); // m_collidedBottomMaxY
@@ -211,6 +225,30 @@ inline constexpr std::size_t kObjAreaMoveSkip = offsetof(GameObject, m_unk508); 
 inline constexpr std::size_t kRingClaimTouch = offsetof(RingObject, m_claimTouch);         // RingObject::m_claimTouch
 inline constexpr std::size_t kCheckpointObject = offsetof(CheckpointObject, m_physicalCheckpointObject);       // CheckpointObject::m_physicalCheckpointObject
 
+// Members the code used to reach by a Windows literal (+0x..) and that the Geode 6 bindings name: the compiler's offset on every platform.
+// gd_offsets_check.cpp holds each to the literal it replaced on Windows 2.2091.
+inline constexpr std::size_t kStateMaxPortalY = offsetof(GJGameState, m_maxPortalY);           // relative to m_gameState (the "headband" float the head reset zeroes)
+inline constexpr std::size_t kPlayerDashY = offsetof(PlayerObject, m_dashY);                   // double; m_dashX is the one before it
+inline constexpr std::size_t kPlayerSlopeVelocity = offsetof(PlayerObject, m_slopeVelocity);   // float
+inline constexpr std::size_t kPlayerWasOnSlope = offsetof(PlayerObject, m_wasOnSlope);
+inline constexpr std::size_t kPlayerIsShip = offsetof(PlayerObject, m_isShip);
+inline constexpr std::size_t kPlayerIsBird = offsetof(PlayerObject, m_isBird);
+inline constexpr std::size_t kPlayerIsBall = offsetof(PlayerObject, m_isBall);
+inline constexpr std::size_t kPlayerIsDart = offsetof(PlayerObject, m_isDart);
+inline constexpr std::size_t kPlayerIsSwing = offsetof(PlayerObject, m_isSwing);
+inline constexpr std::size_t kPlayerIconSprite = offsetof(PlayerObject, m_iconSprite);         // CCSprite*, the node stopDashing reads its rotation from
+inline constexpr std::size_t kPlayerGameLayer = offsetof(PlayerObject, m_gameLayer);
+inline constexpr std::size_t kPlayerCanRunIntoBlocks = offsetof(PlayerObject, m_maybeCanRunIntoBlocks);
+inline constexpr std::size_t kPlayerDashFireSprite = offsetof(PlayerObject, m_dashFireSprite);
+inline constexpr std::size_t kPlayerIsBallRotating = offsetof(PlayerObject, m_isBallRotating);
+inline constexpr std::size_t kPlayerCurrentPotentialSlope = offsetof(PlayerObject, m_currentPotentialSlope);
+inline constexpr std::size_t kPlayerNoPotentialSlope = offsetof(PlayerObject, m_noPotentialSlope);
+inline constexpr std::size_t kObjMiddleSectionIndex = offsetof(GameObject, m_middleSectionIndex);
+inline constexpr std::size_t kObjSomeOtherIndex = offsetof(GameObject, m_someOtherIndex);
+inline constexpr std::size_t kObjIsActivated = offsetof(GameObject, m_isActivated);
+inline constexpr std::size_t kObjLastPosition = offsetof(GameObject, m_lastPosition);          // CCPoint
+inline constexpr std::size_t kObjLastFrameStamp = offsetof(GameObject, m_unk4C4);              // int, the frame counter value kObjLastPosition was taken at
+inline constexpr std::size_t kEffSpecialTarget = offsetof(EffectGameObject, m_specialTarget);
 // EnterEffectObject (the area trigger)
 inline constexpr std::size_t kEnterStartAngle = offsetof(EnterEffectObject, m_startAngle);        // m_startAngle
 inline constexpr std::size_t kEnterAnglePosition = offsetof(EnterEffectObject, m_anglePosition);     // m_anglePosition
@@ -271,13 +309,22 @@ inline constexpr std::size_t kLevelPracticeAttempts = 0x6ac;
 // libcocos2dcpp.so's load base on Android, whose first segment has vaddr 0.
 
 // ---- raw literals that were in the code, not in this header (Windows; the same literal everywhere else) ----
-// GD_WIN_LITERAL(2.2081, 2.209). The sites keep the value they had on every platform but Windows 2.209.
-inline constexpr std::size_t kPlayLayerEndLatch = GD_WIN_LITERAL(0x3878, GD209(0x3a68, 0x3a28));            // checkForEnd's latch byte (PlayLayer)
-inline constexpr std::size_t kLayerLevelEndAnimStarted = GD_WIN_LITERAL(0x3570, GD209(0x36b0, 0x3670));     // m_levelEndAnimationStarted
-inline constexpr std::size_t kLayerSectionSizeX = GD_WIN_LITERAL(0x36a0, GD209(0x37e0, 0x37a0));            // float, the section cell width cpfollowsection divides by
-inline constexpr std::size_t kLayerSectionSizeY = GD_WIN_LITERAL(0x36a4, GD209(0x37e4, 0x37a4));            // float, the cell height
-inline constexpr std::size_t kPlayerPendingCheckpoint = GD_WIN_LITERAL(0x890, 0x898);        // PlayerObject::m_pendingCheckpoint
-inline constexpr std::size_t kObjPositionVtblSlot = GD_WIN_LITERAL(0x4a8, 0x4b8);            // GameObject's vtable slot of getRealPosition (CCNode gained two virtuals)
+// GD_WIN_LITERAL(2.2081, 2.209, android64 2.2091). The android64 values were each found in the Android function that uses the member:
+//   kPlayLayerEndLatch: PlayLayer::checkForEnd tests the byte (ldrb) and sets it (strb) before it starts the end animation; PlayLayer::resetLevel clears it.
+//   kLayerLevelEndAnimStarted: PlayLayer::playEndAnimationToPos raises it, levelComplete / resetLevel / GJBaseGameLayer::resetLevelVariables write it,
+//     GJBaseGameLayer::update and PlayLayer::canPauseGame read it (hooks_gamelayer.cpp holds it to offsetof(PlayLayer, m_levelEndAnimationStarted)).
+//   kLayerSectionSizeX / Y: the floats updateObjectSection, addToSection and staticObjectsInRect divide a position by (m_sectionXFactor / m_sectionYFactor).
+inline constexpr std::size_t kPlayLayerEndLatch = GD_WIN_LITERAL(0x3878, GD209(0x3a68, 0x3a28), 0x3798);            // checkForEnd's latch byte (PlayLayer)
+inline constexpr std::size_t kLayerLevelEndAnimStarted = GD_WIN_LITERAL(0x3570, GD209(0x36b0, 0x3670), 0x3418);     // m_levelEndAnimationStarted
+inline constexpr std::size_t kLayerSectionSizeX = GD_WIN_LITERAL(0x36a0, GD209(0x37e0, 0x37a0), 0x3540);            // float, the section cell width cpfollowsection divides by
+inline constexpr std::size_t kLayerSectionSizeY = GD_WIN_LITERAL(0x36a4, GD209(0x37e4, 0x37a4), 0x3544);            // float, the cell height
+#if defined(GEODE_IS_WINDOWS)
+// Windows only: the two sites that use these (the takeover's static_assert in hooks_gamelayer.cpp, the area position's vtable call in areaenv.hpp) are
+// compiled on Windows alone -- Android names the member (m_pendingCheckpoint) and calls getRealPosition() -- so there is no android64 value, and an
+// Android build that reaches for one stops at compile time.
+inline constexpr std::size_t kPlayerPendingCheckpoint = GD_WIN_LITERAL(0x890, 0x898, 0);        // PlayerObject::m_pendingCheckpoint
+inline constexpr std::size_t kObjPositionVtblSlot = GD_WIN_LITERAL(0x4a8, 0x4b8, 0);            // GameObject's vtable slot of getRealPosition (CCNode gained two virtuals)
+#endif
 
 // ---- 22091, Windows only: what GJBaseGameLayer::processFollowActions (22091 base+0x339100) reads and writes (cfg follow=1, hooks_area.cpp; read only, nothing is written back) ----------------------------------
 // Offsets from that function's decompile, none of them named by the pinned bindings; no value for another platform or version (the follow rows are not written there). The node is a CCMoveCNode.

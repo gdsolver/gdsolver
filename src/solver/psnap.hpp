@@ -988,6 +988,41 @@ struct EMSnap {
     std::shared_ptr<EffectManagerState> full;   // cfg secsnapem only
 };
 
+// A fresh, empty EffectManagerState. The bindings declare EffectManagerState() with a Windows address only (GD builds the object inline
+// everywhere else, and libcocos2dcpp.so exports no constructor for it), so on Android the mod's call to it goes to nothing: a null jump
+// out of the first snapshot of a section search. There the object is made from a struct with the same members, whose constructor the
+// mod compiles itself, and handed out as an EffectManagerState (the members' layouts are asserted equal below). Windows keeps the call.
+#ifdef GEODE_IS_WINDOWS
+inline std::shared_ptr<EffectManagerState> newEMState() { return std::make_shared<EffectManagerState>(); }
+#else
+#define GDSOLVER_EM_MEMBERS(X) \
+    X(m_colorActions) X(m_pulseActions) X(m_unorderedMapInt_vectorPulseEffectAction) X(m_unorderedMapInt_vectorCountTriggerAction) \
+    X(m_unorderedSet_int1) X(m_mapInt_Int) X(m_unorderedMapInt_OpacityEffectAction) X(m_vectorTouchToggleAction) \
+    X(m_vectorCollisionTriggerAction) X(m_vectorToggleTriggerAction) X(m_vectorSpawnTriggerAction) X(m_itemCountMap) \
+    X(m_unorderedMapInt_bool) X(m_vectorGroupCommandObject2) X(m_unorderedMapInt_pair_double_double) X(m_unorderedSet_int2) \
+    X(m_timerItemMap) X(m_unorderedMapInt_vectorTimerTriggerAction) X(m_platformerProgress)
+struct EMStateMirror {
+#define GDSOLVER_EM_DECL(m) decltype(EffectManagerState::m) m{};
+    GDSOLVER_EM_MEMBERS(GDSOLVER_EM_DECL)
+#undef GDSOLVER_EM_DECL
+};
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winvalid-offsetof"
+#endif
+#define GDSOLVER_EM_CHECK(m) static_assert(offsetof(EMStateMirror, m) == offsetof(EffectManagerState, m), "EMStateMirror::" #m);
+GDSOLVER_EM_MEMBERS(GDSOLVER_EM_CHECK)
+#undef GDSOLVER_EM_CHECK
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+static_assert(sizeof(EMStateMirror) == sizeof(EffectManagerState), "EMStateMirror must have EffectManagerState's size");
+inline std::shared_ptr<EffectManagerState> newEMState() {
+    auto m = std::make_shared<EMStateMirror>();
+    return std::shared_ptr<EffectManagerState>(m, reinterpret_cast<EffectManagerState*>(m.get()));
+}
+#endif
+
 inline void captureEM(GJBaseGameLayer* l, EMSnap& out) {
     auto* em = l ? l->m_effectManager : nullptr;
     if (!em) {
@@ -997,7 +1032,7 @@ inline void captureEM(GJBaseGameLayer* l, EMSnap& out) {
     }
     out.pulses = em->m_pulseEffectVector;
     if (g_snapEMActive) {
-        out.full = std::make_shared<EffectManagerState>();   // fresh: saveToState may append
+        out.full = newEMState();   // fresh: saveToState may append
         em->saveToState(*out.full);
     } else {
         out.full.reset();

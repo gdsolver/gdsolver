@@ -695,9 +695,14 @@ inline std::vector<char> spawnChainReachDelayed(std::string_view all) {
 // Advanced Random's (152) and a Sequence's (435) lists, a Spawn's remap pairs (442, either side of a
 // pair). Over-inclusive on purpose (a list's chances and counts are taken too): it answers "can anything
 // fire a spawn-triggered object of this group?", and a group named nowhere cannot be fired.
+// An object that never spawns what it names is left out: an Alpha (1007), a Pulse (1006) and a Stop (1616) only change or end an effect on their target (dp trigshadow.hpp: no
+// spawnGroup on their path; GJBaseGameLayer::toggleGroupTriggered 0x32b7f0 is the one place a switch spawns, and only when the Toggle is set to activate: the same test as spawnChainReach's
+// `spawner`, key 56).
 inline std::unordered_set<int> targetedGroups(std::string_view all) {
     std::unordered_set<int> t;
     forEachObject(all, [&](std::string_view obj) {
+        const int oid = toInt(field(obj, "1"));
+        if (oid == 1006 || oid == 1007 || oid == 1616 || (oid == 1049 && !isOn(field(obj, "56")))) return;
         for (const char* key : {"51", "71", "152", "435", "442"})
             forEachListed(field(obj, key), [&](int g) { if (g > 0) t.insert(g); });
     });

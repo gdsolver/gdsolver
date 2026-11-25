@@ -79,7 +79,7 @@ inline std::string modCfg() {
     put(s, "voidband", g_cfg.voidBand);
     put(s, "voidcredit", g_cfg.voidCredit);
     put(s, "skydeath", g_cfg.skyDeath);
-    put(s, "dpheadguard", g_cfg.dpHeadGuard);
+    put(s, "wallkeyself", g_cfg.wallKeySelf);
     put(s, "dpsecfirst", g_cfg.dpSecFirst);
     put(s, "stallbound", g_cfg.stallBound);
     put(s, "uishow", g_cfg.uiShow);
@@ -271,7 +271,6 @@ inline std::string modCfg() {
     put(s, "dpareaadd", g_cfg.dpAreaAdd);
     put(s, "dpcrosscx", g_cfg.dpCrossCx);
     put(s, "dpcrossbehind", g_cfg.dpCrossBehind);
-    put(s, "dpbirthrung", g_cfg.dpBirthRung);
     put(s, "dpportalobbmode", g_cfg.dpPortalObbMode);
     put(s, "dpwidefirst", g_cfg.dpWideFirst);
     put(s, "hbfrom", g_cfg.hbFrom);
@@ -329,8 +328,6 @@ inline std::string modCfg() {
     put(s, "seckilllog", secsolve::g_killLog);
     put(s, "secvis", secsolve::g_visRefresh);
     put(s, "dpstephorizonlong", g_cfg.dpStepHorizonLong);
-    put(s, "dpportalwalk", g_cfg.dpPortalWalk);
-    put(s, "dppinx", g_cfg.dpPinX);
     put(s, "secpos", psnap::g_keepSnapPos);
     put(s, "secoverlay", secsolve::g_overlay);
     put(s, "secmasklo", psnap::g_maskLo);
@@ -398,7 +395,6 @@ inline std::string modCfg() {
     put(s, "offboardfree", g_cfg.offBoardFree);
     put(s, "offboardband", g_cfg.offBoardBand);
     put(s, "dpmaxiters", g_cfg.dpMaxIters);
-    put(s, "dptopstop", g_cfg.dpTopStop);
     put(s, "dpcapenvrepeat", g_cfg.dpCapEnvRepeat);
     put(s, "dpmissedportalrepeat", g_cfg.dpMissedPortalRepeat);
     put(s, "coinmissrev", g_cfg.coinMissRev);

@@ -10,7 +10,15 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <cstdlib>
+#ifdef GEODE_IS_WINDOWS
 #include <intrin.h>
+#define GDS_RETURN_ADDRESS() _ReturnAddress()
+#define GDS_RETURN_ADDRESS_SLOT() _AddressOfReturnAddress()
+#else
+// The print-only caller traces (rotdbg, nodedbg): clang's own builtins on Android.
+#define GDS_RETURN_ADDRESS() __builtin_return_address(0)
+#define GDS_RETURN_ADDRESS_SLOT() __builtin_frame_address(0)
+#endif
 
 using namespace p1;
 
@@ -39,7 +47,7 @@ class $modify(RotDbgPlayer, PlayerObject) {
             std::string trace;
             {
                 const uintptr_t lo = (uintptr_t)geode::base::get(), hi = lo + 0x1000000;
-                const uintptr_t* sp = (const uintptr_t*)_AddressOfReturnAddress();
+                const uintptr_t* sp = (const uintptr_t*)GDS_RETURN_ADDRESS_SLOT();
                 int found = 0;
                 for (int i = 0; i < 200 && found < 10; ++i) {
                     const uintptr_t v = sp[i];
@@ -49,7 +57,7 @@ class $modify(RotDbgPlayer, PlayerObject) {
             writeResult("rotdbg stack:" + trace);
             char b[200];
             snprintf(b, sizeof(b), "rotdbg: t=%lld setRotation(%.4f) was %.4f ra=base+0x%llx", (long long)g_tick, r, this->getRotation(),
-                     (unsigned long long)((uintptr_t)_ReturnAddress() - (uintptr_t)geode::base::get()));
+                     (unsigned long long)((uintptr_t)GDS_RETURN_ADDRESS() - (uintptr_t)geode::base::get()));
             writeResult(b);
         }
         PlayerObject::setRotation(r);
@@ -83,7 +91,7 @@ class $modify(NodeDbgActionManager, cocos2d::CCActionManager) {
         if (g_nodeDbg1 >= g_nodeDbg0 && (long long)g_tick >= g_nodeDbg0 && (long long)g_tick <= g_nodeDbg1 && botDriving()) {
             char b[200];
             snprintf(b, sizeof(b), "amupdate: t=%lld frame=%lld dt=%.7f ra=base+0x%llx", (long long)g_tick, (long long)g_frame, dt,
-                     (unsigned long long)((uintptr_t)_ReturnAddress() - (uintptr_t)geode::base::get()));
+                     (unsigned long long)((uintptr_t)GDS_RETURN_ADDRESS() - (uintptr_t)geode::base::get()));
             writeResult(b);
         }
         CCActionManager::update(dt);

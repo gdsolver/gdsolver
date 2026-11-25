@@ -456,6 +456,20 @@ struct RotNote {
 // BEFORE the caller keys the child -- the turn rewrites x, y, vy and the frame, and a key taken in
 // the old frame would put two different worlds in one cell. `rot` (may be null) gets what
 // --rotwatch prints, and only when the watch covers this tick and the child turned.
+// A ball turned by the rotation queue. GD's Rotate Gameplay (22091 0x4f7fa0) calls flipGravity (0x4f8440: its ball arm zeroes +0x730 / +0x670 / +0x728 and calls runBallRotation2) and then
+// setLeftward (FUN_1404f6830 = setLeftward in collide.hpp): for a ball that is not dashing it zeroes the three words again and calls runBallRotation(1), so every turn leaves the GROUND stake,
+// signed by the new up / leftward / sideways bytes, and updateRotation spends it (+0x728 / 240 a tick, added to the angle) on the tick the turn happens in. The shadow's pass does this for a body it
+// turned itself (playerRotateGameplay); a turn the queue makes after the pass kept the old stake and the old tick's angle (lv22 t=6307: GD 285.85 -> 282.74 and -3.108 a tick, the model 288.05 and +2.202).
+// `rotBefore` is the angle before the tick.
+inline void ballRestakeAfterTurn(State& c, double rotBefore) {
+    if (c.mode != 2 || c.dual || c.dashing) return;
+    const bool mi = c.mini != 0;
+    const double dxr = c.dx > 0.f ? (double)c.dx : 1.29825;
+    const double rate = ballRotRate(mi, false, dxr);   // runBallRotation(1): +-0x78 / (size * 0.2 * speed factor) / 240
+    const double sgn = (gdUpOf(c) ? -1.0 : 1.0) * (shGdLeft((int)c.frame, c.rev) ? -1.0 : 1.0) * (c.frame != 0 ? -1.0 : 1.0);
+    c.rotStep = (float)rate;
+    c.rot = (float)(rotBefore + sgn * rate);
+}
 inline State advanceState(const State& s, int input, const StepCtx& K, bool& dead, RotNote* rot) {
     // The shadow step (shadow_step.hpp) is the tick: there is no old model to run first or to fall back to.
     State c = shadowAdvance(s, input, K, dead);
@@ -471,6 +485,7 @@ inline State advanceState(const State& s, int input, const StepCtx& K, bool& dea
         // The turn is a gravity flip when it changes GD's up byte (frame 3 is the mirror of frame 0 for the same State::flip): the flip clock restarts, which the end of the tick (step.hpp, c.flipT) cannot see
         // because the turn is applied after it. A shadow seed in the turned frame reads it as the stamp GD's flipGravity wrote (shadow_step.hpp, +0x808): the grace of a body inside a solid.
         if (nfR >= 0 && gdUpOf(c) != up0R) c.flipT = 0;
+        if (nfR >= 0) ballRestakeAfterTurn(c, (double)s.rot);
         if (rw && nfR >= 0) {   // --rotwatch: print only, read in the serial pass
             rot->set = true;
             rot->uid = g_rotWatchUid;

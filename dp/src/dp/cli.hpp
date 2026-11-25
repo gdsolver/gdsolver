@@ -742,6 +742,9 @@ struct IncReport {
                     "(%lld objects) plain=%lld builds=%lld (%.1f ms) failed=%lld | check: %lld compared, %lld disagree (%lld objects not counted: only the step groupPrevApply writes next differed)\n",
                     s.seekFull, s.seekInc, s.procInc, s.objsInc, s.atLists, s.atListObjs, s.atFull, s.builds,
                     s.buildMs, s.buildFail, s.checked, s.mismatch, s.gpStep);
+        if (g_incCheck)
+            if (const char* lg = std::getenv("DP_INCLOG"))   // test only: the totals of every call, for a corpus run that discards stdout
+                if (FILE* f = std::fopen(lg, "a")) { std::fprintf(f, "compared %lld disagree %lld\n", (long long)s.checked, (long long)s.mismatch); std::fclose(f); }
         if (g_sqStats.heads.load())
             std::printf("quiet: %lld no-recording objects with no controller (%lld of them reached by a touch box that moves them by nothing, %lld more of that kind with recorded on/off rows, taken off the rule %lld times); %lld of %lld object-visits of the group walks passed by (%.2f%%) in %lld calls; %lld checked against the walks (K1CHECK); %lld short lists checked against the full ones (QLISTCHECK)%s\n",
                         g_sqStats.objects.load(), g_sqStats.touchInert.load(), g_sqStats.touchRec.load(), g_sqStats.trGated.load(), g_sqStats.passed.load(), g_sqStats.visits.load(), 100.0 * (double)g_sqStats.passed.load() / (double)std::max(g_sqStats.visits.load(), 1LL), g_sqStats.heads.load(),
@@ -8577,6 +8580,7 @@ inline int cliMainOnce(int argc, char** argv) {
             const bool sPrevGrounded = (s.grounded != 0);   // applyRotation's re-tap
             const bool sPrevFresh = (s.action == 0 || s.pSpiderTap != 0 || (g_sameTick && curIn != 0 && refreshEff.count(t)));   // ...and whether the button is a fresh press (--rotretapfresh)
             const double sPrevY = (double)s.y;              // ...and its pre-tap y
+            const double sPrevRot = (double)s.rot;          // ...and its angle before the tick (ballRestakeAfterTurn)
             const int wgFrame = (int)s.frame;               // --walkgates (below)
             // --sametick: a release then a press on one tick while held -- the step sees a fresh press
             if (g_sameTick && curIn != 0 && refreshEff.count(t)) s.action = 0;
@@ -8799,6 +8803,7 @@ inline int cliMainOnce(int argc, char** argv) {
                                              curIn, sPrevGrounded,
                                              sPrevY, true, sPrevFresh);
                 if (nf >= 0 && gdUpOf(s) != up0Rot) s.flipT = 0;
+                if (nf >= 0) ballRestakeAfterTurn(s, sPrevRot);
                 if ((nf >= 0 && nf != f0dbg) || (int)s.rev != rev0dbg) {
                     if (nf >= 0 && nf != f0dbg)
                         bindFrameSlices(rfs, frameLevel(L, nf));
@@ -9376,6 +9381,7 @@ inline int cliMainOnce(int argc, char** argv) {
     twin.print();
     camyPrint();   // --camy (cam_y_obs.hpp): a no-op without the flag
     if (g_camy) g_outcome.camy = camySummary();
+    if (g_shStats.eligible.load() > 0) g_outcome.shstep = shadowStepSummary();   // (SearchOutcome::shstep: the mod relays it into result.txt)
     // --keycensus: the per-box tally, with the uid so it can be joined against
     // objrects. Boxes that never divided the key are printed as 0 rather than
     // omitted -- "absent" and "zero" are the distinction this project keeps

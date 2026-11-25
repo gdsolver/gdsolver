@@ -4,7 +4,7 @@
 
 #include <string>
 
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && defined(GEODE_IS_WINDOWS)
 #include <Windows.h>   // TerminateProcess (exitGame)
 #endif
 
@@ -46,7 +46,7 @@ inline std::string rawLevelString(std::string s) {
 // times out of three). The session's own files are flushed before this is called (endSession), and a worker owes the game nothing else: its profile is not
 // saved while it drives.
 inline void exitGame() {
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && defined(GEODE_IS_WINDOWS)
     ::TerminateProcess(::GetCurrentProcess(), 0);
 #else
     geode::utils::game::exit(false);

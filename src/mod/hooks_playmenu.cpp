@@ -1427,7 +1427,8 @@ class $modify(PlayHoldItem, CCMenuItemSpriteExtra) {
 // of 2.209: the hook read m_enterTransitionFinished at the old build's offset, which in the update is a byte of m_orbsIcon, the sprite pointer's byte 5,
 // zero whenever that address is below 2^40.) With `:z` the byte at +0x27d is set to 0 just before the press: the case of the update's old offset reading a zero, made on purpose (it corrupts
 // m_orbsIcon, which nothing reads before the process is closed). LevelInfoLayer::scene has no Windows address in the bindings, so its place in each build is here.
-#if GEODE_COMP_GD_VERSION >= 22090
+// Windows only: the two addresses are Windows RVAs and the bytes read are that layout's.
+#if GEODE_COMP_GD_VERSION >= 22090 && defined(GEODE_IS_WINDOWS)
 namespace infoplay {
 inline void run(int stars, bool zero27d) {
     if (g_cfg.levelFile.empty()) { writeResult("infoplay: no cfg levelfile"); return; }
@@ -1486,7 +1487,7 @@ class $modify(PlayMenuPreview, MenuLayer) {
     void preview(float) {
         const std::string kind = g_cfg.uiShow;
         if (kind.empty()) return;
-#if GEODE_COMP_GD_VERSION >= 22090
+#if GEODE_COMP_GD_VERSION >= 22090 && defined(GEODE_IS_WINDOWS)
         if (kind.rfind("infoplay", 0) == 0) {
             infoplay::run(kind.size() > 9 && kind[8] == ':' ? std::atoi(kind.c_str() + 9) : 0,
                           kind.size() >= 2 && kind.compare(kind.size() - 2, 2, ":z") == 0);

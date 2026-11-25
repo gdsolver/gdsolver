@@ -201,7 +201,10 @@ class $modify(PlayLayer) {
                       level ? level->m_levelID.value() : -1);
         g_uiArmedLevel = nullptr;   // one entry per Start, whatever is decided below
         bool want = (!g_started || g_sessionOver) && g_uiMode > 0 && armed;
-        if (want && uiConfigureSession(level->m_levelID.value())) attemptAutoForLevel(level);
+        if (want && uiConfigureSession(level->m_levelID.value())) {
+            reverseSyncForLevel(level);   // after the session reset: the menu's route sets what the cfg route's level entry sets
+            attemptAutoForLevel(level);
+        }
         // Sample the level's own record before it has run a tick, so the session-end line can
         // state whether anything was written into it (see progressDiff). A level a slice swap
         // brings in (level_slice.hpp) is not sampled: the record the line speaks for stays the
@@ -359,8 +362,6 @@ class $modify(PlayLayer) {
             takeover::g_restorePending = true;
             return;
         }
-        // cfg dpheadguard: the head reset checkpoint flight asked for (cp_flight g_forceHead is cleared below, before the singlereset test)
-        const bool cpHeadAsked = cpflight::g_forceHead;
         // GD's random seeds first, before anything the reset draws from them (see g_rngFix):
         // every attempt and every checkpoint restore of a session starts from the same values.
         rngFixApply();
@@ -607,8 +608,7 @@ class $modify(PlayLayer) {
         // already as a reset leaves it; a second reset would count a persistent item twice and lose the
         // start triggers.
         if (g_started && !g_sessionOver && !ckptRestore && !cpflight::g_starting
-            && !takeover::g_restoring && g_resetMarkLayer == this && g_resetMarkPc == g_pcCalls
-            && !(g_cfg.dpHeadGuard && cpHeadAsked)) {
+            && !takeover::g_restoring && g_resetMarkLayer == this && g_resetMarkPc == g_pcCalls) {
             ++g_resetsSkipped;
             if (g_resetsSkipped <= 5)
                 writeResult("singlereset: reset skipped at attempt " + std::to_string(g_attempt) + " (no physics since the last one)");
@@ -670,13 +670,13 @@ class $modify(PlayLayer) {
                 static int s_hb = 0;
                 if (s_hb++ < 3) {
                     float was = 0.f;
-                    std::memcpy(&was, gs + 0x5bc, 4);
+                    std::memcpy(&was, gs + gdoff::kStateMaxPortalY, 4);
                     char b[180];
                     snprintf(b, sizeof(b), "headbandfresh: layer+0x%llx (m_gameState+0x5bc) was %.3f, now 0",
-                             (long long)(gs + 0x5bc - lb), (double)was);
+                             (long long)(gs + gdoff::kStateMaxPortalY - lb), (double)was);
                     writeResult(b);
                 }
-                std::memset(gs + 0x5bc, 0, 4);
+                std::memset(gs + gdoff::kStateMaxPortalY, 0, 4);
             }
             // cfg resetdump (print only): player 1's whole object as a head reset leaves it, then the layer's
             // GJBaseGameLayer part and the objects resetdumpuids names -- what the next attempt inherits, before
@@ -917,6 +917,8 @@ class $modify(PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
+        const std::string selfWhy = std::move(solver::g_selfKillWhy);   // cfg wallkeyself: taken by this call only
+        solver::g_selfKillWhy.clear();
         // A layer on its way out still dies, and records like any other (see NoRecordGuard).
         // Measured on a slice swap: the level's own layer, left running for the frames the
         // copy's scene takes to come up, died over and over, and one death reached GD's record
@@ -983,6 +985,7 @@ class $modify(PlayLayer) {
             else writeResult(kb);
             solver::g_killTick = (long long)g_tick;   // cfg voidband (repair.hpp checkVoidRun)
             solver::g_killUid = object ? (int)object->m_uniqueID : -1;
+            solver::g_killSelf = (object && player && object == static_cast<GameObject*>(player)) ? (selfWhy.empty() ? std::string("self") : selfWhy) : std::string();
             solver::g_killAttempt = g_attempt;
             solver::g_killGroups.clear();
             if (object && object->m_groupCount > 0 && object->m_groups) {

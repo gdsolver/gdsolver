@@ -6,8 +6,8 @@ solves a level by playing it — inside the game, from cold.
 **[Download `gdsolver.solver.geode`](https://github.com/gdsolver/gdsolver/releases/latest)**
 from the latest release, drop it into Geometry Dash's `geode/mods/` folder and
 start the game. [Geode](https://geode-sdk.org) 6.0.0 or newer has to be installed first (this
-mod does not load on Geode 5); see [Installing](#installing). This release has no Android build;
-the Android version follows the Windows release ([docs/ANDROID.md](docs/ANDROID.md)).
+mod does not load on Geode 5); see [Installing](#installing). The same file holds an experimental Android build
+(android64, GD 2.2091, Geode 6; [docs/ANDROID.md](docs/ANDROID.md)). The results and solutions published here were measured on Windows (GD 2.2091, Geode 6.0.0) in a 1706x960 (16:9) window. At another resolution or texture quality, or on another platform (Android included), the same level can be solved differently and take a different time.
 
 <p align="center">
   <img src="docs/media/solve-to-replay.webp" width="720"
@@ -272,7 +272,7 @@ C:\Program Files (x86)\Steam\steamapps\common\Geometry Dash\geode\mods\
 
 Geode itself has to be installed first ([geode-sdk.org](https://geode-sdk.org)), **version 6.0.0 or newer**:
 this mod is built on Geode 6 and does not load on Geode 5 (and a Geode 6 loader does not read a Geode 5 mod).
-The build is for **Windows and GD 2.2091**, and for the executable of the Steam build it was made for:
+The Windows build is for **GD 2.2091**, and for the executable of the Steam build it was made for:
 Geometry Dash 2.209 exists as two executables with one version string (the first Steam build and a hotfix
 that moved nearly every function; Geode 6 names the hotfix 2.2091), and a mod built for the one hooks
 the middle of other functions in the other. So the mod checks the executable itself (the build stamps of
@@ -280,11 +280,10 @@ GeometryDash.exe, libcocos2d.dll and libExtensions.dll) before it hooks anything
 built for it stays off, writes one line to the log and shows one line on screen, and the game plays as if
 it were not installed. Nothing else is needed — no Python, no external process, no second copy of the game.
 
-**Android** (android64; not part of this release): the Android version follows the Windows release, on the releases
-page as a separate pre-release, as an experiment. It is not supported: the model's physics is Windows GD's, and
-whether Android GD behaves the same has not been measured, so a result reached on
-Android is Android's alone. [docs/ANDROID.md](docs/ANDROID.md) says how the port
-differs.
+**Android** (android64, GD 2.2091 on Geode 6.0.0): the same gdsolver.solver.geode holds an Android build (since v0.8.1), which goes into the
+Geode launcher's geode/mods/ folder the same way. It is experimental: The results and solutions published here were measured on Windows (GD 2.2091, Geode 6.0.0) in a 1706x960 (16:9) window. At another resolution or texture quality, or on another platform (Android included), the same level can be solved differently and take a different time.
+On Android the mod does not check the game's build as it does on Windows.
+[docs/ANDROID.md](docs/ANDROID.md) says how the port differs.
 
 The mod announces itself in the log the moment it loads, and says what it
 suppresses:

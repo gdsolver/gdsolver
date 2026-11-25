@@ -23,6 +23,9 @@
 #include "dp/trigevent_togstate.hpp"
 #include "dp/game_event.hpp"
 
+#ifndef _WIN32
+#include <unistd.h>   // getpid (--shadowquietdump's %p); Linux's headers pull it in by themselves, Android's do not
+#endif
 #include <ctime>
 #include <atomic>
 #include <cstring>
@@ -3467,6 +3470,15 @@ inline State shadowAdvance(const State& s, int input, const StepCtx& K, bool& de
 }
 
 // printed by the replay and the search when the flag is on
+// The counts shadowStepPrint's `shadowstep declined:` line prints, as one line for the mod to relay into result.txt (SearchOutcome::shstep). Nothing reads it.
+inline std::string shadowStepSummary() {
+    const ShadowStepStats& S = g_shStats;
+    char b[320];
+    std::snprintf(b, sizeof(b), "eligible %lld stepped %lld teleport %lld mini %lld inexact %lld warp %lld other %lld (dual %lld frame %lld reverse %lld platformer %lld) slope %lld seedcheck %lld",
+                  S.eligible.load(), S.stepped.load(), S.declinedTeleport.load(), S.declinedMini.load(), S.declinedInexact.load(), S.declinedWarp.load(), S.declinedOther.load(),
+                  S.declinedDual.load(), S.declinedFrame.load(), S.declinedRev.load(), S.declinedPlat.load(), S.declinedSlope.load(), S.declinedSeedCheck.load());
+    return b;
+}
 inline void shadowStepPrint() {
     fcheck::print();
     if (!g_shModelDeaths.empty()) {

@@ -710,9 +710,9 @@ inline void tick(long long t) {
             int wstamp = 0;
             if (g_wtLast) {   // raw reads: the offsets are the 2.2091 layout (moveObjects 0x3369ab writes them)
                 const char* base = reinterpret_cast<const char*>(tr.obj);
-                wlx = *reinterpret_cast<const float*>(base + 0x4d0);
-                wly = *reinterpret_cast<const float*>(base + 0x4d4);
-                wstamp = *reinterpret_cast<const int*>(base + 0x4dc);
+                wlx = *reinterpret_cast<const float*>(base + gdoff::kObjLastPosition);
+                wly = *reinterpret_cast<const float*>(base + gdoff::kObjLastPosition + sizeof(float));
+                wstamp = *reinterpret_cast<const int*>(base + gdoff::kObjLastFrameStamp);
             }
             if (!tr.wValid || wx != tr.wx || wy != tr.wy || rot != tr.wrot || on != tr.won || w != tr.ww || h != tr.wh
                 || (g_wtLast && (wlx != tr.wlx || wly != tr.wly || wstamp != tr.wstamp))) {

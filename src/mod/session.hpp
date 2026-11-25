@@ -12,6 +12,18 @@ namespace p1 {
 
 inline void resetSecsolveSession();   // below, with the handoff's globals
 
+// cfg `trigshadow` (on by default): the trigger shadow and its supply, at the front of the dp's arguments, once per session's cfg (g_cfg is rebuilt at each level's entry).
+// A cfg that spells --trigshadowlive in a `dparg` has chosen its own arguments and keeps them: nothing is added, so no flag reaches the dp twice.
+// Called where a session's cfg is final: the end of loadConfig, and the play menu's Solve (uiConfigureSession), which builds g_cfg without a cfg file and so never
+// reached loadConfig -- the menu's solves ran the dp without the trigger shadow, and the first plan of official level 22 died at t=470 where the cold's reaches t=1871.
+inline void addTrigShadowArgs() {
+    if (!g_cfg.shadowOn()) return;
+    const bool spelled = std::find(g_cfg.dpArgs.begin(), g_cfg.dpArgs.end(), std::string("--trigshadowlive")) != g_cfg.dpArgs.end();
+    if (spelled) return;
+    static const char* const kTrigShadowArgs[] = {"--trigshadowlive", "@DATA@,@DATA@", "--trigshadowevents", "--trigshadowopts", "all,cammodel=@DATA@/levelstr.lvl,scale=@DATA@/levelstr.lvl,camlock,screen,settings", "--trigshadowworld", "--trigsupply-all", "--trigsupplytake", "--trigsupplycam", "--trigsupplyarea", "--camyband"};
+    g_cfg.dpArgs.insert(g_cfg.dpArgs.begin(), std::begin(kTrigShadowArgs), std::end(kTrigShadowArgs));
+}
+
 // Everything a panel-started session has in common, whichever mode it is.
 inline void uiSessionBase(int levelId) {
     resetSessionState();
@@ -39,6 +51,7 @@ inline bool uiConfigureSession(int levelId) {
         // while the solver runs (dpsolve::start pauses it) and released when the plan lands.
         uiSessionBase(levelId);
         g_cfg.dpSolve = true;
+        addTrigShadowArgs();   // what loadConfig adds for a cfg-driven solve (shadowOn() needs dpSolve, set just above)
         // The overlays shown: F1 does not hide them while solving, so a solve must not inherit them
         // hidden from a replay (session_hotkeys.hpp, F1).
         if (g_overlayHidden) {
@@ -627,7 +640,6 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
     else if (key == "offboardfree") g_cfg.offBoardFree = (val == "1");
     else if (key == "offboardband") g_cfg.offBoardBand = (val == "1");
     else if (key == "dpmaxiters") cfgNum(key, val, g_cfg.dpMaxIters);
-    else if (key == "dptopstop") cfgNum(key, val, g_cfg.dpTopStop);
     else if (key == "dpcapenvrepeat") cfgNum(key, val, g_cfg.dpCapEnvRepeat);
     else if (key == "dpmissedportalrepeat") cfgNum(key, val, g_cfg.dpMissedPortalRepeat);
     else if (key == "coinmissrev") g_cfg.coinMissRev = (val == "1");
@@ -757,7 +769,23 @@ inline bool loadDpCfg(const std::string& key, const std::string& val) {
 
 // Trace-only keys. They live outside loadConfig's else-if chain because that chain is at
 // MSVC's block-nesting limit (C1061): one more `else if` there does not compile.
+#ifndef GEODE_IS_WINDOWS
+// These cfg keys dump a raw image of a game object (whole-object hex, fixed byte ranges, a cached rect read by offset) or follow an absolute address, all laid
+// out for the Windows build; on Android they would read other bytes (or past the end of a smaller object). The key is accepted and ignored, with a warning.
+inline bool windowsOnlyDiagnosticKey(const std::string& key) {
+    static const char* const kKeys[] = {"ctupd", "ctraw", "btraw", "rectcache", "hwwatch"};
+    for (const char* k : kKeys)
+        if (key == k) {
+            geode::log::warn("cfg {} is a diagnostic of the Windows build and is ignored on Android", key);
+            return true;
+        }
+    return false;
+}
+#endif
 inline bool loadTraceCfg(const std::string& key, const std::string& val) {
+#ifndef GEODE_IS_WINDOWS
+    if (windowsOnlyDiagnosticKey(key)) return true;   // accepted and ignored on Android (the helper above says why)
+#endif
     if (key == "presstrace") {
         auto c = val.find(',');
         if (c != std::string::npos) {
@@ -1199,7 +1227,7 @@ inline bool loadCfgKeys2(const std::string& key, const std::string& val) {
     else if (key == "hitboxtrace" || key == "hbstate" || key == "fieldprobe"
              || key == "killersite" || key == "dppin" || key == "dptap" || key == "dpswitch"
              || key == "dpincanchor" || key == "dprlspread0" || key == "dpstatecross"
-             || key == "dpareaadd" || key == "dpcrosscx" || key == "dpcrossbehind" || key == "dpbirthrung" || key == "dpportalobbmode" || key == "dpwidefirst")
+             || key == "dpareaadd" || key == "dpcrosscx" || key == "dpcrossbehind" || key == "dpportalobbmode" || key == "dpwidefirst")
         (key == "hitboxtrace" ? g_cfg.hitboxTrace
          : key == "hbstate" ? g_cfg.hbState
          : key == "fieldprobe" ? g_cfg.fieldProbe
@@ -1212,7 +1240,6 @@ inline bool loadCfgKeys2(const std::string& key, const std::string& val) {
          : key == "dpareaadd" ? g_cfg.dpAreaAdd
          : key == "dpcrosscx" ? g_cfg.dpCrossCx
          : key == "dpcrossbehind" ? g_cfg.dpCrossBehind
-         : key == "dpbirthrung" ? g_cfg.dpBirthRung
          : key == "dpportalobbmode" ? g_cfg.dpPortalObbMode
          : key == "dpwidefirst" ? g_cfg.dpWideFirst
          : g_cfg.killerSite) = (val == "1");
@@ -1304,8 +1331,6 @@ inline bool loadCfgKeys2(const std::string& key, const std::string& val) {
     else if (key == "seckilllog") secsolve::g_killLog = (val == "1");
     else if (key == "secvis") secsolve::g_visRefresh = (val == "1");
     else if (key == "dpstephorizonlong") cfgNum(key, val, g_cfg.dpStepHorizonLong);
-    else if (key == "dpportalwalk") g_cfg.dpPortalWalk = (val == "1");
-    else if (key == "dppinx") g_cfg.dpPinX = (val == "1");
     else return false;
     return true;
 }
@@ -1538,6 +1563,12 @@ inline void loadConfig(const std::string& file = "") {
                 {"glitchwave", "64ab3a1e", "e0dceb02"},
                 {"glitchembed", "64ab3a1e", "e0dceb02"},
                 {"wavecentre", "64ab3a1e", "e0dceb02"},
+                // T220: dormant switches, off by default and never turned on by a measured run
+                {"dppinx", "T220", "T220"},
+                {"dpheadguard", "T220", "T220"},
+                {"dpportalwalk", "T220", "T220"},
+                {"dptopstop", "T220", "T220"},
+                {"dpbirthrung", "T220", "T220"},
             };
             bool removed = false;
             for (const auto& r : kRemovedCfg)
@@ -1578,7 +1609,7 @@ inline void loadConfig(const std::string& file = "") {
         if (key == "voidband") { g_cfg.voidBand = (val == "1"); continue; }
         if (key == "voidcredit") { g_cfg.voidCredit = (val == "1"); continue; }
         if (key == "skydeath") { g_cfg.skyDeath = (val == "1"); continue; }
-        if (key == "dpheadguard") { g_cfg.dpHeadGuard = (val == "1"); continue; }
+        if (key == "wallkeyself") { g_cfg.wallKeySelf = (val == "1"); continue; }
         if (key == "dpsecfirst") { g_cfg.dpSecFirst = (val == "1"); continue; }
         if (key == "stallbound") { g_cfg.stallBound = (val == "1"); continue; }
         if (key == "uishow") { g_cfg.uiShow = val; continue; }
@@ -1736,15 +1767,7 @@ inline void loadConfig(const std::string& file = "") {
         if (loadCfgKeys2(key, val)) continue;
         if (loadCfgKeys3(key, val, inputMask)) continue;
     }
-    // cfg `trigshadow` (on by default): the trigger shadow and its supply, at the front of the dp's arguments, once per level's cfg (g_cfg is rebuilt at each level's entry).
-    // A cfg that spells --trigshadowlive in a `dparg` has chosen its own arguments and keeps them: nothing is added, so no flag reaches the dp twice.
-    if (g_cfg.shadowOn()) {
-        const bool spelled = std::find(g_cfg.dpArgs.begin(), g_cfg.dpArgs.end(), std::string("--trigshadowlive")) != g_cfg.dpArgs.end();
-        if (!spelled) {
-            static const char* const kTrigShadowArgs[] = {"--trigshadowlive", "@DATA@,@DATA@", "--trigshadowevents", "--trigshadowopts", "all,cammodel=@DATA@/levelstr.lvl,scale=@DATA@/levelstr.lvl,camlock,screen,settings", "--trigshadowworld", "--trigsupply-all", "--trigsupplytake", "--trigsupplycam", "--trigsupplyarea", "--camyband"};
-            g_cfg.dpArgs.insert(g_cfg.dpArgs.begin(), std::begin(kTrigShadowArgs), std::end(kTrigShadowArgs));
-        }
-    }
+    addTrigShadowArgs();
     applySuitePlan();
     log::info("phase1 config: enabled={} level={} attempts={} inputs={}",
         g_cfg.enabled, g_cfg.levelId, g_cfg.maxAttempts, g_cfg.inputs.size());
@@ -1798,6 +1821,8 @@ inline void endSession(const std::string& why) {
     if (g_cfg.dpSolve) dpsolve::printWallSiteCounts();   // stage S2b-2: how often each place the wall key replaced was passed
     solver::g_killTick = -1;   // cfg voidband: the last killer belongs to this session
     solver::g_killUid = -1;
+    solver::g_killSelf.clear();
+    solver::g_selfKillWhy.clear();
     solver::g_killAttempt = -1;
     solver::g_killGroups.clear();
     solver::g_killX = solver::g_killY = solver::g_killPy = 0.f;
