@@ -12,7 +12,7 @@
 // gravity part of FUN_14031a210 (playerWillSwitchMode), toggleDualMode.
 // Two-player level (levelSettings +0x154): player 2 takes its own edge (own2 / press2 / release2); not ported yet: the birth's extra bytes (toggleDualMode). Not ported: the Options trigger's Unlink Dual
 // Gravity (+0x860, taken as 0), the click-between half step, player 1's rotation that the game runs after player 2's pass (here player 1's whole tail is first),
-// FUN_1404f6830 (copyAttributes' +0x9ca) and FUN_1404f69a0 (a wave player 1 at the dual's end): counted. GObj::activated is one flag for both players.
+// FUN_1404f69a0 (a wave player 1 at the dual's end): counted. GObj::activated is one flag for both players.
 #pragma once
 #include "dp/selfshadow.hpp"
 
@@ -67,7 +67,7 @@ inline void copyAttributes(Mem& d, const Mem& s, const Layer& L, int& unsupporte
     setPosition(d, s.f32(po::PosX), s.f32(po::PosY));                  // vtable +0xb8 with the source's getPosition
     d.f32(0xa00, s.f32(0xa00)); d.f32(0xa04, s.f32(0xa04));            // +0x140 * 8
     playerFlipGravity(c, s.u8(po::Upside), true);
-    if (d.u8(0x9ca) != s.u8(0x9ca)) ++unsupported;                     // FUN_1404f6830 (+0x9ca): not ported
+    setLeftward(d, s.u8(po::Leftward));                               // GD Win 2.2091: copyAttributes reads source +0x9ca at RVA 0x4feacf and calls 0x4f6830 at 0x4fead9.
     toggleMode(c, kShip, s.u8(kShip) != 0);                           // toggleFlyMode .. toggleSwingMode, in the function's order
     toggleMode(c, kUfo, s.u8(kUfo) != 0);
     toggleMode(c, kBall, s.u8(kBall) != 0);

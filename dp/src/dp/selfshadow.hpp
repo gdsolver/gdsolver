@@ -71,7 +71,7 @@ inline void ctxReset(Ctx& c) {
     c.bornFired = false; c.bornY = 0; c.bornVy = 0;
     c.ringsTouched.clear();
     c.hsKnown = false;
-    c.ringJump = nullptr; c.slopeRotation = nullptr; c.stopDash = nullptr; c.dashRot = nullptr; c.spiderJump = nullptr;
+    c.ringJump = nullptr; c.slopeRotation = nullptr; c.stopDash = nullptr; c.dashRot = nullptr; c.restartDashSpin = nullptr; c.spiderJump = nullptr;
     c.p22 = true; c.primeWords = false;
     c.usedRings = nullptr;
     c.fired.clear(); c.everGuess = false;
@@ -428,6 +428,7 @@ public:
         cp.slopeRotation = [](Ctx& cc, float d) { upd::updateSlopeRotation(cc.P, d); };
         cp.dashRot = &dashRot;
         cp.stopDash = [](Ctx& cc) { SelfShadow& S = *g_self(); upd::stopDashing(cc); S.dashOn = false; };
+        cp.restartDashSpin = [](Ctx&) { SelfShadow& S = *g_self(); S.dashOn = true; S.dashFirstDone = false; S.dashRot = S.dashElapsed = 0.0f; };
         g_self() = this;
         cp.ringJump = [](Ctx& cc, GObj* o) {   // the pass touches a ring: playerTouchedRing registers it, then PlayerObject::ringJump decides (buttons.hpp)
             SelfShadow& S = *g_self();

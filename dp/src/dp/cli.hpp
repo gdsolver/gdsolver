@@ -4926,6 +4926,8 @@ inline int cliMainOnce(int argc, char** argv) {
             if (h.first == "pressSpent") { init.pressSpent = (uint8_t)(h.second != 0); g_seedHistT0 = t0; }
             else if (h.first == "pressSpent2")
                 init.pressSpent2 = (uint8_t)(h.second != 0);
+            else if (h.first == "jumpBuf" && init.mode == 2)
+                init.jumpBuf = (uint8_t)(h.second == 1);   // the first ball's native buffer, not the plan's held level
             else if (h.first == "freeMode" && g_freeModeCol)
                 init.bandBranch = (uint8_t)((init.bandBranch & ~kBandFree)
                                             | kBandFreeKnown

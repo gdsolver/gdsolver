@@ -242,7 +242,7 @@ inline bool shadowLoadObjectsFrom(std::istream& f, const std::string& fbPath, st
         o.type = (int)num(v, "type");
         const double cx = num(v, "cx"), cy = num(v, "cy"), w = num(v, "w"), h = num(v, "h");
         o.uid = (int)num(v, "uid", -1);
-        o.cx = (float)cx; o.cy = (float)cy; o.cy0 = o.cy; o.prevCx = o.cx; o.prevCy = o.cy;
+        o.cx = (float)cx; o.cy = (float)cy; o.cx0 = o.cx; o.cy0 = o.cy; o.prevCx = o.cx; o.prevCy = o.cy;
         if (col.count("posx") && col.count("posy")) { o.secDx = (float)(num(v, "posx", cx) - cx); o.secDy = (float)(num(v, "posy", cy) - cy); }   // --sectionpos
         o.rw = (float)w; o.rh = (float)h; o.rx = (float)(cx - w / 2); o.ry = (float)(cy - h / 2);
         o.radius = (float)num(v, "radius");
@@ -1232,11 +1232,10 @@ inline void shadowSeedFromModel(ShadowThread& T, const State& s, long long t, gd
     }
     // SEED ESTIMATE, to be replaced by the GD image's own bytes (the file seed): the State does not carry GD's press-latch bytes, only the model's mirror of them, so a model seed has to guess them.
     //  - S (+0x98e) is left as the template has it: seeding it as !pressSpent (the State's definition, hist v6: pressSpent = H && !S) broke custom level A t=3800 and custom level B t=14200 in the customs sections.
-    //  - H (+0x98d) = the button, EXCEPT a ball (mode 2) starts with H = 0: the ball arm of updateJump (upd.hpp, the port of the decompile) clears +0x98d after the flip it makes, and the State records only that the
-    //    button is down, not whether the hold was spent. A held ball seeded with H = 1 flips on its next landing; GD and the model keep a spent hold dead. That the ball's hold is spent is an assumption about the
-    //    usual case (a long hold), not something the seed can know: a ball pressed in the air and not yet landed (a buffered tap GD flips on landing) is seeded wrong. Evidence for the usual case: lv20 section 9400
-    //    (a mini ball under a long hold lands on the ceiling at 9404; GD and the old model stay, H = 1 flipped at 9405).
-    P.u8(0x98d, (s.action && in.mode != 2 && !s.holdDead) ? 1 : 0);   // a hold the State says is dead (the anchor's jumpBuf 0 under a held button, a ring or a tap used it) is not a live H
+    //  - H (+0x98d) follows the button unless the hold was spent. A ball without a measured buffer keeps the spent-hold estimate (lv20 section 9400).
+    //    GD Win 2.2091: pushButton writes H at RVA 0x4f6299 even in the air; updateJump checks the landing at 0x4e9e0f and clears H after the flip at 0x4ea11c.
+    const bool bufferedBall = !second && !g_swapBodies && g_seedHistT0 >= 0 && t == g_seedHistT0 && s.jumpBuf;
+    P.u8(0x98d, (s.action && (in.mode != 2 || bufferedBall) && !s.holdDead) ? 1 : 0);
     { const uint8_t h = P.u8(0x98d); const uint8_t sv = (h && !s.pressSpent) ? 1 : 0; P.u8(0x98e, sv); P.u8(0x991, h); P.u8(0x992, sv); }   // --shadowseedmirror: S, Hm, Sm as pushButton leaves them
     P.u8(0x368, 1); P.u8(0x369, 1);
     if (s.dashing && !P.u8(po::Platformer)) {   // the dash the State is in (a dash ring's line), as startDashing leaves it: +0x9ec, the slope words +0x570 / +0x578 and the angle +0x580

@@ -950,7 +950,8 @@ public:
             rng_ = rng_ * 0x343fdULL + 0x269ec3ULL; ++randDraws_;
             if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::fprintf(lf, "%lld,0,3016,%u,0,%llu,advfollow\n", t, (unsigned)((rng_ >> 16) & 0x7fff), (unsigned long long)(rng_ & 0xffffffffULL)); std::fclose(lf); }
         }
-        levelTime_ += (double)(float)((1.0 / 240.0) * warp_);   // the layer's clock (+0x3d8, read by a Sequence's minimum interval / reset time): one step of the game's 240 Hz physics a step
+        // GD Win 2.2091: GJBaseGameLayer::update divides by the full warp at RVA 0x340813 before advancing +0x3d8 (0x340bac), the clock read by Sequence (0x655d85).
+        levelTime_ += ((1.0 / 240.0) * std::min(warp_, 1.0)) / warp_;
         curTick_ = t;
         curPx_ = px; curPy_ = py;
         spawnedStep_.clear();
@@ -1245,7 +1246,8 @@ public:
     long long randDraws_ = 0;
 private:
     double levelTime_ = 0.0;                        // the layer's clock in seconds
-    double warp_ = 1.0;   // the game's time warp: every command's clock runs at this rate (GJBaseGameLayer m_gameState.m_timeWarp)
+    double warp_ = 1.0;   // the full m_timeWarp; the physics step instead uses min(warp, 1)
+    float physicsStepDt() const { return (float)((1.0 / 240.0) * std::min(warp_, 1.0)); }
     bool touchFed_ = false;
     bool evFed_ = false;   // setEventsFed: the Event triggers (3604) are run (their listeners are registered, the game events the caller hands over spawn their groups)
     // the Event triggers' listeners, in the order they were registered (GJBaseGameLayer +0x588: map<(event, key), vector<EventTriggerInstance>>; gameEventTriggered walks the one of its key)
@@ -1328,7 +1330,7 @@ private:
         const auto ti = areaTrans_.find(uid);
         if (ti == areaTrans_.end()) return;
         AreaDef& a = areaDefs_[uid];
-        const float dt = (float)((1.0 / 240.0) * warp_);
+        const float dt = physicsStepDt();
         for (auto it = ti->second.begin(); it != ti->second.end();) {
             AreaTrans& tr = it->second;
             tr.el = dt + tr.el;
@@ -1728,7 +1730,7 @@ private:
         std::vector<std::pair<Cmd*, double>> scales;
         for (Cmd& c : cmds_) {
             if (c.done || c.paused) continue;
-            const float dtf = (float)((1.0 / 240.0) * warp_);
+            const float dtf = physicsStepDt();
             c.time += (double)dtf;   // GroupCommandObject2::step 0x361db0: the clock runs on every step, the elapsed time of an eased command skips the first
             if (c.skip) c.skip = false;
             else c.el = c.el + dtf;
@@ -2031,9 +2033,15 @@ private:
     // GJEffectManager::updateCountForItem 0x36cc30: the item's number is written, and every entry waiting on the item whose number moved across its target fires its group (an entry that is not multi goes after it)
     void updateCountForItem(int item, int now) {
         if (item < 0) item = 0; if (item > 9999) item = 9999;
-        itemCount_[item] = now;
+        int& current = itemCount_[item];
+        const bool descending = current > now;
+        current = now;
         const auto rg = countReg_.find(item);
         if (rg == countReg_.end()) return;
+        // GD Win 2.2091: updateCountForItem sorts at RVA 0x36ce12 using the target comparators 0x362d60 / 0x362d70.
+        std::sort(rg->second.begin(), rg->second.end(), [descending](const CountEntry& a, const CountEntry& b) {
+            return descending ? b.target < a.target : a.target < b.target;
+        });
         std::vector<CountEntry> fire;
         for (size_t i = 0; i < rg->second.size();) {
             CountEntry& e = rg->second[i];
@@ -2072,7 +2080,7 @@ private:
     // it waits for the next call)
     void updateSpawns(size_t from = 0) {   // from: only the entries from this index on (the ones a late touch call has just queued, fireTouchLate)
         if (pendLen_ == 0) return;
-        const double dt = (double)(float)((1.0 / 240.0) * warp_);
+        const double dt = (double)physicsStepDt();
         const size_t n = pendLen_;
         for (size_t i = from; i < n; ++i) {
             // 0x36c5e0: an entry whose "due" flag is set spawns again at once; otherwise a paused one waits, and a running one counts dt up and sets the flag when its delay has run out
@@ -2522,7 +2530,7 @@ private:
                 }
             }
         } else if (t.id == 1935) {
-            if (t.tw > 0.0) warp_ = std::min(t.tw, 1.0);   // above 1 the game runs more steps per frame instead (dumps: tw 1.5 and a player step of 1.0x)
+            if (t.tw > 0.0) warp_ = std::clamp((float)t.tw, 0.1f, 2.0f);   // PlayLayer::updateTimeWarp, GD Win 2.2091 RVA 0x50a264..0x50a285.
         } else if (t.id == 1346) {
             Cmd c;
             c.uid = t.uid; c.id = t.id; c.lockrot = t.lockrot;

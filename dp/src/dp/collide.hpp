@@ -90,7 +90,7 @@ struct GObj {
     bool claim = false;                      // a spawn / toggle orb's Claim Touch (RingObject::m_claimTouch, +0x740, property 445; objrects `claim`): pushButton fires it alone and takes the hold, a touch does not fire it
     bool extCol = false;                     // the editor's Extended Collision (property 511, obj+0x280): not filed in a section cell, checked on every pass by the game's flat list
     // a teleport portal (type 28), from the objrects columns: the exit and the keeps (GJBaseGameLayer::teleportPlayer 0x315f20)
-    float cy0 = 0;                          // the placement the level was loaded with (a group moves cy; --shadowtpmove reads the move)
+    float cx0 = 0, cy0 = 0;                 // the box centre at load, before any group motion
     float tpEx = 0, tpEy = 0, tpY = 0, tpRX = 0, tpRY = 0;   // the linked exit's position, an id-747 portal's target y, the portal's real position
     int tpGrav = 0, tpFm = 0;                                  // +0x774 (1 normal, 2 inverted, 3 toggle); the force flag (+0x759)
     float tpF = 0;
@@ -167,6 +167,7 @@ struct Ctx {
     void (*slopeRotation)(Ctx&, float) = nullptr;   // PlayerObject::updateSlopeRotation 0x4eef20 (upd.hpp sets it): the sprite's turn to the slope at the end of collidedWithSlopeInternal; empty = not written
     void (*stopDash)(Ctx&) = nullptr;     // PlayerObject::stopDashing (upd.hpp, set by selfshadow.hpp): the "Special" object 1829 ends a dash; empty = counted as not ported
     float* dashRot = nullptr;             // the angle the dash's child sprite has turned to (selfshadow.hpp counts it); stopDashing gives it to a cube; null = 0
+    void (*restartDashSpin)(Ctx&) = nullptr;   // Rotate Gameplay restarts the dash's child rotation action
     bool (*spiderJump)(Ctx&) = nullptr;   // PlayerObject::spiderTestJump (spider.hpp sets it): the spider pad (type 0x2c) calls it; empty = counted as not ported
     bool p22 = true;                  // the level's player 1 Enable22Changes (a spawn orb clears the armed press only then)
     FlatSet<int>* usedRings = nullptr;
@@ -1658,7 +1659,9 @@ inline void reversePlayerPort(Ctx& c, GObj* ring) {
     if (P.u8(0xb78)) return;
     if (ring && P.u8(0x562)) {
         const float pend = (float)P.f64(0x9d8);
-        const float dx = ring->cx - (P.f32(po::PosX) + pend), dy = ring->cy - (P.f32(po::PosY) + pend);
+        // GD Win 2.2091: reversePlayer calls getRealPosition at RVA 0x4f67bd, not the rect centre.
+        const float dx = (ring->cx + ring->secDx) - (P.f32(po::PosX) + pend);
+        const float dy = (ring->cy + ring->secDy) - (P.f32(po::PosY) + pend);
         const float d = P.u8(po::Sideways) ? dy : dx;
         P.f64(0x9d8, (double)(d + d) + P.f64(0x9d8));
     }
@@ -1710,12 +1713,12 @@ inline void padBump(Ctx& c, GObj* o) {
     // (0x160 vtable call for the plain cube: sprite)
 }
 
-// The spider pad (type 0x2c): GJBaseGameLayer::bumpPlayer -> PlayerObject::bumpPlayer 0x4fdae0 with the pad itself: a gravity flip towards the pad's facing, then the spider's teleport
+// Spider pad (0x2c), GD Win 2.2091: GJBaseGameLayer::bumpPlayer tests pad+0x704 at RVA 0x31f1de and calls reversePlayer (0x4f6740) at 0x31f1ed, before PlayerObject::bumpPlayer (0x4fdae0) enters the spider search (0x4f25f0).
 inline void padSpider(Ctx& c, GObj* o) {
     Mem& P = c.P;
-    P.f32(0xa08, o->cx);
-    P.f32(0xa0c, o->cy - 10.0f);
+    P.f32(0xa08, o->cx); P.f32(0xa0c, o->cy - 10.0f);
     setObj(c, 0xa88, o);
+    if (o->reverse) reversePlayerPort(c, o);
     if (P.u8(0xb78) || !P.u8(0xbb8)) P.u8(0x9a4, 1);
     const bool facing = P.u8(po::Sideways) ? objFacingLeft(*o) : objFacingDown(*o);
     if (facing != (P.u8(po::Upside) != 0)) playerFlipGravity(c, P.u8(po::Upside) ? 0 : 1, true);
@@ -1791,28 +1794,38 @@ inline thread_local long long g_tpExitTick = -1;
 inline void teleportPortal(Ctx& c, GObj* o) {
     Mem& P = c.P;
     P.u8(0x560, 1);
-    const float px = P.f32(po::PosX), py = P.f32(po::PosY);
-    P.f32(0xa08, o->cx); P.f32(0xa0c, o->cy);
-    setObj(c, 0xa88, o);
-    P.f32(0xc44, 0.0f);
-    float tx, ty;
-    if (o->objectId == 747) { tx = px; ty = o->tpY; ty += o->cy - o->cy0; } else { tx = o->tpEx; ty = o->tpEy; }
-    if (o->objectId != 747 && g_tpExitShiftHook && g_tpExitTick >= 0 && (o->tpEx != 0.0f || o->tpEy != 0.0f)) {
-        tx += (float)g_tpExitShiftHook(o->uid, g_tpExitTick, false); ty += (float)g_tpExitShiftHook(o->uid, g_tpExitTick, true);
+    const bool hasTarget = o->objectId == 747 || o->tpEx != 0.0f || o->tpEy != 0.0f;   // the dump's exit sentinel; 747 has its own height
+    // GD Win 2.2091: teleportPlayer's missing-target branch (RVA 0x3161d9) bypasses contact and position writes, but still applies gravity and force.
+    if (hasTarget) {
+        const float px = P.f32(po::PosX), py = P.f32(po::PosY);
+        P.f32(0xa08, o->cx); P.f32(0xa0c, o->cy);
+        setObj(c, 0xa88, o);
+        P.f32(0xc44, 0.0f);
+        float tx, ty;
+        if (o->objectId == 747) { tx = px; ty = o->tpY; ty += o->cy - o->cy0; } else { tx = o->tpEx; ty = o->tpEy; }
+        if (o->objectId != 747 && g_tpExitShiftHook && g_tpExitTick >= 0) {
+            tx += (float)g_tpExitShiftHook(o->uid, g_tpExitTick, false); ty += (float)g_tpExitShiftHook(o->uid, g_tpExitTick, true);
+        }
+        if (o->tpSave) {
+            // GD Win 2.2091: teleportPlayer reads the entry's live getRealPosition at RVA 0x316157, then subtracts its offset at 0x316176.
+            // A translation moves the box centre and the real position by the same amount.
+            tx -= (o->tpRX + (o->cx - o->cx0)) - px;
+            ty -= (o->tpRY + (o->cy - o->cy0)) - py;
+        }
+        if (o->tpKeepX) tx = px;
+        if (o->tpKeepY) ty = py;
+        c.tpLog.push_back({o->uid, px, tx});
+        setPosition(P, tx, ty);
+        if (o->objectId == 3022) { P.f32(0xa00, tx); P.f32(0xa04, ty); }   // a Teleport trigger: the previous-position floats read the new position (measured: w_143308401_3030 t=3176; a portal's leave them)
+        P.u8(0x369, 1);
     }
-    if (o->tpSave) { tx = tx - (o->tpRX - px); ty = ty - (o->tpRY - py); }
-    if (o->objectId != 747 && o->tpEx == 0.0f && o->tpEy == 0.0f) { tx = px; ty = py; }   // no exit object (the dump has none): teleportPlayer moves nothing, the force and the gravity branches stay
-    if (o->tpKeepX) tx = px;
-    if (o->tpKeepY) ty = py;
-    c.tpLog.push_back({o->uid, px, tx});
-    setPosition(P, tx, ty);
-    if (o->objectId == 3022) { P.f32(0xa00, tx); P.f32(0xa04, ty); }   // a Teleport trigger: the previous-position floats read the new position (measured: w_143308401_3030 t=3176; a portal's leave them)
-    P.u8(0x369, 1);
     if (o->tpGrav == 1) playerFlipGravity(c, 0, true);
     else if (o->tpGrav == 2) playerFlipGravity(c, 1, true);
     else if (o->tpGrav == 3) playerFlipGravity(c, P.u8(po::Upside) ? 0 : 1, true);
-    P.u8(0xa14, 0);
-    P.u8(0x5a0, 0);   // FUN_1404fec10 (the streak restarts at the new position)
+    if (hasTarget) {   // RVA 0x3165cd skips these writes when no exit was resolved.
+        P.u8(0xa14, 0);
+        P.u8(0x5a0, 0);   // FUN_1404fec10 (the streak restarts at the new position)
+    }
     if (o->tpFm & 4) redirectPlayerForce(c, o->tpAng, o->tpRmod, o->tpRmin, o->tpRmax);
     else if (o->tpFm & 1) {   // the static force (teleportPlayer 0x315f20 after the streak call: +0x759 set); +0x75c is the strength, +0xef adds to the velocity instead of setting it
         const bool add = (o->tpFm & 2) != 0;
@@ -2147,7 +2160,7 @@ inline void collisionCheckObjects(Ctx& c, float dt, const std::vector<GObj*>& ca
                 if (fresh) gravityPad(c, o);
                 break;
             case 0x2c:
-                if (fresh) { padSpider(c, o); playerRect(P, px, py, pw, ph); }   // --padspiderrect: the spider's teleport moved the body; the objects after the pad in the same pass meet it where it stands now
+                if (fresh) padSpider(c, o);   // GD Win 2.2091: RVA 0x31cc82 resumes the object loop without refreshing the cached rect.
                 break;
             case 0x2a:                                // the gravity toggle portal: flips whatever the gravity is (collisionCheckObjects case 0x2a; the layer's own flip and the animation are not the player's bytes)
                 if (!fresh) break;
@@ -2188,16 +2201,20 @@ inline void collisionCheckObjects(Ctx& c, float dt, const std::vector<GObj*>& ca
                 // (playerTouchedRing 0x31f5a0 calls ringJump only for a body that is not a ship / UFO / wave / swing and a ring whose [+0x740] claim is 0: a claiming ring waits for the press, pushButton's)
                 if (!P.u8(po::ModeShip) && !P.u8(po::ModeUfo) && !P.u8(po::ModeWave) && !P.u8(po::ModeSwing) && !o->claim
                     && !P.u8(0x9c8) && P.u8(0x992) && P.u8(0x991) && !P.u8(0x9ec)) {
-                    if (c.ringJump) { c.ringJump(c, o); break; }
-                    if (!c.hsKnown) { unsup(c, o->type); break; }
-                    // ringJump's own gate: the ring is not one this press has used, and the class's slot (A for a ring, B for a spawn orb) is down
-                    const int slot = o->type == 0x24 ? 0x994 : 0x993;
-                    if ((c.usedRings && c.usedRings->count(o->uid)) || P.u8((size_t)slot)) break;
-                    if (c.usedRings) c.usedRings->insert(o->uid);
-                    noteFired(c.fireOrder, o->uid);
-                    ringJumpWrites(c, o->type);
-                    if (o->type == 0x24 || o->type == 0x25 || o->type == 0x26 || o->type == 0x2b) unsup(c, o->type);   // (the trigger group, the dash, the spider's jump are not ported)
+                    if (c.ringJump) c.ringJump(c, o);
+                    else if (!c.hsKnown) unsup(c, o->type);
+                    else {
+                        // ringJump's own gate: the ring is not one this press has used, and the class's slot (A for a ring, B for a spawn orb) is down
+                        const int slot = o->type == 0x24 ? 0x994 : 0x993;
+                        if ((!c.usedRings || !c.usedRings->count(o->uid)) && !P.u8((size_t)slot)) {
+                            if (c.usedRings) c.usedRings->insert(o->uid);
+                            noteFired(c.fireOrder, o->uid);
+                            ringJumpWrites(c, o->type);
+                            if (o->type == 0x24 || o->type == 0x25 || o->type == 0x26 || o->type == 0x2b) unsup(c, o->type);   // (the trigger group, the dash, the spider's jump are not ported)
+                        }
+                    }
                 }
+                if (o->type == 0x2e) playerRect(P, px, py, pw, ph);   // GD Win 2.2091: RVA 0x31cde1 jumps to the rect refresh at 0x31d282 after touching a teleport orb.
                 break;
             case 0x28:                                // GameObjectType::Special (collisionCheckObjects case 0x28, no once-gate): by object id, a grace counter the update counts down
                 switch (o->objectId) {
@@ -2481,7 +2498,7 @@ inline bool dualPortalHook(Ctx& c, bool on) {
 // the new directions. GJBaseGameLayer::rotateGameplay 0x31f980 hands the trigger's mvdir / gnddir / editvel / vmodx / vmody / ovrvel / dontslide to the player's rotateGameplay (22091: FUN_1404f7fa0
 // at 0x4f7fa0; Broma's name for 0x35ac20 is a vector insert), ported here from its decompile. NOT ported: the sprite and streak calls (updatePlayerArt, placeStreakPoint, the wave's streak restart,
 // the particle reset), the layer's own half (the swarm channel +0x33c and its reverse map, the vtable +0x518 call with the trigger-to-player offset, +0x75c) -- those are the model's queue's
-// bookkeeping, not the body's bytes -- and the dash / ball arms (+0x9ec, +0x9c3 set: counted as not ported). The point +0xa34 is set to what DAT_14090b428 holds, which is a static the file does not
+// bookkeeping, not the body's bytes -- and the ball arm (+0x9c3 set: counted as not ported). The point +0xa34 is set to what DAT_14090b428 holds, which is a static the file does not
 // initialise (zero here; nothing in a cube's physics reads it). A trigger in rotSpent (the uids the caller knows have fired) or already turned on in this pass does nothing; with no rotSpent given
 // the pass cannot tell a first touch from a later one and turns nothing.
 inline void playerRotateGameplay(Ctx& c, const GObj& o) {
@@ -2524,7 +2541,29 @@ inline void playerRotateGameplay(Ctx& c, const GObj& o) {
             runNormalRotation(P, false, 1.0f);
         }
     }
-    if (P.u8(0x9ec) != 0 || P.u8(po::ModeBall)) unsup(c, 1102);   // the dash / ball arms (the rotation swap +0x570 / +0x578, the angle +0x580, checkRepellPlayer)
+    if (P.u8(0x9ec)) {
+        // GD Win 2.2091: rotateGameplay swaps 0x570/0x578 at RVA 0x4f8337..0x4f8354, rounding old 0x570 through float.
+        if (sw1 != sw0) {
+            const float travel = (float)P.f64(0x570);
+            P.f64(0x570, P.f64(0x578));
+            P.f64(0x578, (double)travel);
+        }
+        // RVA 0x4f8397..0x4f840b mirrors the dash angle on a direction change, normalizes it, then restarts 0x4f43c0.
+        const bool left = P.u8(po::Leftward) != 0;
+        double angle = P.f64(0x580);
+        if (lf0 != (uint8_t)left) {
+            if (sw1 != sw0) angle += 180.0;
+            angle = (angle > 0.0 ? 180.0 : -180.0) - angle;
+        }
+        if (angle > 180.0) angle -= 360.0;
+        else if (angle < -180.0) angle += 360.0;
+        P.f64(0x580, angle);
+        float rotation = (float)((sw1 ? 90.0 : 0.0) - angle);   // 0x4f442a..0x4f4470: the player's node, not its spinning child
+        if (left) rotation += 180.0f;
+        setNodeRotation(P, rotation);
+        if (c.restartDashSpin) c.restartDashSpin(c);
+    }
+    if (P.u8(po::ModeBall)) unsup(c, 1102);   // the ball-specific behavior is still not ported
 }
 
 }  // namespace gdcol
