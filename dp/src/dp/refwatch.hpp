@@ -71,7 +71,7 @@ inline std::string slDiffNames(const gdcol::ShadowLite& a, const gdcol::ShadowLi
     list("now", a.now, b.now, a.nNow, b.nNow); list("ever", a.ever, b.ever, a.nEver, b.nEver); list("act", a.act, b.act, a.nAct, b.nAct);
     list("fired", a.fired, b.fired, a.nFired, b.nFired);
 #define SLD(m) if (std::memcmp(&a.m, &b.m, sizeof a.m) != 0) { s += " "; s += #m; }
-    SLD(layerTime) SLD(everW) SLD(pruneW) SLD(dashRot) SLD(dashElapsed) SLD(pendingSpeed) SLD(rng) SLD(lyCentre) SLD(lyHeight) SLD(lyLastPortalY) SLD(lyW764) SLD(lyFlipAmt) SLD(lyFlipFrom) SLD(lyFlipTo)
+    SLD(layerTime) SLD(everW) SLD(pruneW) SLD(dashRot) SLD(dashElapsed) SLD(dashSpinRate) SLD(pendingSpeed) SLD(rng) SLD(lyCentre) SLD(lyHeight) SLD(lyLastPortalY) SLD(lyW764) SLD(lyFlipAmt) SLD(lyFlipFrom) SLD(lyFlipTo)
     SLD(lyFlipEl) SLD(lyLastMode) SLD(lyLastPortalUid) SLD(flags) SLD(flags2) SLD(hold) SLD(frameSteps) SLD(prevFrameSteps) SLD(ly) SLD(ly2) SLD(seedId0) SLD(seedId1)
 #undef SLD
     return s.empty() ? " (none)" : s;
@@ -99,7 +99,7 @@ inline bool slDiffBenign(const gdcol::ShadowLite& a, const gdcol::ShadowLite& b,
     if (!same(a.gate, b.gate, a.nGate, b.nGate) || !same(a.used, b.used, a.nUsed, b.nUsed) || !same(a.arr, b.arr, a.nArr, b.nArr) || !same(a.now, b.now, a.nNow, b.nNow)
         || !same(a.ever, b.ever, a.nEver, b.nEver) || !same(a.act, b.act, a.nAct, b.nAct) || !same(a.fired, b.fired, a.nFired, b.nFired)) ok = false;
     if (std::memcmp(&a.layerTime, &b.layerTime, sizeof a.layerTime) != 0 || a.flags != b.flags || a.flags2 != b.flags2 || a.hold != b.hold || a.frameSteps != b.frameSteps || a.ly != b.ly || a.ly2 != b.ly2
-        || a.rng != b.rng || a.dashRot != b.dashRot || a.dashElapsed != b.dashElapsed || a.pendingSpeed != b.pendingSpeed || a.everW != b.everW || a.pruneW != b.pruneW) ok = false;
+        || a.rng != b.rng || a.dashRot != b.dashRot || a.dashElapsed != b.dashElapsed || a.dashSpinRate != b.dashSpinRate || a.pendingSpeed != b.pendingSpeed || a.everW != b.everW || a.pruneW != b.pruneW) ok = false;
     return ok;
 }
 

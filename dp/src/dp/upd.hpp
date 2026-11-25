@@ -244,23 +244,17 @@ inline void startDashing(Ctx& c, const GObj* ring) {
         ang9 = x9;
         P.f64(0x580, (double)ang9);
     }
-    // 0x4f43c0: the player's rotation follows the dash angle
-    {
-        float r = (float)((double)(P.u8(0x9cb) ? 90 : 0) - P.f64(0x580));
-        if (P.u8(0x9ca)) r += 180.0f;
-        setRot(P, r);
-    }
+    setDashBodyRotation(P);
     P.f32(0xa34, 0.0f);
     P.f32(0xa38, 0.0f);
 }
 // PlayerObject::stopDashing 0x4f4850, the byte work: the dash flag and its start time go, the ring is forgotten, a ball starts its rotation over. For a cube / robot-less mode the player is turned to
-// the rotation of its child sprite (vtable +0x160 with the +0x168 of +0x740; the sprite was zeroed by startDashing's 0x4f43c0, so 0 here -- NOT checked: w_128992032_710 t=844 shows 16.0 where this gives 0).
+// the signed rotation of its child sprite (GD Win 2.2091 RVAs 0x4f4cc7..0x4f4d49).
 // The platformer arm (the carried speed) is counted as not ported.
 inline void stopDashing(Ctx& c) {
     Mem& P = c.P;
     if (!P.u8(0x9ec)) return;
-    float childRot = c.dashRot ? *c.dashRot : 0.0f;
-    if (c.dashRot && P.u8(po::Upside)) childRot = -childRot;   // the action turns the other way under flipped gravity (w_112089660 t=3874: -128.000229, w_136107503 t=12250: -160.000275; upright: +16.0000305, +288.000549)   // the first child sprite's angle (selfshadow.hpp's count of the frames the dash has run; 0 when the caller does not count)
+    const float childRot = c.dashRot ? *c.dashRot : 0.0f;
     P.u8(0x9ec, 0);
     P.put<uint64_t>(0xa18, 0);
     if (P.u8(po::Platformer)) { ++c.unsupported; ++c.unsupportedBy[2008]; }

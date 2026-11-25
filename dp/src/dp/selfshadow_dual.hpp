@@ -30,7 +30,7 @@ struct PlayerSlot {
     std::vector<int> fireOrder;
     SelfShadow::EverRule everRule;   // (ever's rule part, when an unpack left it out of `ever`)
     bool holding[4] = {false, false, false, false};
-    float dashRot = 0.0f, dashElapsed = 0.0f;
+    float dashRot = 0.0f, dashElapsed = 0.0f, dashSpinRate = 0.0f;
     bool dashOn = false, dashFirstDone = false;
     bool speedDirty = false;
     float pendingSpeed = 1.0f;
@@ -49,7 +49,7 @@ inline void swapPlayer(SelfShadow& sh, PlayerSlot& s) {
     std::swap(sh.ever, s.ever);
     std::swap(sh.everRule, s.everRule);
     for (int k = 0; k < 4; ++k) std::swap(sh.holding[k], s.holding[k]);
-    std::swap(sh.dashRot, s.dashRot); std::swap(sh.dashElapsed, s.dashElapsed);
+    std::swap(sh.dashRot, s.dashRot); std::swap(sh.dashElapsed, s.dashElapsed); std::swap(sh.dashSpinRate, s.dashSpinRate);
     std::swap(sh.dashOn, s.dashOn); std::swap(sh.dashFirstDone, s.dashFirstDone);
     std::swap(sh.speedDirty, s.speedDirty); std::swap(sh.pendingSpeed, s.pendingSpeed);
     std::swap(sh.atButtons.b, s.atButtons.b); std::swap(sh.atEntry.b, s.atEntry.b); std::swap(sh.atExit.b, s.atExit.b);

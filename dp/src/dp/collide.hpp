@@ -166,8 +166,8 @@ struct Ctx {
     bool (*ringJump)(Ctx&, GObj*) = nullptr;   // PlayerObject::ringJump 0x4f6f50 for a ring the pass touches (buttons.hpp's, set by selfshadow.hpp); empty = the short form below (ringJumpWrites)
     void (*slopeRotation)(Ctx&, float) = nullptr;   // PlayerObject::updateSlopeRotation 0x4eef20 (upd.hpp sets it): the sprite's turn to the slope at the end of collidedWithSlopeInternal; empty = not written
     void (*stopDash)(Ctx&) = nullptr;     // PlayerObject::stopDashing (upd.hpp, set by selfshadow.hpp): the "Special" object 1829 ends a dash; empty = counted as not ported
-    float* dashRot = nullptr;             // the angle the dash's child sprite has turned to (selfshadow.hpp counts it); stopDashing gives it to a cube; null = 0
-    void (*restartDashSpin)(Ctx&) = nullptr;   // Rotate Gameplay restarts the dash's child rotation action
+    float* dashRot = nullptr;             // signed child-sprite angle; stopDashing gives it to a cube; null = 0
+    void (*restartDashSpin)(Ctx&) = nullptr;   // restart the dash's child rotation action
     bool (*spiderJump)(Ctx&) = nullptr;   // PlayerObject::spiderTestJump (spider.hpp sets it): the spider pad (type 0x2c) calls it; empty = counted as not ported
     bool p22 = true;                  // the level's player 1 Enable22Changes (a spawn orb clears the armed press only then)
     FlatSet<int>* usedRings = nullptr;
@@ -1790,6 +1790,7 @@ inline void redirectPlayerForce(Ctx& c, float ang, float rmod, float rmin, float
 // how far the Moves that carry a linked exit have taken it. GJBaseGameLayer::teleportPlayer sends the body to the exit object's place at the call; the dump holds its place at load.
 // [M] a custom level uid 191 (exit uid 204, moved +1695 in y by an x-crossing Move at tick 1036): GD's player 2 is at y 4365 in the row of tick 1095, the dump's exit 2670 (the shadow's pass used it).
 inline double (*g_tpExitShiftHook)(int uid, long long t, bool yAxis) = nullptr;
+inline double (*g_tpExitTurnHook)(int uid, long long t) = nullptr;
 inline thread_local long long g_tpExitTick = -1;
 inline void teleportPortal(Ctx& c, GObj* o) {
     Mem& P = c.P;
@@ -1826,12 +1827,18 @@ inline void teleportPortal(Ctx& c, GObj* o) {
         P.u8(0xa14, 0);
         P.u8(0x5a0, 0);   // FUN_1404fec10 (the streak restarts at the new position)
     }
-    if (o->tpFm & 4) redirectPlayerForce(c, o->tpAng, o->tpRmod, o->tpRmin, o->tpRmax);
+    float forceAngle = o->tpAng;
+    if ((o->tpFm & 5) && g_tpExitTurnHook && g_tpExitTick >= 0) {
+        // GD Win 2.2091: teleportPlayer subtracts the exit's live rotation at RVAs 0x3162db..0x3162dd.
+        const double turn = g_tpExitTurnHook(o->uid, g_tpExitTick);
+        if (turn != 0.0) forceAngle = (float)((double)forceAngle - turn);
+    }
+    if (o->tpFm & 4) redirectPlayerForce(c, forceAngle, o->tpRmod, o->tpRmin, o->tpRmax);
     else if (o->tpFm & 1) {   // the static force (teleportPlayer 0x315f20 after the streak call: +0x759 set); +0x75c is the strength, +0xef adds to the velocity instead of setting it
         const bool add = (o->tpFm & 2) != 0;
         if (o->tpF == 0.0f && !add) { P.u8(0x95a, 0); P.f64(po::Vy, 0.0); if (P.u8(0xb78)) { P.f64(0xb00, 0.0); P.u8(0xb9c, 0); } }
         else {
-            const float a = o->tpAng * 0.017453292f;
+            const float a = forceAngle * 0.017453292f;
             const float px = std::cos(a), py = std::sin(a);                         // ccpForAngle
             const float len = std::sqrt(py * py + px * px);
             if (0.0f < len) {
@@ -1937,6 +1944,12 @@ inline void toggleMode(Ctx& c, int flag, bool on) {
     }
 }
 
+// The body angle set by PlayerObject::updateDashArt at 0x4f442a..0x4f4470 (not the spinning child's angle).
+inline void setDashBodyRotation(Mem& P) {
+    float rotation = (float)((P.u8(po::Sideways) ? 90.0 : 0.0) - P.f64(0x580));
+    if (P.u8(po::Leftward)) rotation += 180.0f;
+    setNodeRotation(P, rotation);
+}
 // the portals of type 5, 6, 0x10, 0x13, 0x1a (ship, cube, ball, UFO, wave)
 inline void modePortal(Ctx& c, GObj* o) {
     Mem& P = c.P;
@@ -1948,7 +1961,14 @@ inline void modePortal(Ctx& c, GObj* o) {
     case 0x13: switchedToMode(c, kUfo); toggleMode(c, kUfo, true); break;
     case 0x1a: switchedToMode(c, kWave); toggleMode(c, kWave, true); break;
     case 0x10: switchedToMode(c, kBall); toggleMode(c, kBall, true); break;
-    case 6:    for (int f : {kShip, kUfo, kBall, kWave, kRobot, kSpider, kSwing}) toggleMode(c, f, false); break;
+    case 6:
+        for (int f : {kShip, kUfo, kBall, kWave, kRobot, kSpider, kSwing}) toggleMode(c, f, false);
+        // GD Win 2.2091: collisionCheckObjects calls updateDashArt at RVA 0x31c2c7 even if already a cube.
+        if (P.u8(0x9ec)) {
+            setDashBodyRotation(P);
+            if (c.restartDashSpin) c.restartDashSpin(c);
+        }
+        break;
     case 0x1b: switchedToMode(c, kRobot); toggleMode(c, kRobot, true); break;
     case 0x21: switchedToMode(c, kSpider); toggleMode(c, kSpider, true); break;
     case 0x29: switchedToMode(c, kSwing); toggleMode(c, kSwing, true); break;
@@ -2423,10 +2443,12 @@ inline int checkCollisions(Ctx& c, float dt, bool ignoreDamage, const std::vecto
             if (preReg && o->groupCount > 0) {
                 bool hit = false;
                 if (o->cx != o->prevCx || o->cy != o->prevCy) {
-                    const bool down = !flip ? (o->cy < o->prevCy) : (o->prevCy < o->cy);
+                    // GD Win 2.2091: RVAs 0x31b8f7 / 0x31b93a read gravity after the portal and pad pass.
+                    const bool solidFlip = P.u8(po::Upside) != 0;
+                    const bool down = !solidFlip ? (o->cy < o->prevCy) : (o->prevCy < o->cy);
                     if (down) {
                         float gy = o->ry, gh = o->rh + dt * 5.0f;
-                        if (flip) gy -= dt * 5.0f;
+                        if (solidFlip) gy -= dt * 5.0f;
                         if (rectsIntersect(px, py, pw, ph, o->rx, gy, o->rw, gh)) { setObj(c, po::Collided, o); hit = true; }
                     }
                 }
@@ -2558,9 +2580,7 @@ inline void playerRotateGameplay(Ctx& c, const GObj& o) {
         if (angle > 180.0) angle -= 360.0;
         else if (angle < -180.0) angle += 360.0;
         P.f64(0x580, angle);
-        float rotation = (float)((sw1 ? 90.0 : 0.0) - angle);   // 0x4f442a..0x4f4470: the player's node, not its spinning child
-        if (left) rotation += 180.0f;
-        setNodeRotation(P, rotation);
+        setDashBodyRotation(P);
         if (c.restartDashSpin) c.restartDashSpin(c);
     }
     if (P.u8(po::ModeBall)) unsup(c, 1102);   // the ball-specific behavior is still not ported

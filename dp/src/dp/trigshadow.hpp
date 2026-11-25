@@ -2038,24 +2038,26 @@ private:
         current = now;
         const auto rg = countReg_.find(item);
         if (rg == countReg_.end()) return;
+        auto& entries = rg->second;
         // GD Win 2.2091: updateCountForItem sorts at RVA 0x36ce12 using the target comparators 0x362d60 / 0x362d70.
-        std::sort(rg->second.begin(), rg->second.end(), [descending](const CountEntry& a, const CountEntry& b) {
+        std::sort(entries.begin(), entries.end(), [descending](const CountEntry& a, const CountEntry& b) {
             return descending ? b.target < a.target : a.target < b.target;
         });
-        std::vector<CountEntry> fire;
-        for (size_t i = 0; i < rg->second.size();) {
-            CountEntry& e = rg->second[i];
+        // GD Win 2.2091: erase a one-shot before calling the group at RVA 0x36cf94, then reread the live list at 0x36d029.
+        for (size_t i = 0; i < entries.size();) {
+            CountEntry& e = entries[i];
             if (e.last != now) {
                 const int old = e.last;
                 e.last = now;
                 if ((e.target > old && e.target <= now) || (e.target < old && e.target >= now)) {
-                    fire.push_back(e);
-                    if (!e.multi) { rg->second.erase(rg->second.begin() + (long)i); continue; }
+                    const CountEntry fired = e;
+                    if (!fired.multi) entries.erase(entries.begin() + i);
+                    toggleGroupTriggered(fired.group, fired.activate, fired.trigUid);
+                    if (!fired.multi) continue;
                 }
             }
             ++i;
         }
-        for (const CountEntry& e : fire) toggleGroupTriggered(e.group, e.activate, e.trigUid);
     }
     void fireItems(long long t) {
         const auto it = itemAt_.find(t);
