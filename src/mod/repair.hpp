@@ -483,7 +483,7 @@ inline void record(GJBaseGameLayer* l, long long t) {
     // points back: GD -0.0, the old form -0.81; the three the clamp already holds).
     r.dashSlope = 0.f;
     if (r.dashing && p->m_dashRing)
-        r.dashSlope = (float)*reinterpret_cast<double const*>(reinterpret_cast<char const*>(p) + 0x578);
+        r.dashSlope = (float)p->m_dashY;
     // p2's by its ring's uid: the hist payload carries integers, and dp rebuilds the slope from
     // that ring's angle as its own dash start does.
     if (r.dual && l->m_player2 && l->m_player2->m_isDashing) {

@@ -906,7 +906,7 @@ inline void writeAreaTargets(GJBaseGameLayer* l) {
     // An Area trigger whose instance has a target-group index (EnterEffectInstance +0xc0, from the layer's key -> (index, count) map) is run by processAreaMoveGroupAction in two calls: the
     // objects that have no parent (array [index - 1]) and the parents (array [index]), each parent carrying along the children its dictionary (array [index + 1], keyed by the parent's
     // m_uniqueID) lists. The arrays are the layer's m_targetGroupsArray, filled when the level opens. Rows: `T trig key id` for every Area trigger (key = its entry in the map),
-    // `M key index count` for the map, `A i uid ...` for a CCArray element, `D i parent:kid,kid ...` (one token per parent) for a CCDictionary element. Windows 2.209 only (these offsets are that build's).
+    // `M key index count` for the map, `A i uid ...` for a CCArray element, `D i parent:kid,kid ...` (one token per parent) for a CCDictionary element. The raw trigger and object flags still use Windows 2.209 offsets.
 #ifdef GEODE_IS_WINDOWS
     {
         std::ofstream tf(std::string(DATA_DIR) + "/areatargets.txt", std::ios::trunc);
@@ -918,12 +918,11 @@ inline void writeAreaTargets(GJBaseGameLayer* l) {
             const unsigned key = ((unsigned)(unsigned char)ob[0x739] + ((unsigned)(unsigned char)ob[0x738] + 10u) * 10u) * 1000000u + (unsigned)*reinterpret_cast<int*>(ob + 0x5c8);
             tf << "T " << obj->m_uniqueID << " " << key << " " << obj->m_objectID << "\n";
         }
-        {   // ...and that map itself (std::unordered_map at the layer + 0x1060: its list head at +0x1068, a node = next, prev, key, index, count)
-            char* lay = reinterpret_cast<char*>(l);
-            char* head = *reinterpret_cast<char**>(lay + 0x1068);
-            long long guard = 0;
-            for (char* n = head ? *reinterpret_cast<char**>(head) : nullptr; n && n != head && guard < 100000; n = *reinterpret_cast<char**>(n), ++guard)
-                tf << "M " << *reinterpret_cast<unsigned*>(n + 0x10) << " " << *reinterpret_cast<int*>(n + 0x14) << " " << *reinterpret_cast<int*>(n + 0x18) << "\n";
+        // GD Win 2.2091: m_targetGroups at +0x1060; keep the unsigned key and the dump's row limit.
+        size_t mapRows = 0;
+        for (const auto& [key, range] : l->m_targetGroups) {
+            if (mapRows++ == 100000) break;
+            tf << "M " << static_cast<unsigned>(key) << " " << range.first << " " << range.second << "\n";
         }
         {   // the three bytes of an object that processAreaMoveGroupAction / moveAreaObject read: +0x2c8 (an x displacement is dropped), +0x520 (a child is not moved), +0x305 (the section range is skipped)
             std::string lx = "X", lk = "K", lp = "P";
@@ -936,7 +935,7 @@ inline void writeAreaTargets(GJBaseGameLayer* l) {
             }
             tf << lx << "\n" << lk << "\n" << lp << "\n";
         }
-        auto* arr = *reinterpret_cast<cocos2d::CCArray**>(reinterpret_cast<char*>(l) + gdoff::kLayerTargetGroupsArray);
+        auto* arr = l->m_targetGroupsArray;
         tf << "# targetGroupsArray " << (arr ? (int)arr->count() : -1) << " elements\n";
         for (unsigned i = 0; arr && i < arr->count(); ++i) {
             cocos2d::CCObject* o = arr->objectAtIndex(i);

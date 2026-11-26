@@ -8195,10 +8195,10 @@ class $modify(GJBaseGameLayer) {
                               pb[gdoff::kPlayerJumpBuffered] ? 1 : 0, pb[gdoff::kPlayerStateRingJump] ? 1 : 0,
                               d2 ? 1 : 0, d2 ? (m_player2->m_dashRing ? (int)reinterpret_cast<GameObject*>(m_player2->m_dashRing)->m_uniqueID : -1) : -1);
                 g_dump << rb;
-                // the dash a dash ring leaves on player 1 as the update reads it (22091: startDashing writes +0x9ec and the slope word +0x578); the loop derives the same from the ring's rotation, tan(-rot)
+                // The native dash flag and slope left by startDashing (22091: +0x9ec and +0x578).
 #ifdef GEODE_IS_WINDOWS
                 char db[64];
-                std::snprintf(db, sizeof db, ",%d,%.9g", pb[gdoff::kPlayerDashing] ? 1 : 0, *reinterpret_cast<double const*>(pb + 0x578));
+                std::snprintf(db, sizeof db, ",%d,%.9g", m_player1->m_isDashing ? 1 : 0, m_player1->m_dashY);
                 g_dump << db;
 #else
                 g_dump << ",-1,-1";
