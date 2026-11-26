@@ -390,27 +390,19 @@ class $modify(PlayerObject) {
         postColRow(this, l, dt, betweenSteps);
     }
 
-    // Name the spider's teleport target ON THE SPOT (cfg `standtrace=1`).
-    //
-    // Reading the raw fields from GJBaseGameLayer::update is too late: by the time the
-    // layer update runs, `[this+0x960]` is back to the player's bottom edge, `[this+0x968]`
-    // is 0 and `[this+0x5e8]` is null (measured, 7 points). Wrapping the function directly
-    // captures the values IMMEDIATELY AFTER the search.
-    //
-    // [Correction] Those three are not spiderTestJump's but the bookkeeping of
-    // updateCollide. The installed GD is 2.2081, not 2.208, and in 2.2081:
-    //   0x393ff0 updateCollide / 0x394340 spiderTestJump /
-    //   0x3943f0 spiderTestJumpInternal
-    // The search body is 0x3943f0: it builds a rect, extends it to the band
-    // (getMinPortalY / getMaxPortalY) and queries TWICE — staticObjectsInRect and
-    // damagingObjectsInRect. The from/to/gravity emitted by this instrumentation
-    // (`spidertp:` lines) were the evidence that pinned down those two rects.
-    void spiderTestJump(bool dynamic) {
+    // cfg standtrace=1: the body's actual position at the end of the spider search.
+    // GD Win 2.2091 PlayerObject::bumpPlayer calls the internal directly (0x4fdb6d -> 0x4f25f0),
+    // so a hook on spiderTestJump (0x4f2540) misses pads. The internal's bool denotes the widened retry.
+    void spiderTestJumpInternal(bool again) {
         auto* l = GJBaseGameLayer::get();
-        const bool isP1 = l && this == l->m_player1;
+        if (!l || this != l->m_player1 || !g_cfg.standTrace || !g_started || g_sessionOver) {
+            PlayerObject::spiderTestJumpInternal(again);
+            return;
+        }
+        const float x0 = this->getPositionX();
         const float y0 = this->getPositionY();
-        PlayerObject::spiderTestJump(dynamic);
-        if (!isP1 || !g_cfg.standTrace || !g_started || g_sessionOver) return;
+        PlayerObject::spiderTestJumpInternal(again);
+        // The legacy slope and collision fields are not the query's chosen target.
         auto* tg = *reinterpret_cast<GameObject**>((char*)this + gdoff::kPlayerCurrentSlope2);
         const double lo = *reinterpret_cast<double*>((char*)this + gdoff::kPlayerCollidedBottomMaxY);
         const double hi = *reinterpret_cast<double*>((char*)this + gdoff::kPlayerCollidedLeftMaxX);
@@ -426,9 +418,9 @@ class $modify(PlayerObject) {
         char b[320];
         snprintf(b, sizeof(b),
                  "spidertp: t=%lld dyn=%d y %.3f -> %.3f up=%d lo=%.3f hi=%.3f "
-                 "tgt=[%s]",
-                 (long long)g_tick, (int)dynamic, y0, this->getPositionY(),
-                 (int)this->m_isUpsideDown, lo, hi, tb);
+                 "tgt=[%s] x %.3f -> %.3f",
+                 (long long)g_tick, (int)again, y0, this->getPositionY(),
+                 (int)this->m_isUpsideDown, lo, hi, tb, x0, this->getPositionX());
         writeResult(b);
     }
 

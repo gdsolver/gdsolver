@@ -1034,13 +1034,12 @@ inline void playerRectScaled(Mem& P, float s, float& rx, float& ry, float& rw, f
     rw = w;
     rh = h;
 }
-inline void destroyBreakable(Ctx& c, GObj& o);
-// PlayerObject::collidedWithObjectInternal 0x4efd50 for a player that is not a platformer and not in a turned frame.
+inline void destroyBreakable(Ctx& c, GObj& o, bool platformerContact = false);
+// PlayerObject::collidedWithObjectInternal 0x4efd50. A turned caller supplies object geometry rotated around the player.
 // `rectArg` is null for the object's own rect, or x,y,w,h of the strip preSlopeCollision passes (then the object is not remembered: plVar28 = 0).
 // Returns true where the decompile returns 1.
 inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float* rectArg, bool noOverlap) {
     Mem& P = c.P;
-    (void)noOverlap;
     const bool flip = P.u8(po::Upside) != 0;
     const GObj* O = rectArg ? nullptr : Oarg;                 // plVar28
     float pr[4];
@@ -1091,23 +1090,23 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
     }
     const bool bVar29 = !((P.i32(0xb84) < 1 && !P.u8(po::Platformer) && P.i32(0xb88) < 1)) && !passable;
     const float fy = P.f32(po::PosY);
-    double dVar42 = (double)(fy - P.f32(po::PrevY));
+    const float jumpDelta = P.u8(po::Sideways) ? P.f32(po::PosX) - P.f32(po::PrevX) : fy - P.f32(po::PrevY);   // 2.2091 0x4f0139..0x4f0161
     iVar17 = flip ? -1 : 1;
     const double dVar41 = (double)(fy - ph * 0.5f * (float)iVar17) + dVar44;      // the foot line now (+ margin)
-    const double dVar36 = dVar41 - dVar42;                                         // ... and last tick
+    const double dVar36 = dVar41 - (double)jumpDelta;                              // ... and last tick
     iVar17 = flip ? 1 : -1;
     const double dVar44h = (double)(fy - (float)iVar17 * ph * 0.5f) - dVar44;      // the head line now (- margin)
-    const double dVar33 = dVar44h - dVar42;
+    const double dVar33 = dVar44h - (double)jumpDelta;
     const float fMaxY = orc[1] + orc[3], fMinY = orc[1];
     const double dVar4 = (double)fMaxY;                                            // the object's top
-    dVar42 = (double)fMinY;                                                        // ... and bottom
+    const double dVar42 = (double)fMinY;                                           // ... and bottom
     bool bVar12 = false;
     bool local_1c0 = true;
     const bool cVar24 = O && O->type == 0x15;
     const bool bVar8 = !(flyBall || P.u8(po::ModeRobot) || P.u8(po::ModeSpider));
     bool bVar6 = false, bVar9 = false, bVar10 = false;
     const GObj* Oc = O;
-
+    bool platformerBreak = false;
     auto setPos = [&](float yy) { if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg setPos object uid %d type %d rect %.3f %.3f %.3f %.3f rectArg %d y %.4f -> %.4f\n", O ? O->uid : -1, O ? O->type : -1, (double)orc[0], (double)orc[1], (double)orc[2], (double)orc[3], rectArg ? 1 : 0, (double)P.f32(po::PosY), (double)yy); setPosition(P, P.f32(po::PosX), yy); };
     auto gflag = [&]() { return flip && flyM; };
     auto upd12d = [&](float v) {
@@ -1135,6 +1134,7 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
         if (bVar8 && 0 < P.i32(0xb7c) && P.u8(0x7e8)) P.u8(0x98d, 0);
         if (!flyM || !bVar11) { if (bVar12) didHitHead(c); }
         else if (bVar12) { setYVelocity(P, P.f64(0x630)); didHitHead(c); }
+        if (platformerBreak) destroyBreakable(c, *Oarg, true);   // 2.2091 0x4f1d93..0x4f1db0
         return true;
     };
     // the common "contact made" bookkeeping of the foot and the head sections (L588-L700, L792-L905)
@@ -1153,7 +1153,6 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
             else if (!cVar24 && !passable) { upd300(fMaxY); uidCeil(uid); }
         }
     };
-
     const bool waveSkip = P.u8(po::ModeWave) && P.i32(0xb80) < 1;
     bool result = false;
     bool resolved = false;      // a branch returned 1
@@ -1215,7 +1214,8 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
             bVar5 = false;
             bVar12 = dVar4 <= dVar41 ? true : !(dVar36 < dVar4);
         }
-        // ---- the foot section, L436-L741 ----
+        platformerBreak = bVar12 && cVar24 && P.u8(po::Platformer) && (flip ? jumpDelta < 0 : jumpDelta > 0) && !P.u8(0x996) && (noOverlap || rectsIntersect(orc[0], orc[1], orc[2], orc[3], pr[0] + 2.5f, pr[1], pr[2] - 5.0f, pr[3]));
+        // ---- the foot section, L436-L741; break gate: 2.2091 0x4f0231..0x4f0255, 0x4f06a3..0x4f06ea ----
         if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg foot uid %d: dVar44 %.4f dVar41(foot now) %.4f dVar36(foot prev) %.4f top %.4f bottom %.4f flip %d bVar5 %d bVar29 %d bVar12 %d bVar11 %d fastObj %d vy %.4f Was %d On %d bVar10 %d bVar6 %d -> enter %d\n", O ? O->uid : -1, dVar44, dVar41, dVar36, dVar4, dVar42, (int)flip, (int)bVar5, (int)bVar29, (int)bVar12, (int)bVar11, (int)fastObj, P.f64(po::Vy), (int)P.u8(po::WasOnSlope), (int)P.u8(po::OnSlope), (int)bVar10, (int)bVar6, (int)((bVar5 || bVar29) && !(dVar41 < dVar4 && dVar36 < dVar4)));
         bool footDone = false;                       // reached "local_1c0 = false; goto LAB_0b32"
         if (bVar5 || bVar29) {
@@ -1246,7 +1246,7 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
                             double nv = P.f64(po::Vy);
                             if (nv <= P.f64(0x630) + 1.0) nv = P.f64(0x630) + 1.0;
                             setYVelocity(P, nv);
-                            didHitHead(c);
+                            didHitHead(c); if (platformerBreak) destroyBreakable(c, *Oarg, true);   // 2.2091 0x4f0ac8..0x4f0ae5
                         }
                         footDone = true;
                     } else {
@@ -1306,7 +1306,7 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
                                     double nv = P.f64(po::Vy);
                                     if (P.f64(0x630) - 1.0 <= nv) nv = P.f64(0x630) - 1.0;
                                     setYVelocity(P, nv);
-                                    didHitHead(c);
+                                    didHitHead(c); if (platformerBreak) destroyBreakable(c, *Oarg, true);   // 2.2091 0x4f10c0..0x4f10dd
                                 }
                             } else if (!bVar12 && bVar11) {
                                 const double vy0 = P.f64(po::Vy);
@@ -2139,9 +2139,10 @@ inline bool handleRotatedCollisionInternal(Ctx& c, float dt, GObj* O, const floa
     return r;
 }
 // GJBaseGameLayer::destroyObject (2.2091 0x31d460) marks +0x3d2 at 0x31d536; collisionCheckObjects skips it (0x31bdc8).
-// It emits DestroyBlock at 0x31d568..0x31d575. The platformer contact branches which also set player +0x996 are not ported here.
+// It emits DestroyBlock at 0x31d568..0x31d575. Platformer head contacts first set +0x996, cleared at update end (0x4e817c).
 // Do not unfile the object or mark it inactive: staticObjectsInRect still tests its box.
-inline void destroyBreakable(Ctx& c, GObj& o) {
+inline void destroyBreakable(Ctx& c, GObj& o, bool platformerContact) {
+    if (platformerContact) c.P.u8(0x996, 1);
     o.activated = true;
     if (c.actLog) c.actLog->push_back(&o);
     if (c.gameEvents) c.gameEvents->push_back({gdev::gdEventOfType(o.type), o.uid, o.type});

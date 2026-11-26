@@ -514,8 +514,8 @@ inline void shadowStepInit(const char* objrectsPath, const Level& L) {
         for (const auto& m : g_bigSecObjs) addBox(m.first, 1);
         for (const auto& m : g_bigSecDyn) addBox(m.first, 1);
     }
-    // The dump is not a per-tick recording. updateIsOriented (2.2091 0x29e640) can rewrite the latch;
-    // updateObjectSection (0x330ba0) can refile movers that are not limited to Follow Player Y and group switches.
+    // The dump is not a per-tick recording. updateObjectSection (2.2091 0x330ba0) can refile
+    // movers that are not limited to Follow Player Y and group switches.
     std::map<std::pair<int, int>, int> firstMovingSlot;
     for (size_t i = 0; i < B.objs.size(); ++i) if (B.mover[i]) {
         auto& o = B.objs[i];
@@ -523,10 +523,16 @@ inline void shadowStepInit(const char* objrectsPath, const Level& L) {
             auto [it, inserted] = firstMovingSlot.try_emplace(std::make_pair(o.spiderSecX, o.spiderSecY), o.spiderFixedSlot);
             if (!inserted) it->second = std::min(it->second, o.spiderFixedSlot);
         }
-        o.spiderOuterOb = -1;
-        const bool followCell = (o.type == 0 || o.type == 2 || o.type == 25)
-            && std::binary_search(g_followCellStickyUids.begin(), g_followCellStickyUids.end(), o.uid);
-        if (!followCell) o.spiderSecX = o.spiderSecY = -2;
+        // Follow Player Y dirties/translates every group member without a type test
+        // (2.2091 0x336d10..0x336d5d). PlayLayer's batch hook is a no-op (0x3f5c0);
+        // neither the cell nor the outer-OBB latch read by getObjectRect2 (0x2949ff) is rewritten.
+        if (!std::binary_search(g_followCellStickyUids.begin(), g_followCellStickyUids.end(), o.uid)) {
+            // moveObjects only dirties the boxes (0x3369b7); rotateObject sets the latch
+            // (0x334d6e) but does not clear it. The reset in updateIsOriented (0x29e64f)
+            // is for object setup (PlayLayer::addObject 0x50c6dc). Retain an observed raised latch.
+            if (o.spiderOuterOb == 0) o.spiderOuterOb = -1;
+            o.spiderSecX = o.spiderSecY = -2;
+        }
         o.spiderFixedSlot = -1;
     }
     // A removal before the end of the prefix can swap a later slot forward (0x32fbce..0x32fbec).

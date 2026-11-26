@@ -262,7 +262,13 @@ inline bool hazardHit(const GObj& o, const Rect& r, const Sections& sections) {
     if (!(o.radius > 0.0f)) {   // 0x3188f6..0x3188fa sends an unordered radius to the box branch too.
         if (!meets(r, objRect(o))) return false;
         // 0x318bd1..0x318c10 gates OBB overlap on the latch, not the current angle.
-        const bool outerOb = o.spiderOuterOb < 0 ? objRotatedBox(o) : o.spiderOuterOb != 0;
+        bool outerOb = o.spiderOuterOb != 0;
+        if (o.spiderOuterOb < 0) {
+            // GameObject::updateIsOriented truncates getRotation() to signed degrees, then tests mod 90
+            // (2.2091 0x29e67f..0x29e6a7); CVTTSS2SI gives INT32_MIN on an invalid conversion.
+            const int angle = o.rot >= -0x1p31f && o.rot < 0x1p31f ? (int)o.rot : INT32_MIN;
+            outerOb = o.radius <= 0.0f && angle % 90 != 0;
+        }
         if (outerOb) {
             const Obb rb = makeObb(r.x + r.w * 0.5f, r.y + r.h * 0.5f, r.w, r.h, 0.0f);
             if (!obbOverlap(objObb(o), rb)) return false;
