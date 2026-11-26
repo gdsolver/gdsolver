@@ -89,7 +89,7 @@ struct TrigLoadOpts {
     bool pickup = false;         // run a Pickup trigger (1594, touch) in the shadow: a touch of its object switches its target group on / off (the triggers.txt actgrp column)
     bool remapChain = false;     // run a Spawn with a group remap in the shadow's own chain (the keys handed down the call), instead of leaving its chain to the record
     bool areaEOut = false;       // run an Area Move that has a separate ease-out (areas.txt eOut = 1; eOutType / eOutRate / eOutBuf)
-    bool random = false;         // run the Random (1912) and Advanced Random (2068) triggers: the trigger LCG is drawn in the shadow (TrigShadow::rng_); needs the level string (scale=) and, for the Advanced Random, trigext.txt
+    bool random = false;         // model the trigger LCG (Random, Advanced Random and covered Spawn Delay Range); needs the level string (scale=)
     bool randomPin = false;      // the first step's draws use the in-reset seed 0x48c67641 and the stream restarts at 0 after it (the mod's rngearly / rngfix); false = the whole stream from 0
     bool collision = false;      // run the collision blocks and the Collision triggers (collblocks.txt in the dump directory: uid,blockid of each collision block, object id 1816)
     std::string levelString;     // the level's string (a .lvl): the Sequence triggers' lists (keys 435..439) are read from it, matched to the dump's uids by place; "" = Sequences are not run
@@ -192,16 +192,19 @@ inline std::unordered_map<int, RandParams> parseRandoms(const TsLevelObjs& lvl, 
     }
     return best;
 }
-// The objects of a level string that draw from the trigger LCG without the shadow running them: a Spawn Particle (3608, EffectGameObject::triggerObject case 0xe18) and a Spawn with a delay variation (1268, key 556: +0x784,
-// SpawnTriggerGameObject::triggerObject 0x4b91f0 draws one number when it is not 0). While there is one, the shadow's stream would drift from the game's: Random / Advanced Random are not run.
-inline size_t countOtherDraws(const TsLevelObjs& lvl) {
-    if (!lvl.ok) return 0;
-    size_t n = 0;
+// Check that the dump accounts for the level string's trigger-LCG consumers before starting the stream.
+struct TriggerDrawInventory { size_t particles = 0, rangedSpawns = 0, follows = 0, randoms = 0, advancedRandoms = 0; };
+inline TriggerDrawInventory triggerDrawInventory(const TsLevelObjs& lvl) {
+    TriggerDrawInventory n;
+    if (!lvl.ok) return n;
     for (const std::string& o : lvl.objs) {
-        if (o.compare(0, 7, "1,3608,") == 0) { ++n; continue; }
+        if (o.compare(0, 7, "1,3608,") == 0) { ++n.particles; continue; }
+        if (o.compare(0, 7, "1,3016,") == 0) { ++n.follows; continue; }
+        if (o.compare(0, 7, "1,1912,") == 0) { ++n.randoms; continue; }
+        if (o.compare(0, 7, "1,2068,") == 0) { ++n.advancedRandoms; continue; }
         if (o.compare(0, 7, "1,1268,") != 0) continue;
         const auto f = tsSplit(o, ',');
-        for (size_t i = 0; i + 1 < f.size(); i += 2) if (f[i] == "556" && std::atof(f[i + 1].c_str()) != 0.0) { ++n; break; }
+        for (size_t i = 0; i + 1 < f.size(); i += 2) if (f[i] == "556" && std::strtof(f[i + 1].c_str(), nullptr) != 0.f) { ++n.rangedSpawns; break; }
     }
     return n;
 }
@@ -319,12 +322,24 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
     const TsLines objrectsFile = tsReadLines(ref + "/objrects.txt");   // read once: every pass below (and the parsers of the level string) reads these lines
     TsLevelObjs levelObjs; bool levelObjsRead = false;
     auto lvlObjs = [&]() -> const TsLevelObjs& { if (!levelObjsRead) { levelObjs = tsReadLevelObjs(o.levelString); levelObjsRead = true; } return levelObjs; };
+    const TriggerDrawInventory drawInventory = o.levelString.empty() ? TriggerDrawInventory{} : triggerDrawInventory(lvlObjs());
+    size_t dumpedRanges = 0;
     std::unordered_map<int, long long> rankOf;   // a line of objgroups.txt = the level's own object order
     {
         std::ifstream f(ref + "/objgroups.txt");
         std::string line;
         while (std::getline(f, line)) {
             std::istringstream is(line);
+            if (line.starts_with("#spawnorder ")) {
+                std::string tag;
+                int group;
+                if (!(is >> tag >> group)) continue;
+                std::vector<OrderedSpawnMember> list;
+                OrderedSpawnMember member{};
+                while (is >> member.uid >> member.x) list.push_back(member);
+                S.setOrderedSpawnMembers(group, std::move(list));
+                continue;
+            }
             int uid;
             if (!(is >> uid)) continue;
             rankOf[uid] = (long long)rankOf.size();
@@ -413,6 +428,20 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
     }
     S.areaPhase = areaPhase;
     S.spawnModel = !noSpawn;
+    S.spawnGroupBySource = false;
+    {
+        std::ifstream flags(ref + "/levelflags.txt");
+        std::string flag;
+        while (std::getline(flags, flag)) {
+            flag = tsTrim(flag);
+            if (flag == "spawnGroupBySource=0" || flag == "spawnGroupBySource=1") {
+                S.spawnGroupBySource = flag.back() == '1';
+                break;
+            }
+            // Older dumps have the level setting but not a separate copy of the layer's byte.
+            if (flag == "enable22Changes=0" || flag == "enable22Changes=1") S.spawnGroupBySource = flag.back() == '1';
+        }
+    }
     S.floatRotate = !doubleRotate;
     S.spawnPhase = spawnPhase;
     S.sectionWindow = !noWindow;
@@ -810,7 +839,7 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
         const int cUid = need("uid"), cId = need("id"), cCx = need("cx"), cTarget = need("target"), cCenter = need("center"), cTouch = need("touch"), cSpawn = need("spawn"), cDur = need("dur"),
                   cOx = need("ox"), cOy = need("oy"), cEase = need("ease"), cRate = need("erate"), cDeg = need("deg"), cT360 = need("t360"), cChan = need("chan"), cTogon = need("togon"), cActgrp = need("actgrp"),
                   cItem = need("item"), cCount = need("count"), cCmode = need("cmode"), cActg = need("actgrp"), cLx = need("lockx"), cLy = need("locky"), cLcx = need("lockcamx"), cLcy = need("lockcamy"), cLrot = need("lockrot"), cMmx = need("movemodx"), cMmy = need("movemody"),
-                  cCy2 = need("cy"), cSdelay = need("sdelay"), cSord = need("sord"), cSordd = need("sordd"), cOrd = need("ord"), cRemap = need("remap"), cSilent = need("silent"),
+                  cCy2 = need("cy"), cSdelay = need("sdelay"), cSrange = need("srange"), cSord = need("sord"), cSordd = need("sordd"), cOrd = need("ord"), cRemap = need("remap"), cResetRemap = need("resetremap"), cSilent = need("silent"),
                   cCtrobj = need("ctrobj"), cMvtgt = need("mvtgt"), cMvaxis = need("mvaxis"), cTmodctr = need("tmodctr"), cDynmode = need("dynmode"), cDirdist = need("dirdist"), cEvents = need("events"), cEvx = need("evextra");
         while (std::getline(f, line)) {
             const auto c = tsSplit(tsTrim(line), ',');
@@ -835,6 +864,21 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
         t.lockCX = I(cLcx) != 0; t.lockCY = I(cLcy) != 0; t.camLockOk = o.camLock;
             t.lockrot = I(cLrot) != 0;
             t.sdelay = D(cSdelay); t.sord = I(cSord) != 0; t.sordd = I(cSordd) != 0; t.ord = I(cOrd); t.silent = I(cSilent) != 0; t.remap = cRemap >= 0 && c[(size_t)cRemap] != "-" && !c[(size_t)cRemap].empty();
+            if (t.id == 1268) {
+                if (cSrange >= 0 && cSrange < (int)c.size() && !c[(size_t)cSrange].empty()) {
+                    const char* range = c[(size_t)cSrange].c_str();
+                    char* end = nullptr;
+                    const float parsed = std::strtof(range, &end);
+                    t.srangeUnknown = end == range || *end || !std::isfinite(parsed);
+                    if (!t.srangeUnknown) { t.srange = parsed; if (parsed != 0.f) ++dumpedRanges; }
+                } else {
+                    t.srangeUnknown = drawInventory.rangedSpawns != 0;
+                }
+            }
+            if (t.id == 1268 && cResetRemap >= 0 && cResetRemap < (int)c.size()) {
+                const std::string& reset = c[(size_t)cResetRemap];
+                if (reset == "0" || reset == "1") t.resetRemap = I(cResetRemap);
+            }
             t.ctrCol = cCtrobj >= 0; t.ctrObj = I(cCtrobj);
             if (t.id == 3604 && cEvents >= 0 && cEvx >= 0 && (int)c.size() > std::max(cEvents, cEvx)) {   // an Event trigger: its events (';'-separated, '-' none) and the extra IDs (a:b); run when it listens for something with the extra IDs 0 / 0 (EffectGameObject +0x754 * 10000 + +0x758 is the key)
                 const std::string& es = c[(size_t)cEvents];
@@ -899,9 +943,11 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
         std::unordered_set<int> listedUids; for (const TrigDef& tt : S.triggers()) listedUids.insert(tt.uid);
         if (!o.levelString.empty() && haveExt) seqP = parseSequences(lvlObjs(), objrectsFile);
         if (!o.levelString.empty() && haveExt) randP = parseRandoms(lvlObjs(), objrectsFile, "2068");
-        if (o.random && !o.levelString.empty()) {   // Random (1912): its chance from the level string; Advanced Random (2068): run below. Not while the level has draws the shadow does not make
-            const size_t od = countOtherDraws(lvlObjs());
-            if (od) std::printf("random: %zu objects draw from the trigger LCG without being run (Spawn Particle / Spawn delay variation): Random and Advanced Random are not run\n", od);
+        if (o.random && !o.levelString.empty() && lvlObjs().ok) {
+            // Mixed Advanced Follow/Delay Range draw order has not been matched to a flight.
+            const bool rangesKnown = drawInventory.rangedSpawns == dumpedRanges;
+            if (drawInventory.particles || !rangesKnown || (dumpedRanges && drawInventory.follows))
+                std::printf("random: trigger draw order is not covered (Spawn Particle, missing srange, or mixed Advanced Follow/Delay Range); using no predicted RNG draws\n");
             else {
                 randRun = true; S.rngPinFirst_ = o.randomPin; S.drawOnFollow = true;
                 for (const auto& kv : parseRandoms(lvlObjs(), objrectsFile, "1912")) S.markRandom(kv.first, kv.second.chance);
@@ -1005,6 +1051,19 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
         S.setAttempt(attemptNo);
     }
 
+    if (randRun && dumpedRanges) {
+        size_t randoms = 0, advancedRandoms = 0;
+        for (const TrigDef& t : S.triggers()) {
+            if (t.id == 1912 && t.randOk) ++randoms;
+            if (t.id == 2068 && t.randOk) ++advancedRandoms;
+        }
+        if (randoms == drawInventory.randoms && advancedRandoms == drawInventory.advancedRandoms)
+            S.enableSpawnDelayRng();
+        else {
+            std::printf("random: a Random trigger is missing from the dump; using no predicted RNG draws\n");
+            S.disableTriggerRng();
+        }
+    }
     return R;
 }
 

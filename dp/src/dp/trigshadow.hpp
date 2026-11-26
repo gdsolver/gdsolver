@@ -18,6 +18,7 @@
 #include "dp/guard_hit.hpp"
 #include <memory>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -102,6 +103,8 @@ struct TrigDef {
     bool areaOk = false;   // an Area Move (3006) whose areas.txt row is one the shadow runs (see AreaDef)
     bool editOk = false;   // an Edit Area (3011..3015) whose areaedit.txt row changes only fields of an Area Move the shadow keeps (see AreaEdit)
     double sdelay = 0;     // a Spawn trigger's delay in seconds (m_spawnDelay)
+    float srange = 0.f;   // Spawn property 556 (m_delayRange)
+    bool srangeUnknown = false;   // a level reports range draws but this archived row has no range
     bool sord = false, remap = false, silent = false;   // a spawn-order index (not read), a group remap, m_isSilent: a Spawn the shadow runs has none of them
     bool sordd = false;    // the Spawn is ordered: the triggers of its group are spawned one after the other, by their x (FUN_140322560)
     // an Item Compare (3620, ItemTriggerGameObject; trigext.txt): the shadow runs it when every value it reads is one the shadow has (itemCmp)
@@ -116,6 +119,7 @@ struct TrigDef {
     double dirDist = 0.0;   // m_directionModeDistance (key 396): a Move with a distance is in the game's Direction mode, a displacement the shadow does not compute (kindRuns: not run)
     bool mvtgt = false, dynmode = false; int mvaxis = 0, tmodctr = 0;   // a Move in the target mode (m_useMoveTarget), the dynamic one, which axis (m_moveTargetMode: 1 x, 2 y), the centre-modifier group (m_targetModCenterID)
     std::vector<std::pair<int, int>> remapTo;   // a Spawn's group remap (triggers.txt `remap`, source:source:target:flag; entries by ';'): a trigger it spawns acts on the target group in place of the source one
+    int resetRemap = -1;   // Spawn property 581; -1 means an old dump did not record the flag
     std::string raw;   // a trigger that moves the player (Teleport 3022): its objrects.txt columns, as `name=value` text, for whoever reads the event
     double gmod = 1.0; int gpl = 0;   // a Gravity trigger (2066): the value it sets (objrects.txt gmod) and the player it is for (gpl)
     int optp1 = 0, optp2 = 0, optudg = 0;   // an Options trigger (2899): disable (1) / enable (-1) player 1's / 2's controls, unlink dual gravity (objrects.txt)
@@ -213,6 +217,8 @@ struct ObjState {
     IntSpan groups;   // a view into TrigShadow::groupStore_ (shared_const.hpp: IntSpan, and its lifetime)
 };
 
+struct OrderedSpawnMember { int uid; float x; };   // CCNode X in the native group snapshot, not the hitbox centre
+
 class TrigShadow {
 public:
     CowPages<ObjState> objs;   // read with objs[i], written with objs.mut(i): a copy of the shadow shares the pages no step has written since (shared_const.hpp)
@@ -247,6 +253,7 @@ public:
         objs.push_back(o);
     }
     void setGroupBit(int g, bool on) { groupBit[g] = on; }
+    void setOrderedSpawnMembers(int g, std::vector<OrderedSpawnMember> list) { orderedSpawnMembers_.mut()[g] = std::move(list); }
     // (dptest) an item's number written as a Pickup would write it, and an item put in / taken out of the persistent set as an Item Persist would
     void setItemForTest(int item, int n) { updateCountForItem(item, n); }
     void setPersistForTest(int item, bool on) { if (on) persistItems_.insert(item); else persistItems_.erase(item); }
@@ -257,6 +264,17 @@ public:
     }
     // a Random (1912) the loader found in the level string: its chance (key 10) and the order to run it (before finish())
     void markRandom(int uid, double chance) { for (TrigDef& t : trigs_.mut()) if (t.uid == uid && t.id == 1912) { t.randOk = true; t.randChance = chance; } }
+    void enableSpawnDelayRng() {
+        spawnDelayRng_ = true;
+        for (TrigDef& t : trigs_.mut()) if (t.id == 1268 && t.srange != 0.f) t.randOk = true;
+    }
+    void disableTriggerRng() {
+        spawnDelayRng_ = drawOnFollow = rngPinFirst_ = false;
+        for (TrigDef& t : trigs_.mut()) if (isTriggerRngDraw(t)) {
+            t.randOk = false;
+            modelled_.erase(t.uid);
+        }
+    }
     void addTrigger(const TrigDef& t) { trigs_.push_back(t); if (!t.remapTo.empty()) anyRemap_ = true; }
     // (the live path, before finish()) the touch Toggle Blocks (1594) the caller's own touch table keeps as boxes -- one that switches its group on when the button is down inside it, or off -- as the Events it hands over
     // fire them: uid -> 1 (on) / 0 (off). Only these are run (togon is what kindRuns asks for); a 1594 the caller does not keep as a box is never given an Event, so running it would leave its group where it started.
@@ -297,7 +315,7 @@ public:
             case 3024: return t.areaStopOk;
             case 1815: return t.collOk;    // a Collision trigger: registered when it fires, checked every step (stepCollisions)
             case 3620: return t.itemCmp;   // trigger objects whose Item Compare reads a value the shadow does not have are left to the record (not vouched for)   // needs the Areas' effect ids (areafx.txt)
-            case 1268: return (!t.remap || t.remapOk) && !t.sord && !t.silent;
+            case 1268: return spawnDelayKnown(t) && (!t.remap || t.remapOk) && !t.sord && !t.silent;
             case 3607: return t.seqOk;
             case 3604: return evFed && t.evOk;
             case 1912: case 2068: return t.randOk;
@@ -353,7 +371,7 @@ public:
             for (size_t i = 0; i < n; ++i) {
                 if (evListen_[i].ev != ev || evListen_[i].key != key) continue;
                 const EvListener L = evListen_[i];
-                const int keepSp = curSpawnUid_; const RemapKeys keepR = curRemap_;
+                const int keepSp = curSpawnUid_; const SpawnRemap keepR = curRemap_;
                 curSpawnUid_ = L.trigUid; curRemap_ = L.remap;
                 spawnGroup(L.target, false, 0.0);
                 curRemap_ = keepR; curSpawnUid_ = keepSp;
@@ -397,6 +415,7 @@ public:
     // button phase of the tick, its toggleGroupTriggered before the next step's updateSpawns / commands), which is where the timeline is between two steps, so it is made now, with nothing to catch up on.
     void toggleGroupLate(int group, bool on, int uid) {
         if (!gtogFed_) return;
+        SpawnPhaseScope phase(spawnDedupePhase_, SpawnPhase::NextHead);
         toggleGroupTriggered(group, on, uid);
         ++groupToggleFed;
     }
@@ -440,15 +459,26 @@ public:
             for (const TrigDef& t : trigs_) if (kindRuns(t) && !t.spawn && t.id != 1268) modelled_.insert(t.uid);
         }
         if (gtogFed_) for (const TrigDef& t : trigs_) if (t.id == 1595 && (gtogTaps_.empty() || gtogTaps_.count(t.uid))) modelled_.insert(t.uid);   // its on / off calls are handed over (addGroupToggleEvent)
-        for (const TrigDef& t : trigs_)   // an ordered Spawn is run only when the group it spawns keeps the level's order (no order value, no channel on the triggers in it)
-            if (t.id == 1268 && t.sordd && modelled_.count(t.uid)) {
-                const auto m = members.find(t.target);
-                if (m != members.end())
-                    for (size_t i : m->second) {
-                        const auto ti = trigByUid_.find(objs[i].uid);
-                        if (ti != trigByUid_.end() && (trigs_[ti->second].ord != 0 || trigs_[ti->second].chan != 0)) { modelled_.erase(t.uid); break; }
-                    }
+        auto checkOrderedGroup = [&](const TrigDef& t, int g) {   // only when the spawned group keeps the level's order
+            if (!t.sordd || !modelledT(t)) return;
+            const auto m = members.find(g);
+            if (m == members.end()) return;
+            for (size_t i : m->second) {
+                const auto ti = trigByUid_.find(objs[i].uid);
+                if (ti != trigByUid_.end() && (trigs_[ti->second].ord != 0 || trigs_[ti->second].chan != 0)) { modelled_.erase(t.uid); break; }
             }
+        };
+        std::map<int, std::set<int>> remappedSpawners;
+        for (const TrigDef& sp : trigs_) {
+            if (sp.id != 1268) continue;
+            checkOrderedGroup(sp, sp.target);
+            if (sp.remapTo.empty()) continue;
+            forSpawnRemap(sp, [&](const TrigDef& t, int g, bool centre) {
+                if (centre || t.id != 1268 || !t.spawn) return;
+                remappedSpawners[g].insert(t.uid);
+                checkOrderedGroup(t, g);
+            });
+        }
         for (const TrigDef& t : trigs_)   // a Stop by control ID is not run; a pause / resume of a group that holds an Area trigger is not run either (an Area instance's pause is not ported)
             if (t.id == 1616 && modelled_.count(t.uid)) {
                 bool bad = t.stopCtrl;
@@ -472,6 +502,13 @@ public:
                 const auto bi = byUid.find(x.uid);
                 bool ok = bi != byUid.end();   // a trigger in no group (the shadow only keeps grouped objects) is never spawned by anything: nothing can fire it, so nothing is waited for
                 if (!ok) continue;
+                for (int g : objs[bi->second].groups) {
+                    const auto it = remappedSpawners.find(g);
+                    if (it == remappedSpawners.end()) continue;
+                    for (int uid : it->second)
+                        if (!modelled(uid)) { ok = false; spawnBlockers_.mut()[x.uid].insert(1268); break; }
+                    if (!ok) break;
+                }
                 if (ok)
                     for (const TrigDef& y : trigs_) {
                         if (!kActivators.count(y.id) || modelled_.count(y.uid)) continue;
@@ -480,7 +517,20 @@ public:
                     }
                 if (!ok) { modelled_.erase(x.uid); changed = true; }
             }
+            if (spawnDelayRng_) {
+                // Missing even one trigger draw changes all later sampled delays.
+                bool missingDraw = spawnFedOn_ && spawnFedMode_ == 2;
+                for (const TrigDef& t : trigs_)
+                    if (isTriggerRngDraw(t) && !modelledT(t)) { missingDraw = true; break; }
+                if (missingDraw) {
+                    std::printf("random: a trigger RNG call is not covered; using no predicted RNG draws\n");
+                    disableTriggerRng();
+                    changed = true;
+                }
+            }
         }
+        // Native update (RVA 0x340cf5 before 0x341334): run the queue before a crossing can enqueue a new delay.
+        if (spawnDelayRng_) spawnPhase = 0;
         if (spawnFedOn_) {   // why each spawn-triggered trigger the shadow cannot run is waited for in vain (before it is handed to the record): the activators it cannot run, a report
             auto actName = [](const TrigDef& y) -> std::string {
                 switch (y.id) {
@@ -499,12 +549,15 @@ public:
                         if (!kActivators.count(y.id) || modelled_.count(y.uid)) continue;
                         for (int g : objs[bi->second].groups) if (g == y.target || ((y.id == 3607 || y.id == 2068) && namesGroup(y, g))) { r.insert(actName(y)); break; }
                     }
+                const auto blockers = spawnBlockers_.find(x.uid);
+                if (blockers != spawnBlockers_.end() && blockers->second.count(1268) && r.empty()) r.insert("remap");
                 if (r.empty()) r.insert("other");
             }
         }
         if (spawnFedOn_)   // the triggers the shadow cannot wait for are fired from the record; a Spawn whose own start the shadow does not run only starts triggers that are fired from the record too
             for (const TrigDef& t : trigs_) {
                 if (t.chan != 0 && !chanModel_) continue;   // (a spawn-triggered trigger of any channel runs: spawnObject has no channel test, and a Rotate Gameplay among them is what switches the channel back)
+                if (t.id == 1268 && !spawnDelayKnown(t)) continue;   // the recorded call tick does not give its sampled delay
                 if (t.spawn) {
                     // (a Stop is not in the record: a spawn-triggered one is run only when its activators are run)
                     if ((t.id == 1268 || (kindRuns(t, true, recordComplete_, chanModel_, evFed_) && (recordComplete_ || t.id != 1616))) && (spawnFedMode_ == 2 || !modelled_.count(t.uid) || (t.id == 901 && t.mvtgt))) { fedSpawn_.insert(t.uid); modelled_.insert(t.uid); }   // (a Move-To reads where the player is when it fires: the step of the record, not the shadow's own chain's)
@@ -568,30 +621,12 @@ public:
             // shadow runs) was "not covered" because a Follow of group 681 names it as its leader, so its Transform was not supplied and the blocks it scales stood still: window 5000 left the game at 5274.
             if (t.center && t.id != 1347) other.insert(t.center);
         }
-        // a Spawn with a group remap hands the triggers it spawns other groups than the ones the table names: a trigger that is not run, in what such a Spawn spawns, acts on the NEW group of the key that names its target
-        // or centre (the table only holds the old one, so the new group would pass for covered). The keys of the Spawns met on the way (a nested Spawn) count as well: a superset, never less.
+        // Do not vouch for a remapped target or centre of a trigger the shadow cannot run.
         for (const TrigDef& sp : trigs_) {
             if (sp.id != 1268 || sp.remapTo.empty()) continue;
-            RemapKeys keys = sp.remapTo;
-            std::set<int> seenG;
-            std::vector<int> work{sp.target};
-            std::vector<const TrigDef*> unrun;
-            while (!work.empty()) {
-                const int g = work.back();
-                work.pop_back();
-                if (!seenG.insert(g).second) continue;
-                const auto m = members.find(g);
-                if (m == members.end()) continue;
-                for (size_t oi : m->second) {
-                    const auto ti = trigByUid_.find(objs[oi].uid);
-                    if (ti == trigByUid_.end()) continue;
-                    const TrigDef& y = trigs_[ti->second];
-                    if (y.id == 1268) { work.push_back(y.target); keys.insert(keys.end(), y.remapTo.begin(), y.remapTo.end()); }
-                    if (!ignT(y) && !modelledT(y)) unrun.push_back(&y);
-                }
-            }
-            for (const TrigDef* y : unrun)
-                for (const auto& kv : keys) if ((y->target == kv.first && y->target) || (y->center == kv.first && y->center)) other.insert(kv.second);
+            forSpawnRemap(sp, [&](const TrigDef& t, int g, bool) {
+                if (!ignT(t) && !modelledT(t)) other.insert(g);
+            });
         }
         // a trigger that is not run and acts on the group an Area Move trigger sits in (an Edit Area, a Pause / Resume, a Stop that is not plain ...) changes what that Area does to its objects:
         // those objects are not vouched for either. A plain Stop is run (fire() ends the Area); a Toggle of the group is read from the Area trigger's own counter.
@@ -893,30 +928,12 @@ public:
         std::set<int> r;
         const auto mover = [](int id) { return id == 901 || id == 1346 || id == 2067 || id == 3006 || id == 3008 || id == 1049 || id == 1594; };   // 1594: only a touch Toggle Block the live path told the shadow to run (setToggleBoxes) is modelled
         for (const TrigDef& t : trigs_) if (t.target && modelled_.count(t.uid) && mover(t.id)) r.insert(t.target);
-        // a Spawn with a group remap run in the shadow's own chain moves the NEW group of the key that names a spawned Move / Rotate / Scale's target (lv22: Spawn 17647 remap 100:100:443:0 over the
-        // chain of group 436 = Move target 100 -> group 443). The keys of the nested Spawns met on the way count as well (a superset, never less: the tests that follow decide per group).
+        // Include remapped Move / Rotate / Scale targets (lv22: Spawn 17647 remaps Move target 100 to 443).
         for (const TrigDef& sp : trigs_) {
             if (sp.id != 1268 || !sp.remapOk || sp.remapTo.empty()) continue;
-            RemapKeys keys = sp.remapTo;
-            std::set<int> seenG;
-            std::vector<int> work{sp.target};
-            std::vector<const TrigDef*> moved;
-            while (!work.empty()) {
-                const int g = work.back();
-                work.pop_back();
-                if (!seenG.insert(g).second) continue;
-                const auto m = members.find(g);
-                if (m == members.end()) continue;
-                for (size_t oi : m->second) {
-                    const auto ti = trigByUid_.find(objs[oi].uid);
-                    if (ti == trigByUid_.end()) continue;
-                    const TrigDef& y = trigs_[ti->second];
-                    if (y.id == 1268) { work.push_back(y.target); keys.insert(keys.end(), y.remapTo.begin(), y.remapTo.end()); }
-                    if (y.target && modelled_.count(y.uid) && mover(y.id)) moved.push_back(&y);
-                }
-            }
-            for (const TrigDef* y : moved)
-                for (const auto& kv : keys) if (y->target == kv.first) r.insert(kv.second);
+            forSpawnRemap(sp, [&](const TrigDef& t, int g, bool centre) {
+                if (!centre && modelledT(t) && mover(t.id)) r.insert(g);
+            });
         }
         return r;
     }
@@ -929,6 +946,7 @@ public:
     std::vector<std::pair<int, int>> unlistedActivators;   // (uid, object id) of every activator object the trigger dump leaves out (--trigshadowtable)
     bool unknownActivators = false;   // the level has trigger objects that start groups (Random / Advanced Random / Sequence ...) with no row in the trigger dump
     bool spawnModel = true;      // Spawn triggers and what they spawn are run (false = the first versions: every spawn-triggered trigger is unvouched for)
+    bool spawnGroupBySource = false;   // GJBaseGameLayer::m_enable22Changes (level kA40)
     int spawnPhase = 2;          // where in a step the delayed spawns count down: 0 before the commands step, 1 after it, 2 after the crossed triggers fired
     bool uncoveredAreasOn = true;   // the objects a non-run Area reaches through its parents / children are not vouched for (false = only its target group, as before)
     bool rotFloat = true;          // an object's own rotation accumulates in float, as the node's does (false = in double, as before)
@@ -947,20 +965,26 @@ public:
         if (firstStep && rngPinFirst_) rng_ = 0x48c67641ULL;   // the draws of the start triggers fire inside the game's reset
         while (!pendDraw_.empty() && pendDraw_.front() <= t) {   // the Advanced Follows called in an earlier step run now: one draw each
             pendDraw_.erase(pendDraw_.begin());
-            rng_ = rng_ * 0x343fdULL + 0x269ec3ULL; ++randDraws_;
-            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::fprintf(lf, "%lld,0,3016,%u,0,%llu,advfollow\n", t, (unsigned)((rng_ >> 16) & 0x7fff), (unsigned long long)(rng_ & 0xffffffffULL)); std::fclose(lf); }
+            const unsigned r15 = drawTriggerR15();
+            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::fprintf(lf, "%lld,0,3016,%u,0,%llu,advfollow\n", t, r15, (unsigned long long)(rng_ & 0xffffffffULL)); std::fclose(lf); }
         }
-        levelTime_ += (double)(float)((1.0 / 240.0) * warp_);   // the layer's clock (+0x3d8, read by a Sequence's minimum interval / reset time): one step of the game's 240 Hz physics a step
+        // GD Win 2.2091: GJBaseGameLayer::update divides by the full warp at RVA 0x340813 before advancing +0x3d8 (0x340bac), the clock read by Sequence (0x655d85).
+        levelTime_ += ((1.0 / 240.0) * std::min(warp_, 1.0)) / warp_;
+        const bool followsPrevTick = t == curTick_ + 1;
         curTick_ = t;
         curPx_ = px; curPy_ = py;
-        spawnedStep_.clear();
-        spawnCountStep_ = 0;
+        // GD Win 2.2091: update clears the group stamps at 0x340c93 before updateSpawnTriggers,
+        // and again at 0x340ea5 before player collisions and crossing triggers.
+        spawnedStep_ = followsPrevTick ? std::move(spawnedNext_) : SpawnTick{};
+        spawnedNext_ = {};
         evDone_.clear();
+        if (spawnDelayRng_) updateSpawns();
         if (gtogFed_) {
+            SpawnPhaseScope phase(spawnDedupePhase_, SpawnPhase::Head);
             const auto gi = gtogAt_.find(t);
             if (gi != gtogAt_.end()) for (const auto& e : gi->second) { toggleGroupTriggered(e.group, e.on, e.uid); ++groupToggleFed; }
         }
-        if (spawnPhase == 0) updateSpawns();
+        if (!spawnDelayRng_ && spawnPhase == 0) updateSpawns();
         stepCommands();
         if (spawnPhase == 1) updateSpawns();
         if (!havePrev_) { prevPx_ = px; prevPy_ = py; prevCam_ = cam; prev2Cam_ = cam; havePrev_ = true; }
@@ -1023,7 +1047,12 @@ public:
             const PendingSpawn& p = pending_[i];
             h = mix(h, (uint64_t)(uint32_t)p.group); h = mix(h, (uint64_t)(uint32_t)p.objUid); h = mix(h, bits(p.delay)); h = mix(h, bits(p.time));
             h = mix(h, (p.ordered ? 1 : 0) | (p.done ? 2 : 0) | (p.paused ? 4 : 0)); h = mix(h, (uint64_t)(uint32_t)p.trigUid);
-            for (const auto& kv : p.remap) h = mix(h, ((uint64_t)(uint32_t)kv.first << 32) | (uint32_t)kv.second);
+            if (p.remap.origin) h = mix(h, (uint64_t)(uint32_t)p.remap.origin);
+            for (const auto& kv : p.remap.groups) h = mix(h, ((uint64_t)(uint32_t)kv.first << 32) | (uint32_t)kv.second);
+        }
+        if (haveSpawnDedupeState()) {
+            const Hash2 spawnSeen = spawnDedupeHash();
+            h = mix(h, spawnSeen.a); h = mix(h, spawnSeen.b);
         }
         for (int u : areaInsts_) h = mix(h, (uint64_t)(uint32_t)u);
         s = 0;
@@ -1067,7 +1096,7 @@ public:
     // NOT in it, by kind:
     //   reports      fired, queueWaits, lastTrig / lastTrigId of an object (written, never read in dp/), itemsFed, groupToggleFed, sclMoves, sclMoved, randDraws_, collEnters, stepNo_
     //   outputs      events, gravChanges, ctrlChanges, hiddenChanges, spawnReach, spawnFires: what the steps so far fired, read by the caller for the step just made
-    //   scratch      moveNodes_, spawnedStep_, spawnCountStep_, curSpawnUid_, curRemap_, curOvershoot_, curExtraDelay_, curLate_, arCx_ / arCy_, pyKnown_, curTick_: written before they are read in every step
+    //   scratch      moveNodes_, spawnDedupePhase_, curSpawnUid_, curRemap_, curOvershoot_, curExtraDelay_, curLate_, arCx_ / arCy_, pyKnown_, curTick_: written before they are read in every step
     //   the level    everything the load fixed (the SharedConst tables, areaEdits_, noopUids_, the loader's switches). The record's feeds (itemAt_, gtogAt_, spawnAt_, crossRef_, lateAt_) are the
     //                level's too -- one base shadow hands them to every timeline of a call -- so only their sizes are in (a timeline that was fed something another was not differs there);
     //                touchAt_ is fed per timeline (addTouchEvent), and its entries still ahead of the last step are in.
@@ -1113,8 +1142,9 @@ public:
         for (const PendingSpawn& p : pending_) {
             h.add((uint64_t)(uint32_t)p.group | ((uint64_t)(uint32_t)p.objUid << 32)); h.addD(p.delay); h.addD(p.time);
             h.add((p.ordered ? 1 : 0) | (p.done ? 2 : 0) | (p.paused ? 4 : 0) | ((uint64_t)(uint32_t)p.trigUid << 32));
-            h.add((uint64_t)p.remap.size()); for (const auto& kv : p.remap) h.add(((uint64_t)(uint32_t)kv.first << 32) | (uint32_t)kv.second);
+            addSpawnRemapHash(h, p.remap);
         }
+        if (haveSpawnDedupeState()) h.addH(spawnDedupeHash());
         h.add(0x6709); h.add((uint64_t)areaInsts_.size()); for (int u : areaInsts_) h.add((uint64_t)(uint32_t)u);
         sa = sb = 0;
         for (const auto& kv : areaDefs_) {
@@ -1165,7 +1195,7 @@ public:
         for (auto it = touchAt_.upper_bound(curTick_); it != touchAt_.end(); ++it) { h.add((uint64_t)it->first); h.add((uint64_t)it->second.size()); for (int u : it->second) h.add((uint64_t)(uint32_t)u); }
         if (!evListen_.empty() || !evAt_.empty()) {   // the Event triggers (3604): the listeners in the order they are called (with the keys of the call that registered them), and the game events still to be raised; nothing where a level has none
             h.add(0x6716); h.add((uint64_t)evListen_.size());
-            for (const EvListener& L : evListen_) { h.add((uint64_t)(uint32_t)L.ev | ((uint64_t)(uint32_t)L.key << 32)); h.add((uint64_t)(uint32_t)L.target | ((uint64_t)(uint32_t)L.trigUid << 32)); h.add((uint64_t)L.remap.size()); for (const auto& r : L.remap) h.add((uint64_t)(uint32_t)r.first | ((uint64_t)(uint32_t)r.second << 32)); }
+            for (const EvListener& L : evListen_) { h.add((uint64_t)(uint32_t)L.ev | ((uint64_t)(uint32_t)L.key << 32)); h.add((uint64_t)(uint32_t)L.target | ((uint64_t)(uint32_t)L.trigUid << 32)); addSpawnRemapHash(h, L.remap); }
             for (auto it = evAt_.upper_bound(curTick_); it != evAt_.end(); ++it) { h.add((uint64_t)it->first); h.add((uint64_t)it->second.size()); for (const GameEvt& e : it->second) { h.add((uint64_t)(uint32_t)e.ev | ((uint64_t)(uint32_t)e.material << 32)); h.add((uint64_t)(uint32_t)e.player); } }
         }
         h.add(0x6713); h.add((uint64_t)itemAt_.size()); h.add((uint64_t)gtogAt_.size()); h.add((uint64_t)spawnAt_.size()); h.add((uint64_t)crossRef_.size()); h.add((uint64_t)lateAt_.size()); h.add((uint64_t)touchAt_.size());
@@ -1200,6 +1230,16 @@ public:
     }
 
 private:
+    bool spawnDelayRng_ = false;
+    static bool spawnDelayKnown(const TrigDef& t) { return !t.srangeUnknown && (t.srange == 0.f || t.randOk); }
+    static bool isTriggerRngDraw(const TrigDef& t) { return t.id == 1912 || t.id == 2068 || (t.id == 1268 && t.srange != 0.f); }
+    unsigned drawTriggerR15() {
+        rng_ = rng_ * 0x343fdULL + 0x269ec3ULL;
+        ++randDraws_;
+        return (unsigned)((rng_ >> 16) & 0x7fff);
+    }
+    using RemapKeys = std::vector<std::pair<int, int>>;   // (source group, target group), the first match of a source wins
+    struct SpawnRemap { RemapKeys groups; int origin = 0; };   // origin: the negated final token in GD's remap-key vector
     struct Cmd {
         size_t trig = 0;
         bool rotate = false;
@@ -1245,11 +1285,12 @@ public:
     long long randDraws_ = 0;
 private:
     double levelTime_ = 0.0;                        // the layer's clock in seconds
-    double warp_ = 1.0;   // the game's time warp: every command's clock runs at this rate (GJBaseGameLayer m_gameState.m_timeWarp)
+    double warp_ = 1.0;   // the full m_timeWarp; the physics step instead uses min(warp, 1)
+    float physicsStepDt() const { return (float)((1.0 / 240.0) * std::min(warp_, 1.0)); }
     bool touchFed_ = false;
     bool evFed_ = false;   // setEventsFed: the Event triggers (3604) are run (their listeners are registered, the game events the caller hands over spawn their groups)
     // the Event triggers' listeners, in the order they were registered (GJBaseGameLayer +0x588: map<(event, key), vector<EventTriggerInstance>>; gameEventTriggered walks the one of its key)
-    struct EvListener { int ev = 0, key = 0, target = 0, trigUid = 0; std::vector<std::pair<int, int>> remap; };   // remap: the keys of the call that registered it (RemapKeys)
+    struct EvListener { int ev = 0, key = 0, target = 0, trigUid = 0; SpawnRemap remap; };   // the remap context of the call that registered it
     std::vector<EvListener> evListen_;
     struct GameEvt { int ev = 0, material = 0, player = 0; };
     std::map<long long, std::vector<GameEvt>> evAt_;   // step -> the game events raised there (addGameEvent)
@@ -1284,17 +1325,77 @@ private:
     bool anyRemap_ = false;                                  // some Spawn has a group remap (applySpawnRemap)
     SharedConst<std::unordered_map<int, std::vector<int>>> spawnersOf_;   // trigger uid -> the Spawn triggers whose group holds it
     SharedConst<std::unordered_map<int, std::vector<long long>>> fireSteps_;   // trigger uid -> the steps the record has it called at
-    using RemapKeys = std::vector<std::pair<int, int>>;   // (source group, target group), the first match of a source wins
-    struct PendingSpawn { int group = 0; int objUid = 0; bool ordered = false; double delay = 0, time = 0; bool done = false; int trigUid = 0; bool paused = false; RemapKeys remap; };   // trigUid: the Spawn trigger that made it (a Stop of its group erases it)   // objUid != 0: one trigger of an ordered spawn   // remap: the keys the call carries
+    // Coverage is conservative: follow both raw and remapped group calls, and close over aliases learned later.
+    // Native spawnObject remaps the next Spawn's target at 0x3228c6 before it calls updateRemapKeys at 0x3228ec.
+    template <class F> void forSpawnRemap(const TrigDef& root, F visit) const {
+        std::map<int, std::set<int>> aliases;
+        std::set<int> groups;
+        std::set<size_t> reached;
+        std::vector<int> work;
+        auto addGroup = [&](int g) { if (g > 0 && groups.insert(g).second) work.push_back(g); };
+        auto addKeys = [&](const RemapKeys& keys) {
+            for (const auto& [from, to] : keys)
+                if (from > 0 && to > 0 && aliases[from].insert(to).second && groups.count(from)) addGroup(to);
+        };
+        addKeys(root.remapTo);
+        addGroup(root.target);
+        while (!work.empty()) {
+            const int g = work.back(); work.pop_back();
+            const auto ai = aliases.find(g);
+            if (ai != aliases.end()) for (int to : ai->second) addGroup(to);
+            const auto m = members.find(g);
+            if (m == members.end()) continue;
+            for (size_t oi : m->second) {
+                const auto ti = trigByUid_.find(objs[oi].uid);
+                if (ti == trigByUid_.end() || !reached.insert(ti->second).second) continue;
+                const TrigDef& t = trigs_[ti->second];
+                if (t.id == 1268) { addGroup(t.target); addKeys(t.remapTo); }
+            }
+        }
+        for (size_t i : reached) {
+            const TrigDef& t = trigs_[i];
+            auto report = [&](int g, bool centre) {
+                if (g <= 0 || !aliases.count(g)) return;
+                std::set<int> seen{g};
+                std::vector<int> todo{g};
+                while (!todo.empty()) {
+                    const int from = todo.back(); todo.pop_back();
+                    const auto ai = aliases.find(from);
+                    if (ai == aliases.end()) continue;
+                    for (int to : ai->second) if (seen.insert(to).second) { visit(t, to, centre); todo.push_back(to); }
+                }
+            };
+            report(t.target, false);
+            report(t.center, true);
+        }
+    }
+    struct PendingSpawn { int group = 0; int objUid = 0; bool ordered = false; double delay = 0, time = 0; bool done = false; int trigUid = 0; bool paused = false; SpawnRemap remap; };   // trigUid: the Spawn trigger that made it (a Stop of its group erases it)   // objUid != 0: one trigger of an ordered spawn
+    SharedConst<std::unordered_map<int, std::vector<OrderedSpawnMember>>> orderedSpawnMembers_;
     int curSpawnUid_ = 0;         // the Spawn trigger whose spawn is being done
-    // The remap keys of the spawn call that is running (GJBaseGameLayer::spawnGroup / spawnObject / triggerObject all carry a `remapKeys` argument). A Spawn trigger with a remap hands its own keys followed by the
-    // ones it was called with (SpawnTriggerGameObject::updateRemapKeys 0x65a140); a Spawn with none hands nothing down. A trigger a call spawns acts on the remapped groups (applyRemapKeys). Empty outside a spawn chain.
-    RemapKeys curRemap_;
+    // Effective group map of the running call, empty outside a remapped spawn chain.
+    SpawnRemap curRemap_;
+    static int remappedGroup(int group, const RemapKeys& keys) {
+        for (const auto& kv : keys) if (group == kv.first) return kv.second;
+        return group;
+    }
+    static SpawnRemap spawnRemapOf(const TrigDef& t, const SpawnRemap& inherited) {
+        // GD Win 2.2091: 0x65a19a and 0x65a21b test Reset Remap even when the Spawn has no map of its own.
+        if (t.resetRemap == 1 || (t.resetRemap < 0 && t.remapTo.empty()))
+            return {t.remapTo, t.remapTo.empty() ? 0 : t.uid};
+        if (t.remapTo.empty()) return inherited;
+        // 0x65a1d7..0x65a1f6 appends -uid for a new chain; otherwise the outer origin survives.
+        SpawnRemap result{t.remapTo, inherited.origin ? inherited.origin : t.uid};
+        // 0x322ad0..0x322bf1 applies each key to the group's value left by the preceding key.
+        if (t.resetRemap == 0 && !inherited.groups.empty())
+            for (auto& kv : result.groups) kv.second = remappedGroup(kv.second, inherited.groups);
+        result.groups.insert(result.groups.end(), inherited.groups.begin(), inherited.groups.end());
+        return result;
+    }
     static void applyRemapKeys(TrigDef& x, const RemapKeys& keys, bool remapMainObj) {
         const int ga0 = x.tmodctr > 0 ? x.tmodctr : x.target, center0 = x.center;
-        for (const auto& kv : keys) if (x.target == kv.first) { x.target = kv.second; break; }
-        for (const auto& kv : keys) if (x.center == kv.first) { x.center = kv.second; break; }
-        for (const auto& kv : keys) if (x.tmodctr == kv.first) { x.tmodctr = kv.second; break; }
+        x.target = remappedGroup(x.target, keys);
+        x.center = remappedGroup(x.center, keys);
+        x.tmodctr = remappedGroup(x.tmodctr, keys);
         if (remapMainObj) {
             if ((x.tmodctr > 0 ? x.tmodctr : x.target) != ga0) x.mvaCol = false;
             if (x.center != center0) x.ctrCol = false;
@@ -1307,8 +1408,41 @@ private:
     size_t pendLen_ = 0;
     void pendPush(const PendingSpawn& p) { if (pendLen_ < pending_.size()) pending_[pendLen_] = p; else pending_.push_back(p); ++pendLen_; }
     int spawnDepth_ = 0;
-    std::set<int> spawnedStep_;   // the groups being spawned right now (one chain)
-    long long spawnCountStep_ = 0;
+    enum class SpawnPhase { Body, Head, NextHead };
+    struct SpawnPhaseScope {
+        SpawnPhase& phase;
+        SpawnPhase saved;
+        SpawnPhaseScope(SpawnPhase& at, SpawnPhase now) : phase(at), saved(at) { phase = now; }
+        ~SpawnPhaseScope() { phase = saved; }
+    };
+    using SpawnKey = std::array<int, 3>;   // group, source when enabled, origin of remap
+    struct SpawnTick { std::set<SpawnKey> head, body; int duplicates = 0; };
+    SpawnTick spawnedStep_, spawnedNext_;   // a late Tap already belongs to the next tick's head
+    SpawnPhase spawnDedupePhase_ = SpawnPhase::Body;
+    bool spawnLoopHalted_ = false;
+    static void addSpawnRemapHash(Hash2& h, const SpawnRemap& remap) {
+        if (remap.origin) h.add(0x100000000ULL | (uint32_t)remap.origin);
+        h.add((uint64_t)remap.groups.size());
+        for (const auto& [from, to] : remap.groups) h.add(((uint64_t)(uint32_t)from << 32) | (uint32_t)to);
+    }
+    bool haveSpawnDedupeState() const {
+        return spawnLoopHalted_ || !spawnedStep_.head.empty() || !spawnedStep_.body.empty() || !spawnedNext_.head.empty();
+    }
+    Hash2 spawnDedupeHash() const {
+        Hash2 h;
+        h.add(spawnLoopHalted_);
+        for (const SpawnTick* tick : {&spawnedStep_, &spawnedNext_}) {
+            h.add((uint64_t)tick->duplicates);
+            for (const auto* phase : {&tick->head, &tick->body}) {
+                h.add((uint64_t)phase->size());
+                for (const auto& k : *phase) {
+                    h.add(((uint64_t)(uint32_t)k[0] << 32) | (uint32_t)k[1]);
+                    h.add((uint64_t)(uint32_t)k[2]);
+                }
+            }
+        }
+        return h;
+    }
     std::unordered_map<int, AreaDef> areaDefs_;   // trigger uid -> its Area Move (the instance's values: an Edit Area changes them)
     SharedConst<std::unordered_map<int, AreaDef>> areaOrig_;   // ...as the trigger object holds them (the Area firing again reloads them: EnterEffectInstance::loadValuesFromObject)
     SharedConst<std::unordered_map<int, int>> uncoveredObjBy_;   // object uid -> the (first) non-run Area whose target arrays reach it (a report)
@@ -1328,7 +1462,7 @@ private:
         const auto ti = areaTrans_.find(uid);
         if (ti == areaTrans_.end()) return;
         AreaDef& a = areaDefs_[uid];
-        const float dt = (float)((1.0 / 240.0) * warp_);
+        const float dt = physicsStepDt();
         for (auto it = ti->second.begin(); it != ti->second.end();) {
             AreaTrans& tr = it->second;
             tr.el = dt + tr.el;
@@ -1728,7 +1862,7 @@ private:
         std::vector<std::pair<Cmd*, double>> scales;
         for (Cmd& c : cmds_) {
             if (c.done || c.paused) continue;
-            const float dtf = (float)((1.0 / 240.0) * warp_);
+            const float dtf = physicsStepDt();
             c.time += (double)dtf;   // GroupCommandObject2::step 0x361db0: the clock runs on every step, the elapsed time of an eased command skips the first
             if (c.skip) c.skip = false;
             else c.el = c.el + dtf;
@@ -2031,23 +2165,31 @@ private:
     // GJEffectManager::updateCountForItem 0x36cc30: the item's number is written, and every entry waiting on the item whose number moved across its target fires its group (an entry that is not multi goes after it)
     void updateCountForItem(int item, int now) {
         if (item < 0) item = 0; if (item > 9999) item = 9999;
-        itemCount_[item] = now;
+        int& current = itemCount_[item];
+        const bool descending = current > now;
+        current = now;
         const auto rg = countReg_.find(item);
         if (rg == countReg_.end()) return;
-        std::vector<CountEntry> fire;
-        for (size_t i = 0; i < rg->second.size();) {
-            CountEntry& e = rg->second[i];
+        auto& entries = rg->second;
+        // GD Win 2.2091: updateCountForItem sorts at RVA 0x36ce12 using the target comparators 0x362d60 / 0x362d70.
+        std::sort(entries.begin(), entries.end(), [descending](const CountEntry& a, const CountEntry& b) {
+            return descending ? b.target < a.target : a.target < b.target;
+        });
+        // GD Win 2.2091: erase a one-shot before calling the group at RVA 0x36cf94, then reread the live list at 0x36d029.
+        for (size_t i = 0; i < entries.size();) {
+            CountEntry& e = entries[i];
             if (e.last != now) {
                 const int old = e.last;
                 e.last = now;
                 if ((e.target > old && e.target <= now) || (e.target < old && e.target >= now)) {
-                    fire.push_back(e);
-                    if (!e.multi) { rg->second.erase(rg->second.begin() + (long)i); continue; }
+                    const CountEntry fired = e;
+                    if (!fired.multi) entries.erase(entries.begin() + i);
+                    toggleGroupTriggered(fired.group, fired.activate, fired.trigUid);
+                    if (!fired.multi) continue;
                 }
             }
             ++i;
         }
-        for (const CountEntry& e : fire) toggleGroupTriggered(e.group, e.activate, e.trigUid);
     }
     void fireItems(long long t) {
         const auto it = itemAt_.find(t);
@@ -2071,8 +2213,10 @@ private:
     // GJEffectManager::updateSpawnTriggers 0x36c5e0: every waiting Spawn counts one step of dt up and, once its delay has run out, spawns its group (the loop's end is read before it starts: a Spawn made inside
     // it waits for the next call)
     void updateSpawns(size_t from = 0) {   // from: only the entries from this index on (the ones a late touch call has just queued, fireTouchLate)
+        // Deduplicate delayed groups in their native head phase even when the model schedules them later.
+        SpawnPhaseScope phase(spawnDedupePhase_, SpawnPhase::Head);
         if (pendLen_ == 0) return;
-        const double dt = (double)(float)((1.0 / 240.0) * warp_);
+        const double dt = (double)physicsStepDt();
         const size_t n = pendLen_;
         for (size_t i = from; i < n; ++i) {
             // 0x36c5e0: an entry whose "due" flag is set spawns again at once; otherwise a paused one waits, and a running one counts dt up and sets the flag when its delay has run out
@@ -2084,11 +2228,12 @@ private:
             if (pending_[i].done) {
                 const PendingSpawn p = pending_[i];
                 const double over = p.time - p.delay;
-                const RemapKeys keepR = curRemap_;
+                const SpawnRemap keepR = curRemap_;
                 curRemap_ = p.remap;
                 if (p.objUid) spawnObject(p.objUid, over);
                 else { const int keepSp = curSpawnUid_; curSpawnUid_ = p.trigUid; spawnGroup(p.group, p.ordered, over); curSpawnUid_ = keepSp; }
                 curRemap_ = keepR;
+                if (spawnLoopHalted_) break;
             }
         }
         size_t keep = 0;   // the end-of-call compaction: the entries that are not due close up and the end moves down (the slots beyond stay as they were)
@@ -2097,6 +2242,7 @@ private:
     }
     // GJBaseGameLayer::spawnObject 0x3227a0: a spawn-triggered trigger that is on is triggered; `over` = how far past its delay the spawn got
     void spawnObject(int uid, double over) {
+        if (spawnLoopHalted_) return;   // spawnObject checks the same loop stop at 0x3227cf.
         const auto bi = byUid.find(uid);
         if (bi == byUid.end() || !objs[bi->second].on()) return;
         if (fedSpawn_.count(uid)) return;   // fired from the game's record
@@ -2112,8 +2258,8 @@ private:
         const double keep = curOvershoot_;
         curOvershoot_ = over;
         spawnFires.push_back({curTick_, x.uid});   // the shadow's own spawn chain fired this trigger (a report)
-        if (curRemap_.empty()) fire(x);
-        else { TrigDef y = x; applyRemapKeys(y, curRemap_, remapMainObj); fire(y); }
+        if (curRemap_.groups.empty()) fire(x);
+        else { TrigDef y = x; applyRemapKeys(y, curRemap_.groups, remapMainObj); fire(y); }
         curOvershoot_ = keep;
     }
     // GJBaseGameLayer::spawnGroup 0x322370: if the group's bit is on, its triggers are spawned in the level's order -- all at once, or (ordered) the first now and each of the others after
@@ -2121,47 +2267,64 @@ private:
     double curExtraDelay_ = 0.0;   // see orbDelay
     void spawnGroup(int g, bool ordered = false, double over = 0.0) {
         const auto gb = groupBit.find(g);
-        if (gb != groupBit.end() && !gb->second) return;
+        if (spawnLoopHalted_ || (gb != groupBit.end() && !gb->second)) return;
         if (spawnDepth_ > 32 || pendLen_ > 100000) {   // (ours, not the game's: the game's own stop is the 10,000 spawns a step, below)
             guardHit(spawnDepth_ > 32 ? "trigshadow spawnGroup: the spawn depth" : "trigshadow spawnGroup: the pending queue", spawnDepth_ > 32 ? 32 : 100000, "a Spawn group was not spawned");
             return;
         }
-        // a group is not spawned again inside its own spawn (the layer's visited map at +0x1000), and a step spawns at most 10,000 times (m_spawnLoopCount at +0x33b4 stops everything beyond it)
-        if (spawnedStep_.count(g) || ++spawnCountStep_ > 10000) return;
-        spawnedStep_.insert(g);
+        // GD Win 2.2091: 0x3223e7..0x3224b1 stamps (group, kA40 ? source : 0, remap origin)
+        // before visiting members. Only duplicate attempts count toward the loop stop (0x322473).
+        SpawnTick& tick = spawnDedupePhase_ == SpawnPhase::NextHead ? spawnedNext_ : spawnedStep_;
+        auto& seen = spawnDedupePhase_ == SpawnPhase::Body ? tick.body : tick.head;
+        if (!seen.insert({g, spawnGroupBySource ? curSpawnUid_ : 0, curRemap_.origin}).second) {
+            if (++tick.duplicates > 10000) spawnLoopHalted_ = true;
+            return;
+        }
         ++spawnDepth_;
+        auto spawnOrderedMember = [&](int uid, float x, float x0) {
+            // GD Win 2.2091 spawnObjectsInOrder 0x32264f..0x322660: round the X delta to float before the double division and overshoot subtraction.
+            const float dx = x - x0;
+            float d = (float)((double)dx / 311.5801086425781 - over);
+            if (d <= 0.0f) { spawnObject(uid, 0.0); return; }
+            if (curExtraDelay_ != 0.0) d += (float)curExtraDelay_;
+            PendingSpawn p;
+            p.remap = curRemap_;
+            p.objUid = uid; p.delay = (double)d;
+            p.trigUid = curSpawnUid_;   // a Stop of the group that owns the spawning trigger also stops its ordered members (c141972420 Spawn 2626 / Stop 2624).
+            pendPush(p);
+        };
+        const auto native = ordered ? orderedSpawnMembers_.find(g) : orderedSpawnMembers_.end();
         const auto m = members.find(g);
-        if (m != members.end()) {
+        if (native != orderedSpawnMembers_.end()) {
+            // GD Win 2.2091 spawnObjectsInOrder 0x32263d..0x32267c: first eligible member in the group array anchors X and is called with zero overshoot, even if spawnObject declines it.
+            const auto& list = native->second;
+            if (!list.empty()) {
+                spawnObject(list.front().uid, 0.0);
+                for (size_t i = 1; i < list.size() && !spawnLoopHalted_; ++i)
+                    spawnOrderedMember(list[i].uid, list[i].x, list.front().x);
+            }
+        } else if (m != members.end()) {
             const std::vector<size_t> list = m->second;   // a copy: firing may toggle groups
-            // an ordered spawn is timed from the leftmost spawn-triggered trigger of the group (not the first one in the level's order, not the Spawn trigger's own x): the record's delays follow
-            // (x - min x) / 311.58 within 1.5 steps for 5,427 of 5,563 triggers, against 3,638 for the first in level order and 889 for the Spawn trigger's x
-            double x0 = 0.0;
+            // Archived dumps have no native group order: keep their leftmost-X approximation (5,427 of 5,563 delays within 1.5 steps).
+            float x0 = 0.f;
             if (ordered) {
                 bool any = false;
                 for (size_t i : list) {
                     const auto ti = trigByUid_.find(objs[i].uid);
                     if (ti == trigByUid_.end() || !trigs_[ti->second].spawn) continue;
-                    const double xk = (double)(float)trigs_[ti->second].cx;
+                    const float xk = (float)trigs_[ti->second].cx;
                     if (!any || xk < x0) { x0 = xk; any = true; }
                 }
             }
             for (size_t i : list) {
+                if (spawnLoopHalted_) break;
                 const auto ti = trigByUid_.find(objs[i].uid);
                 if (ti == trigByUid_.end() || !trigs_[ti->second].spawn) continue;   // not a spawn-triggered trigger (isSpawnableTrigger)
                 if (!ordered) { spawnObject(objs[i].uid, over); continue; }
-                const double xk = (double)(float)trigs_[ti->second].cx;
-                float d = (float)((xk - x0) / 311.5801086425781 - over);
-                if (d <= 0.0f) { spawnObject(objs[i].uid, 0.0); continue; }
-                if (curExtraDelay_ != 0.0) d += (float)curExtraDelay_;
-                PendingSpawn p;
-                p.remap = curRemap_;
-                p.objUid = objs[i].uid; p.delay = (double)d;
-                p.trigUid = curSpawnUid_;   // the entry of one trigger of an ordered spawn belongs to the Spawn trigger that made it: a Stop of a group that Spawn is in erases it (c141972420: Spawn 2626 spawns a group it is in, and loops until the Stop 2624 at x 8205 ends it; c113256289: a Stop of the members' group erases nothing, the Spawn is elsewhere)
-                pendPush(p);
+                spawnOrderedMember(objs[i].uid, (float)trigs_[ti->second].cx, x0);
             }
         }
         --spawnDepth_;
-        spawnedStep_.erase(g);
     }
     // the values an Item Compare can read here: mode 1 is an item counter, which the level does not write (trig_replay checks that before it sets itemCmp), so 0; mode 5 is the attempt number
     int attemptNo_ = 1;
@@ -2381,16 +2544,26 @@ private:
         } else if (t.id == 1594) {   // a Toggle Orb (object type 36, clicked while the player is on it): "activate group" switches the target group on AND spawns its triggers (trigfire.csv: the group's spawn-triggered triggers fire at the click's tick); off switches it off
             if (t.togon >= 0) {
                 if (!t.spawnOnly) toggle(t.target, t.togon == 1, t.uid);   // (a spawn-only 1594 switches nothing: its press only spawns the group)
-                if (t.togon == 1) { const int keepSp = curSpawnUid_; const RemapKeys keepR = curRemap_; const double keepX = curExtraDelay_; curSpawnUid_ = t.uid; curRemap_.clear(); curExtraDelay_ = curLate_ ? orbDelay : 0.0; spawnGroup(t.target, false, 0.0); curExtraDelay_ = keepX; curRemap_ = keepR; curSpawnUid_ = keepSp; }
+                if (t.togon == 1) { const int keepSp = curSpawnUid_; const SpawnRemap keepR = curRemap_; const double keepX = curExtraDelay_; curSpawnUid_ = t.uid; curRemap_ = {}; curExtraDelay_ = curLate_ ? orbDelay : 0.0; spawnGroup(t.target, false, 0.0); curExtraDelay_ = keepX; curRemap_ = keepR; curSpawnUid_ = keepSp; }
             }
         } else if (t.id == 1268) {   // Spawn: no delay spawns its group now, a delay waits (spawnGroup of the effect manager 0x36c4f0)
-            const float d = (float)((double)(float)t.sdelay - curOvershoot_);   // SpawnTriggerGameObject::triggerObject 0x65a240
-            RemapKeys keys;   // what the call it makes carries: its own keys, then the ones it was called with; nothing for a Spawn with no keys of its own
-            if (!t.remapTo.empty()) { keys = t.remapTo; keys.insert(keys.end(), curRemap_.begin(), curRemap_.end()); }
-            if (!(d > 0.0f)) { const int keepSp = curSpawnUid_; const RemapKeys keepR = curRemap_; curSpawnUid_ = t.uid; curRemap_ = keys; spawnGroup(t.target, t.sordd, d < 0.0f ? -(double)d : 0.0); curRemap_ = keepR; curSpawnUid_ = keepSp; }
-            else { PendingSpawn p; p.group = t.target; p.ordered = t.sordd; p.delay = (double)d; p.trigUid = t.uid; p.remap = keys; pendPush(p); }
+            if (!spawnDelayKnown(t)) return;
+            float delay = (float)t.sdelay;
+            if (t.srange != 0.f) {
+                // GD Win 2.2091 play: 0x65a281..0x65a2c9 draws once from the shared LCG at 0x90bf68.
+                const unsigned r15 = drawTriggerR15();
+                const float r = (float)r15 / 32767.f;
+                const float variation = ((r + r) - 1.f) * t.srange;
+                delay = std::max(0.f, delay + variation);
+            }
+            // 0x65a2f8..0x65a303 subtracts a parent's overshoot in double, *after* the clamp.
+            const float d = (float)((double)delay - curOvershoot_);
+            const SpawnRemap keys = spawnRemapOf(t, curRemap_);
+            if (!(d > 0.0f)) { const int keepSp = curSpawnUid_; const SpawnRemap keepR = curRemap_; curSpawnUid_ = t.uid; curRemap_ = keys; spawnGroup(t.target, t.sordd, d < 0.0f ? -(double)d : 0.0); curRemap_ = keepR; curSpawnUid_ = keepSp; }
+            // GD Win 2.2091 GJEffectManager::spawnGroup 0x36c4f0..0x36c4f2 rejects nonpositive targets before enqueueing, after the trigger's RNG draw.
+            else if (t.target > 0) { PendingSpawn p; p.group = t.target; p.ordered = t.sordd; p.delay = (double)d; p.trigUid = t.uid; p.remap = keys; pendPush(p); }
         } else if (t.id == 3607) {   // Sequence (0x655c50): the count per remap key (the trigger's maps +0x758 last call [float, -1 none], +0x798 count), then the group of the list that holds that count
-            const int key = t.seqUnique && !curRemap_.empty() ? -curRemap_.back().second : 0;
+            const int key = t.seqUnique ? curRemap_.origin : 0;   // RVA 0x655c9a..0x655ca7 reads the same final remap token
             SeqState& s = seq_[(long long)t.uid * 4294967296LL + (unsigned)key];
             const float lastT = s.has ? s.lastT : -1.0f;
             int idx = s.idx;
@@ -2417,8 +2590,8 @@ private:
                 curSpawnUid_ = keepSp;
             }
         } else if ((t.id == 1912 || t.id == 2068) && t.randOk) {   // Random / Advanced Random: one draw of the trigger LCG (the global at base+0x90bf68 on 22091: x' = x * 0x343fd + 0x269ec3, r = (x' >> 16) & 0x7fff), then the chosen group is spawned
-            rng_ = rng_ * 0x343fdULL + 0x269ec3ULL;
-            const float r = (float)(unsigned)((rng_ >> 16) & 0x7fff) / 32767.0f;
+            const unsigned r15 = drawTriggerR15();
+            const float r = (float)r15 / 32767.0f;
             int group = 0;
             if (t.id == 1912) group = (float)t.randChance < r * 100.0f ? t.center : t.target;
             else {
@@ -2427,8 +2600,7 @@ private:
                 int acc = 0;
                 for (const auto& e : t.seqTargets) { acc += e.second; if (x <= acc) { group = e.first; break; } }
             }
-            ++randDraws_;
-            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::string cands; if (t.id == 2068) for (const auto& e : t.seqTargets) cands += (cands.empty() ? "" : ".") + std::to_string(e.first); else cands = std::to_string(t.target) + "." + std::to_string(t.center); std::fprintf(lf, "%lld,%d,%d,%u,%d,%llu,%s\n", stepNo_, t.uid, t.id, (unsigned)((rng_ >> 16) & 0x7fff), group, (unsigned long long)(rng_ & 0xffffffffULL), cands.c_str()); std::fclose(lf); }
+            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::string cands; if (t.id == 2068) for (const auto& e : t.seqTargets) cands += (cands.empty() ? "" : ".") + std::to_string(e.first); else cands = std::to_string(t.target) + "." + std::to_string(t.center); std::fprintf(lf, "%lld,%d,%d,%u,%d,%llu,%s\n", stepNo_, t.uid, t.id, r15, group, (unsigned long long)(rng_ & 0xffffffffULL), cands.c_str()); std::fclose(lf); }
             if (group > 0) { const int keepSp = curSpawnUid_; curSpawnUid_ = t.uid; spawnGroup(group, false, 0.0); curSpawnUid_ = keepSp; }
         } else if (t.id == 2900) {   // Rotate Gameplay: only its channel half is here (rotateGameplay 0x31f980: m_changeChannel -> layer +0x33c = m_targetChannelID, and the channel's reverse bit = direction 2 / 3)
             if (t.rgSwarm && t.rgSwch >= 0) { activeChan_ = t.rgSwch; chanRev_[t.rgSwch] = (unsigned)(t.rgDir - 2) < 2u; }   // the channel's reverse bit is the pure predicate gnddir - 2 <u 2 (dp/src/dp/step.hpp applyRotation)
@@ -2522,7 +2694,7 @@ private:
                 }
             }
         } else if (t.id == 1935) {
-            if (t.tw > 0.0) warp_ = std::min(t.tw, 1.0);   // above 1 the game runs more steps per frame instead (dumps: tw 1.5 and a player step of 1.0x)
+            if (t.tw > 0.0) warp_ = std::clamp((float)t.tw, 0.1f, 2.0f);   // PlayLayer::updateTimeWarp, GD Win 2.2091 RVA 0x50a264..0x50a285.
         } else if (t.id == 1346) {
             Cmd c;
             c.uid = t.uid; c.id = t.id; c.lockrot = t.lockrot;
@@ -2572,6 +2744,7 @@ private:
             // a trigger whose own object is switched off (a Toggle of one of its groups) is passed over without firing (checkSpawnObjects)
             const auto bi = byUid.find(t.uid);
             if (bi == byUid.end() || objs[bi->second].on()) fire(t);
+            if (spawnLoopHalted_) break;   // GJBaseGameLayer::checkSpawnObjects tests the stop at 0x3221ee.
         }
     }
 };

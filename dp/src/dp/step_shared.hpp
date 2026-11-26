@@ -1558,7 +1558,21 @@ inline double tpExitShift(int uid, long long t, bool yAxis) {
     return d;
 }
 
-inline const bool kTpExitHookSet = (gdcol::g_tpExitShiftHook = &tpExitShift, true);   // the shadow's teleportPortal (collide.hpp) reads the same shift
+inline double tpExitTurn(int uid, long long t) {
+    if (!g_tpExitRot) return 0.0;
+    const auto it = g_tpExitRots.find(uid);
+    if (it == g_tpExitRots.end()) return 0.0;
+    double turn = 0.0;
+    for (const TpExitRot& r : it->second) {
+        const long long F = g_autoTrig[(size_t)r.a].fireT;
+        if (F < 0 || t <= F) continue;
+        const double u = r.durT > 0.0 ? std::min(1.0, (double)(t - F) / r.durT) : 1.0;
+        turn += r.total * gdEase(r.ease, r.erate, u);
+    }
+    return turn;
+}
+
+inline const bool kTpExitHookSet = (gdcol::g_tpExitShiftHook = &tpExitShift, gdcol::g_tpExitTurnHook = &tpExitTurn, true);
 
 // The dash line's slope for ring `ob` (dy per px of x). --dashclamp (speed.hpp): startDashing's
 // angle, in its float arithmetic; otherwise, and on a turned frame, tan(-rot).

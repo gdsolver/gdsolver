@@ -1,6 +1,9 @@
 #pragma once
+#include <array>
 #include <charconv>
 #include <cmath>
+#include <iomanip>
+#include <limits>
 #include <sstream>
 
 namespace solver {
@@ -431,7 +434,7 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
           "editvel,vmodx,vmody,ovrvel,force,free,touch,spawn,chan,axis,exstat,rev,"
     // - tpfm,tpf,tpang,tprmod,tprmin,tprmax: the velocity a teleport (type 28, the trigger 3022,
     //   the orb 3027) gives the player after the move -- the static or redirected force and the
-    //   direction it takes; see where they are computed. 0 on every other object.
+    //   direction it takes, or Redirect Dash; see where they are computed. 0 on every other object.
           "nocol,multiact,nomultiact,gmod,gpl,dontslide,"
           "tpfm,tpf,tpang,tprmod,tprmin,tprmax,"
     // - optudg: the Options trigger's (id 2899) m_unlinkDualGravity (property 160), On=1 / Off=-1 /
@@ -540,6 +543,7 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
             // The velocity teleportPlayer gives after the move (0x2103e7..0x2105c8):
             // tpfm bit 0 m_staticForceEnabled (345), bit 1 m_staticForceAdditive (443),
             // bit 2 m_redirectForceEnabled (347, which wins over the static force);
+            // bit 3 m_redirectDash (591), bit 4 marks its angle as coming from the entry itself.
             // tpf m_staticForce (346); tprmod / tprmin / tprmax the redirect's
             // m_redirectForceMod / Min / Max, passed to PlayerObject::redirectPlayerForce
             // (0x39fc60). tpang is the direction both use, in degrees, computed in float as
@@ -549,6 +553,7 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
             // 0) - its rotation (0x2103ba). A random exit (several members) takes member 0.
             tpfm = (tp->m_staticForceEnabled ? 1 : 0) | (tp->m_staticForceAdditive ? 2 : 0)
                    | (tp->m_redirectForceEnabled ? 4 : 0);
+            if (tp->m_redirectDash) tpfm |= exitObj ? 8 : 24;
             tpf = tp->m_staticForce;
             tprmod = tp->m_redirectForceMod;
             tprmin = tp->m_redirectForceMin;
@@ -1394,7 +1399,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
               //               "key=value|key=value" over every key it writes (position and layer included), '-' on any other row. Which of those keys the trigger sets decides
               //               what it follows (138 = Target Player 1, 306 = X only, 307 = Y only, 71 = a group, 200 = Player 2, ...), and none of them is a column above.
               //               Read only by dp's Advanced Follow model; a dump without the column leaves it with nothing to act on.
-              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj,movemodx,movemody,advp\n";
+              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj,movemodx,movemody,advp,resetremap,srange\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -1423,12 +1428,18 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
             break;
         }
         long long nTrig = 0, nGrp = 0;
+        bool hasOrderedSpawn = false;
+        std::array<bool, 10000> seenGroup{};
         for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
             if (!obj) continue;
             if (obj->m_groupCount > 0 && obj->m_groups) {
                 gf << obj->m_uniqueID;
                 const int ng = std::min((int)obj->m_groupCount, 10);
-                for (int i = 0; i < ng; ++i) gf << " " << (int)(*obj->m_groups)[i];
+                for (int i = 0; i < ng; ++i) {
+                    const int group = (*obj->m_groups)[i];
+                    gf << " " << group;
+                    if (group >= 0 && group < (int)seenGroup.size()) seenGroup[group] = true;
+                }
                 gf << "\n";
                 ++nGrp;
             }
@@ -1469,12 +1480,16 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
             if (!e || e->m_targetGroupID == 0) continue;
             auto tr = obj->getObjectRect();
             // A Spawn's delay is SpawnTriggerGameObject::m_spawnDelay (property 63, +0x780), the float
-            // SpawnTriggerGameObject::triggerObject (0x4b91f0) schedules the group by (plus a draw within
-            // m_delayRange, property 556, which is not dumped). EffectGameObject::m_spawnTriggerDelay is another
+            // SpawnTriggerGameObject::triggerObject (2.2091 RVA 0x65a240) schedules the group by (plus a draw within
+            // m_delayRange, property 556, dumped as srange). EffectGameObject::m_spawnTriggerDelay is another
             // field: it read 0 on every Spawn of the cov126 kits (14,736 rows; the level strings give 5,726 of
             // them a delay) and on all 141 of lv22's (34 with one).
-            float sdelay = e->m_spawnTriggerDelay;
-            if (auto* sp = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj)) sdelay = sp->m_spawnDelay;
+            auto* spawn = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj);
+            if (spawn && spawn->m_spawnOrdered) hasOrderedSpawn = true;
+            const float sdelay = spawn ? spawn->m_spawnDelay : e->m_spawnTriggerDelay;
+            const float srange = spawn ? spawn->m_delayRange : 0.f;
+            const int oldPrecision = (int)tf.precision();
+            const int delayPrecision = srange != 0.f ? std::numeric_limits<float>::max_digits10 : oldPrecision;
             tf << obj->m_uniqueID << "," << obj->m_objectID << ","
                << (tr.origin.x + tr.size.width * 0.5f) << ","
                << (tr.origin.y + tr.size.height * 0.5f) << ","
@@ -1500,7 +1515,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                << (e->m_spawnOrdered ? 1 : 0) << ","
                << e->m_times360 << ","
                << (e->m_lockObjectRotation ? 1 : 0) << ","
-               << sdelay << ","
+               << std::setprecision(delayPrecision) << sdelay << std::setprecision(oldPrecision) << ","
                << (e->m_useMoveTarget ? 1 : 0) << ","
                << (int)e->m_moveTargetMode << ","
                << e->m_targetModCenterID << ","
@@ -1519,8 +1534,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                << (obj->m_objectID == 1049 ? (e->m_activateGroup ? 1 : 0) : -1) << ",";
             {
                 std::string rm;
-                if (auto* sp = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj)) {
-                    for (auto const& c : sp->m_remapObjects) {
+                if (spawn) {
+                    for (auto const& c : spawn->m_remapObjects) {
                         if (!rm.empty()) rm += ";";
                         rm += std::to_string(c.m_groupID) + ":"
                             + std::to_string(c.m_oldGroupID) + ":"
@@ -1617,10 +1632,35 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                         }
                         if (advp.empty()) advp = "-";
                     }
-                    tf << "," << ctr << "," << e->m_moveModX << "," << e->m_moveModY << "," << advp << "\n";
+                    tf << "," << ctr << "," << e->m_moveModX << "," << e->m_moveModY << "," << advp
+                       << "," << (spawn ? (int)spawn->m_resetRemap : -1)
+                       << "," << std::setprecision(delayPrecision) << srange << std::setprecision(oldPrecision) << "\n";
                 }
             }
             ++nTrig;
+        }
+        if (hasOrderedSpawn) {
+            // GD Win 2.2091 sortGroups (0x32bf80) qsorts selected group arrays by int(getPosition().x).
+            // Record the actual array order, including ties and groups reached through remaps.
+            gf << std::setprecision(std::numeric_limits<float>::max_digits10);
+            for (int group = 0; group < (int)seenGroup.size(); ++group) {
+                if (!seenGroup[group]) continue;
+                gf << "#spawnorder " << group;
+                if (auto* objects = l->getGroup(group)) {
+                    for (auto* obj : CCArrayExt<GameObject*>(objects)) {
+                        if (!obj) break;
+                        // spawnObjectsInOrder (0x3225fc..0x32263b) picks its X anchor before spawnObject checks m_isSpawnTriggered.
+                        bool eligible = false;
+                        if (obj->m_classType == GameObjectClassType::Effect) eligible = obj->isSpawnableTrigger();
+                        else if (obj->m_objectID == 2065) {
+                            if (auto* animated = geode::cast::typeinfo_cast<EnhancedGameObject*>(obj))
+                                eligible = animated->m_animateOnTrigger;
+                        }
+                        if (eligible) gf << ' ' << obj->m_uniqueID << ' ' << obj->getPosition().x;
+                    }
+                }
+                gf << '\n';
+            }
         }
         log::info("triggers: {} triggers with a target, {} grouped objects, "
                   "{} pickups", nTrig, nGrp, nItem);
@@ -1796,6 +1836,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
         const int p22b = l->m_player2 ? (l->m_player2->m_enable22Changes ? 1 : 0) : -1;
         std::ofstream ff(std::string(DATA_DIR) + "/levelflags.txt", std::ios::trunc);
         ff << "enable22Changes=" << ls22 << "\nplayer1Enable22Changes=" << p22a << "\nplayer2Enable22Changes=" << p22b << "\n";
+        // 2.2091 spawnGroup (RVA 0x3223fb) tests the layer's byte, not either player's copy of kA40.
+        ff << "spawnGroupBySource=" << (l->m_enable22Changes ? 1 : 0) << "\n";
     }
 }
 

@@ -342,7 +342,7 @@ inline void slPack(const SelfShadow& sh, SlWorld& W, ShadowLite& sl, bool movedI
     sl.flags = f;
     sl.hold = 0;
     for (int k = 1; k <= 3; ++k) if (sh.holding[k]) sl.hold |= (uint8_t)(1u << k);
-    sl.dashRot = sh.dashRot; sl.dashElapsed = sh.dashElapsed; sl.pendingSpeed = sh.pendingSpeed;
+    sl.dashRot = sh.dashRot; sl.dashElapsed = sh.dashElapsed; sl.dashSpinRate = sh.dashSpinRate; sl.pendingSpeed = sh.pendingSpeed;
     sl.rng = sh.rng;
     sl.layerTime = sh.layerTime;
     sl.frameSteps = (uint8_t)std::min(255, sh.frameSteps);
@@ -395,7 +395,7 @@ inline void slUnpack(const ShadowLite& sl, const std::vector<uint8_t>& tmpl, SlW
     sh.speedDirty = (sl.flags & kSlSpeedDirty) != 0;
     sh.rngOn = (sl.flags & kSlRngOn) != 0;
     sh.platformerNoted = (sl.flags & kSlPlatNoted) != 0;
-    sh.dashRot = sl.dashRot; sh.dashElapsed = sl.dashElapsed; sh.pendingSpeed = sl.pendingSpeed;
+    sh.dashRot = sl.dashRot; sh.dashElapsed = sl.dashElapsed; sh.dashSpinRate = sl.dashSpinRate; sh.pendingSpeed = sl.pendingSpeed;
     sh.rng = sl.rng;
     sh.frameSteps = sl.frameSteps;
     sh.prevFrameSteps = sl.prevFrameSteps;

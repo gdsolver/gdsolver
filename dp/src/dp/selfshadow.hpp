@@ -71,7 +71,7 @@ inline void ctxReset(Ctx& c) {
     c.bornFired = false; c.bornY = 0; c.bornVy = 0;
     c.ringsTouched.clear();
     c.hsKnown = false;
-    c.ringJump = nullptr; c.slopeRotation = nullptr; c.stopDash = nullptr; c.dashRot = nullptr; c.spiderJump = nullptr;
+    c.ringJump = nullptr; c.slopeRotation = nullptr; c.stopDash = nullptr; c.dashRot = nullptr; c.restartDashSpin = nullptr; c.spiderJump = nullptr;
     c.p22 = true; c.primeWords = false;
     c.usedRings = nullptr;
     c.fired.clear(); c.everGuess = false;
@@ -161,11 +161,24 @@ public:
     StepPoint ptButtons, ptEntry;
     bool keepImages = false;
     Mem atButtons, atEntry, atExit;
-    // The dash's child sprite turns 960 degrees a second from the dash's start (an action on +0x740's child, run by the scheduler once a FRAME, not a step), and stopDashing hands its angle to a cube. Measured on
-    // w_128992032_710 (16.000030517578125 after one frame) and w_86407629_635 (288.000549 = 18 frames): the frame that follows the start counts nothing (the action's first update has no time), every later frame adds
-    // 960 * the frame time (0.0166667 as the captures ran: 16.000030517578125 for four steps). Counted here at the head of each frame.
-    float dashRot = 0.0f, dashElapsed = 0.0f;   // the angle (960 * the action's elapsed time, a float summed frame by frame like the action's). Of six measured stops (1, 8, 10, 13, 18, 19 counted frames) this fits 1, 8, 13, 18 to the bit and is one ulp high at 10 and 19: the dt of a frame is not always the same float
+    // The scheduler updates the dash's child action once per frame; its first update counts no time.
+    // w_128992032_710 measures 16.0000305 after one counted frame at normal gravity.
+    float dashRot = 0.0f, dashElapsed = 0.0f, dashSpinRate = 0.0f;
     bool dashOn = false, dashFirstDone = false;
+    static float dashRate(const Mem& P) {
+        if (P.u8(po::ModeShip) || P.u8(po::ModeUfo) || P.u8(po::ModeWave) || P.u8(po::ModeSwing) || P.u8(po::ModeRobot) || P.u8(po::ModeSpider)) return 0.0f;
+        // GD Win 2.2091: updateDashArt (RVAs 0x4f4713..0x4f47cd) latches gravity and orientation into a +/-288 degree, 0.3s action.
+        const bool neg = (P.u8(po::Upside) != 0) != (P.u8(po::Sideways) != 0);
+        return (neg ? -960.0f : 960.0f) * P.f32(0xb8c);
+    }
+    void restartDashAction(const Mem& P) {
+        dashOn = true; dashFirstDone = false;
+        dashRot = dashElapsed = 0.0f; dashSpinRate = dashRate(P);
+    }
+    void bindDashRestart(Ctx& c) {
+        g_self() = this;
+        c.restartDashSpin = [](Ctx& cc) { g_self()->restartDashAction(cc.P); };
+    }
     int frameSteps = 0, prevFrameSteps = 4;
     std::map<int, std::vector<int>> tpExit;   // a Teleport trigger's uid -> the uids of its target group, in group order
     long long curTickNow = 0;
@@ -185,6 +198,7 @@ public:
             if (it != uidIndex.end()) {
                 Ctx ct(P);
                 ct.L = L; ct.objs = world; ct.p22 = p22; ct.hsKnown = true; ct.usedRings = &usedRings; ct.fireOrder = &fireOrder;
+                bindDashRestart(ct);
                 GObj trg = (*world)[it->second];
                 // GJBaseGameLayer::teleportPlayer (0x315f20) picks the exit at random among the target group's objects when there are several: idx = (int)(count * r / 32767) from the C runtime's
                 // generator, state = state * 0x343fd + 0x269ec3 (one step per pick; a single object does not advance it). Without a seed (rngOn) the dump's exit stays.
@@ -313,7 +327,7 @@ public:
             if (dashOn) {
                 if (dashFirstDone) {
                     const float sched = (float)rawTimeWarpAt((double)P.f32(po::PosX));   // --shadowdashsched: the action manager runs on the scheduler's scaled dt
-                    dashElapsed += 0.0166667f * ((float)prevFrameSteps / 4.0f) * sched; dashRot = 960.0f * dashElapsed;
+                    dashElapsed += 0.0166667f * ((float)prevFrameSteps / 4.0f) * sched; dashRot = dashSpinRate * dashElapsed;
                 }
                 else dashFirstDone = true;
             }
@@ -331,13 +345,14 @@ public:
         sm(1);
         Ctx& cb = stepCtx(0);
         cb.L = L; cb.objs = &local; cb.p22 = p22; cb.hsKnown = true; cb.usedRings = &usedRings; cb.fireOrder = &fireOrder; cb.dashRot = &dashRot; cb.dualH = dualH;
+        bindDashRestart(cb);
         actLog.clear(); cb.actLog = &actLog;
         ButtonsBody b; b.c = &cb; b.touch = &rt; b.usedRings = &usedRings;
         for (int k = 1; k <= 3; ++k) b.holding[k] = holding[k];
         if (!headHooksSet) {   // (made once: they read only this shadow's members)
             headHooks.updateJump = [this](Ctx& cc, float dt) { auto* s = cc.objs; cc.objs = world; upd::updateJump(cc, dt); cc.objs = s; };
             headHooks.spiderTestJump = [this](Ctx& cc, const GObj*) { auto* s = cc.objs; cc.objs = world; const bool r = spider::spiderTestJump(cc); cc.objs = s; return r; };
-            headHooks.startDashing = [this](Ctx& cc, const GObj* ring) { upd::startDashing(cc, ring); dashOn = true; dashFirstDone = false; dashRot = 0.0f; dashElapsed = 0.0f; };
+            headHooks.startDashing = [this](Ctx& cc, const GObj* ring) { upd::startDashing(cc, ring); restartDashAction(cc.P); };
             headHooks.stopDashing = [this](Ctx& cc) { upd::stopDashing(cc); dashOn = false; };
             // the teleport orb (ringJump's 0x2e arm -> GJBaseGameLayer::teleportPlayer, the orb's own exit tpEx / tpEy) is the portal's teleport on a copy of the orb
             headHooks.teleportPlayer = [this](Ctx& cc, const GObj* ring) { GObj o = *ring; teleportPortal(cc, &o); };
@@ -428,7 +443,7 @@ public:
         cp.slopeRotation = [](Ctx& cc, float d) { upd::updateSlopeRotation(cc.P, d); };
         cp.dashRot = &dashRot;
         cp.stopDash = [](Ctx& cc) { SelfShadow& S = *g_self(); upd::stopDashing(cc); S.dashOn = false; };
-        g_self() = this;
+        bindDashRestart(cp);
         cp.ringJump = [](Ctx& cc, GObj* o) {   // the pass touches a ring: playerTouchedRing registers it, then PlayerObject::ringJump decides (buttons.hpp)
             SelfShadow& S = *g_self();
             S.rt.touched(o->uid);
@@ -437,7 +452,7 @@ public:
             ButtonsHooks hk;
             hk.updateJump = [&](Ctx& c2, float dt) { auto* sv = c2.objs; c2.objs = S.world; upd::updateJump(c2, dt); c2.objs = sv; };
             hk.spiderTestJump = [&](Ctx& c2, const GObj*) { return spider::spiderTestJump(c2); };
-            hk.startDashing = [&](Ctx& c2, const GObj* ring) { upd::startDashing(c2, ring); S.dashOn = true; S.dashFirstDone = false; S.dashRot = 0.0f; S.dashElapsed = 0.0f; };
+            hk.startDashing = [&](Ctx& c2, const GObj* ring) { upd::startDashing(c2, ring); S.restartDashAction(c2.P); };
             hk.stopDashing = [&](Ctx& c2) { upd::stopDashing(c2); S.dashOn = false; };
             hk.teleportPlayer = [&](Ctx& c2, const GObj* ring) { GObj og = *ring; teleportPortal(c2, &og); };
             return ringJump(b, o, hk);

@@ -84,7 +84,7 @@ struct ShadowLite {
     // E9 (11-18): the other direction of ever's rule. everW says "every static seedable object whose right edge is left of it was seen" (a body travelling right); with kSl3EverRev set the block was seeded
     // by a body travelling LEFT and everWr says "every one whose left edge is right of it was seen". The rule used to assume forward travel at every seed, so a reverse anchor (lv22 t=13400, rev 1) took
     // the objects AHEAD of it for passed ones and the first of them it met (the mini portal uid 6445) did not fire.
-    float everWr = 0.f, everWsp_ = 0.f;
+    float everWr = 0.f, dashSpinRate = 0.f;
     float dashRot = 0.f, dashElapsed = 0.f, pendingSpeed = 0.f;
     uint32_t rng = 0;
     float lyCentre = 0.f, lyHeight = 0.f, lyLastPortalY = 0.f, lyW764 = 0.f, lyFlipAmt = 0.f, lyFlipFrom = 0.f, lyFlipTo = 0.f, lyFlipEl = 0.f;

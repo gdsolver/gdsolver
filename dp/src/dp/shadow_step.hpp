@@ -245,7 +245,7 @@ inline bool shadowLoadObjectsFrom(std::istream& f, const std::string& fbPath, st
         o.type = (int)num(v, "type");
         const double cx = num(v, "cx"), cy = num(v, "cy"), w = num(v, "w"), h = num(v, "h");
         o.uid = (int)num(v, "uid", -1);
-        o.cx = (float)cx; o.cy = (float)cy; o.cy0 = o.cy; o.prevCx = o.cx; o.prevCy = o.cy;
+        o.cx = (float)cx; o.cy = (float)cy; o.cx0 = o.cx; o.cy0 = o.cy; o.prevCx = o.cx; o.prevCy = o.cy;
         if (col.count("posx") && col.count("posy")) { o.secDx = (float)(num(v, "posx", cx) - cx); o.secDy = (float)(num(v, "posy", cy) - cy); }   // --sectionpos
         o.rw = (float)w; o.rh = (float)h; o.rx = (float)(cx - w / 2); o.ry = (float)(cy - h / 2);
         o.radius = (float)num(v, "radius");
@@ -543,7 +543,7 @@ struct TailMemo {
     std::vector<int> arr;
     bool holding[4] = {false, false, false, false};
     bool dashOn = false, dashFirstDone = false, speedDirty = false;
-    float dashRot = 0.f, dashElapsed = 0.f, pendingSpeed = 1.f;
+    float dashRot = 0.f, dashElapsed = 0.f, dashSpinRate = 0.f, pendingSpeed = 1.f;
     double layerTime = 0.0;
     int frameSteps = 0, prevFrameSteps = 0;
     long long curTickNow = 0;
@@ -600,7 +600,7 @@ inline void shadowMemoSave(ShadowThread& T, const State& s, long long t, const g
     M.usedRings = sh.usedRings; M.now = sh.rt.now; M.arr = sh.rt.arr;
     for (int k = 0; k < 4; ++k) M.holding[k] = sh.holding[k];
     M.dashOn = sh.dashOn; M.dashFirstDone = sh.dashFirstDone; M.speedDirty = sh.speedDirty;
-    M.dashRot = sh.dashRot; M.dashElapsed = sh.dashElapsed; M.pendingSpeed = sh.pendingSpeed;
+    M.dashRot = sh.dashRot; M.dashElapsed = sh.dashElapsed; M.dashSpinRate = sh.dashSpinRate; M.pendingSpeed = sh.pendingSpeed;
     M.layerTime = sh.layerTime; M.frameSteps = sh.frameSteps; M.prevFrameSteps = sh.prevFrameSteps; M.curTickNow = sh.curTickNow; M.rng = sh.rng;
     M.actIdx = T.W.actIdx;
     std::memcpy(static_cast<void*>(&M.sl), &sl, sizeof sl);
@@ -620,7 +620,7 @@ inline void shadowMemoRestore(ShadowThread& T, gdcol::ShadowLite& sl, gdcol::Sha
     sh.usedRings = M.usedRings; sh.rt.now = M.now; sh.rt.arr = M.arr;
     for (int k = 0; k < 4; ++k) sh.holding[k] = M.holding[k];
     sh.dashOn = M.dashOn; sh.dashFirstDone = M.dashFirstDone; sh.speedDirty = M.speedDirty;
-    sh.dashRot = M.dashRot; sh.dashElapsed = M.dashElapsed; sh.pendingSpeed = M.pendingSpeed;
+    sh.dashRot = M.dashRot; sh.dashElapsed = M.dashElapsed; sh.dashSpinRate = M.dashSpinRate; sh.pendingSpeed = M.pendingSpeed;
     sh.layerTime = M.layerTime; sh.frameSteps = M.frameSteps; sh.prevFrameSteps = M.prevFrameSteps; sh.curTickNow = M.curTickNow; sh.rng = M.rng;
     T.W.actIdx = M.actIdx;
     std::memcpy(static_cast<void*>(&sl), &M.sl, sizeof sl);
@@ -1235,11 +1235,10 @@ inline void shadowSeedFromModel(ShadowThread& T, const State& s, long long t, gd
     }
     // SEED ESTIMATE, to be replaced by the GD image's own bytes (the file seed): the State does not carry GD's press-latch bytes, only the model's mirror of them, so a model seed has to guess them.
     //  - S (+0x98e) is left as the template has it: seeding it as !pressSpent (the State's definition, hist v6: pressSpent = H && !S) broke custom level A t=3800 and custom level B t=14200 in the customs sections.
-    //  - H (+0x98d) = the button, EXCEPT a ball (mode 2) starts with H = 0: the ball arm of updateJump (upd.hpp, the port of the decompile) clears +0x98d after the flip it makes, and the State records only that the
-    //    button is down, not whether the hold was spent. A held ball seeded with H = 1 flips on its next landing; GD and the model keep a spent hold dead. That the ball's hold is spent is an assumption about the
-    //    usual case (a long hold), not something the seed can know: a ball pressed in the air and not yet landed (a buffered tap GD flips on landing) is seeded wrong. Evidence for the usual case: lv20 section 9400
-    //    (a mini ball under a long hold lands on the ceiling at 9404; GD and the old model stay, H = 1 flipped at 9405).
-    P.u8(0x98d, (s.action && in.mode != 2 && !s.holdDead) ? 1 : 0);   // a hold the State says is dead (the anchor's jumpBuf 0 under a held button, a ring or a tap used it) is not a live H
+    //  - H (+0x98d) follows the button unless the hold was spent. A ball without a measured buffer keeps the spent-hold estimate (lv20 section 9400).
+    //    GD Win 2.2091: pushButton writes H at RVA 0x4f6299 even in the air; updateJump checks the landing at 0x4e9e0f and clears H after the flip at 0x4ea11c.
+    const bool bufferedBall = !second && !g_swapBodies && g_seedHistT0 >= 0 && t == g_seedHistT0 && s.jumpBuf;
+    P.u8(0x98d, (s.action && (in.mode != 2 || bufferedBall) && !s.holdDead) ? 1 : 0);
     { const uint8_t h = P.u8(0x98d); const uint8_t sv = (h && !s.pressSpent) ? 1 : 0; P.u8(0x98e, sv); P.u8(0x991, h); P.u8(0x992, sv); }   // --shadowseedmirror: S, Hm, Sm as pushButton leaves them
     P.u8(0x368, 1); P.u8(0x369, 1);
     if (s.dashing && !P.u8(po::Platformer)) {   // the dash the State is in (a dash ring's line), as startDashing leaves it: +0x9ec, the slope words +0x570 / +0x578 and the angle +0x580
@@ -1252,6 +1251,8 @@ inline void shadowSeedFromModel(ShadowThread& T, const State& s, long long t, gd
     for (int k = 1; k <= 3; ++k) sh.holding[k] = false;
     sh.holding[1] = s.action != 0;
     sh.dashOn = s.dashing; sh.dashFirstDone = false; sh.dashRot = 0.f; sh.dashElapsed = 0.f;
+    // A mid-dash anchor does not carry the gravity and orientation from the last action restart.
+    sh.dashSpinRate = sh.dashOn ? gdcol::SelfShadow::dashRate(P) : 0.f;
     sh.speedDirty = false; sh.pendingSpeed = 1.0f;
     sh.frameSteps = (int)((t - 1) % 4) + 1; sh.prevFrameSteps = 4;
     if (g_shadowDashAge && sh.dashOn && !second && g_seedDashAgeKnown && t >= g_seedDashAgeT && t <= g_seedDashAgeT + 1) {   // --shadowdashage: the frames the dash action has run before the anchor
@@ -1262,7 +1263,7 @@ inline void shadowSeedFromModel(ShadowThread& T, const State& s, long long t, gd
             sh.dashFirstDone = true;
             const float sched = (float)rawTimeWarpAt((double)s.xAbs);
             for (int k = 1; k < heads; ++k) sh.dashElapsed += 0.0166667f * sched;
-            sh.dashRot = 960.0f * sh.dashElapsed;
+            sh.dashRot = sh.dashSpinRate * sh.dashElapsed;
         }
     }
     sh.layerTime = (double)t * sh.stepSeconds;
@@ -1487,7 +1488,7 @@ inline void shadowSeedFromFile(ShadowThread& T, const State& s, gdcol::ShadowLit
     sh.usedRings = B.seedUsed;
     for (int k = 1; k <= 3; ++k) sh.holding[k] = B.seedHold.size() >= 3 && B.seedHold[(size_t)k - 1] == '1';
     sh.layerTime = sh.img.f64(po::Time) - sh.stepSeconds;
-    sh.dashOn = false; sh.dashFirstDone = false; sh.dashRot = 0.f; sh.dashElapsed = 0.f;
+    sh.dashOn = false; sh.dashFirstDone = false; sh.dashRot = 0.f; sh.dashElapsed = 0.f; sh.dashSpinRate = 0.f;
     sh.speedDirty = false; sh.pendingSpeed = 1.0f;
     sh.frameSteps = 0; sh.prevFrameSteps = 4;
     sh.platformerNoted = true;
@@ -1561,7 +1562,7 @@ inline int shadowDualLoad(ShadowThread& T, const State& s, long long t, bool atA
         p.usedRings.clear(); p.gate.clear(); p.ever.clear(); p.everRule = SelfShadow::EverRule{};
         p.fireOrder.clear();   // --shadowfireorder: player 2's fired-ring record is the slot's own; the slot is reused across states and threads, so what the last state left must not reach this one (seeded from the State's usedOrb2 / usedOrbOld2 / usedOrbHist2 below)
         for (int k = 0; k < 4; ++k) p.holding[k] = false;
-        p.dashRot = 0.0f; p.dashElapsed = 0.0f;
+        p.dashRot = 0.0f; p.dashElapsed = 0.0f; p.dashSpinRate = 0.0f;
         p.dashOn = false; p.dashFirstDone = false;
         p.speedDirty = false; p.pendingSpeed = 1.0f;
         p.atButtons.b.clear(); p.atEntry.b.clear(); p.atExit.b.clear(); p.ptButtons = {}; p.ptEntry = {};
@@ -1592,7 +1593,7 @@ inline int shadowDualLoad(ShadowThread& T, const State& s, long long t, bool atA
             std::map<size_t, int> slots;
             if (parts.size() > 5) { std::istringstream is(parts[5]); std::string tok; while (is >> tok) { const auto fs = shstep::split(tok, ':'); if (fs.size() == 2) { const int u = std::atoi(fs[1].c_str()); if (u >= 0) slots[(size_t)std::strtoull(fs[0].c_str(), nullptr, 16)] = u; } } }
             for (size_t off : {(size_t)0x5e8, (size_t)0x5f0, (size_t)0x600, (size_t)0x608, (size_t)0x610, (size_t)0x618, (size_t)0x680, (size_t)0x890}) { auto it = slots.find(off); sh.img.put<int64_t>(off, it == slots.end() ? 0 : (int64_t)it->second + 1); }
-            sh.dashOn = false; sh.dashFirstDone = false; sh.dashRot = 0.f; sh.dashElapsed = 0.f; sh.speedDirty = false; sh.pendingSpeed = 1.0f;
+            sh.dashOn = false; sh.dashFirstDone = false; sh.dashRot = 0.f; sh.dashElapsed = 0.f; sh.dashSpinRate = 0.f; sh.speedDirty = false; sh.pendingSpeed = 1.0f;
             sh.seedTurnX = 0.0f; sh.seedMemory();
             sl2.everW = slPlayerLeft(sh.img); sl2.flags2 |= kSlEverW;   // (seedMemory's rule part, without player 1's list of the seed's movers)
             // ...and the other direction of it, as slSeedRule gives player 1 (E9): a second body seeded travelling LEFT (its own +0x9ca; a dual's two bodies need not run the same way) has passed what lies to

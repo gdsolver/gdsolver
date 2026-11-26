@@ -544,7 +544,6 @@ inline double rawTimeWarpAt(double x) {
 struct TpForce {
     uint8_t fm = 0;
     float f = 0.f, ang = 0.f, rmod = 0.f, rmin = 0.f, rmax = 0.f;
-    int exitUid = 0;   // --tpexitrot: the exit object the direction was read off (0 = none found)
 };
 // --tpexitrot: the direction a teleport's force takes is read off its exit's rotation when the teleport happens
 // (teleportPlayer 0x210105..0x210173: (portal-like exit ? 180 : 90) - getRotation()), and the export reads it at
@@ -555,7 +554,7 @@ struct TpForce {
 // objects a Rotate turns; its Rotates (g_rotTailParts, not lockrot) give the turn by their fire ticks.
 inline bool g_tpExitRot = true;
 struct TpExitRot { int a; double total, durT, erate; int ease; };
-inline std::unordered_map<int, std::vector<TpExitRot>> g_tpExitRots;   // exit uid -> its Rotates (step.hpp tpExitTurn)
+inline std::unordered_map<int, std::vector<TpExitRot>> g_tpExitRots;   // portal uid -> its linked exit's Rotates
 // --tpexitmove: the target is the exit's real position when the teleport happens (teleportPlayer 0x20ff6a), and the
 // export reads it at load. An exit a Move carries since then is somewhere else: tpex / tpey + the Moves' offset so
 // far. A custom level: teleport portal uid 11494 exits at uid 11496 (groups 51 and 52), which a Move at x 6,465
