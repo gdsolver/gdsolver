@@ -498,7 +498,9 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
         if (!o || o == anticheat || o == l->m_endPortal || o == l->m_player1CollisionBlock
             || o == l->m_player2CollisionBlock || o->m_classType != GameObjectClassType::Game || o->m_groupCount != 0) return false;
         const auto type = o->m_objectType;
-        return type == GameObjectType::Solid || type == GameObjectType::Hazard || type == GameObjectType::Slope;
+        // Glass (customSetup 2.2091 0x290997) stays in its slot when destroyObject hides it (0x31d52a..0x31d575).
+        return type == GameObjectType::Solid || type == GameObjectType::Hazard || type == GameObjectType::Slope
+            || (type == GameObjectType::Breakable && o->m_objectID == 143);
     };
     std::unordered_map<const std::vector<GameObject*>*, int> spiderPrefixes;
     const auto spiderCell = [&](const GameObject* obj) -> std::array<int, 3> {

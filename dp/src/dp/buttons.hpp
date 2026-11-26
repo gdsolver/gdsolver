@@ -131,10 +131,10 @@ inline bool ringJump(ButtonsBody& b, GObj* ring, const ButtonsHooks& hk) {
         if (hk.teleportPlayer) hk.teleportPlayer(c, ring); else hookCount(c, 2003);
         P.u8(bo::S, 0);
     } else if (ty == 0x2b) {
-        // the spider orb (ringJump 0x4f6f50, the 0x2b arm): gravity is flipped to the orb's facing (isFacingLeft for a turned frame, isFacingDown otherwise), then spiderTestJump
+        // ringJump (2.2091 0x4f725d) calls PlayerObject::flipGravity directly, not the layer's dual flip.
         {
             const bool facing = P.u8(po::Sideways) ? objFacingLeft(*ring) : objFacingDown(*ring);
-            if (facing != (P.u8(po::Upside) != 0)) flip();
+            if (facing != upside) playerFlipGravity(c, facing, true);
         }
         const bool ok = hk.spiderTestJump ? hk.spiderTestJump(c, ring) : true;
         if (ok) P.u8(bo::H, 0);
