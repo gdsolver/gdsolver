@@ -1,6 +1,8 @@
 #pragma once
 #include <charconv>
 #include <cmath>
+#include <iomanip>
+#include <limits>
 #include <sstream>
 
 namespace solver {
@@ -1396,7 +1398,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
               //               "key=value|key=value" over every key it writes (position and layer included), '-' on any other row. Which of those keys the trigger sets decides
               //               what it follows (138 = Target Player 1, 306 = X only, 307 = Y only, 71 = a group, 200 = Player 2, ...), and none of them is a column above.
               //               Read only by dp's Advanced Follow model; a dump without the column leaves it with nothing to act on.
-              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj,movemodx,movemody,advp,resetremap\n";
+              "sponly,fyspd,fydel,fyoff,fymax,lockcamx,lockcamy,events,evextra,ctrobj,movemodx,movemody,advp,resetremap,srange\n";
         // uid → groups it belongs to. One object can belong to several groups,
         // so the mapping is many-to-many
         std::ofstream gf(std::string(DATA_DIR) + "/objgroups.txt", std::ios::trunc);
@@ -1471,12 +1473,15 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
             if (!e || e->m_targetGroupID == 0) continue;
             auto tr = obj->getObjectRect();
             // A Spawn's delay is SpawnTriggerGameObject::m_spawnDelay (property 63, +0x780), the float
-            // SpawnTriggerGameObject::triggerObject (0x4b91f0) schedules the group by (plus a draw within
-            // m_delayRange, property 556, which is not dumped). EffectGameObject::m_spawnTriggerDelay is another
+            // SpawnTriggerGameObject::triggerObject (2.2091 RVA 0x65a240) schedules the group by (plus a draw within
+            // m_delayRange, property 556, dumped as srange). EffectGameObject::m_spawnTriggerDelay is another
             // field: it read 0 on every Spawn of the cov126 kits (14,736 rows; the level strings give 5,726 of
             // them a delay) and on all 141 of lv22's (34 with one).
             auto* spawn = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj);
             const float sdelay = spawn ? spawn->m_spawnDelay : e->m_spawnTriggerDelay;
+            const float srange = spawn ? spawn->m_delayRange : 0.f;
+            const int oldPrecision = (int)tf.precision();
+            const int delayPrecision = srange != 0.f ? std::numeric_limits<float>::max_digits10 : oldPrecision;
             tf << obj->m_uniqueID << "," << obj->m_objectID << ","
                << (tr.origin.x + tr.size.width * 0.5f) << ","
                << (tr.origin.y + tr.size.height * 0.5f) << ","
@@ -1502,7 +1507,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                << (e->m_spawnOrdered ? 1 : 0) << ","
                << e->m_times360 << ","
                << (e->m_lockObjectRotation ? 1 : 0) << ","
-               << sdelay << ","
+               << std::setprecision(delayPrecision) << sdelay << std::setprecision(oldPrecision) << ","
                << (e->m_useMoveTarget ? 1 : 0) << ","
                << (int)e->m_moveTargetMode << ","
                << e->m_targetModCenterID << ","
@@ -1620,7 +1625,8 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                         if (advp.empty()) advp = "-";
                     }
                     tf << "," << ctr << "," << e->m_moveModX << "," << e->m_moveModY << "," << advp
-                       << "," << (spawn ? (int)spawn->m_resetRemap : -1) << "\n";
+                       << "," << (spawn ? (int)spawn->m_resetRemap : -1)
+                       << "," << std::setprecision(delayPrecision) << srange << std::setprecision(oldPrecision) << "\n";
                 }
             }
             ++nTrig;

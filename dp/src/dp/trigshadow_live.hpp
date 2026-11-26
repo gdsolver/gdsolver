@@ -305,7 +305,8 @@ struct TrigLive {
                                     mvs.push_back(std::move(m));
                                 } else narrowBad = true;
                             } else if (d.id != 1006 && d.id != 1007 && d.id != 899 && d.id != 1817 && d.id != 1611 && d.id != 1811 && !(counts && d.id == 1049)) narrowBad = true;
-                            { long long& sp = counts ? spanB : spanA; sp = std::max(sp, acc + (long long)std::ceil((d.dur + d.sdelay) * 240.0)); }
+                            const double delayMax = d.srange != 0.f ? std::max(0.0, d.sdelay + std::fabs(d.srange)) : d.sdelay;
+                            { long long& sp = counts ? spanB : spanA; sp = std::max(sp, acc + (long long)std::ceil((d.dur + delayMax) * 240.0)); }
                             if (d.id != 1268 && d.id != 1817 && d.id != 1611 && d.id != 1811 && d.id != 1616 && d.id != 899 && d.id != 1006 && d.id != 1007) {   // what the chain can change about the world the player meets: a trigger that moves, toggles or transforms its target group's members (Color / Pulse / Alpha, the Spawn / Stop / Pickup / Count triggers do not)
                                 const auto tm = S->members.find(d.target);
                                 if (tm != S->members.end()) for (size_t j : tm->second) {
@@ -318,7 +319,7 @@ struct TrigLive {
                                     reachJ.emplace_back(j, reach);
                                 }
                             }
-                            if (d.id == 1268) work.push_back({d.target, acc + (long long)std::ceil(d.sdelay * 240.0)});
+                            if (d.id == 1268) work.push_back({d.target, acc + (long long)std::ceil(delayMax * 240.0)});
                             else if (d.id == 1817) items.insert(d.pkItem);
                             else if (d.id == 1611 || d.id == 1811 || d.id == 1049 || d.id == 1616) {}
                             else if (!counts) perPress = true;

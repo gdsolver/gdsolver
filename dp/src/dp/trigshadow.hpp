@@ -103,6 +103,8 @@ struct TrigDef {
     bool areaOk = false;   // an Area Move (3006) whose areas.txt row is one the shadow runs (see AreaDef)
     bool editOk = false;   // an Edit Area (3011..3015) whose areaedit.txt row changes only fields of an Area Move the shadow keeps (see AreaEdit)
     double sdelay = 0;     // a Spawn trigger's delay in seconds (m_spawnDelay)
+    float srange = 0.f;   // Spawn property 556 (m_delayRange)
+    bool srangeUnknown = false;   // a level reports range draws but this archived row has no range
     bool sord = false, remap = false, silent = false;   // a spawn-order index (not read), a group remap, m_isSilent: a Spawn the shadow runs has none of them
     bool sordd = false;    // the Spawn is ordered: the triggers of its group are spawned one after the other, by their x (FUN_140322560)
     // an Item Compare (3620, ItemTriggerGameObject; trigext.txt): the shadow runs it when every value it reads is one the shadow has (itemCmp)
@@ -259,6 +261,17 @@ public:
     }
     // a Random (1912) the loader found in the level string: its chance (key 10) and the order to run it (before finish())
     void markRandom(int uid, double chance) { for (TrigDef& t : trigs_.mut()) if (t.uid == uid && t.id == 1912) { t.randOk = true; t.randChance = chance; } }
+    void enableSpawnDelayRng() {
+        spawnDelayRng_ = true;
+        for (TrigDef& t : trigs_.mut()) if (t.id == 1268 && t.srange != 0.f) t.randOk = true;
+    }
+    void disableTriggerRng() {
+        spawnDelayRng_ = drawOnFollow = rngPinFirst_ = false;
+        for (TrigDef& t : trigs_.mut()) if (isTriggerRngDraw(t)) {
+            t.randOk = false;
+            modelled_.erase(t.uid);
+        }
+    }
     void addTrigger(const TrigDef& t) { trigs_.push_back(t); if (!t.remapTo.empty()) anyRemap_ = true; }
     // (the live path, before finish()) the touch Toggle Blocks (1594) the caller's own touch table keeps as boxes -- one that switches its group on when the button is down inside it, or off -- as the Events it hands over
     // fire them: uid -> 1 (on) / 0 (off). Only these are run (togon is what kindRuns asks for); a 1594 the caller does not keep as a box is never given an Event, so running it would leave its group where it started.
@@ -299,7 +312,7 @@ public:
             case 3024: return t.areaStopOk;
             case 1815: return t.collOk;    // a Collision trigger: registered when it fires, checked every step (stepCollisions)
             case 3620: return t.itemCmp;   // trigger objects whose Item Compare reads a value the shadow does not have are left to the record (not vouched for)   // needs the Areas' effect ids (areafx.txt)
-            case 1268: return (!t.remap || t.remapOk) && !t.sord && !t.silent;
+            case 1268: return spawnDelayKnown(t) && (!t.remap || t.remapOk) && !t.sord && !t.silent;
             case 3607: return t.seqOk;
             case 3604: return evFed && t.evOk;
             case 1912: case 2068: return t.randOk;
@@ -501,7 +514,20 @@ public:
                     }
                 if (!ok) { modelled_.erase(x.uid); changed = true; }
             }
+            if (spawnDelayRng_) {
+                // Missing even one trigger draw changes all later sampled delays.
+                bool missingDraw = spawnFedOn_ && spawnFedMode_ == 2;
+                for (const TrigDef& t : trigs_)
+                    if (isTriggerRngDraw(t) && !modelledT(t)) { missingDraw = true; break; }
+                if (missingDraw) {
+                    std::printf("random: a trigger RNG call is not covered; using no predicted RNG draws\n");
+                    disableTriggerRng();
+                    changed = true;
+                }
+            }
         }
+        // Native update (RVA 0x340cf5 before 0x341334): run the queue before a crossing can enqueue a new delay.
+        if (spawnDelayRng_) spawnPhase = 0;
         if (spawnFedOn_) {   // why each spawn-triggered trigger the shadow cannot run is waited for in vain (before it is handed to the record): the activators it cannot run, a report
             auto actName = [](const TrigDef& y) -> std::string {
                 switch (y.id) {
@@ -528,6 +554,7 @@ public:
         if (spawnFedOn_)   // the triggers the shadow cannot wait for are fired from the record; a Spawn whose own start the shadow does not run only starts triggers that are fired from the record too
             for (const TrigDef& t : trigs_) {
                 if (t.chan != 0 && !chanModel_) continue;   // (a spawn-triggered trigger of any channel runs: spawnObject has no channel test, and a Rotate Gameplay among them is what switches the channel back)
+                if (t.id == 1268 && !spawnDelayKnown(t)) continue;   // the recorded call tick does not give its sampled delay
                 if (t.spawn) {
                     // (a Stop is not in the record: a spawn-triggered one is run only when its activators are run)
                     if ((t.id == 1268 || (kindRuns(t, true, recordComplete_, chanModel_, evFed_) && (recordComplete_ || t.id != 1616))) && (spawnFedMode_ == 2 || !modelled_.count(t.uid) || (t.id == 901 && t.mvtgt))) { fedSpawn_.insert(t.uid); modelled_.insert(t.uid); }   // (a Move-To reads where the player is when it fires: the step of the record, not the shadow's own chain's)
@@ -935,8 +962,8 @@ public:
         if (firstStep && rngPinFirst_) rng_ = 0x48c67641ULL;   // the draws of the start triggers fire inside the game's reset
         while (!pendDraw_.empty() && pendDraw_.front() <= t) {   // the Advanced Follows called in an earlier step run now: one draw each
             pendDraw_.erase(pendDraw_.begin());
-            rng_ = rng_ * 0x343fdULL + 0x269ec3ULL; ++randDraws_;
-            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::fprintf(lf, "%lld,0,3016,%u,0,%llu,advfollow\n", t, (unsigned)((rng_ >> 16) & 0x7fff), (unsigned long long)(rng_ & 0xffffffffULL)); std::fclose(lf); }
+            const unsigned r15 = drawTriggerR15();
+            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::fprintf(lf, "%lld,0,3016,%u,0,%llu,advfollow\n", t, r15, (unsigned long long)(rng_ & 0xffffffffULL)); std::fclose(lf); }
         }
         // GD Win 2.2091: GJBaseGameLayer::update divides by the full warp at RVA 0x340813 before advancing +0x3d8 (0x340bac), the clock read by Sequence (0x655d85).
         levelTime_ += ((1.0 / 240.0) * std::min(warp_, 1.0)) / warp_;
@@ -948,12 +975,13 @@ public:
         spawnedStep_ = followsPrevTick ? std::move(spawnedNext_) : SpawnTick{};
         spawnedNext_ = {};
         evDone_.clear();
+        if (spawnDelayRng_) updateSpawns();
         if (gtogFed_) {
             SpawnPhaseScope phase(spawnDedupePhase_, SpawnPhase::Head);
             const auto gi = gtogAt_.find(t);
             if (gi != gtogAt_.end()) for (const auto& e : gi->second) { toggleGroupTriggered(e.group, e.on, e.uid); ++groupToggleFed; }
         }
-        if (spawnPhase == 0) updateSpawns();
+        if (!spawnDelayRng_ && spawnPhase == 0) updateSpawns();
         stepCommands();
         if (spawnPhase == 1) updateSpawns();
         if (!havePrev_) { prevPx_ = px; prevPy_ = py; prevCam_ = cam; prev2Cam_ = cam; havePrev_ = true; }
@@ -1199,6 +1227,14 @@ public:
     }
 
 private:
+    bool spawnDelayRng_ = false;
+    static bool spawnDelayKnown(const TrigDef& t) { return !t.srangeUnknown && (t.srange == 0.f || t.randOk); }
+    static bool isTriggerRngDraw(const TrigDef& t) { return t.id == 1912 || t.id == 2068 || (t.id == 1268 && t.srange != 0.f); }
+    unsigned drawTriggerR15() {
+        rng_ = rng_ * 0x343fdULL + 0x269ec3ULL;
+        ++randDraws_;
+        return (unsigned)((rng_ >> 16) & 0x7fff);
+    }
     using RemapKeys = std::vector<std::pair<int, int>>;   // (source group, target group), the first match of a source wins
     struct SpawnRemap { RemapKeys groups; int origin = 0; };   // origin: the negated final token in GD's remap-key vector
     struct Cmd {
@@ -2495,7 +2531,17 @@ private:
                 if (t.togon == 1) { const int keepSp = curSpawnUid_; const SpawnRemap keepR = curRemap_; const double keepX = curExtraDelay_; curSpawnUid_ = t.uid; curRemap_ = {}; curExtraDelay_ = curLate_ ? orbDelay : 0.0; spawnGroup(t.target, false, 0.0); curExtraDelay_ = keepX; curRemap_ = keepR; curSpawnUid_ = keepSp; }
             }
         } else if (t.id == 1268) {   // Spawn: no delay spawns its group now, a delay waits (spawnGroup of the effect manager 0x36c4f0)
-            const float d = (float)((double)(float)t.sdelay - curOvershoot_);   // SpawnTriggerGameObject::triggerObject 0x65a240
+            if (!spawnDelayKnown(t)) return;
+            float delay = (float)t.sdelay;
+            if (t.srange != 0.f) {
+                // GD Win 2.2091 play: 0x65a281..0x65a2c9 draws once from the shared LCG at 0x90bf68.
+                const unsigned r15 = drawTriggerR15();
+                const float r = (float)r15 / 32767.f;
+                const float variation = ((r + r) - 1.f) * t.srange;
+                delay = std::max(0.f, delay + variation);
+            }
+            // 0x65a2f8..0x65a303 subtracts a parent's overshoot in double, *after* the clamp.
+            const float d = (float)((double)delay - curOvershoot_);
             const SpawnRemap keys = spawnRemapOf(t, curRemap_);
             if (!(d > 0.0f)) { const int keepSp = curSpawnUid_; const SpawnRemap keepR = curRemap_; curSpawnUid_ = t.uid; curRemap_ = keys; spawnGroup(t.target, t.sordd, d < 0.0f ? -(double)d : 0.0); curRemap_ = keepR; curSpawnUid_ = keepSp; }
             else { PendingSpawn p; p.group = t.target; p.ordered = t.sordd; p.delay = (double)d; p.trigUid = t.uid; p.remap = keys; pendPush(p); }
@@ -2527,8 +2573,8 @@ private:
                 curSpawnUid_ = keepSp;
             }
         } else if ((t.id == 1912 || t.id == 2068) && t.randOk) {   // Random / Advanced Random: one draw of the trigger LCG (the global at base+0x90bf68 on 22091: x' = x * 0x343fd + 0x269ec3, r = (x' >> 16) & 0x7fff), then the chosen group is spawned
-            rng_ = rng_ * 0x343fdULL + 0x269ec3ULL;
-            const float r = (float)(unsigned)((rng_ >> 16) & 0x7fff) / 32767.0f;
+            const unsigned r15 = drawTriggerR15();
+            const float r = (float)r15 / 32767.0f;
             int group = 0;
             if (t.id == 1912) group = (float)t.randChance < r * 100.0f ? t.center : t.target;
             else {
@@ -2537,8 +2583,7 @@ private:
                 int acc = 0;
                 for (const auto& e : t.seqTargets) { acc += e.second; if (x <= acc) { group = e.first; break; } }
             }
-            ++randDraws_;
-            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::string cands; if (t.id == 2068) for (const auto& e : t.seqTargets) cands += (cands.empty() ? "" : ".") + std::to_string(e.first); else cands = std::to_string(t.target) + "." + std::to_string(t.center); std::fprintf(lf, "%lld,%d,%d,%u,%d,%llu,%s\n", stepNo_, t.uid, t.id, (unsigned)((rng_ >> 16) & 0x7fff), group, (unsigned long long)(rng_ & 0xffffffffULL), cands.c_str()); std::fclose(lf); }
+            if (g_randLogReplay && !g_randLogFile.empty()) if (FILE* lf = std::fopen(g_randLogFile.c_str(), "a")) { std::string cands; if (t.id == 2068) for (const auto& e : t.seqTargets) cands += (cands.empty() ? "" : ".") + std::to_string(e.first); else cands = std::to_string(t.target) + "." + std::to_string(t.center); std::fprintf(lf, "%lld,%d,%d,%u,%d,%llu,%s\n", stepNo_, t.uid, t.id, r15, group, (unsigned long long)(rng_ & 0xffffffffULL), cands.c_str()); std::fclose(lf); }
             if (group > 0) { const int keepSp = curSpawnUid_; curSpawnUid_ = t.uid; spawnGroup(group, false, 0.0); curSpawnUid_ = keepSp; }
         } else if (t.id == 2900) {   // Rotate Gameplay: only its channel half is here (rotateGameplay 0x31f980: m_changeChannel -> layer +0x33c = m_targetChannelID, and the channel's reverse bit = direction 2 / 3)
             if (t.rgSwarm && t.rgSwch >= 0) { activeChan_ = t.rgSwch; chanRev_[t.rgSwch] = (unsigned)(t.rgDir - 2) < 2u; }   // the channel's reverse bit is the pure predicate gnddir - 2 <u 2 (dp/src/dp/step.hpp applyRotation)
