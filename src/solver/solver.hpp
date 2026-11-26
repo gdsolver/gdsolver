@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <iomanip>
@@ -1427,12 +1428,18 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
             break;
         }
         long long nTrig = 0, nGrp = 0;
+        bool hasOrderedSpawn = false;
+        std::array<bool, 10000> seenGroup{};
         for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
             if (!obj) continue;
             if (obj->m_groupCount > 0 && obj->m_groups) {
                 gf << obj->m_uniqueID;
                 const int ng = std::min((int)obj->m_groupCount, 10);
-                for (int i = 0; i < ng; ++i) gf << " " << (int)(*obj->m_groups)[i];
+                for (int i = 0; i < ng; ++i) {
+                    const int group = (*obj->m_groups)[i];
+                    gf << " " << group;
+                    if (group >= 0 && group < (int)seenGroup.size()) seenGroup[group] = true;
+                }
                 gf << "\n";
                 ++nGrp;
             }
@@ -1478,6 +1485,7 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
             // field: it read 0 on every Spawn of the cov126 kits (14,736 rows; the level strings give 5,726 of
             // them a delay) and on all 141 of lv22's (34 with one).
             auto* spawn = geode::cast::typeinfo_cast<SpawnTriggerGameObject*>(obj);
+            if (spawn && spawn->m_spawnOrdered) hasOrderedSpawn = true;
             const float sdelay = spawn ? spawn->m_spawnDelay : e->m_spawnTriggerDelay;
             const float srange = spawn ? spawn->m_delayRange : 0.f;
             const int oldPrecision = (int)tf.precision();
@@ -1630,6 +1638,29 @@ inline void buildPois(GJBaseGameLayer* l, bool obbNoLatch = false, bool areaTarg
                 }
             }
             ++nTrig;
+        }
+        if (hasOrderedSpawn) {
+            // GD Win 2.2091 sortGroups (0x32bf80) qsorts selected group arrays by int(getPosition().x).
+            // Record the actual array order, including ties and groups reached through remaps.
+            gf << std::setprecision(std::numeric_limits<float>::max_digits10);
+            for (int group = 0; group < (int)seenGroup.size(); ++group) {
+                if (!seenGroup[group]) continue;
+                gf << "#spawnorder " << group;
+                if (auto* objects = l->getGroup(group)) {
+                    for (auto* obj : CCArrayExt<GameObject*>(objects)) {
+                        if (!obj) break;
+                        // spawnObjectsInOrder (0x3225fc..0x32263b) picks its X anchor before spawnObject checks m_isSpawnTriggered.
+                        bool eligible = false;
+                        if (obj->m_classType == GameObjectClassType::Effect) eligible = obj->isSpawnableTrigger();
+                        else if (obj->m_objectID == 2065) {
+                            if (auto* animated = geode::cast::typeinfo_cast<EnhancedGameObject*>(obj))
+                                eligible = animated->m_animateOnTrigger;
+                        }
+                        if (eligible) gf << ' ' << obj->m_uniqueID << ' ' << obj->getPosition().x;
+                    }
+                }
+                gf << '\n';
+            }
         }
         log::info("triggers: {} triggers with a target, {} grouped objects, "
                   "{} pickups", nTrig, nGrp, nItem);

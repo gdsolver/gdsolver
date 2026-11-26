@@ -330,6 +330,16 @@ inline TrigLoadResult loadTrigShadow(TrigShadow& S, const TrigLoadOpts& o, const
         std::string line;
         while (std::getline(f, line)) {
             std::istringstream is(line);
+            if (line.starts_with("#spawnorder ")) {
+                std::string tag;
+                int group;
+                if (!(is >> tag >> group)) continue;
+                std::vector<OrderedSpawnMember> list;
+                OrderedSpawnMember member{};
+                while (is >> member.uid >> member.x) list.push_back(member);
+                S.setOrderedSpawnMembers(group, std::move(list));
+                continue;
+            }
             int uid;
             if (!(is >> uid)) continue;
             rankOf[uid] = (long long)rankOf.size();

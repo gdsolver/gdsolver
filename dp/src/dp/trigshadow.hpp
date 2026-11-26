@@ -217,6 +217,8 @@ struct ObjState {
     IntSpan groups;   // a view into TrigShadow::groupStore_ (shared_const.hpp: IntSpan, and its lifetime)
 };
 
+struct OrderedSpawnMember { int uid; float x; };   // CCNode X in the native group snapshot, not the hitbox centre
+
 class TrigShadow {
 public:
     CowPages<ObjState> objs;   // read with objs[i], written with objs.mut(i): a copy of the shadow shares the pages no step has written since (shared_const.hpp)
@@ -251,6 +253,7 @@ public:
         objs.push_back(o);
     }
     void setGroupBit(int g, bool on) { groupBit[g] = on; }
+    void setOrderedSpawnMembers(int g, std::vector<OrderedSpawnMember> list) { orderedSpawnMembers_.mut()[g] = std::move(list); }
     // (dptest) an item's number written as a Pickup would write it, and an item put in / taken out of the persistent set as an Item Persist would
     void setItemForTest(int item, int n) { updateCountForItem(item, n); }
     void setPersistForTest(int item, bool on) { if (on) persistItems_.insert(item); else persistItems_.erase(item); }
@@ -1367,6 +1370,7 @@ private:
         }
     }
     struct PendingSpawn { int group = 0; int objUid = 0; bool ordered = false; double delay = 0, time = 0; bool done = false; int trigUid = 0; bool paused = false; SpawnRemap remap; };   // trigUid: the Spawn trigger that made it (a Stop of its group erases it)   // objUid != 0: one trigger of an ordered spawn
+    SharedConst<std::unordered_map<int, std::vector<OrderedSpawnMember>>> orderedSpawnMembers_;
     int curSpawnUid_ = 0;         // the Spawn trigger whose spawn is being done
     // Effective group map of the running call, empty outside a remapped spawn chain.
     SpawnRemap curRemap_;
@@ -2277,18 +2281,38 @@ private:
             return;
         }
         ++spawnDepth_;
+        auto spawnOrderedMember = [&](int uid, float x, float x0) {
+            // GD Win 2.2091 spawnObjectsInOrder 0x32264f..0x322660: round the X delta to float before the double division and overshoot subtraction.
+            const float dx = x - x0;
+            float d = (float)((double)dx / 311.5801086425781 - over);
+            if (d <= 0.0f) { spawnObject(uid, 0.0); return; }
+            if (curExtraDelay_ != 0.0) d += (float)curExtraDelay_;
+            PendingSpawn p;
+            p.remap = curRemap_;
+            p.objUid = uid; p.delay = (double)d;
+            p.trigUid = curSpawnUid_;   // a Stop of the group that owns the spawning trigger also stops its ordered members (c141972420 Spawn 2626 / Stop 2624).
+            pendPush(p);
+        };
+        const auto native = ordered ? orderedSpawnMembers_.find(g) : orderedSpawnMembers_.end();
         const auto m = members.find(g);
-        if (m != members.end()) {
+        if (native != orderedSpawnMembers_.end()) {
+            // GD Win 2.2091 spawnObjectsInOrder 0x32263d..0x32267c: first eligible member in the group array anchors X and is called with zero overshoot, even if spawnObject declines it.
+            const auto& list = native->second;
+            if (!list.empty()) {
+                spawnObject(list.front().uid, 0.0);
+                for (size_t i = 1; i < list.size() && !spawnLoopHalted_; ++i)
+                    spawnOrderedMember(list[i].uid, list[i].x, list.front().x);
+            }
+        } else if (m != members.end()) {
             const std::vector<size_t> list = m->second;   // a copy: firing may toggle groups
-            // an ordered spawn is timed from the leftmost spawn-triggered trigger of the group (not the first one in the level's order, not the Spawn trigger's own x): the record's delays follow
-            // (x - min x) / 311.58 within 1.5 steps for 5,427 of 5,563 triggers, against 3,638 for the first in level order and 889 for the Spawn trigger's x
-            double x0 = 0.0;
+            // Archived dumps have no native group order: keep their leftmost-X approximation (5,427 of 5,563 delays within 1.5 steps).
+            float x0 = 0.f;
             if (ordered) {
                 bool any = false;
                 for (size_t i : list) {
                     const auto ti = trigByUid_.find(objs[i].uid);
                     if (ti == trigByUid_.end() || !trigs_[ti->second].spawn) continue;
-                    const double xk = (double)(float)trigs_[ti->second].cx;
+                    const float xk = (float)trigs_[ti->second].cx;
                     if (!any || xk < x0) { x0 = xk; any = true; }
                 }
             }
@@ -2297,15 +2321,7 @@ private:
                 const auto ti = trigByUid_.find(objs[i].uid);
                 if (ti == trigByUid_.end() || !trigs_[ti->second].spawn) continue;   // not a spawn-triggered trigger (isSpawnableTrigger)
                 if (!ordered) { spawnObject(objs[i].uid, over); continue; }
-                const double xk = (double)(float)trigs_[ti->second].cx;
-                float d = (float)((xk - x0) / 311.5801086425781 - over);
-                if (d <= 0.0f) { spawnObject(objs[i].uid, 0.0); continue; }
-                if (curExtraDelay_ != 0.0) d += (float)curExtraDelay_;
-                PendingSpawn p;
-                p.remap = curRemap_;
-                p.objUid = objs[i].uid; p.delay = (double)d;
-                p.trigUid = curSpawnUid_;   // the entry of one trigger of an ordered spawn belongs to the Spawn trigger that made it: a Stop of a group that Spawn is in erases it (c141972420: Spawn 2626 spawns a group it is in, and loops until the Stop 2624 at x 8205 ends it; c113256289: a Stop of the members' group erases nothing, the Spawn is elsewhere)
-                pendPush(p);
+                spawnOrderedMember(objs[i].uid, (float)trigs_[ti->second].cx, x0);
             }
         }
         --spawnDepth_;
@@ -2544,7 +2560,8 @@ private:
             const float d = (float)((double)delay - curOvershoot_);
             const SpawnRemap keys = spawnRemapOf(t, curRemap_);
             if (!(d > 0.0f)) { const int keepSp = curSpawnUid_; const SpawnRemap keepR = curRemap_; curSpawnUid_ = t.uid; curRemap_ = keys; spawnGroup(t.target, t.sordd, d < 0.0f ? -(double)d : 0.0); curRemap_ = keepR; curSpawnUid_ = keepSp; }
-            else { PendingSpawn p; p.group = t.target; p.ordered = t.sordd; p.delay = (double)d; p.trigUid = t.uid; p.remap = keys; pendPush(p); }
+            // GD Win 2.2091 GJEffectManager::spawnGroup 0x36c4f0..0x36c4f2 rejects nonpositive targets before enqueueing, after the trigger's RNG draw.
+            else if (t.target > 0) { PendingSpawn p; p.group = t.target; p.ordered = t.sordd; p.delay = (double)d; p.trigUid = t.uid; p.remap = keys; pendPush(p); }
         } else if (t.id == 3607) {   // Sequence (0x655c50): the count per remap key (the trigger's maps +0x758 last call [float, -1 none], +0x798 count), then the group of the list that holds that count
             const int key = t.seqUnique ? curRemap_.origin : 0;   // RVA 0x655c9a..0x655ca7 reads the same final remap token
             SeqState& s = seq_[(long long)t.uid * 4294967296LL + (unsigned)key];
