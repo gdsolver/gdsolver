@@ -105,6 +105,8 @@ inline bool ringJump(ButtonsBody& b, GObj* ring, const ButtonsHooks& hk) {
     P.u8(bo::RingJumpRelated, 1);
     if (b.usedRings) b.usedRings->insert(ring->uid);
     noteFired(c.fireOrder, ring->uid);
+    gdev::noteOrbEvents(c.gameEvents, ring->uid, ty);   // GD Win 2.2091 ringJump: calls at 0x4f7123 / 0x4f7153 precede spiderTestJump at 0x4f7265.
+    // Native listeners spawn synchronously here (0x33ac80 -> 0x322370 -> 0x3227a0); the DP feeds these tokens in the next layer, so this search cannot yet see their immediate geometry changes.
     P.u8(ty == 0x24 ? bo::SlotB : ty == 0x2e ? bo::SlotC : bo::SlotA, 1);
     if (b.touch) b.touch->remove(ring->uid);
     if (classA) P.u8(bo::Rf, 1);

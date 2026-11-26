@@ -443,6 +443,7 @@ inline void resetInvocationState() {
     g_camFrees.clear();
     g_followYs.clear();
     g_followSecObjs.clear();
+    g_followCellStickyUids.clear();
     g_zoomTrigs.clear();
     zoomCrossReset(0);
     // bands.hpp: the objrects header's own answer to "does this dump carry the

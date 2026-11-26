@@ -74,7 +74,7 @@ inline void ctxReset(Ctx& c) {
     c.ringJump = nullptr; c.slopeRotation = nullptr; c.stopDash = nullptr; c.dashRot = nullptr; c.restartDashSpin = nullptr; c.spiderJump = nullptr;
     c.p22 = true; c.primeWords = false;
     c.usedRings = nullptr;
-    c.fired.clear(); c.everGuess = false;
+    c.fired.clear(); c.everGuess = false; c.gameEvents = nullptr;
     c.rotApply = false; c.rotSpent = nullptr; c.rotFired.clear();
     c.actLog = nullptr;
     c.dualH = nullptr;
@@ -96,6 +96,7 @@ struct SelfIn {
     int head = -1, end = -1;            // 1 / 0 = the game's own frame boundaries for this step (a frame is not always four steps: GJBaseGameLayer::update takes as many as the frame time asks); -1 = by the modulus
     bool rotApply = false;              // --shadowrotapply: a touch Rotate Gameplay the pass overlaps turns the body (collide.hpp playerRotateGameplay); rotSpent = the uids that have fired already (null: turns nothing)
     const std::vector<int>* rotSpent = nullptr;
+    bool recordGameEvents = false;
 };
 
 struct SelfOut {
@@ -109,8 +110,9 @@ struct SelfOut {
     bool everGuess = false;                       // --shadowrev: the pass went left through an object the gate holds as seen by the seeding guess alone (Ctx::everGuess)
 std::vector<std::pair<int, int>> fired;   // (type, uid) of the non-solid objects the pass overlapped, 1000 added when the once-only gate let one act
     std::vector<int> rotFired;                // the touch Rotate Gameplay triggers the pass turned the body with (SelfIn::rotApply)
+    std::vector<gdev::EvTok> gameEvents;      // events emitted by the head or the tail, in call order
     // back to what SelfOut{} holds, keeping the storage (a caller that steps many times reuses one; a member added above must be added here)
-    void reset() { ran = false; died = false; ret = 0; why = 0; whyUid = -1; unsupported = 0; unsupportedBy.clear(); tps.clear(); fired.clear(); rotFired.clear(); everGuess = false; }
+    void reset() { ran = false; died = false; ret = 0; why = 0; whyUid = -1; unsupported = 0; unsupportedBy.clear(); tps.clear(); fired.clear(); rotFired.clear(); gameEvents.clear(); everGuess = false; }
 };
 
 class SelfShadow {
@@ -150,13 +152,13 @@ public:
         p.ok = true; p.posX = m.f32(po::PosX); p.posY = m.f32(po::PosY); p.left = playerLeftOf(m); p.flipStamp = m.get<uint64_t>(0x828);
         return p;
     }
+    static float playerWidthOf(const Mem& m) {
+        return m.u8(0x368) ? plainPlayerRectSize(m, m.f32(0x394), m.f32(0x398)).first : m.f32(0x360);
+    }
     // the left edge of the player's rect in an image (1e30 for no image): shadow_state.hpp's slPlayerLeft is this
     static float playerLeftOf(const Mem& m) {
         if (m.b.size() < 0xc80) return 1e30f;
-        float rw;
-        if (m.u8(0x368)) rw = m.f32(0x2fc) * m.f32(0x488) * m.f32(0x394);
-        else rw = m.f32(0x360);
-        return m.f32(po::PosX) - rw * 0.5f;
+        return m.f32(po::PosX) - playerWidthOf(m) * 0.5f;
     }
     StepPoint ptButtons, ptEntry;
     bool keepImages = false;
@@ -344,6 +346,7 @@ public:
         if (sm.on) { ssTl().cnt[0] += 1; ssTl().cnt[1] += (long long)local.size(); }
         sm(1);
         Ctx& cb = stepCtx(0);
+        if (in.recordGameEvents) cb.gameEvents = &out.gameEvents;
         cb.L = L; cb.objs = &local; cb.p22 = p22; cb.hsKnown = true; cb.usedRings = &usedRings; cb.fireOrder = &fireOrder; cb.dashRot = &dashRot; cb.dualH = dualH;
         bindDashRestart(cb);
         actLog.clear(); cb.actLog = &actLog;
@@ -402,6 +405,7 @@ public:
 
         // ---- update ----
         Ctx& cu = stepCtx(1);
+        if (in.recordGameEvents) cu.gameEvents = &out.gameEvents;
         cu.L = L; cu.objs = world; cu.p22 = p22; cu.hsKnown = true; cu.usedRings = &usedRings; cu.fireOrder = &fireOrder;
         sm(5);
         upd::playerUpdate(cu, in.dt, [](Ctx& cc, float d) { upd::updateJump(cc, d); });
@@ -437,6 +441,7 @@ public:
         cand.resize(nCand);   // (the same list as a clear and nCand push_backs, which were 0.5 us of a tick with 170 objects around the player)
         { GObj* const o0 = objs.data(); GObj** const c0 = cand.data(); for (size_t i = 0; i < nCand; ++i) c0[i] = o0 + i; }
         Ctx& cp = stepCtx(2);
+        if (in.recordGameEvents) cp.gameEvents = &out.gameEvents;
         cp.objs = &objs; cp.L = L;
         if (nb.ok) { cp.lkWorld = &uidOnce; cp.lkIndex = [](const void* m, int u) -> long long { const auto& M = *(const std::unordered_map<int, long long>*)m; const auto it = M.find(u); return it == M.end() ? -1 : it->second; }; cp.lkObjs = &objs; cp.lkStamp = nb.stamp[1].data(); cp.lkPos = nb.pos[1].data(); cp.lkGen = nb.gen[1]; }   // Ctx::byUid: nbPass by place (the cells' part and the slot uids appended above)
         cp.spiderJump = [](Ctx& cc) { return spider::spiderTestJump(cc); };
@@ -561,8 +566,13 @@ private:
         w.activated = v;
     }
     void writeBack(const std::vector<GObj>& v, const std::vector<uint32_t>& idx) {
-        if (p2Phase) {   // player 2's fired rings go to its own set, not the world's flag
-            for (const GObj* p : actLog) if (p >= v.data() && p < v.data() + v.size() && p->activated) act2.insert(p->uid);
+        if (p2Phase) {   // Rings are per player; destroyObject (2.2091 0x31d536) writes the shared object.
+            for (const GObj* p : actLog) {
+                if (p < v.data() || p >= v.data() + v.size() || !p->activated) continue;
+                if (p->type != 0x15) { act2.insert(p->uid); continue; }
+                auto it = uidIndex.find(p->uid);
+                if (it != uidIndex.end()) { setActivated(it->second, true); activatedChangedAt((uint32_t)it->second); }
+            }
             actLog.clear();
             return;
         }
@@ -629,7 +639,7 @@ private:
 
     static int cellOfD(double v, float s) { if (!(v > 0.0)) return 0; return (int)(v < 1e7 ? (double)s * v : (double)(s * 1e7f)); }
     static uint64_t cellKey(int cx, int cy) { return ((uint64_t)(uint32_t)cx << 32) | (uint64_t)(uint32_t)cy; }
-    uint64_t keyOf(const GObj& o) const { return cellKey(cellOfD((double)o.cx + (double)o.secDx, tmpl::kScaleX), cellOfD((double)o.cy + (double)o.secDy, dynHeight ? 0.01f : 0.0f)); }
+    uint64_t keyOf(const GObj& o) const { return cellKey(cellOfD(o.realX(), tmpl::kScaleX), cellOfD(o.realY(), dynHeight ? 0.01f : 0.0f)); }
     void fileMover(uint32_t i, uint64_t k) {
         std::vector<uint32_t>& v = nb.mcells[k];
         const int u = (*world)[i].uid;
@@ -764,7 +774,7 @@ private:
         const int pcx = px > 0.0f ? (int)(px < 1e7f ? px * sxs : sxs * 1e7f) : 0, pcy = py > 0.0f ? (int)(py < 1e7f ? py * sys : sys * 1e7f) : 0;
         const std::vector<GObj>& W = *world;
         // The reuse (setNbReuse): the copies the last call into this buffer made, for the same cells, are what a fresh copy would be except for
-        // `activated` (the only GObj member a step writes: buttons.hpp ringJump; writeBack has put it into the world) and the extras appended after
+        // `activated` (written by ringJump and destroyBreakable; writeBack has put it into the world) and the extras appended after
         // them (the rings below, the pass's slot uids): cut back to the cells' part (the extras' stamps taken off, the cells' part keeps this buffer's
         // stamps), and `activated` read again from the world when it may have changed there since (needResync: the other buffer's writeBack wrote a
         // ring, or the caller said activatedChanged).
@@ -814,13 +824,15 @@ private:
                 ordered.push_back(W[it->second]); idx.push_back((uint32_t)it->second); stamp[it->second] = gen;
             }
         }
-        if (p2Phase) for (GObj& o : ordered) o.activated = act2.count(o.uid) != 0;   // --shadowringp2: player 2 sees its own fired set
+        if (p2Phase) for (GObj& o : ordered) if (o.type != 0x15) o.activated = act2.count(o.uid) != 0;   // --shadowringp2: player 2 sees its own fired set, but shared breakables
         if (nbCheck() && !p2Phase) {   // ST_NBRCHECK=1: the old scan beside the index, every call
             const std::vector<GObj> ref = neighbourhoodScan(px, py, forButtons);
             bool same = ref.size() == ordered.size();
             for (size_t k = 0; same && k < ref.size(); ++k) {
                 const GObj &r = ref[k], &o = ordered[k];
-                same = r.uid == o.uid && std::memcmp(&r.rx, &o.rx, sizeof(float) * 10) == 0 && r.activated == o.activated && r.inactive == o.inactive && r.type == o.type;   // rx ry rw rh cx cy prevCx prevCy radius scaleX
+                same = r.uid == o.uid && std::memcmp(&r.rx, &o.rx, sizeof(float) * 6) == 0   // rx ry rw rh cx cy
+                    && std::memcmp(&r.prevCx, &o.prevCx, sizeof(float) * 5) == 0   // prevCx prevCy radius scaleX scaleY
+                    && r.activated == o.activated && r.inactive == o.inactive && r.farHold == o.farHold && r.type == o.type;
             }
             if (!same) { std::fprintf(stderr, "ST_NBRCHECK: the index's neighbourhood differs from the scan at (%f, %f) forButtons %d: %zu vs %zu objects\n", px, py, (int)forButtons, ordered.size(), ref.size()); std::abort(); }
         }
@@ -859,13 +871,13 @@ private:
         std::vector<const GObj*> nearby;
         for (const GObj& o : *world) {
             if (o.extCol) continue;
-            const int cx = cellOf((double)o.cx + (double)o.secDx, sxs), cy = cellOf((double)o.cy + (double)o.secDy, sys);
+            const int cx = cellOf(o.realX(), sxs), cy = cellOf(o.realY(), sys);
             if (cx >= pcx - 1 && cx <= pcx + 1 && cy >= pcy - 1 && cy <= pcy + 1) nearby.push_back(&o);
         }
         for (int ix = std::max(0, pcx - 1); ix <= pcx + 1; ++ix)
             for (int iy = std::max(0, pcy - 1); iy <= pcy + 1; ++iy) {
                 std::vector<const GObj*> cell;
-                for (const GObj* o : nearby) if (cellOf((double)o->cx + (double)o->secDx, sxs) == ix && cellOf((double)o->cy + (double)o->secDy, sys) == iy) cell.push_back(o);
+                for (const GObj* o : nearby) if (cellOf(o->realX(), sxs) == ix && cellOf(o->realY(), sys) == iy) cell.push_back(o);
                 std::sort(cell.begin(), cell.end(), [](const GObj* a, const GObj* b) { return a->uid < b->uid; });
                 for (const GObj* o : cell) ordered.push_back(*o);
             }

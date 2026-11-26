@@ -1734,7 +1734,7 @@ inline bool applyFlySpiderRing(State& c, const Obj* ob, const StepCtx& K) {
 
 
 // --shadowsupply, Follow Player Y: the objects the follow pass of this tick put somewhere else for this state (placed by a running command, or sent away because their cell is far), as the shadow's world takes them. The shadow's tick sets it from followPassPlan (shadow_step.hpp).
-struct FollowPlaced { int uid; double cx, cy, dcy; bool far, slope; bool placed = false; };   // placed: a running Follow Player Y command moved it (else the windows' own place)
+struct FollowPlaced { int uid; double cx, cy, dcy; bool far, slope; bool placed = false, enabled = true; double windowY = 0.0; };   // cy/dcy describe the placement; windowY is the pre-overlay position
 
 inline thread_local std::vector<FollowPlaced> t_followPlaced;
 
@@ -1842,6 +1842,7 @@ inline void followPassPlan(const State& s, const StepCtx& K, bool half2, float f
         const int sl = (r.cmd == kFollowSecCmd || big) ? -1 : g_followYs[r.cmd].slot;
         const bool placed = sl >= 0 && placeCmd[sl] == (int)r.cmd;
         const Obj* orig = (*src[r.win])[r.idx];
+        const bool enabled = orig->recOn != 0 && orig->onNew == 0;
         const double yFiled = bigDyn ? orig->cy : r.y0;
         const bool farCell = big
             ? (std::abs(gdSectionCell(orig->cx) - gdSectionCell(secX)) > 1
@@ -1851,7 +1852,7 @@ inline void followPassPlan(const State& s, const StepCtx& K, bool half2, float f
             && (std::abs(gdSectionCell(orig->cx) - gdSectionCell(secX)) > 1
                 || std::abs(gdSectionCell(r.y0) - gdSectionCell((double)s.y)) > 1);
         if (!placed && !farCell) {
-            out.push_back({orig->uid, orig->cx, orig->cy, orig->dcy, false, orig->slope != 0});
+            out.push_back({orig->uid, orig->cx, orig->cy, orig->dcy, false, orig->slope != 0, false, enabled, orig->cy});
             continue;
         }
         double cy = orig->cy, dcy = orig->dcy;
@@ -1862,7 +1863,7 @@ inline void followPassPlan(const State& s, const StepCtx& K, bool half2, float f
             cy = y;
             dcy = y - yPrev;
         }
-        out.push_back({orig->uid, orig->cx, farCell ? orig->cy : cy, farCell ? 0.0 : dcy, farCell, orig->slope != 0, placed});
+        out.push_back({orig->uid, orig->cx, cy, dcy, farCell, orig->slope != 0, placed, enabled, orig->cy});
     }
 }
 

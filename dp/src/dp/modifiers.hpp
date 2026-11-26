@@ -818,6 +818,7 @@ struct FollowY {
     std::vector<std::pair<int, double>> objs;
 };
 inline std::vector<FollowY> g_followYs;   // sorted by cx
+inline std::vector<int> g_followCellStickyUids;   // sorted: Follow Player Y targets without a possible refiling trigger on their groups
 // The trigger that holds `slot` at x: the last one in that slot at or behind x, -1 for none.
 inline int followOwner(int slot, double x) {
     int o = -1;

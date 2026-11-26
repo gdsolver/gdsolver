@@ -277,7 +277,7 @@ public:
                 for (int iy = std::max(0, pcy - 1); iy <= pcy + 1; ++iy) {
                     std::vector<GObj> cell;
                     for (const GObj& o : cands)
-                        if (!o.extCol && cellOf((double)o.cx + (double)o.secDx, sxs) == ix && cellOf((double)o.cy + (double)o.secDy, sys) == iy) cell.push_back(o);
+                        if (!o.extCol && cellOf(o.realX(), sxs) == ix && cellOf(o.realY(), sys) == iy) cell.push_back(o);
                     std::sort(cell.begin(), cell.end(), [](const GObj& a, const GObj& b) { return a.uid < b.uid; });
                     ordered.insert(ordered.end(), cell.begin(), cell.end());
                 }

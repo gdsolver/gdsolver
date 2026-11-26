@@ -243,16 +243,23 @@ inline bool shadowLoadObjectsFrom(std::istream& f, const std::string& fbPath, st
         const double cx = num(v, "cx"), cy = num(v, "cy"), w = num(v, "w"), h = num(v, "h");
         o.uid = (int)num(v, "uid", -1);
         o.cx = (float)cx; o.cy = (float)cy; o.cx0 = o.cx; o.cy0 = o.cy; o.prevCx = o.cx; o.prevCy = o.cy;
-        if (col.count("posx") && col.count("posy")) { o.secDx = (float)(num(v, "posx", cx) - cx); o.secDy = (float)(num(v, "posy", cy) - cy); }   // --sectionpos
-        o.rw = (float)w; o.rh = (float)h; o.rx = (float)(cx - w / 2); o.ry = (float)(cy - h / 2);
+        o.realDx = num(v, "posx", o.cx) - o.cx; o.realDy = num(v, "posy", o.cy) - o.cy;
+        o.spiderSecX = (int)num(v, "spidersecx", -2); o.spiderSecY = (int)num(v, "spidersecy", -2);
+        o.spiderFixedSlot = (int)num(v, "spiderfixedslot", -1);
+        o.spiderUiDetached = num(v, "spideruidetached") != 0;
+        o.rw = (float)w; o.rh = (float)h; o.rx = (float)num(v, "rectx", cx - w / 2); o.ry = (float)num(v, "recty", cy - h / 2);
         o.radius = (float)num(v, "radius");
         o.scaleX = (float)num(v, "scx", 1);
         o.scaleY = (float)num(v, "scy", 1);
         o.slopeDir = (int)num(v, "sdir");
         o.slopeUphill = num(v, "sup") != 0;
         o.slopeHazard = num(v, "shz") != 0;
+        o.spiderSlopeLockX = num(v, "slopelockx") != 0;
+        o.spiderSlopeCachedOffset = num(v, "slopecachedoffset", num(v, "slopenoboxoffset")) != 0;
+        o.spiderSlopeBoxDx = (float)num(v, "slopeboxdx"); o.spiderSlopeBoxDy = (float)num(v, "slopeboxdy");
         o.passable = num(v, "nocol") != 0;
         o.oriented = num(v, "rot") != 0;
+        o.spiderOuterOb = (int8_t)num(v, "outerob", -1);
         o.flipY = num(v, "flipy") != 0;
         o.multiAct = num(v, "multiact") != 0;
         o.claim = num(v, "claim") != 0;   // (a dump that predates the column has none: no ring claims the touch)
@@ -372,7 +379,7 @@ inline void shadowReadSeed(ShadowBase& B, const std::string& path) {
 // What g_shBase was built from (shadowStepInit): a call whose key is the same keeps it, any other builds it again.
 inline std::string g_shBaseKey;
 inline uint64_t g_shBaseGen = 0;   // bumped whenever g_shBase is built: a thread's ShadowThread is built again (shadowThread)
-inline thread_local std::vector<int> t_evPreFire;   // the body's fired-ring record as the pass started (newest first): what eventsOfPass compares the record after the pass with
+inline thread_local std::vector<int> t_evPreFire;   // the body's prior fired-ring record for the toggle and contact bookkeeping
 inline uint64_t g_shCallGen = 0;   // bumped by every call's shadowStepInit: a thread's tail memo does not outlive the call that saved it
 
 // With every call's loaded level (its moving objects are the ones the model places from grouptrace). The CLI makes one call per process, or a
@@ -439,6 +446,9 @@ inline void shadowStepInit(const char* objrectsPath, const Level& L) {
         mix(settings, sizeof settings);
         mix(cand.data(), cand.size() * sizeof(int));
         mix(candBox.data(), candBox.size() * sizeof(int));
+        const size_t followCellCount = g_followCellStickyUids.size();
+        mix(&followCellCount, sizeof followCellCount);
+        mix(g_followCellStickyUids.data(), followCellCount * sizeof(int));
         key = (inproc ? std::string("csv:") + std::to_string(g_levelCsv.size()) : std::string("file:") + objrectsPath) + "|fb:" + fbPath + "|seed:" + g_shadowSeedFile
               + "|h:" + std::to_string(h);
     }
@@ -504,6 +514,26 @@ inline void shadowStepInit(const char* objrectsPath, const Level& L) {
         for (const auto& m : g_bigSecObjs) addBox(m.first, 1);
         for (const auto& m : g_bigSecDyn) addBox(m.first, 1);
     }
+    // The dump is not a per-tick recording. updateIsOriented (2.2091 0x29e640) can rewrite the latch;
+    // updateObjectSection (0x330ba0) can refile movers that are not limited to Follow Player Y and group switches.
+    std::map<std::pair<int, int>, int> firstMovingSlot;
+    for (size_t i = 0; i < B.objs.size(); ++i) if (B.mover[i]) {
+        auto& o = B.objs[i];
+        if (o.spiderFixedSlot >= 0) {
+            auto [it, inserted] = firstMovingSlot.try_emplace(std::make_pair(o.spiderSecX, o.spiderSecY), o.spiderFixedSlot);
+            if (!inserted) it->second = std::min(it->second, o.spiderFixedSlot);
+        }
+        o.spiderOuterOb = -1;
+        const bool followCell = (o.type == 0 || o.type == 2 || o.type == 25)
+            && std::binary_search(g_followCellStickyUids.begin(), g_followCellStickyUids.end(), o.uid);
+        if (!followCell) o.spiderSecX = o.spiderSecY = -2;
+        o.spiderFixedSlot = -1;
+    }
+    // A removal before the end of the prefix can swap a later slot forward (0x32fbce..0x32fbec).
+    if (!firstMovingSlot.empty()) for (auto& o : B.objs) if (o.spiderFixedSlot >= 0) {
+        auto it = firstMovingSlot.find({o.spiderSecX, o.spiderSecY});
+        if (it != firstMovingSlot.end() && it->second < o.spiderFixedSlot) o.spiderFixedSlot = -1;
+    }
     if (!g_shadowSeedFile.empty()) shadowReadSeed(B, g_shadowSeedFile);
     // the template the carried words are laid over: the seed's image (the level's own constant words), else the generated one
     B.clean.resize(gdcol::tmpl::kImageBytes);
@@ -564,8 +594,8 @@ struct ShadowThread {
     bool frameBad = false;   // --shadowframe: the last placement met a mover it cannot turn back to the world
     std::vector<uint8_t> seen;
     // shadowPlaceMovers without a sweep of every mover (a level of 32k movers spent 16 % of the search there): the movers the last placement
-    // set seen (the only ones whose seen is 1), and every mover whose `inactive` may be false -- that placement's, and the follow objects the
-    // supply switched on since. Until the thread's first placement every mover may be on (the world is the base's copy): liveAll.
+    // set seen (the only ones whose seen is 1), and every mover with a per-state placement to clear, including Follow's farHold.
+    // Until the thread's first placement every mover may be on (the world is the base's copy): liveAll.
     std::vector<uint32_t> seenList, liveList;
     bool liveAll = true;
     gdcol::SelfOut outs[3];   // shadowAdvance's SelfOut (the pending head, the tail, the head), reset at each use instead of constructed (a std::map each)
@@ -671,6 +701,16 @@ inline ShadowThread& shadowThreadOf(std::unique_ptr<ShadowThread>& P, uint64_t& 
     return T;
 }
 
+// updateObjectSection (2.2091 0x330bbe..0x330c36) uses the double logical position, not a widened float centre.
+// Preserve both the dump's logical offset and the current placement's rounding residue.
+inline bool shadowSetMoverCentre(gdcol::GObj& o, const gdcol::GObj& base, double x, double y) {
+    const float cx = (float)x, cy = (float)y;
+    const double dx = base.realDx + (x - cx), dy = base.realDy + (y - cy);
+    const bool moved = o.cx != cx || o.cy != cy || o.realDx != dx || o.realDy != dy;
+    o.cx = cx; o.cy = cy; o.realDx = dx; o.realDy = dy;
+    return moved;
+}
+
 // A mover this group's windows do not hold is off, and it stands where the level loaded it. It used to keep the place of whichever group this thread had put it in last: nothing read it
 // while it was off, except slPack, which asks where the movers of `ever` and of the drop lists are (SlWorld::right) to keep them or let them go -- so what a block held depended on the order
 // in which the thread had stepped its states, and the search at 8 threads (each with its own world) did not match the search at 1 (c136_591: 77 of 198 children of one layer).
@@ -678,7 +718,8 @@ inline void shadowParkMover(ShadowThread& T, const ShadowBase& B, uint32_t i) {
     gdcol::GObj& G = T.world[i];
     const gdcol::GObj& B0 = B.objs[i];
     G.inactive = true;
-    G.cx = B0.cx; G.cy = B0.cy; G.prevCx = B0.prevCx; G.prevCy = B0.prevCy;
+    G.farHold = false;   // parked geometry is not a candidate of either native rect query
+    shadowSetMoverCentre(G, B0, B0.cx, B0.cy); G.prevCx = B0.prevCx; G.prevCy = B0.prevCy;
     G.rx = B0.rx; G.ry = B0.ry; G.rw = B0.rw; G.rh = B0.rh;
     G.rot = B0.rot; G.oriented = B0.oriented; G.bw = B0.bw; G.bh = B0.bh;
 }
@@ -718,12 +759,10 @@ inline void shadowPlaceMovers(ShadowThread& T, const StepCtx& K, int fr = 0) {
                 if (fr & 1) std::swap(whw, whh);
 
             }
-            const float cx = (float)wcx, cy = (float)wcy;
-            const bool moved = G.cx != cx || G.cy != cy;
-            G.cx = cx; G.cy = cy;
+            const bool moved = shadowSetMoverCentre(G, B.objs[i], wcx, wcy);
             G.prevCx = (float)wpx; G.prevCy = (float)wpy;
             G.rw = (float)(2.0 * whw); G.rh = (float)(2.0 * whh);
-            G.rx = cx - G.rw * 0.5f; G.ry = cy - G.rh * 0.5f;
+            G.rx = G.cx - G.rw * 0.5f; G.ry = G.cy - G.rh * 0.5f;
             if (o->oriented) {   // a turned mover: this tick's angle and its unturned box (Obj::rot, ohw / ohh), as self_test turns a wtrace row's object
                 G.rot = (float)(o->rot - 90.0 * (double)fr);   // (frames.hpp turnObj: the frame's rotation is added to the Obj's)
                 if (fr == 0 && o->rotT == (long long)K.t) G.rot = (float)o->rotSup;   // the supply's angle for this tick (search_dp.hpp supplyPlaceMovers; a tick other than the group's own: not supplied)
@@ -795,11 +834,13 @@ inline void shadowPlaceMovers(ShadowThread& T, const StepCtx& K, int fr = 0) {
                 if (G.scaleX != s0x || G.scaleY != s0y) T.sh.moverMoved(i);
             }
             G.farHold = false;
-            G.inactive = (o->onNew != 0) || (o->recOn == 0);   // --shadowrecon (constants.hpp)   // --shadowonnew: the row that switches a hazard ON is not there for its own tick's pass (Obj::onNew, dynamics.hpp place())
+            // The recorder samples after processCommands (update call at 0x340d75), not inside the
+            // head's spider query. The same onNew row may include a Tap dispatched after that query (0x33c7b6).
+            G.inactive = (o->onNew != 0) || (o->recOn == 0);   // preserve the body pass's existing onNew lag
             {   // SHSTEP_FORCEMOVE=uid,tick,cy,prevcy (diagnosis only): put one mover where GD held it at one tick
                 static int fu = -1; static long long ft = -1; static double fcy = 0, fpcy = 0; static bool fr = false;
                 if (!fr) { fr = true; if (const char* e = std::getenv("SHSTEP_FORCEMOVE")) std::sscanf(e, "%d,%lld,%lf,%lf", &fu, &ft, &fcy, &fpcy); }
-                if (fu >= 0 && o->uid == fu && K.t == ft) { G.cy = (float)fcy; G.prevCy = (float)fpcy; G.ry = G.cy - G.rh * 0.5f; T.sh.moverMoved(i); }
+                if (fu >= 0 && o->uid == fu && K.t == ft) { G.cy = (float)fcy; G.realDy = B.objs[i].realDy + (fcy - G.cy); G.prevCy = (float)fpcy; G.ry = G.cy - G.rh * 0.5f; T.sh.moverMoved(i); }
             }
             if (moved) T.sh.moverMoved(i);
         }
@@ -829,12 +870,12 @@ inline void shadowPlaceMovers(ShadowThread& T, const StepCtx& K, int fr = 0) {
             while (lo < hi) { const size_t m = lo + (hi - lo) / 2; if (live[m].t <= (int)K.t) lo = m + 1; else hi = m; }
             if (lo > 0 && live[lo - 1].on == 0) on = false;
         }
-        const float cx = (float)bx, cy = (float)by;
-        const bool moved = G.cx != cx || G.cy != cy;
-        G.cx = cx; G.cy = cy; G.prevCx = cx; G.prevCy = cy;
+        const bool moved = shadowSetMoverCentre(G, B.objs[i], bx, by);
+        G.prevCx = G.cx; G.prevCy = G.cy;
         G.rw = (float)(2.0 * hw); G.rh = (float)(2.0 * hh);
-        G.rx = cx - G.rw * 0.5f; G.ry = cy - G.rh * 0.5f;
+        G.rx = G.cx - G.rw * 0.5f; G.ry = G.cy - G.rh * 0.5f;
         G.inactive = !on;
+        G.farHold = false;
         if (moved) T.sh.moverMoved(i);
     };
     for (const ArmBox& b : g_armBoxes) placeBox(b.uid, b.live, b.cx, b.cy, b.hw, b.hh, true, b.sup);
@@ -868,7 +909,8 @@ inline void shadowPlaceMovers(ShadowThread& T, const StepCtx& K, int fr = 0) {
         for (uint32_t i : T.liveList) if (!T.seen[i]) shadowParkMover(T, B, i);
         if (check) {
             long long bad = 0;
-            for (uint32_t i : T.W.moverIdx) if (!T.seen[i] && !T.world[i].inactive) { ++bad; T.world[i].inactive = true; }
+            for (uint32_t i : T.W.moverIdx) if (!T.seen[i] && (!T.world[i].inactive || T.world[i].farHold)) { ++bad; shadowParkMover(T, B, i); }
+            if (bad) T.sh.worldChanged();
             ++g_shPlaceChecks;
             g_shPlaceCheckDiff += bad;
         }
@@ -909,7 +951,9 @@ inline void shadowApplyTapMoves(ShadowThread& T, const State& s) {
             if (ix < 0 || !B.mover[(size_t)ix] || !T.seen[(size_t)ix]) continue;
             gdtrig::g_tapMoveApplied.fetch_add(1, std::memory_order_relaxed);
             gdcol::GObj& G = T.world[(size_t)ix];
+            const double realX = G.realX() + ddx, realY = G.realY() + ddy;
             G.cx += (float)ddx; G.cy += (float)ddy; G.prevCx += (float)pdx; G.prevCy += (float)pdy;
+            G.realDx = realX - G.cx; G.realDy = realY - G.cy;
             G.rx = G.cx - G.rw * 0.5f; G.ry = G.cy - G.rh * 0.5f;
             // unsound: the count has left the key (the player is past the Tap's past x) yet this mover, with its offset on, could still touch the player (its right edge + the cube reaches the player's x): the bound was too small
             if ((double)s.xAbs > gdev::g_tapPastX[tp->slot] && (double)G.cx + 0.5 * (double)std::max(G.rw, G.rh) + kCubeHalf > (double)s.xAbs) gdtrig::g_tapMoveUnsound.fetch_add(1, std::memory_order_relaxed);
@@ -925,7 +969,8 @@ inline void shadowApplyTapMoves(ShadowThread& T, const State& s) {
 // laid over it when the head that takes the button runs before the pass (edgeInput < 0: no edge now). Only the objects trigevent_togload.hpp lists, so a level without such an object does nothing here.
 // A mover is only ever switched off here (shadowPlaceMovers wrote its own `inactive`); when one has been, the next placement is asked for again, because the same group's next state may find the Tap's
 // group on and the placement's own value is what has to stand then.
-inline void shadowApplyTapGates(ShadowThread& T, const State& s, int edgeInput) {
+struct TapMoverGate { uint32_t index; bool inactive, farHold; };
+inline void shadowApplyTapGates(ShadowThread& T, const State& s, int edgeInput, std::vector<TapMoverGate>* temporary = nullptr) {
     const gdtrig::TogTable& TT = gdtrig::g_togTable;
     if (TT.objs.empty()) return;
     if (T.tapGen != gdtrig::g_togTableGen) {
@@ -950,11 +995,25 @@ inline void shadowApplyTapGates(ShadowThread& T, const State& s, int edgeInput) 
         for (int b : TT.objs[it.second].idx) if (!gdtrig::togGroupOn(TT, tog, b)) { on = false; break; }
         gdcol::GObj& G = T.world[it.first];
         if (g_shBase.mover[it.first]) {
-            if (!on) { if (!G.inactive) { G.inactive = true; changed = true; } forcedMover = true; }
+            if (!on) {
+                if (!G.inactive || G.farHold) {
+                    if (temporary) temporary->push_back({it.first, G.inactive, G.farHold});
+                    G.inactive = true; G.farHold = false; changed = true;
+                }
+                forcedMover = true;
+            }
         } else if (G.inactive == on) { G.inactive = !on; changed = true; }
     }
     if (changed) T.sh.worldChanged();
-    if (forcedMover) T.gen = ~0ull;
+    if (forcedMover && !temporary) T.gen = ~0ull;
+}
+
+inline void shadowRestoreTapMovers(ShadowThread& T, const std::vector<TapMoverGate>& temporary) {
+    for (const auto& old : temporary) {
+        auto& G = T.world[old.index];
+        G.inactive = old.inactive; G.farHold = old.farHold;
+    }
+    if (!temporary.empty()) T.sh.worldChanged();
 }
 
 inline int shadowModeOf(const gdcol::Mem& P) {
@@ -1447,14 +1506,15 @@ inline void shadowSeedFromModel(ShadowThread& T, const State& s, long long t, gd
     if (!levelStart && !(sh.img.u8(po::Sideways) && sh.seedTurnX <= 0.0f)) {
         sl.everW = (sh.img.u8(po::Sideways)) ? sh.seedTurnX : slPlayerLeft(sh.img); sl.flags2 |= kSlEverW;
         // E9 (11-18): a body seeded travelling left (seedMemory above took the objects to its RIGHT as passed) carries the rule the other way round: everWr = the right edge of its rect, kSl3EverRev
-        if (!sh.img.u8(po::Sideways) && sh.img.u8(po::Leftward)) { sl.everWr = slPlayerLeft(sh.img) + (sh.img.u8(0x368) ? sh.img.f32(0x2fc) * sh.img.f32(0x488) * sh.img.f32(0x394) : sh.img.f32(0x360)); sl.flags3 |= kSl3EverRev; }
+        if (!sh.img.u8(po::Sideways) && sh.img.u8(po::Leftward)) { sl.everWr = slPlayerLeft(sh.img) + SelfShadow::playerWidthOf(sh.img); sl.flags3 |= kSl3EverRev; }
     }   // (--shadowturnedever: a turned frame has the rule of what lay before its turn, or none when the turn is not known)   // (the rule part of ever is off when a run starts at the level start: shadow_state.hpp)
     // --shadowsupply, the repair loop's fixups: a transition record the old tick matched (fixup.hpp applyFixup) is GD's own answer for this tick, so it is applied to the shadow's body before it is packed:
     // a delta sets y / vy (and the ground flag) from the PARENT's, a kill makes the tick fatal. Without this the model's override is overwritten by the shadow's body below and the loop's records
     // never take effect -- the same death at the same place iteration after iteration (lv22 t=3267, the Steam package's 'stuck at x=4125').
+    // Relocate through setPosition so the next query refills the rect (GD Win 2.2091 0x4fa9a4 invalidates both caches).
     const bool fxApply = g_shadowSupply;
     if (fxApply && t_fixDelta) {
-        sh.img.f32(po::PosY, s.y + t_fixDy);
+        setPosition(sh.img, sh.img.f32(po::PosX), s.y + t_fixDy);
         sh.img.f64(po::Vy, (double)(s.vy + t_fixDvy));
         if (t_fixG != 255) sh.img.u8(po::G, t_fixG ? 1 : 0);
         ++g_shStats.supFixDelta;
@@ -1512,7 +1572,7 @@ inline void shadowSeedFromFile(ShadowThread& T, const State& s, gdcol::ShadowLit
     // never take effect -- the same death at the same place iteration after iteration (lv22 t=3267, the Steam package's 'stuck at x=4125').
     const bool fxApply = g_shadowSupply;
     if (fxApply && t_fixDelta) {
-        sh.img.f32(po::PosY, s.y + t_fixDy);
+        setPosition(sh.img, sh.img.f32(po::PosX), s.y + t_fixDy);
         sh.img.f64(po::Vy, (double)(s.vy + t_fixDvy));
         if (t_fixG != 255) sh.img.u8(po::G, t_fixG ? 1 : 0);
         ++g_shStats.supFixDelta;
@@ -1596,7 +1656,7 @@ inline int shadowDualLoad(ShadowThread& T, const State& s, long long t, bool atA
             // ...and the other direction of it, as slSeedRule gives player 1 (E9): a second body seeded travelling LEFT (its own +0x9ca; a dual's two bodies need not run the same way) has passed what lies to
             // its RIGHT, not to its left -- everWr = the right edge of its rect, kSl3EverRev. The forward rule alone counted a gravity portal ahead of it (to its left) as already seen (a custom level t=19436).
             if (sh.img.u8(po::Leftward) != 0 && !sh.img.u8(po::Sideways)) {
-                sl2.everWr = slPlayerLeft(sh.img) + (sh.img.u8(0x368) ? sh.img.f32(0x2fc) * sh.img.f32(0x488) * sh.img.f32(0x394) : sh.img.f32(0x360));
+                sl2.everWr = slPlayerLeft(sh.img) + SelfShadow::playerWidthOf(sh.img);
                 sl2.flags3 |= kSl3EverRev;
             } else { sl2.everWr = 0.0f; sl2.flags3 = (uint8_t)(sl2.flags3 & ~kSl3EverRev); }
             {   // ...run through the head of the seed's step with its edges, as player 1's image is (shadowSeedFromFile); player 1's clock words are set after this
@@ -1627,7 +1687,7 @@ inline int shadowDualLoad(ShadowThread& T, const State& s, long long t, bool atA
         shadowSeedFromModel(T, s2, t, sl2, true);
         if (s.frame == 0) sh.img.u8(po::Leftward, s.rev2 ? 1 : 0);   // --shadowp2dir: player 2's own direction (the image is player 2's while swapped in)
         if (s.frame == 0 && s.rev2) {   // ...and its ever's rule part the other way round (E9 slSeedRule's reverse arm): the seed above wrote the forward rule, the direction is set only now
-            sl2.everWr = slPlayerLeft(sh.img) + (sh.img.u8(0x368) ? sh.img.f32(0x2fc) * sh.img.f32(0x488) * sh.img.f32(0x394) : sh.img.f32(0x360));
+            sl2.everWr = slPlayerLeft(sh.img) + SelfShadow::playerWidthOf(sh.img);
             sl2.flags3 |= kSl3EverRev;
         }
         swapPlayer(sh, ds.two);
@@ -1790,26 +1850,6 @@ inline const Obj* shadowObjByUid(int uid, int frame = 0) {
     const auto it = map[f].find(uid);
     return it == map[f].end() ? nullptr : it->second;
 }
-// The game events the shadow's pass raised, in the order the game raises them (game_event.hpp): a pad that fresh-bumped gives its type's event, then PadActivated; a ring that fired (a record entry the pass added) gives
-// OrbActivated, then its type's event. Player 1's body only (a second player's events are not read).
-inline void eventsOfPass(const gdcol::SelfShadow& sh, const std::vector<std::pair<int, int>>& fired, std::vector<gdev::EvTok>& out) {
-    out.clear();
-    for (const auto& f : fired)
-        if (f.first >= 1000 && gdev::isPadType(f.first - 1000)) {
-            const int ty = f.first - 1000;
-            out.push_back({gdev::gdEventOfType(ty), f.second, ty});
-            out.push_back({gdev::kPadActivated, f.second, ty});
-        }
-    const std::vector<int>& F = sh.fireOrder;
-    size_t added = 0;
-    for (; added < F.size(); ++added) if (!t_evPreFire.empty() && F[added] == t_evPreFire[0]) break;
-    for (size_t i = added; i-- > 0;) {   // the oldest of the new rings first
-        const Obj* ro = shadowObjByUid(F[i]);
-        const int ty = ro ? (int)ro->type : -1;
-        out.push_back({gdev::kOrbActivated, F[i], ty});
-        out.push_back({gdev::gdEventOfType(ty), F[i], ty});
-    }
-}
 // (defined below, with the families that use them; shadowAdvanceImpl calls them on a State that no longer depends on the template parameter, so they must be declared before it)
 inline void collisionEventsDerive(const State& s, const State& c, const gdcol::Mem& P, const ShadowThread& T, State& d);
 inline void collisionEventsDerive2(const State& s, const State& c, const gdcol::Mem& P, State& d);
@@ -1969,10 +2009,9 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
             const double pdx = s.snapObj->dcx;   // --shadowdcx
             double wcx = s.snapObj->cx, wcy = s.snapObj->cy, wpx = s.snapObj->cx - pdx, wpy = s.snapObj->cy - s.snapObj->dcy;
             if (fr) { fromFrame(fr, s.snapObj->cx, s.snapObj->cy, wcx, wcy); fromFrame(fr, s.snapObj->cx - pdx, s.snapObj->cy - s.snapObj->dcy, wpx, wpy); }   // (the model's Obj is in the turned frame's coordinates)
-            const float cx = (float)wcx, cy = (float)wcy;
-            if (G.cx != cx || G.cy != cy) {
-                G.cx = cx; G.cy = cy; G.prevCx = (float)wpx; G.prevCy = (float)wpy;
-                G.rx = cx - G.rw * 0.5f; G.ry = cy - G.rh * 0.5f;
+            if (shadowSetMoverCentre(G, g_shBase.objs[(size_t)ix], wcx, wcy)) {
+                G.prevCx = (float)wpx; G.prevCy = (float)wpy;
+                G.rx = G.cx - G.rw * 0.5f; G.ry = G.cy - G.rh * 0.5f;
                 T.sh.moverMoved((size_t)ix);
                 T.gen = 0;   // the world is no longer this group's placement: the next state on this thread places it again (it saw this state's block where the group's stood, and which state a thread stepped first is the schedule's)
             }
@@ -1985,10 +2024,10 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
             const long long ix = shadowIdxOf(T, uid);
             if (ix < 0 || !g_shBase.mover[(size_t)ix]) return;
             gdcol::GObj& G = T.world[(size_t)ix];
-            const float cx = fresh ? s.xAbs : G.cx, cy = fresh ? (float)s.y : G.cy;
-            if (G.cx == cx && G.cy == cy && G.inactive == !fresh) return;
-            G.cx = cx; G.cy = cy; G.prevCx = cx; G.prevCy = cy;
-            G.rx = cx - G.rw * 0.5f; G.ry = cy - G.rh * 0.5f;
+            const bool moved = fresh && shadowSetMoverCentre(G, g_shBase.objs[(size_t)ix], s.xAbs, s.y);
+            if (!moved && G.inactive == !fresh) return;
+            G.prevCx = G.cx; G.prevCy = G.cy;
+            G.rx = G.cx - G.rw * 0.5f; G.ry = G.cy - G.rh * 0.5f;
             G.inactive = !fresh;
             T.sh.worldChanged();
             T.sh.moverMoved((size_t)ix);
@@ -2014,26 +2053,46 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
             const long long ix = shadowIdxOf(T, fp.uid);
             if (ix < 0 || !g_shBase.mover[(size_t)ix]) { ++g_shStats.supFolNonMover; continue; }
             gdcol::GObj& G = T.world[(size_t)ix];
-            if (fp.far && !(!fr && g_shBase.bigSec[(size_t)ix])) { G.inactive = true; G.farHold = true; T.sh.moverWritten((size_t)ix); ++g_shStats.supFolFar; continue; }   // --shadowbigsecpost (constants.hpp): a far collider of --bigsection stays in the world at the windows' place; the section index decides from the position after the update   // (--shadowspiderrect: the object stays where the windows put it, which is its place)
+            // The small player neighbourhood can cull an object that a spider strip still visits
+            // (0x318407 / 0x3188be: the native queries apply the object's own activation/group gate).
+            // Keep that exception only for this state's enabled placement, never a parked or toggled-off copy.
+            T.gen = 0;   // a per-state Follow overlay must not become the next state's group placement
+            T.liveList.push_back((uint32_t)ix);
+            if (fp.far && (fr || !g_shBase.bigSec[(size_t)ix])) {
+                // The native Follow Y write (0x336d22) moves the rect even if the section slot
+                // stays put. A spider strip that reaches that cell also tests the moved rect.
+                const bool placedInStickyCell = fp.placed && G.spiderSecX >= 0 && G.spiderSecY >= 0;
+                if (fp.enabled && (placedInStickyCell || !T.seen[(size_t)ix])) {
+                    const double fy = placedInStickyCell ? fp.cy : fp.windowY;
+                    double x = fp.cx, y = fy;
+                    if (fr) fromFrame(fr, fp.cx, fy, x, y);
+                    const float cx = (float)x, cy = (float)y;
+                    G.rx += cx - G.cx; G.ry += cy - G.cy;
+                    shadowSetMoverCentre(G, g_shBase.objs[(size_t)ix], x, y);
+                    G.prevCx = G.cx; G.prevCy = G.cy;
+                }
+                G.inactive = true; G.farHold = fp.enabled;
+                T.sh.moverWritten((size_t)ix); ++g_shStats.supFolFar; continue;
+            }
+            G.farHold = false;
             if (fp.slope) ++g_shStats.supFolSlope;
             if (fr) {   // (the windows' own place, in the frame's coordinates)
                 double wcx, wcy, wpx, wpy;
                 fromFrame(fr, fp.cx, fp.cy, wcx, wcy); fromFrame(fr, fp.cx, fp.cy - fp.dcy, wpx, wpy);
-                const bool mv = G.cx != (float)wcx || G.cy != (float)wcy;
-                G.cx = (float)wcx; G.cy = (float)wcy; G.prevCx = (float)wpx; G.prevCy = (float)wpy;
+                const bool mv = shadowSetMoverCentre(G, g_shBase.objs[(size_t)ix], wcx, wcy);
+                G.prevCx = (float)wpx; G.prevCy = (float)wpy;
                 G.rx = G.cx - G.rw * 0.5f; G.ry = G.cy - G.rh * 0.5f;
-                G.inactive = false;
-                T.liveList.push_back((uint32_t)ix);   // (on outside a placement: the next one switches it off unless it places it)
+                G.inactive = !fp.enabled;
                 T.sh.moverWritten((size_t)ix);   // (prevCy, the box and the inactive byte are written whether or not the centre moved)
                 if (mv) ++g_shStats.supFolMoved;
                 ++g_shStats.supFolPlaced;
                 continue;
             }
             const float cy = (float)fp.cy;
-            const bool moved = G.cy != cy;
-            G.cy = cy; G.prevCy = (float)(fp.cy - fp.dcy); G.ry = cy - G.rh * 0.5f;
-            G.inactive = false;
-            T.liveList.push_back((uint32_t)ix);
+            const double dy = g_shBase.objs[(size_t)ix].realDy + (fp.cy - cy);
+            const bool moved = G.cy != cy || G.realDy != dy;
+            G.cy = cy; G.realDy = dy; G.prevCy = (float)(fp.cy - fp.dcy); G.ry = cy - G.rh * 0.5f;
+            G.inactive = !fp.enabled;
             T.sh.moverWritten((size_t)ix);   // (prevCy, the box and the inactive byte are written whether or not the centre moved)
             if (moved) ++g_shStats.supFolMoved;
             ++g_shStats.supFolPlaced;
@@ -2045,9 +2104,12 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
     // (handleButton, +0xa33), so a port needs the disabled flag in the shadow's button pass, not a plan edge. Counted here, not applied.
     const bool btn = input != 0;
     if (g_shadowSupply && t_inputEffValid && (t_inputEff != 0) != (input != 0)) ++g_shStats.supGateRefused;
-    // The objects a Tap switches stand off while their group is off (GD's handleButton calls GJEffectManager::playerButton in the head, which toggles the group at once): a ship's or a UFO's head
-    // (this tick's button) runs before the tail, so the pass of this tick sees the edge; any other mode's head is the end of the tick, so the pass sees the groups as the parent left them.
-    shadowApplyTapGates(T, s, lat2 ? input : -1);
+    // GD Win 2.2091 handleButton calls pushButton at 0x33c6d7 / 0x33c713 before Tap dispatch at 0x33c7b6.
+    // A spider orb fired by that press (0x4f640e -> ringJump -> 0x4f7265) sees the old groups, but the ensuing collision pass sees the Tap's edge.
+    // A latency-1 head is already after this pass, so the next state's groups carry that edge instead.
+    const bool tapAfterHead = lat2 && btn != (s.action != 0) && !gdtrig::g_togTable.objs.empty();
+    std::vector<TapMoverGate> tapBeforeHead;
+    shadowApplyTapGates(T, s, lat2 && !tapAfterHead ? input : -1, tapAfterHead ? &tapBeforeHead : nullptr);
 
     // The tail of a latency-1 tick does not read the input (the head at its end does): the second child of a parent repeats the first one's tail
     // from the memo (shadowTailMemo) instead of stepping it again.
@@ -2076,7 +2138,12 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
     bool exact = false, seededM = false;
     SelfIn inT; inT.dt = t_shDt;
     inT.tick = K.t - 1;
+    static const bool dumpGameEvents = [] { const char* e = std::getenv("EVDUMP"); return e && e[0]; }();
+    inT.recordGameEvents = dumpGameEvents || gdev::evAnyListened();
     SelfOut& outT = T.outs[1];
+    auto appendGameEvents = [&](const SelfOut& out) {
+        outT.gameEvents.insert(outT.gameEvents.end(), out.gameEvents.begin(), out.gameEvents.end());
+    };
     // --shadowrotapply: the touch Rotate Gameplay triggers the model's queue has spent are the ones the pass must not turn on again (a trigger fires once)
     static thread_local std::vector<int> t_rotSpentUids;
     if (!g_rotQ.empty()) {
@@ -2137,7 +2204,7 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
     }
     slUnpack(sl, g_shBase.tmpl, T.W, sh, (float)s.xAbs - 600.0f);
     slUnpackLayer(sl, own);
-    t_evPreFire.assign(sh.fireOrder.begin(), sh.fireOrder.end());   // the fired-ring record as this tick's pass starts (the block's, or the State's slots when the body was seeded from the model): the rings the head and the tail add are the ones this tick fired (eventsOfPass)
+    t_evPreFire.assign(sh.fireOrder.begin(), sh.fireOrder.end());   // the prior slots are not new ring fires for the toggle and touch bookkeeping
     // --shadowrev: the old model turned the player round between two ticks (a Rotate Gameplay trigger, which sets State::rev and the gravity as one) -- the image the last pass left does not know it, and a
     // pass from it would go on in the old direction (a custom level t=9472: GD x 15284.07, the pass 15287.30). The model's tick stands; the next tick seeds from the State.
     const bool revMismatch = exact && ((sh.img.u8(po::Leftward) ? 1 : 0) != gdLeft(s.rev)
@@ -2151,7 +2218,10 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
         t_evPreFire.assign(sh.fireOrder.begin(), sh.fireOrder.end());
         // (own stays what the carried block said: the reseed is the BODY's, from the State. GD's rotateGameplay writes none of +0x308 / +0x2ec / +0x310 / +0x311 / +0x400 ([R] 2.209b, gd-05), and the seed's layer
         // words are the State's defaults -- on 0, no portal known, lastMode -1 -- which emptied the layer on the tick after the turn: [M] a custom level:4600, 4799 pre on 1 known 1 lastMode 5 centre 3360 H 300, 4801 on 0 known 0.)
-    } else if (revMismatch) return unsupported(5);
+    } else if (revMismatch) {
+        shadowRestoreTapMovers(T, tapBeforeHead);
+        return unsupported(5);
+    }
     // the gravity trigger's value in force over this tick (the model's rule: at the tick's starting x)
     if (!fr && (!g_gravTrigs.empty() || s.gravTouch)) {   // (a turned frame: the triggers are listed by the upright frame's x, which the State's travel coordinate is not -- the image keeps its value)
         const float gm = (float)gravModOfCh(crossXOf((double)s.xAbs, g_tpBack ? s.tpBack : 0), g_gravTouch ? s.gravTouch : 0, !g_rotQ.empty() ? (int)s.rotChan : -1, s.rev != 0, (uint32_t)s.trig.word(0));
@@ -2169,9 +2239,11 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
     // latency-1 one skips it (that head already took the same plan edge). The edge is this tick's input against the shadow's own last button.
     const bool headPending = exact ? (sl.flags2 & kSlHeadPending) != 0 : (seededM && lat2);
     const bool lastBtn = sh.holding[1];
+    outT.reset();
     if (headPending) {
         SelfIn inP; inP.dt = t_shDt;
         inP.tick = K.t - 1;
+        inP.recordGameEvents = inT.recordGameEvents;
         if (lat2) { inP.press1 = (btn && !lastBtn) ? 1 : 0; inP.release1 = (!btn && lastBtn) ? 1 : 0; }
         if (lat2 && ctrlAny) { const bool w = ctrlWant((double)s.xAbs, ctrlBit, s.ctrlT != 0); inP.ctrl = ctrlEdgeOf(ctrlBit, w); ctrlBit = w; }
         if (lat2 && dualCtrl) { const bool w2 = t_ctrlGateP2; inP.ctrl2 = ctrlEdgeOf(ctrlBit2, w2); ctrlBit2 = w2; }
@@ -2180,12 +2252,17 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
         SelfOut& outP = T.out(0);
         if (dualOn) { SelfOut& o2 = T.out2(0); T.ds.head(inP, outP, o2); } else
         sh.stepHead(inP, outP);
+        if (inT.recordGameEvents) { appendGameEvents(outP); if (dualOn) appendGameEvents(T.outs2[0]); }
     }
-    outT.reset();
+    if (tapAfterHead) {
+        shadowRestoreTapMovers(T, tapBeforeHead);
+        shadowApplyTapGates(T, s, input);
+    }
     if (dualOn) {   // both players' tails; player 2's portals join player 1's for the layer words below (a mode portal's band, the dual's end)
         SelfOut& o2 = T.out2(1);
         T.ds.tail(inT, outT, o2);
         for (const auto& f : o2.fired) outT.fired.push_back(f);
+        if (inT.recordGameEvents) appendGameEvents(o2);
         if (T.ds.active || T.ds.ended) ++g_shStats.dualStepped;
     } else
     sh.stepTail(inT, outT);
@@ -2488,6 +2565,7 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
         const bool last = sh.holding[1];
         SelfIn inH; inH.dt = t_shDt;
         inH.tick = K.t;
+        inH.recordGameEvents = inT.recordGameEvents;
         inH.press1 = (btn && !last) ? 1 : 0;
         inH.release1 = (!btn && last) ? 1 : 0;
         if (ctrlAny) {
@@ -2524,6 +2602,7 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
         SelfOut& outH = T.out(2);
         if (dualOn) { SelfOut& o2 = T.out2(2); T.ds.head(inH, outH, o2); } else
         sh.stepHead(inH, outH);
+        if (inH.recordGameEvents) { appendGameEvents(outH); if (dualOn) appendGameEvents(T.outs2[2]); }
         headOut = &outH;
     }
     pm(4);
@@ -2607,7 +2686,7 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
     // never take effect -- the same death at the same place iteration after iteration (lv22 t=3267, the Steam package's 'stuck at x=4125').
     const bool fxApply = g_shadowSupply;
     if (fxApply && t_fixDelta) {
-        sh.img.f32(po::PosY, s.y + t_fixDy);
+        setPosition(sh.img, sh.img.f32(po::PosX), s.y + t_fixDy);
         sh.img.f64(po::Vy, (double)(s.vy + t_fixDvy));
         if (t_fixG != 255) sh.img.u8(po::G, t_fixG ? 1 : 0);
         ++g_shStats.supFixDelta;
@@ -3101,10 +3180,7 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
         static std::FILE* const ff = [] { const char* e = std::getenv("P9DUMPF"); return e && e[0] ? std::fopen(e, "w") : nullptr; }();
         if (ff) { std::fprintf(ff, "%lld", K.t); for (const auto& f : outT.fired) if (f.first >= 1000) std::fprintf(ff, ",%d:%d", f.second, f.first - 1000); std::fprintf(ff, "\n"); }
         }
-    {   // env EVDUMP=file (gd-03, 11-19; observation only, nothing reads it): per tick the GJGameEvents the shadow's pass raised, the producer of the Event trigger / Toggle Orb design (notes event_orb_producer_design_gd03_1119.md).
-        // A line "t,event:uid:type,..." (t = K.t, the shadow step). A pad that fresh-bumped raises gdEventOfType(type) and PadActivated (bumpPlayer); a ring that fired this tick (the new head of the body's fireOrder) raises OrbActivated and gdEventOfType(type) (ringJump).
-        // The ring's events are the entries the pass added to the body's fired-ring record (t_evPreFire is the record as the pass started, after the State's slots seeded it): the seeded slots are not events.
-        // The same list gives State::evgate below (listened events only).
+    {   // env EVDUMP=file: "t,event:uid:type,..." (t = K.t), in the order the shadow's phases emitted them. The same ordered list feeds the existing single-player event timeline.
         static std::FILE* const ef = [] {   // a "%p" in the name is this process's id (the 604 harness starts one leveldp a section; the --shadowquietdump convention)
             const char* e = std::getenv("EVDUMP");
             if (!e || !e[0]) return static_cast<std::FILE*>(nullptr);
@@ -3119,8 +3195,7 @@ inline State shadowAdvanceImpl(const State& s, int input, const StepCtx& K, bool
             ));
             return std::fopen(nm.c_str(), "w");
         }();
-        static thread_local std::vector<gdev::EvTok> evToks;
-        if (ef || gdev::evAnyListened()) eventsOfPass(sh, outT.fired, evToks);
+        const auto& evToks = outT.gameEvents;
         if ((gdev::evAnyListened() || gdev::g_tapFed) && !s.dual && !c.dual) {   // State::evgate: the events of this pass that an Event trigger of the level listens for, on top of the lineage's chain (nothing on a level with no listener)
             std::vector<int> evs;
             if (gdev::evAnyListened()) for (const gdev::EvTok& t : evToks) if (gdev::evHeardAt(t.ev, (double)c.xAbs)) evs.push_back(t.ev);   // only an event a registered listener can hear (game_event.hpp evFromX)

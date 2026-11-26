@@ -5,7 +5,7 @@
 // handleRotatedCollisionInternal 0x4ed4c0, hitGround 0x4fa250, hitGroundNoJump 0x4fa1f0, updateCollide(Left/Right) 0x4f21f0.., postCollision 0x4eb830,
 // didHitHead 0x4f1e30, bumpPlayer/propellPlayer/boostPlayer 0x4fdae0/0x4fdc90/0x4fe2f0, checkSnapJumpToObject 0x4f1eb0.
 //
-// Self-contained on purpose: no dp header is included, so tools/collide_test.cpp compiles it alone in seconds and checks it against the game's own
+// Kept independent of the search: tools/collide_test.cpp compiles it alone in seconds and checks it against the game's own
 // entry / exit bytes (mod cfg ctraw=t0,t1 -> ctraw.csv) before anything in the model depends on it. The player is a byte image of [0, 0xc80) of the
 // PlayerObject (the offsets are the decompile's, i.e. 2.209 Windows), written in place; objects are the fields the pass reads.
 //
@@ -20,7 +20,7 @@
 #include <set>
 #include "dp/flat_set.hpp"
 #include <vector>
-
+#include "dp/game_event.hpp"
 #define GDCOL_DIED(c) do { (c).died = true; if (!(c).why) { (c).why = __LINE__; (c).whyUid = (c).curUid; } } while (0)
 namespace dp {
 namespace gdcol {
@@ -71,18 +71,18 @@ struct GObj {
     int type = 0;            // GameObjectType (+0x3a0): 0 solid, 2 hazard, 0x19 slope, ...
     float rx = 0, ry = 0, rw = 0, rh = 0;   // getObjectRect(): origin and size
     float cx = 0, cy = 0;                   // the object's centre (vtable +0xc8 / +0x4b8)
-    float secDx = 0, secDy = 0;             // --sectionpos: the logical position (obj+0x3b8 / +0x3c0, what addToSection files the section cell by) minus the rect centre; 0 = the centre is the position
+    double realDx = 0, realDy = 0; int spiderSecX = -2, spiderSecY = -2, spiderFixedSlot = -1;   // logical position relative to the float rect centre; spider cell: -2 = not captured, -1 = not filed
     float prevCx = 0, prevCy = 0;           // +0x4d0 / +0x4d4: where it was last tick
     float radius = 0;                       // +0x38c
     float scaleX = 1, scaleY = 1;
-    int slopeDir = 0;                       // +0x444 m_slopeDirection
+    int slopeDir = 0; float spiderSlopeBoxDx = 0, spiderSlopeBoxDy = 0;   // +0x444 m_slopeDirection; cached getBoxOffset for the spider's temporary rotation
     bool slopeUphill = false;               // +0x440 m_slopeUphill
-    bool slopeHazard = false;               // m_slopeIsHazard
+    bool slopeHazard = false; bool spiderSlopeLockX = false, spiderSlopeCachedOffset = false;   // m_slopeIsHazard; native turn's X gate and known box offset
     bool inactive = false;                  // +0x28e
     bool farHold = false;                   // --shadowspiderrect: `inactive` only because a Follow Player Y object was sent away from the pass's cells (its place is real): the spider's rect queries still find it
-    bool activated = false;                 // +0x3d2
+    bool activated = false;                 // +0x3d2: used object or destroyed breakable
     bool passable = false;                  // +0x515
-    bool oriented = false;                  // +0x2e8 the rotated-box flag
+    bool oriented = false; int8_t spiderOuterOb = -1;   // rotation estimate; spiderOuterOb is the captured +0x2e8 latch, or -1 when unknown
     bool b517 = false, b518 = false, b519 = false, b51a = false, b51b = false, b51c = false, b51d = false, b51e = false;   // the flag bytes at +0x517.. the pass reads
     int groupCount = 0;                     // +0x498 m_groupCount: checkCollisions registers a platform as the rider's +0x600 only if it is in a group (0 = unknown / none: the registration is skipped)
     bool dynamic = false;                   // a moving object: its rect is re-read every tick
@@ -90,7 +90,7 @@ struct GObj {
     bool reverse = false;                    // +0x704
     bool multiAct = false;                   // the editor's Multi Activate: a portal / pad / orb that may fire again
     bool claim = false;                      // a spawn / toggle orb's Claim Touch (RingObject::m_claimTouch, +0x740, property 445; objrects `claim`): pushButton fires it alone and takes the hold, a touch does not fire it
-    bool extCol = false;                     // the editor's Extended Collision (property 511, obj+0x280): not filed in a section cell, checked on every pass by the game's flat list
+    bool extCol = false, spiderUiDetached = false;   // Extended Collision uses a flat list; addUIObject removes the object from the gameplay sections
     // a teleport portal (type 28), from the objrects columns: the exit and the keeps (GJBaseGameLayer::teleportPlayer 0x315f20)
     float cx0 = 0, cy0 = 0;                 // the box centre at load, before any group motion
     float tpEx = 0, tpEy = 0, tpY = 0, tpRX = 0, tpRY = 0;   // the linked exit's position, an id-747 portal's target y, the portal's real position
@@ -114,8 +114,8 @@ struct GObj {
     double sy0 = 0, sy1 = 0;                // the slope line's y at the rect's left and right edge (objrects.txt)
     int objectId = 0;
     bool operator<(const GObj& o) const { return uid < o.uid; }
+    double realX() const { return (double)cx + realDx; } double realY() const { return (double)cy + realDy; }
 };
-
 struct Layer {
     bool freeMode = false;      // +0x311
     bool dual = false;          // +0x422
@@ -173,7 +173,7 @@ struct Ctx {
     bool (*spiderJump)(Ctx&) = nullptr;   // PlayerObject::spiderTestJump (spider.hpp sets it): the spider pad (type 0x2c) calls it; empty = counted as not ported
     bool p22 = true;                  // the level's player 1 Enable22Changes (a spawn orb clears the armed press only then)
     FlatSet<int>* usedRings = nullptr;
-    std::vector<int>* fireOrder = nullptr;   // --shadowfireorder (shadow_lite.hpp): the rings this body has fired, newest first, at most kFireOrder (SelfShadow::fireOrder); null = not recorded
+    std::vector<int>* fireOrder = nullptr; std::vector<gdev::EvTok>* gameEvents = nullptr;   // cumulative ring history (shadow_lite.hpp), and the optional ordered event log for this step
     bool everGuess = false;                  // --shadowrev: a Leftward pass overlapped an object the gate calls seen only by the seeding rule (everRule), not by the objects the player was known to touch
     std::vector<std::pair<int,int>> fired;   // (type, uid) of the non-solid objects that overlapped this tick, with 1000 added to the type when the gate let them fire (the test's --verbose prints it)
     explicit Ctx(Mem& p) : P(p) {}   std::vector<GObj*>* actLog = nullptr;   struct DualHooks* dualH = nullptr;   bool rotApply = false; bool primeWords = false; const std::vector<int>* rotSpent = nullptr; std::vector<int> rotFired;   // rotApply (--shadowrotapply): a touch Rotate Gameplay (2900) the pass overlaps turns the body at once (playerRotateGameplay, the end of this file); rotSpent = the uids the caller knows have fired, rotFired = the ones this pass turned on.   dualH: --shadowdual, the other player (selfshadow_dual.hpp; null = player 2 is not modelled and its calls are counted). non-null: buttons.hpp ringJump appends every object it marks activated (selfshadow.hpp writeBack; on this line so that the __LINE__ of the kills below, which self_test prints, stay; a member added here must be added to selfshadow.hpp ctxReset)
@@ -212,26 +212,26 @@ inline void setPosition(Mem& P, float x, float y, int line = __builtin_LINE()) {
     P.u8(0x368, 1);                                     // GameObject::setPosition marks the rect cache dirty
     P.u8(0x369, 1);                                     // ... and the oriented box (the player's setPosition, vtable +0xb8, marks both)
 }
-// GameObject::getObjectRect2 0x2949e0: the cached rect (+0x358..) is rebuilt from the hitbox words and the scale only when +0x368 says the position moved.
-// Changing the scale (setScaleX / setScaleY) does not mark it, so a size portal's new size reaches the pass at the next setPosition or the next tick.
+// GameObject::getObjectRect (2.2091 0x29484a..0x294938): use absolute scale for mirrored-by-scale objects, then swap the scaled sides at right angles.
+inline std::pair<float, float> plainPlayerRectSize(const Mem& P, float fx, float fy) {
+    const float sx = P.f32(0x488), sy = P.f32(0x48c); const bool mirrored = P.u8(0x36d) != 0;
+    const float w = (P.f32(0x2fc) * (mirrored ? std::fabs(sx) : sx)) * fx, h = (P.f32(0x300) * (mirrored ? std::fabs(sy) : sy)) * fy;
+    return P.u8(0x390) ? std::pair{h, w} : std::pair{w, h};
+}
+// getObjectRect2 (0x2949e0) only refreshes the cached rect when +0x368 is dirty; a scale change alone does not mark it.
 inline void refreshRect(Mem& P) {
     if (!P.u8(0x368)) return;
-    P.f32(0x360, P.f32(0x2fc) * P.f32(0x488) * P.f32(0x394));
-    P.f32(0x364, P.f32(0x300) * P.f32(0x48c) * P.f32(0x398));
-    P.f32(0x358, P.f32(po::PosX) - P.f32(0x360) * 0.5f);   // GameObject::getObjectRect: (centre - size / 2, size); the player's box offset is 0 (measured)
-    P.f32(0x35c, P.f32(po::PosY) - P.f32(0x364) * 0.5f);
+    const auto [w, h] = plainPlayerRectSize(P, P.f32(0x394), P.f32(0x398));
+    P.f32(0x360, w); P.f32(0x364, h);
+    P.f32(0x358, P.f32(po::PosX) - w * 0.5f); P.f32(0x35c, P.f32(po::PosY) - h * 0.5f);   // the player's box offset is 0 (measured)
     P.u8(0x368, 0);
 }
-
 // the player's rectangle (vtable +0x4a0): centred on the position, size from the rect cache the game keeps (+0x358: x, y, w, h)
 inline void playerRect(Mem& P, float& rx, float& ry, float& rw, float& rh) {
     refreshRect(P);
-    rw = P.f32(0x360);
-    rh = P.f32(0x364);
-    rx = P.f32(po::PosX) - rw * 0.5f;
-    ry = P.f32(po::PosY) - rh * 0.5f;
+    rw = P.f32(0x360); rh = P.f32(0x364);
+    rx = P.f32(po::PosX) - rw * 0.5f; ry = P.f32(po::PosY) - rh * 0.5f;
 }
-
 // PlayerObject::levelFlipping 0x4f97c0: +0x7ec set and the layer's mirror tween (+0x41c) neither 0 nor 1.
 inline bool levelFlipping(const Mem& P, const Layer& L) { return P.u8(0x7ec) != 0 && L.flipAmt != 0.0f && L.flipAmt != 1.0f; }
 
@@ -1028,13 +1028,13 @@ inline void playerRectScaled(Mem& P, float s, float& rx, float& ry, float& rw, f
     // GameObject::getObjectRect(w, h) 0x294840 multiplies the hitbox words by the factors it is HANDED (+0x2fc * +0x488 * w, +0x48c * +0x300 * h); the cached rect is the same call with
     // the player's own scale (+0x394 / +0x398) as the factors. The small kill box is the call with 0.3, not 0.3 of the cached rect: a mini body's box is 9, not 5.4 (read in
     // collidedWithObjectInternal 0x4efd50, asm 0x4f186f..0x4f1884, by the static read of 2026-10-29).
-    const float w = P.f32(0x2fc) * P.f32(0x488) * s, h = P.f32(0x48c) * P.f32(0x300) * s;
+    const auto [w, h] = plainPlayerRectSize(P, s, s);
     rx = P.f32(po::PosX) - w * 0.5f;
     ry = P.f32(po::PosY) - h * 0.5f;
     rw = w;
     rh = h;
 }
-
+inline void destroyBreakable(Ctx& c, GObj& o);
 // PlayerObject::collidedWithObjectInternal 0x4efd50 for a player that is not a platformer and not in a turned frame.
 // `rectArg` is null for the object's own rect, or x,y,w,h of the strip preSlopeCollision passes (then the object is not remembered: plVar28 = 0).
 // Returns true where the decompile returns 1.
@@ -1258,7 +1258,7 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
                 } else {
                     float rx, ry, rw, rh;
                     playerRectScaled(P, 0.3f, rx, ry, rw, rh);
-                    if (rectsIntersect(orc[0], orc[1], orc[2], orc[3], rx, ry, rw, rh)) { GDCOL_DIED(c); resolved = true; result = true; }   // L722-L729: a breakable
+                    if (rectsIntersect(orc[0], orc[1], orc[2], orc[3], rx, ry, rw, rh)) { destroyBreakable(c, *Oarg); resolved = true; result = true; }   // 2.2091 0x4f0778 -> 0x4f1da1
                     else footDone = true;
                 }
             }
@@ -1281,14 +1281,14 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
                 else if (!flip) { if (uid16 == P.i32(po::PrevTopUid)) go = true; }
                 else if (uid16 == P.i32(po::PrevBottomUid)) go = true;
                 if (go) {
-                    bool breakableKill = false;
+                    bool brokeBlock = false;
                     if (!flip && P.u8(po::ModeUfo) && cVar24 && !P.u8(po::Platformer) && (hn <= dVar42 || hp <= dVar42 || uid16 == P.i32(po::PrevTopUid))) {
                         float rx, ry, rw, rh;
                         playerRectScaled(P, 0.3f, rx, ry, rw, rh);
-                        if (rectsIntersect(orc[0], orc[1], orc[2], orc[3], rx, ry, rw, rh)) { GDCOL_DIED(c); resolved = true; result = true; breakableKill = true; }
+                        if (rectsIntersect(orc[0], orc[1], orc[2], orc[3], rx, ry, rw, rh)) { destroyBreakable(c, *Oarg); resolved = true; result = true; brokeBlock = true; }   // 2.2091 0x4f0e50 -> 0x4f1da1
                         else local_1c0 = false;
                     }
-                    if (!breakableKill && !(local_1c0 == false && !flip && P.u8(po::ModeUfo) && cVar24)) {
+                    if (!brokeBlock && !(local_1c0 == false && !flip && P.u8(po::ModeUfo) && cVar24)) {
                         const double vy = P.f64(po::Vy);
                         if (((0.0 <= vy) || P.u8(po::WasOnSlope) || fastObj) && (!bVar10 || !bVar9)) {
                             setPos((float)(dVar42 - (double)(ph * 0.5f)));
@@ -1339,7 +1339,7 @@ inline bool collidedWithObjectInternal(Ctx& c, float dt, GObj* Oarg, const float
                     // the spider's grace after a teleport: m_lastSpiderFlipTime is +0x828 on 22091 (+0x820 was the 2.2081 offset; gd_offsets.hpp kPlayerLastSpiderFlipTime, and 22091 collidedWithObjectInternal reads param_1[0x105] x 8)
                     if (f30 < f31 && P.f64(0x828) != 0.0 && P.f64(po::Time) - P.f64(0x828) < 0.03999999910593033) return true;
                 }
-                if (cVar24) return true;           // a breakable is destroyed, the player lives
+                if (cVar24) { destroyBreakable(c, *Oarg); return true; }   // 2.2091 0x4f19bd -> 0x4f1da1, bypasses the +0x996 write
                 if (P.u8(0x7ed) == 0) GDCOL_DIED(c); else if (P.u8(0xc4c) == 0) P.u8(0x98c, 1);
             } else {
                 setPosition(P, P.f32(po::PosX), !flip ? (float)(dVar42 - (double)(ph * 0.5f)) : (float)((double)(ph * 0.5f) + dVar4));
@@ -1397,8 +1397,8 @@ inline Obb makeObb(float px, float py, float w, float h, float ang) {
     b.ax[0] = b.cx[1] - b.cx[0]; b.ay[0] = b.cy[1] - b.cy[0];
     b.ax[1] = b.cx[3] - b.cx[0]; b.ay[1] = b.cy[3] - b.cy[0];
     for (int a = 0; a < 2; ++a) {
-        const float l2 = b.ay[a] * b.ay[a] + b.ax[a] * b.ax[a];
-        b.ax[a] = b.ax[a] / l2; b.ay[a] = b.ay[a] / l2;
+        const float invLen2 = 1.0f / (b.ay[a] * b.ay[a] + b.ax[a] * b.ax[a]);   // OBB2D::calculateWithCenter 0x7b69f..0x7b710: divide once, then multiply each component.
+        b.ax[a] *= invLen2; b.ay[a] *= invLen2;
         b.org[a] = (double)(b.ax[a] * b.cx[0] + b.ay[a] * b.cy[0]);
     }
     return b;
@@ -1425,8 +1425,8 @@ inline Obb obbFromCorners(const float* x, const float* y) {
     b.ax[0] = b.cx[1] - b.cx[0]; b.ay[0] = b.cy[1] - b.cy[0];
     b.ax[1] = b.cx[3] - b.cx[0]; b.ay[1] = b.cy[3] - b.cy[0];
     for (int a = 0; a < 2; ++a) {
-        const float l2 = b.ay[a] * b.ay[a] + b.ax[a] * b.ax[a];
-        b.ax[a] = b.ax[a] / l2; b.ay[a] = b.ay[a] / l2;
+        const float invLen2 = 1.0f / (b.ay[a] * b.ay[a] + b.ax[a] * b.ax[a]);   // same native normalization as the generated box above
+        b.ax[a] *= invLen2; b.ay[a] *= invLen2;
         b.org[a] = (double)(b.ax[a] * b.cx[0] + b.ay[a] * b.cy[0]);
     }
     return b;
@@ -1434,8 +1434,8 @@ inline Obb obbFromCorners(const float* x, const float* y) {
 inline Obb objObb(const GObj& o) {
     if (o.hasGc) {   // GD's own corners: the box need not stand on the rect's centre (a hitbox off the sprite's pivot), and its size is not solved from anything
         float x[4], y[4];
-        const float dx = o.cx - o.gcx, dy = o.cy - o.gcy;
-        for (int k = 0; k < 4; ++k) { x[k] = o.gcx + (o.gc[2 * k] - o.gcx) * o.gscale + dx; y[k] = o.gcy + (o.gc[2 * k + 1] - o.gcy) * o.gscale + dy; }   // gscale: a Scale trigger has shrunk / grown the box about its centre since the corners were taken
+        const float dx = o.cx - o.gcx, dy = o.cy - o.gcy; const bool asCaptured = dx == 0.0f && dy == 0.0f && o.gscale == 1.0f;
+        for (int k = 0; k < 4; ++k) { x[k] = asCaptured ? o.gc[2 * k] : o.gcx + (o.gc[2 * k] - o.gcx) * o.gscale + dx; y[k] = asCaptured ? o.gc[2 * k + 1] : o.gcy + (o.gc[2 * k + 1] - o.gcy) * o.gscale + dy; }   // OBB2D::overlaps1Way 0x7bb8f..0x7bbf7 reads the stored corners without recentering.
         return obbFromCorners(x, y);
     }
     const float ang = -o.rot * 0.017453292f;
@@ -1454,7 +1454,8 @@ inline Obb playerObbAt(Mem& P, bool turned) {
         qx = P.f32(po::PosX) - qw * 0.5f;
         qy = P.f32(po::PosY) - qh * 0.5f;
     } else {
-        playerRect(P, qx, qy, qw, qh);
+        playerRect(P, qx, qy, qw, qh);   // The AABB already swapped its sides; the OBB (0x29e598..0x29e607) is turned by angle instead.
+        if (P.u8(0x390)) { std::swap(qw, qh); qx = P.f32(po::PosX) - qw * 0.5f; qy = P.f32(po::PosY) - qh * 0.5f; }
     }
     return makeObb(qx + qw * 0.5f, qy + qh * 0.5f, qw, qh, turned ? -P.f32(0x38) * 0.017453292f : 0.0f);   // PlayerObject::getOrientedBox: the node's rotation turns it
 }
@@ -1662,8 +1663,8 @@ inline void reversePlayerPort(Ctx& c, GObj* ring) {
     if (ring && P.u8(0x562)) {
         const float pend = (float)P.f64(0x9d8);
         // GD Win 2.2091: reversePlayer calls getRealPosition at RVA 0x4f67bd, not the rect centre.
-        const float dx = (ring->cx + ring->secDx) - (P.f32(po::PosX) + pend);
-        const float dy = (ring->cy + ring->secDy) - (P.f32(po::PosY) + pend);
+        const float dx = (float)ring->realX() - (P.f32(po::PosX) + pend);
+        const float dy = (float)ring->realY() - (P.f32(po::PosY) + pend);
         const float d = P.u8(po::Sideways) ? dy : dx;
         P.f64(0x9d8, (double)(d + d) + P.f64(0x9d8));
     }
@@ -2137,6 +2138,14 @@ inline bool handleRotatedCollisionInternal(Ctx& c, float dt, GObj* O, const floa
     }
     return r;
 }
+// GJBaseGameLayer::destroyObject (2.2091 0x31d460) marks +0x3d2 at 0x31d536; collisionCheckObjects skips it (0x31bdc8).
+// It emits DestroyBlock at 0x31d568..0x31d575. The platformer contact branches which also set player +0x996 are not ported here.
+// Do not unfile the object or mark it inactive: staticObjectsInRect still tests its box.
+inline void destroyBreakable(Ctx& c, GObj& o) {
+    o.activated = true;
+    if (c.actLog) c.actLog->push_back(&o);
+    if (c.gameEvents) c.gameEvents->push_back({gdev::gdEventOfType(o.type), o.uid, o.type});
+}
 // Does the pass's answer for this object depend on whether the contact is the first one (`fresh`)? Only the types whose case in collisionCheckObjects reads it
 // (portals, pads, mirrors, size / swing / dual portals, speed portals: selfshadow.hpp takes the speed from a fresh 0x14 fired entry) do. The Special objects (0x28), the
 // touch triggers and coins (0x14 other than a speed portal, 0x2d, 0x16) and the rings take no once-gate decision of the shadow's: whether the seeding rule or
@@ -2172,7 +2181,7 @@ inline void collisionCheckObjects(Ctx& c, float dt, const std::vector<GObj*>& ca
     auto callKeyOf = [&](const GObj& q) -> int64_t {
         if (q.extCol) return -1;
         auto cellOf = [](double v, float s) -> int { if (!(v > 0.0)) return 0; return (int)(v < 1e7 ? (double)s * v : (double)(s * 1e7f)); };
-        return ((int64_t)cellOf((double)q.cx + (double)q.secDx, c.L.scaleX) << 32) ^ (int64_t)(uint32_t)cellOf((double)q.cy + (double)q.secDy, c.L.dynHeight ? 0.01f : 0.0f);
+        return ((int64_t)cellOf(q.realX(), c.L.scaleX) << 32) ^ (int64_t)(uint32_t)cellOf(q.realY(), c.L.dynHeight ? 0.01f : 0.0f);
     };
     for (GObj* o : cand) {
         // The rect is a function of the player's bytes, and in this loop only an object that passes the overlap tests below writes them (or the rect's locals). So the read at a call boundary gives the same four numbers unless such an
@@ -2214,13 +2223,13 @@ inline void collisionCheckObjects(Ctx& c, float dt, const std::vector<GObj*>& ca
                 dualFlipSite(c, up0, false); }           // the second player's flip (GJBaseGameLayer::flipGravity 0x319e20)
                 break;
             case 8: case 9: case 0x22:
-                if (fresh) padBump(c, o);
+                if (fresh) { padBump(c, o); gdev::notePadEvents(c.gameEvents, o->uid, o->type); }
                 break;
             case 10:
-                if (fresh) gravityPad(c, o);
+                if (fresh) { gravityPad(c, o); gdev::notePadEvents(c.gameEvents, o->uid, o->type); }
                 break;
-            case 0x2c:
-                if (fresh) padSpider(c, o);   // GD Win 2.2091: RVA 0x31cc82 resumes the object loop without refreshing the cached rect.
+            case 0x2c:   // GD Win 2.2091: 0x31cc82 resumes the loop without refreshing the rect; SpiderTeleport at 0x4fdb8d precedes the pad events at 0x31f23a / 0x31f24d.
+                if (fresh) { padSpider(c, o); gdev::notePadEvents(c.gameEvents, o->uid, o->type); }
                 break;
             case 0x2a:                                // the gravity toggle portal: flips whatever the gravity is (collisionCheckObjects case 0x2a; the layer's own flip and the animation are not the player's bytes)
                 if (!fresh) break;
@@ -2268,7 +2277,7 @@ inline void collisionCheckObjects(Ctx& c, float dt, const std::vector<GObj*>& ca
                         const int slot = o->type == 0x24 ? 0x994 : 0x993;
                         if ((!c.usedRings || !c.usedRings->count(o->uid)) && !P.u8((size_t)slot)) {
                             if (c.usedRings) c.usedRings->insert(o->uid);
-                            noteFired(c.fireOrder, o->uid);
+                            noteFired(c.fireOrder, o->uid); gdev::noteOrbEvents(c.gameEvents, o->uid, o->type);
                             ringJumpWrites(c, o->type);
                             if (o->type == 0x24 || o->type == 0x25 || o->type == 0x26 || o->type == 0x2b) unsup(c, o->type);   // (the trigger group, the dash, the spider's jump are not ported)
                         }

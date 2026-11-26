@@ -2514,51 +2514,43 @@ class $modify(GJBaseGameLayer) {
         // membership, printed when either changes, with the tick and the run.
         if (!itermap::g_objWatch.empty() && m_objects && g_started && !g_sessionOver) {
             static const void* s_layer = nullptr;
-            static std::vector<std::pair<GameObject*, int>> s_objs;   // object, last (disabled | in-section<<1)
+            static std::vector<std::pair<GameObject*, std::array<int, 5>>> s_objs;   // object, last (flags, x, y, slot, live count)
             if (s_layer != this) {
                 s_layer = this;
                 s_objs.clear();
                 for (auto* o : CCArrayExt<GameObject*>(m_objects))
                     if (o && std::find(itermap::g_objWatch.begin(), itermap::g_objWatch.end(), o->m_uniqueID)
                                  != itermap::g_objWatch.end())
-                        s_objs.emplace_back(o, -1);
+                        s_objs.emplace_back(o, std::array<int, 5>{-1, -1, -1, -1, -1});
             }
-            // ...with the two bytes staticObjectsInRect (0x211260) tests before it takes an object --
+            // ...with the two bytes staticObjectsInRect (GD Win 2.2091 0x318407..0x31841e) tests before it takes an object --
             // +0x305 (taken whatever its groups) and +0x28e (taken by an enabledGroups query only when 0)
-            // -- and the object's slot in its section against the section's live count (layer+0x3658),
+            // -- and the object's slot in its non-effect section against the live count (layer+0x3758),
             // which bounds the query's walk.
             for (auto& [o, last] : s_objs) {
-                const auto* ob = reinterpret_cast<const uint8_t*>(o);
-                const int b305 = ob[0x305], b28e = ob[0x28e];
-                // the slot and the live count of its section (removeObjectFromSection: +0x278 / +0x27c /
-                // +0x270; staticObjectsInRect: counts at layer+0x3658, sections at layer+0x35b0)
-                const int outer = *reinterpret_cast<const int*>(ob + 0x278);
-                const int inner = *reinterpret_cast<const int*>(ob + 0x27c);
-                const int slot = *reinterpret_cast<const int*>(ob + 0x270);
+                const int b305 = o->m_isActivated, b28e = o->m_isGroupDisabled;
+                // The non-effect slot is +0x274 (removeObjectFromSection 0x32fbce..0x32fbec), not the all-object slot at +0x270.
+                const int outer = o->m_outerSectionIndex, inner = o->m_middleSectionIndex, slot = o->m_innerSectionIndex;
                 int liveCount = -1;
-                {
-                    const auto* lb = reinterpret_cast<const uint8_t*>(this);
-                    const long long xs = (*reinterpret_cast<const long long*>(lb + gdoff::kLayerNonEffectObjects + 8)
-                                          - *reinterpret_cast<const long long*>(lb + gdoff::kLayerNonEffectObjects)) >> 3;
-                    const long long cv = *reinterpret_cast<const long long*>(lb + gdoff::kLayerNonEffectObjectsSizes);
-                    if (outer >= 0 && inner >= 0 && outer < xs && cv) {
-                        const long long vp = *reinterpret_cast<const long long*>(cv + (long long)outer * 8);
-                        if (vp) {
-                            const long long d0 = *reinterpret_cast<const long long*>(vp);
-                            const long long d1 = *reinterpret_cast<const long long*>(vp + 8);
-                            if (d0 && inner < (d1 - d0) / 4) liveCount = *reinterpret_cast<const int*>(d0 + (long long)inner * 4);
-                        }
+                bool filed = false;
+                if (outer >= 0 && inner >= 0 && (size_t)outer < m_nonEffectObjects.size()) {
+                    const auto* col = m_nonEffectObjects[outer];
+                    if (col && (size_t)inner < col->size()) if (const auto* cell = (*col)[inner]) {
+                        liveCount = (*m_nonEffectObjectsSizes[outer])[inner];
+                        filed = slot >= 0 && slot < liveCount && (*cell)[slot] == o;
                     }
                 }
                 const int now = (o->m_isGroupDisabled ? 1 : 0) | (o->m_outerSectionIndex >= 0 ? 2 : 0)
-                                | (b305 ? 4 : 0) | (b28e ? 8 : 0) | ((slot < liveCount ? 1 : 0) << 4);
-                if (now == last) continue;
-                last = now;
+                                | (b305 ? 4 : 0) | (b28e ? 8 : 0) | (filed ? 16 : 0);
+                const std::array<int, 5> here{now, outer, inner, slot, liveCount};
+                if (here == last) continue;
+                last = here;
                 writeResult("objwatch: t=" + std::to_string((long long)g_tick) + " uid=" + std::to_string(o->m_uniqueID)
                             + " disabled=" + std::to_string(now & 1) + " sec=" + std::to_string(o->m_outerSectionIndex)
                             + " b305=" + std::to_string(b305) + " b28e=" + std::to_string(b28e)
                             + " sec=(" + std::to_string(outer) + "," + std::to_string(inner) + ") slot=" + std::to_string(slot)
                             + " live=" + std::to_string(liveCount)
+                            + " filed=" + std::to_string(filed)
                             + " run=" + (seekcp::g_from < 0 ? std::string("head") : "cp@" + std::to_string(seekcp::g_from)));
             }
         }        // cfg batchlog (print only): the ticks each update call ran, (end of the last call, now]

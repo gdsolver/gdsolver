@@ -47,7 +47,7 @@ struct SlWorld {
                                          // registers (collide.hpp playerTouchedRing's case) or a uid of the seed's ring array -- not movers (scanned whole)
     std::vector<int32_t> idxOfUid;       // uid -> world index (-1 = none), dense; empty when the uids are not unique or too sparse (then the shadow's map)
     std::vector<uint32_t> actTmp;        // pack's scratch
-    std::vector<int> dropTmp, actKeep;   // pack's scratch: the movers a list left behind, the uids the list keeps
+    std::vector<int> dropTmp, actKeep;   // pack's scratch: the objects a list left behind, the uids the list keeps
     std::vector<int> seedMovers;         // sorted uids
     std::vector<uint32_t> moverIdx;      // the world indices of the movers
     std::vector<uint32_t> actIdx;        // world indices whose `activated` this side has set (cleared by the next unpack)
@@ -56,7 +56,7 @@ struct SlWorld {
     // self_test and shadow_state_test (which compare `ever` itself) do not.
     bool lazyEver = false;
     // slPack's scan of the movers' `activated` (all of them, filed by their load position: 1,234 objects read at every pack on a custom level) reads instead
-    // a superset of the movers that can be activated: every writer that sets a mover's flag true adds it (noteTrue; SelfShadow::setActivated through
+    // a superset of the movers and breakables whose flags can be set: every writer adds it (noteTrue; SelfShadow::setActivated through
     // actTrueLog), and the scan drops the ones it finds false. trackActivated() turns it on (leveldp's shadow_step) while no flag is set; unique uids only
     // (the scan's result is sorted by uid). ST_ACTCHECK=1: every pack also runs the full scan and aborts when the two differ.
     bool trackAct = false;
@@ -68,7 +68,7 @@ struct SlWorld {
         actCandFlag.assign(trackAct ? world->size() : 0, 0);
     }
     void noteTrue(uint32_t i) {
-        if (!trackAct || !mover[i] || actCandFlag[i]) return;
+        if (!trackAct || actCandFlag[i] || (!mover[i] && (*world)[i].type != 0x15)) return;
         actCandFlag[i] = 1;
         actCand.push_back(i);
     }
@@ -118,7 +118,7 @@ struct SlWorld {
         for (size_t i = 0; i < w->size(); ++i) {
             if (mover[i]) continue;
             const GObj& o = (*w)[i];
-            if (ringType(o.type) || std::find(extraAct.begin(), extraAct.end(), o.uid) != extraAct.end()) byLeft.push_back((uint32_t)i);
+            if (o.type == 0x15 || ringType(o.type) || std::find(extraAct.begin(), extraAct.end(), o.uid) != extraAct.end()) byLeft.push_back((uint32_t)i);
         }
         std::sort(byLeft.begin(), byLeft.end(), [&](uint32_t a, uint32_t b) { return (*w)[a].rx < (*w)[b].rx || ((*w)[a].rx == (*w)[b].rx && a < b); });
         for (uint32_t i : byLeft) lefts.push_back((*w)[i].rx);   // (static objects' rects never change)
@@ -181,7 +181,7 @@ inline std::vector<uint32_t>& slTrackActivated(const SelfShadow& sh, SlWorld& W)
             const GObj& o = (*W.world)[i];
             if (o.activated && o.rx + o.rw >= lo && std::find(act.begin(), act.end(), i) == act.end()) act.push_back(i);
         }
-        if (W.trackAct) {   // (the movers that can be activated: SlWorld::actCand)
+        if (W.trackAct) {   // (the movers and breakables that can be activated: SlWorld::actCand)
             for (uint32_t i : W.actTrueLog) W.noteTrue(i);
             W.actTrueLog.clear();
             size_t keep = 0;
@@ -310,7 +310,7 @@ inline void slPack(const SelfShadow& sh, SlWorld& W, ShadowLite& sl, bool movedI
         bool changed = dropLoad(slDropId(sl), drop, keepU);
         for (uint32_t i : act) {
             const int u = (*W.world)[i].uid;
-            if (W.mover[(size_t)i]) {
+            if (W.mover[i] || (*W.world)[i].type == 0x15) {   // A broken block must not respawn if the player returns.
                 if (W.right((size_t)i) < pruneAt) { if (dropLeave(drop, u)) changed = true; continue; }
             } else if (!keepOrPrune(u, (long long)i)) continue;
             if (std::find(keepU.begin(), keepU.end(), u) == keepU.end()) keepU.push_back(u);
@@ -415,7 +415,7 @@ inline void slSeedRule(const SelfShadow& sh, SlWorld& W, ShadowLite& sl) {
     const float rx = turned ? sh.seedTurnX : slPlayerLeft(sh.img);   // (a turned frame: what lay before the turn)
     // E9: a body seeded travelling left (not a turned frame) has passed what lies to its right: everWr = the right edge of its rect
     const bool revSeed = !turned && sh.img.u8(po::Leftward) != 0;
-    if (revSeed) { sl.everWr = rx + (sh.img.u8(0x368) ? sh.img.f32(0x2fc) * sh.img.f32(0x488) * sh.img.f32(0x394) : sh.img.f32(0x360)); sl.flags3 |= kSl3EverRev; }
+    if (revSeed) { sl.everWr = rx + SelfShadow::playerWidthOf(sh.img); sl.flags3 |= kSl3EverRev; }
     else { sl.everWr = 0.0f; sl.flags3 = (uint8_t)(sl.flags3 & ~kSl3EverRev); }
     sl.everW = rx;
     sl.flags2 |= kSlEverW;

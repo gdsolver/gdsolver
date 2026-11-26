@@ -955,6 +955,39 @@ inline const std::unordered_map<int, std::vector<int>>* groupMembersCached(
     return &c.byGroup;
 }
 
+// GD 2.2091: Follow Player Y writes logical Y at 0x336d22, then calls PlayLayer's
+// no-op batch hook (0x336d5d -> 0x3f5c0). Move re-files per object (0x336a08 -> 0x330ba0).
+// Toggle 1049 (0x6481f5), Toggle Orb 1594 (0x4f71b6 -> 0x325950), and Tap 1595 (0x36ca89)
+// do not refile the group: toggleGroup only changes its disable count/flag (0x32b900..0x32b950).
+// A spawned Move or other geometric action is checked separately, including its remap destinations.
+// Unknown/shared targets, including Spawn remap destinations, keep the general cell estimate.
+inline std::vector<int> followCellStickyUids(const std::unordered_map<int, TrigRow>& rows,
+                                            const std::unordered_map<int, std::vector<int>>& members) {
+    std::unordered_set<int> mayRefile;
+    auto excludeGroup = [&](int gid) {
+        if (gid <= 0) return;
+        const auto it = members.find(gid);
+        if (it != members.end()) mayRefile.insert(it->second.begin(), it->second.end());
+    };
+    for (const auto& kv : rows) {
+        const TrigRow& r = kv.second;
+        if (r.id != 1814 && r.id != 1049 && r.id != 1594 && r.id != 1595) {
+            excludeGroup(r.target); excludeGroup(r.center); excludeGroup(r.tmodctr);
+        }
+        for (const auto& remap : r.remap) excludeGroup(remap.second);
+    }
+    std::vector<int> uids;
+    for (const auto& kv : rows) {
+        const TrigRow& r = kv.second;
+        if (r.id != 1814 || r.target <= 0 || !r.fyCols) continue;
+        const auto it = members.find(r.target);
+        if (it != members.end()) for (int uid : it->second) if (!mayRefile.count(uid)) uids.push_back(uid);
+    }
+    std::sort(uids.begin(), uids.end());
+    uids.erase(std::unique(uids.begin(), uids.end()), uids.end());
+    return uids;
+}
+
 // --actlookchain (removed): the triggers that change only what is seen, by their editor icon (the mod's levelwarn::kLookOnly,
 // src/mod/level_warnings.hpp, read off ObjectToolbox::init in 2.2081). Sorted. The two tables are the same list kept in two places:
 // tools/check_look_only_tables.py fails when they differ, so change both together.

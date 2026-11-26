@@ -18,6 +18,7 @@ namespace gdev {
 
 inline constexpr int kOrbActivated = 8;
 inline constexpr int kPadActivated = 9;
+inline constexpr int kSpiderTeleport = 18;
 
 inline int gdEventOfType(int objType) {
     switch (objType) {
@@ -62,14 +63,22 @@ inline int gdEventOfType(int objType) {
     }
 }
 
-// the pad types bumpPlayer is called for
-inline bool isPadType(int t) { return t == 8 || t == 9 || t == 0xa || t == 0x22 || t == 0x2c; }
-
 // ---- the world's event record (State::evgate) --------------------------------------------------------------------------------------------------------------------------------------------------
 // The game events a body raised that some Event trigger of the level listens for, along its lineage: State::evgate is the digest of the chain (0 = none), and g_evChain keeps each link (digest -> the digest
 // before it, the step, the events of that step in the order they were raised), so a timeline that must be told the events a state has raised can walk the chain from the digest it was last told. Nothing is
 // recorded where the level has no listener (evgate stays 0 and the chain empty). The chain is a level's side table: it outlives a call (a ladder resume walks it again) and is emptied by the level's reset.
 struct EvTok { int ev = 0, uid = -1, type = -1; };
+
+inline void noteOrbEvents(std::vector<EvTok>* out, int uid, int type) {
+    if (!out) return;
+    out->push_back({kOrbActivated, uid, type});
+    out->push_back({gdEventOfType(type), uid, type});
+}
+inline void notePadEvents(std::vector<EvTok>* out, int uid, int type) {
+    if (!out) return;
+    out->push_back({gdEventOfType(type), uid, type});
+    out->push_back({kPadActivated, uid, type});
+}
 // The objects only an Event trigger's chain (3604 -> its target group -> a spawn-triggered Move / Toggle -> their target) acts on, with no touch box and no crossing trigger of their own (triggers.hpp
 // loadSpawnReachedMovers): dynamics.hpp applyTriggersImpl hands them the shadow's on / off as it does an object an autonomous trigger controls. An object such a chain switches stood on for the model, which never visited it.
 inline std::unordered_set<int> g_supplyEventUids;

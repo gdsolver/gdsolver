@@ -208,7 +208,7 @@ public:
 private:
     static SelfIn stepIn(const SelfIn& in1) {
         SelfIn in2;
-        in2.tick = in1.tick; in2.dt = in1.dt; in2.head = in1.head; in2.end = in1.end;
+        in2.tick = in1.tick; in2.dt = in1.dt; in2.head = in1.head; in2.end = in1.end; in2.recordGameEvents = in1.recordGameEvents;
         return in2;
     }
     static bool sameModes(const Mem& a, const Mem& b) {   // the six bytes GJBaseGameLayer::flipGravity compares (not the wave's)

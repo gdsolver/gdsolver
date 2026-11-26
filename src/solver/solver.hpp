@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <unordered_map>
 
 namespace solver {
 
@@ -459,22 +460,69 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
           "pcctl,scx,scy,"
     // - posx,posy: GameObject::m_positionX / m_positionY (doubles at +0x3b8 / +0x3c0), the position GJBaseGameLayer::addToSection files the object
     //   in its section cell by (the rect centre cx,cy can stand up to a few px off it: a pad turned 90 degrees has its centre 2 px to one side, so two pads
-    //   on one spot straddle a 100 px cell edge in the rect and not in the game). Appended at the END; a reader that knows the name reads them.
+    //   on one spot straddle a 100 px cell edge in the rect and not in the game). These two columns use round-trip
+    //   precision, not exportdigits: getRealPosition (0x294cd6..0x294cf0) rounds the actual doubles to float only at the call.
           "posx,posy,"
     // - claim: a spawn / toggle orb's Claim Touch (RingObject::m_claimTouch, +0x740, property 445). Appended at the END; 0 on every other row.
           "claim,"
     // - sscx,sscy: GameObject::m_startScaleX / m_startScaleY, the scale the level string gave the object (the game's +0x3dc / +0x3e0). scx / scy (+0x488 / +0x48c) are the scale the object holds NOW, and a
     //   call's objrects is written at a reset, where an object a Scale trigger had resized may stand as the previous attempt left it: a custom level uid 16076 reads scx 0.019068 in a call's dump against 0.227
     //   at the level's start. The dp trigger timeline's osx / osy is the ratio to the level-string scale, so scx / sscx is the ratio the dump already holds. Appended at the END.
-          "sscx,sscy\n";
+          "sscx,sscy,"
+    // - outerob: GameObject::m_shouldUseOuterOb (+0x2e8), which damagingObjectsInRect (2.2091 0x318bd1) reads after getObjectRect.
+          "outerob,"
+    // - spidersecx,spidersecy: the actual non-effect cell, not one rebuilt from the rounded position.
+    //   staticObjectsInRect (2.2091 0x3183b4..0x318403) and damagingObjectsInRect (0x318850..0x318894)
+    //   visit the slots below the live count. -1 is not filed (e.g. addUIObject, 0x32ecf9); -2 is not captured.
+    // - spiderfixedslot: a slot in the cell's plain, ungrouped terrain prefix; -1 if the slot can change.
+    // - slopelockx: rotateGameplayObject (2.2091 0x4ef815 / 0x4ef8bd) drops the X shift if m_tempOffsetXRelated is set.
+    // - slopecachedoffset,slopeboxdx,slopeboxdy: getBoxOffset returns the raw custom offset if it compares equal
+    //   to zero (0x29e702; CCPoint::equals, libcocos2d.dll 0xc930),
+    //   or the saved parent-space offset outside the editor when +0x2d4 is clear (0x29e74e..0x29e80b).
+    // - rectx,recty: the stored CCRect origin, which the 2.2091 static query passes to intersectsRect
+    //   at 0x318456..0x318472. Reversing the centre calculation can round a different endpoint.
+    // - spideruidetached: addUIObject sets the UI flag and outer section to -1 (2.2091 0x32ed0c..0x32ed19).
+          "spidersecx,spidersecy,spiderfixedslot,slopelockx,slopecachedoffset,slopeboxdx,slopeboxdy,rectx,recty,spideruidetached\n";
     // PlayLayer's anti-cheat spike (id 8, created last, at 0,105) sits in m_objects but never
     // collides: GD only hands it to destroyPlayer as a check (hooks_playlayer.cpp). Written out,
     // the model read it as a hazard on the spawn point and a ship or ball start died on tick 2
     // (two custom levels).
     PlayLayer* const pl = typeinfo_cast<PlayLayer*>(l);
     GameObject* const anticheat = pl ? pl->m_anticheatSpike : nullptr;
+    const bool editorBoxOffset = GameManager::sharedState()->m_editorEnabled;
+    const cocos2d::CCPoint zeroBoxOffset(0.0f, 0.0f);
+    // addToSection appends (0x32f9c3); removeObjectFromSection swaps the last live slot into the hole
+    // (0x32fbce..0x32fbec). Thus changes after a fixed prefix cannot exchange any of its slots.
+    // addToGroups (0x32bbc0) registers no groups when the count is zero; group moves (0x3368d0) can refile their members.
+    const auto fixedTerrain = [l, anticheat](const GameObject* o) {
+        if (!o || o == anticheat || o == l->m_endPortal || o == l->m_player1CollisionBlock
+            || o == l->m_player2CollisionBlock || o->m_classType != GameObjectClassType::Game || o->m_groupCount != 0) return false;
+        const auto type = o->m_objectType;
+        return type == GameObjectType::Solid || type == GameObjectType::Hazard || type == GameObjectType::Slope;
+    };
+    std::unordered_map<const std::vector<GameObject*>*, int> spiderPrefixes;
+    const auto spiderCell = [&](const GameObject* obj) -> std::array<int, 3> {
+        const int x = obj->m_outerSectionIndex, y = obj->m_middleSectionIndex;
+        const int slot = obj->m_innerSectionIndex;   // addToSection 0x32f9c3 writes the non-effect slot (+0x274)
+        if (x < 0 || y < 0 || slot < 0 || (size_t)x >= l->m_nonEffectObjects.size()) return {-1, -1, -1};
+        const auto* col = l->m_nonEffectObjects[x];
+        if (!col || (size_t)y >= col->size()) return {-1, -1, -1};
+        const auto* cell = (*col)[y];
+        if (!cell) return {-1, -1, -1};
+        const int count = (*l->m_nonEffectObjectsSizes[x])[y];
+        if (slot >= count || (*cell)[slot] != obj) return {-1, -1, -1};
+        if (!fixedTerrain(obj)) return {x, y, -1};
+        auto [it, inserted] = spiderPrefixes.try_emplace(cell, 0);
+        int& prefix = it->second;
+        if (inserted) while (prefix < count && fixedTerrain((*cell)[prefix])) ++prefix;
+        return {x, y, slot < prefix ? slot : -1};
+    };
     for (auto* obj : CCArrayExt<GameObject*>(l->m_objects)) {
         if (!obj || obj == anticheat) continue;
+        const int type = (int)obj->m_objectType;
+        const auto [spiderSecX, spiderSecY, spiderFixedSlot] = !obj->m_hasExtendedCollision
+            && (type == 0 || type == 2 || type == 21 || type == 25 || type == 47)
+            ? spiderCell(obj) : std::array<int, 3>{-2, -2, -1};
         auto r = obj->getObjectRect();
         double sy0 = 0.0, sy1 = 0.0;
         int shz = 0, sdir = 0, sup = 0;
@@ -687,7 +735,15 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
             pcctl = (pc->m_stopJump ? 1 : 0) | (pc->m_stopMove ? 2 : 0) | (pc->m_stopRotation ? 4 : 0)
                     | (pc->m_stopSlide ? 8 : 0) | (pc->m_targetPlayer1 ? 16 : 0) | (pc->m_targetPlayer2 ? 32 : 0);
         }
-        rf << obj->m_objectID << "," << (int)obj->m_objectType << ","
+        const bool rawSlopeOffset = type == 25 && obj->m_customBoxOffset.equals(zeroBoxOffset);
+        const bool useSlopeCache = type == 25 && !rawSlopeOffset && !editorBoxOffset && !obj->m_boxOffsetCalculated;
+        const auto& slopeOffset = rawSlopeOffset ? obj->m_customBoxOffset : useSlopeCache ? obj->m_boxOffset : zeroBoxOffset;
+        char posX[32], posY[32], rectX[32], rectY[32];
+        *std::to_chars(posX, posX + sizeof(posX) - 1, obj->m_positionX).ptr = '\0';
+        *std::to_chars(posY, posY + sizeof(posY) - 1, obj->m_positionY).ptr = '\0';
+        *std::to_chars(rectX, rectX + sizeof(rectX) - 1, r.origin.x).ptr = '\0';
+        *std::to_chars(rectY, rectY + sizeof(rectY) - 1, r.origin.y).ptr = '\0';
+        rf << obj->m_objectID << "," << type << ","
            << (r.origin.x + r.size.width * 0.5f) << ","
            << (r.origin.y + r.size.height * 0.5f) << ","
            << r.size.width << "," << r.size.height << ","
@@ -721,9 +777,16 @@ inline void writeObjRectsTo(Out& rf, GJBaseGameLayer* l) {
            // give both scales when the turn is a multiple of 45 degrees (the two bound equations coincide), so a pad stretched along
            // one axis only was rebuilt with the uniform factor. Appended at the END; a reader that knows the name reads them.
            << "," << obj->m_scaleX << "," << obj->m_scaleY
-           << "," << obj->m_positionX << "," << obj->m_positionY
+           << "," << static_cast<const char*>(posX) << "," << static_cast<const char*>(posY)
            << "," << claim
            << "," << obj->m_startScaleX << "," << obj->m_startScaleY
+           << "," << (obj->m_shouldUseOuterOb ? 1 : 0)
+           << "," << spiderSecX << "," << spiderSecY << "," << spiderFixedSlot
+           << "," << (type == 25 && obj->m_tempOffsetXRelated ? 1 : 0)
+           << "," << (rawSlopeOffset || useSlopeCache ? 1 : 0)
+           << "," << slopeOffset.x << "," << slopeOffset.y
+           << "," << static_cast<const char*>(rectX) << "," << static_cast<const char*>(rectY)
+           << "," << (obj->m_isUIObject && obj->m_outerSectionIndex < 0 ? 1 : 0)
            << "\n";
     }
 }

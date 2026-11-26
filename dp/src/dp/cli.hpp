@@ -4137,6 +4137,7 @@ inline int cliMainOnce(int argc, char** argv) {
     // windows then). Each object's load-time y is where it closes on the player from.
     g_followYs.clear();
     g_followSecObjs.clear();
+    g_followCellStickyUids.clear();
     if (!trigPath.empty() && !grpPath.empty()) {
         const auto* rowsP = trigRowsCached(trigPath);   // (parse caches, as the touchfollow block above)
         if (rowsP) {
@@ -4152,6 +4153,7 @@ inline int cliMainOnce(int argc, char** argv) {
             static const std::unordered_map<int, std::vector<int>> noMembers;
             const auto* memP = fy.empty() ? nullptr : groupMembersCached(grpPath);
             const std::unordered_map<int, std::vector<int>>& members = memP ? *memP : noMembers;   // group -> uids
+            if (memP) g_followCellStickyUids = followCellStickyUids(rows, members);
             std::unordered_map<int, double> y0Of;   // uid -> load-time y, from every bucket
             if (!fy.empty())
                 for (const std::vector<Obj>* v : {&L.objs, &L.portals, &L.pads, &L.orbs, &L.speeds,
