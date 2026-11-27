@@ -721,7 +721,7 @@ inline bool preSlopeCollision(Ctx& c, float dt, GObj* o) {
 
 // ----------------------------------------------------------------------------------------------------------------------------------------
 // PlayerObject::collidedWithSlopeInternal 0x4edb90 for the upright frame of a non-platformer
-inline void collidedWithSlopeInternal(Ctx& c, float dt, GObj* o, bool forced) {
+inline void collidedWithSlopeInternal(Ctx& c, float dt, GObj* o, bool forced, float turnDy = 0.0f) {
     Mem& P = c.P;
     if (!forced && preSlopeCollision(c, dt, o)) { if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg main uid %d: preSlopeCollision handled it\n", o->uid); return; }
     if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg main uid %d: entered, WasOnSlope %d OnSlope %d forced %d\n", o->uid, (int)P.u8(po::WasOnSlope), (int)P.u8(po::OnSlope), (int)forced);
@@ -917,11 +917,13 @@ inline void collidedWithSlopeInternal(Ctx& c, float dt, GObj* o, bool forced) {
     }
     if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg main uid %d: flip %d top %d bVar20 %d bVar7 %d fVar24 %.4f fVar25 %.4f fVar29b %.4f fVar30 %.4f slopeY %.4f fVar28 %.4f posY0 %.4f contact %d kill %d bVar3 %d\n", o->uid, (int)flip, (int)cVar4, (int)bVar20, (int)bVar7, (double)fVar24, (double)fVar25, (double)fVar29b, (double)fVar30, dVar26, (double)fVar28, (double)posY0, (int)bVar17, (int)gotoKillCheck, (int)bVar3);
     // L485-: seat
-    float fVar28b = fVar30;
+    // A sideways seat also tracks the snap without the temporary turn's Y shift (2.2091 0x4ee755..0x4ee7c1).
+    const bool sideways = P.u8(po::Sideways) != 0;
+    const float offsetSnap = sideways ? (float)((double)fVar30 - turnDy) : fVar30;
     const uint8_t cVar6x = bVar22s ? 1 : 0;
     if (P.u8(po::WasOnSlope)) {
-        const bool a = (P.f64(0x948) != (double)fVar30) && true;
-        if (a || (P.u8(po::Platformer) && std::fabs(P.f64(0xb00)) < 0.1)) {
+        const bool changed = P.f64(0x948) != (double)fVar30 && (!sideways || P.f64(0x950) != (double)offsetSnap);
+        if (changed || (P.u8(po::Platformer) && std::fabs(P.f64(0xb00)) < 0.1)) {
             if (ody != 0.0f && ((cVar6x && P.u8(0x958)) || (local_157 && P.u8(0x959))) && P.u8(0x9ec) == 0
                 && (!P.u8(po::Platformer) || 0.1 < std::fabs(P.f64(0xb00))))
                 bVar17 = false;
@@ -937,7 +939,7 @@ inline void collidedWithSlopeInternal(Ctx& c, float dt, GObj* o, bool forced) {
     P.f64(0x688, (double)(fVar31 - ph * 0.5f));
     P.u8(0x95b, cVar4 ? 1 : 0);
     P.f64(0x948, (double)fVar30);
-    P.f64(0x950, (double)fVar28b);
+    P.f64(0x950, (double)offsetSnap);   // 0x4ee93c..0x4ee940
     P.i32(0x690, o->uid);
     P.u8(0x694, bVar20 ? 1 : 0);
     const double dVar26a = P.f64(0x938);
@@ -2087,7 +2089,7 @@ inline void ownBoxOf(const GObj& o, float& bw, float& bh) {
 }
 
 // FUN_1404ef700: one object turned +90 degrees about the player''s position (floats, sinf / cosf of the float pi/2: cos is -4.37e-8, not 0), its rotation lowered by 90
-inline void turnObjectAboutPlayer(GObj& o, float px, float py) {
+inline void turnObjectAboutPlayer(GObj& o, float px, float py, float* slopeTurnDy = nullptr) {
     const float sn = std::sin(1.5707964f), cs = std::cos(1.5707964f);
     float bw, bh;
     ownBoxOf(o, bw, bh);
@@ -2096,6 +2098,12 @@ inline void turnObjectAboutPlayer(GObj& o, float px, float py) {
         nx = (cs * dx - sn * (y - py)) + px;
         ny = cs * (y - py) + sn * dx + py;
     };
+    if (slopeTurnDy) {
+        // rotateGameplayObject records the shift of the real position, not the rect centre (2.2091 0x4ef870..0x4ef9ad).
+        const float ox = (float)o.realX(), oy = (float)o.realY();
+        const float turnedY = (float)((double)(cs * (oy - py) + sn * (ox - px)) + py);
+        *slopeTurnDy = turnedY - oy;
+    }
     float nx, ny;
     turn(o.cx, o.cy, nx, ny);
     const float ddx = nx - o.cx, ddy = ny - o.cy;
@@ -2119,17 +2127,18 @@ inline void turnObjectAboutPlayer(GObj& o, float px, float py) {
 inline bool handleRotatedCollisionInternal(Ctx& c, float dt, GObj* O, const float* rectArg, bool noOverlap, bool forced, bool slope) {
     Mem& P = c.P;
     const float x0 = P.f32(po::PosX), y0 = P.f32(po::PosY);
+    float slopeTurnDy = 0.0f;
     std::vector<std::pair<GObj*, GObj>> saved;
     auto turnOne = [&](GObj* o) {
         for (const auto& s : saved) if (s.first == o) return;
         saved.push_back({o, *o});
-        turnObjectAboutPlayer(*o, x0, y0);
+        turnObjectAboutPlayer(*o, x0, y0, slope && o == O ? &slopeTurnDy : nullptr);
     };
     turnOne(O);
     for (int u : c.touched) if (GObj* t = c.byUid(u)) turnOne(t);
     bool r = false;
     if (!slope) r = collidedWithObjectInternal(c, dt, O, rectArg, noOverlap);
-    else collidedWithSlopeInternal(c, dt, O, forced);
+    else collidedWithSlopeInternal(c, dt, O, forced, slopeTurnDy);
     const float x1 = P.f32(po::PosX), y1 = P.f32(po::PosY);
     setPosition(P, (y1 - y0) + x0, y0 - (x1 - x0));
     for (const auto& s : saved) {                 // unrotateGameplayObject: the geometry as it was; what the pass marked on the object stays

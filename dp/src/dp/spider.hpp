@@ -7,8 +7,12 @@
 // The mutable suffix still uses reset order: addToSection (0x32f782..0x32f9cd) appends, and removeObjectFromSection (0x32fb88..0x32fbec) swaps its tail into the hole.
 // The +0x305 (m_isActivated) override of the group-disabled byte is not modelled (0x318407 / 0x3188be).
 // toggleGroup (0x32b913 / 0x32b950) only writes +0x28e. PlayLayer::updateVisibility calls
-// preUpdateVisibility at 0x50df2d and activates objects at 0x50e807; the prep pass can clear +0x305
-// (0x33fed9 -> 0x28ddb3). A stale load-time flag does not describe a later query's visibility history.
+// preUpdateVisibility at 0x50df2d and activates objects at 0x50e807. The prep marks old active objects
+// (0x33f8bb) and can deactivate them (0x33fed9 -> 0x28ddb3). A refile outside the view queues the same
+// deactivation for the prep pass (0x330ca5, 0x34010c), rather than clearing the latch in the move.
+// calib_spiderpad, group-978 probe: off at t=529, native still returns solids 38/39 and hazard 931 at
+// t=533 (landing Y=195); with visibility skipped those candidates are absent (Y=3090, like the DP).
+// The load-time flag cannot describe a later query's visibility history.
 // Sprite/camera side effects not ported: playSpiderDashEffect 0x4f3370 and checkCameraLimitAfterTeleport 0x3427b0.
 #pragma once
 #include "dp/collide.hpp"

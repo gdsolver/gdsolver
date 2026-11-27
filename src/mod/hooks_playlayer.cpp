@@ -131,8 +131,8 @@ class $modify(PlayLayer) {
         // (1) Performance: its cost is proportional to the total object count
         // (2) Stability: during the fast loop object state changes massively and it trips
         //     an inconsistency and CTDs
-        // With render skip the display preparation itself is unnecessary. Physics and
-        // collision are independent, via GD's section scheme
+        // Ordinary collision uses the section scheme, but the spider's rect queries read
+        // m_isActivated (Win 2.2091 0x318407 / 0x3188be), so skipping this pass can change their result.
         // Note this is NOT renderSuppressed(): F8 (g_renderOff) stops the drawing but must not
         // stop the visibility pass. Skipping it leaves the visibility state stale, and the first
         // visit() after the screen comes back walks over that and crashes -- the fast loop can
