@@ -647,7 +647,8 @@ inline bool preSlopeCollision(Ctx& c, float dt, GObj* o) {
     const bool bVar2 = dir == 2 || ((((unsigned)(dir - 3)) & 0xfffffffcu) == 0 && dir != 5);
     const bool bVar1 = dir < 7 && ((0x6au >> dir) & 1);
     float fVar15 = (!P.u8(po::Platformer) || (!P.u8(po::OnSlope) && !P.u8(po::WasOnSlope))) ? 0.0f : 5.0f;
-    const float odx = o->cx - o->prevCx;
+    // preSlopeCollision takes the ramp's world Y motion in a sideways frame (2.2091 0x4ed790..0x4ed7a5).
+    const float rampAdvance = P.u8(po::Sideways) ? o->cy - o->prevCy : o->cx - o->prevCx;
     float fVar12 = (float)((double)P.f32(0x9fc) * P.f64(0x7c0) * (double)dt);
     const float X = P.f32(po::PosX), Y = P.f32(po::PosY);
     auto strip = [&](float sx, int iVar3) {
@@ -660,11 +661,11 @@ inline bool preSlopeCollision(Ctx& c, float dt, GObj* o) {
     };
     bool done = false;
     if (bVar2) {
-        if (((P.u8(po::Leftward) == 0 || P.u8(po::Platformer)) || odx < fVar12) && X <= cx && cx != X) {
+        if (((P.u8(po::Leftward) == 0 || P.u8(po::Platformer)) || rampAdvance < fVar12) && X <= cx && cx != X) {
             strip(cx, (P.u8(po::Leftward) == 0 || P.u8(po::Platformer)) ? 0 : 1);
             done = true;
         }
-    } else if ((P.u8(po::Leftward) != 0 || P.u8(po::Platformer)) || fVar12 < odx) {
+    } else if ((P.u8(po::Leftward) != 0 || P.u8(po::Platformer)) || fVar12 < rampAdvance) {
         if (cx + cw < X) {
             strip((cw + cx) - 1.0f, (P.u8(po::Leftward) == 0 && !P.u8(po::Platformer)) ? 1 : 0);
             done = true;
@@ -681,7 +682,7 @@ inline bool preSlopeCollision(Ctx& c, float dt, GObj* o) {
         bx = o->rx + fVar14; by = o->ry; bw = ow; bh = 1.0f;
         take = Y <= (bh + by);
     }
-    if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg pre uid %d dir %d uphill %d bVar1 %d bVar2 %d X %.4f Y %.4f | player rect %.3f %.3f %.3f %.3f | ramp rect %.3f %.3f %.3f %.3f | strip %.3f %.3f %.3f %.3f take %d fVar14 %.1f odx %.4f\n", o->uid, dir, (int)o->slopeUphill, (int)bVar1, (int)bVar2, (double)X, (double)Y, (double)px, (double)py, (double)pw, (double)ph, (double)o->rx, (double)o->ry, (double)o->rw, (double)o->rh, (double)bx, (double)by, (double)bw, (double)bh, (int)take, (double)fVar14, (double)odx);
+    if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg pre uid %d dir %d uphill %d bVar1 %d bVar2 %d X %.4f Y %.4f | player rect %.3f %.3f %.3f %.3f | ramp rect %.3f %.3f %.3f %.3f | strip %.3f %.3f %.3f %.3f take %d fVar14 %.1f advance %.4f\n", o->uid, dir, (int)o->slopeUphill, (int)bVar1, (int)bVar2, (double)X, (double)Y, (double)px, (double)py, (double)pw, (double)ph, (double)o->rx, (double)o->ry, (double)o->rw, (double)o->rh, (double)bx, (double)by, (double)bw, (double)bh, (int)take, (double)fVar14, (double)rampAdvance);
     if (take) {
         bVar11 = true;
         const float s[4] = {bx, by, bw, bh};
@@ -738,9 +739,12 @@ inline void collidedWithSlopeInternal(Ctx& c, float dt, GObj* o, bool forced, fl
     const int dir = o->slopeDir;
     const bool cVar4 = slopeIsTop(dir);
     bool bVar21 = false, bVar19 = false;
-    const float odx = o->cx - o->prevCx, ody = o->cy - o->prevCy;
-    (void)ody;
-    if ((double)P.f32(0x9fc) * P.f64(0x7c0) * (double)dt < (double)odx) {
+    // The temporary turn translates current and previous positions equally. Select the world axes
+    // as collidedWithSlopeInternal does at 0x4edcd6..0x4edcfe and 0x4ede6e..0x4ede83.
+    const bool sideways = P.u8(po::Sideways) != 0;
+    const float rampAdvance = sideways ? o->cy - o->prevCy : o->cx - o->prevCx;
+    const float rampAcross = sideways ? o->prevCx - o->cx : o->prevCy - o->cy;
+    if ((double)P.f32(0x9fc) * P.f64(0x7c0) * (double)dt < (double)rampAdvance) {
         if (!flip) { if (bVar20) bVar21 = true; } else bVar21 = !bVar20;
         bVar19 = true;
         bVar20 = !bVar20;
@@ -763,7 +767,7 @@ inline void collidedWithSlopeInternal(Ctx& c, float dt, GObj* o, bool forced, fl
         fVar28 = (float)bVar5;
     }
     // the ramp's centre now and before: d = prev - cur along the gravity axis
-    float local_d4 = o->prevCy - o->cy;
+    float local_d4 = rampAcross;
     bool bVar17 = !flip ? (local_d4 > 0.0f) : (local_d4 < 0.0f);
     if (forced || bVar17) {
         local_d4 = std::fabs(local_d4);
@@ -918,13 +922,12 @@ inline void collidedWithSlopeInternal(Ctx& c, float dt, GObj* o, bool forced, fl
     if (slopeDbgOn(P)) std::fprintf(slopeDbgOut(), "slopedbg main uid %d: flip %d top %d bVar20 %d bVar7 %d fVar24 %.4f fVar25 %.4f fVar29b %.4f fVar30 %.4f slopeY %.4f fVar28 %.4f posY0 %.4f contact %d kill %d bVar3 %d\n", o->uid, (int)flip, (int)cVar4, (int)bVar20, (int)bVar7, (double)fVar24, (double)fVar25, (double)fVar29b, (double)fVar30, dVar26, (double)fVar28, (double)posY0, (int)bVar17, (int)gotoKillCheck, (int)bVar3);
     // L485-: seat
     // A sideways seat also tracks the snap without the temporary turn's Y shift (2.2091 0x4ee755..0x4ee7c1).
-    const bool sideways = P.u8(po::Sideways) != 0;
     const float offsetSnap = sideways ? (float)((double)fVar30 - turnDy) : fVar30;
     const uint8_t cVar6x = bVar22s ? 1 : 0;
     if (P.u8(po::WasOnSlope)) {
         const bool changed = P.f64(0x948) != (double)fVar30 && (!sideways || P.f64(0x950) != (double)offsetSnap);
         if (changed || (P.u8(po::Platformer) && std::fabs(P.f64(0xb00)) < 0.1)) {
-            if (ody != 0.0f && ((cVar6x && P.u8(0x958)) || (local_157 && P.u8(0x959))) && P.u8(0x9ec) == 0
+            if (rampAcross != 0.0f && ((cVar6x && P.u8(0x958)) || (local_157 && P.u8(0x959))) && P.u8(0x9ec) == 0
                 && (!P.u8(po::Platformer) || 0.1 < std::fabs(P.f64(0xb00))))
                 bVar17 = false;
         } else bVar17 = false;
