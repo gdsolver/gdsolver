@@ -18,6 +18,8 @@ namespace gdev {
 
 inline constexpr int kOrbActivated = 8;
 inline constexpr int kPadActivated = 9;
+inline constexpr int kGravityInverted = 10;
+inline constexpr int kGravityRestored = 11;
 inline constexpr int kSpiderTeleport = 18;
 
 inline int gdEventOfType(int objType) {

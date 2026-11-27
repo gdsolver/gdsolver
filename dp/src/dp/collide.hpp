@@ -1558,6 +1558,8 @@ inline void playerFlipGravity
     if (P.u8(po::Upside) == up) return;
     P.u8(0x5a0, 0);                                     // FUN_1404fec10
     P.u8(po::Upside, up);
+    // flipGravity (2.2091 0x4f8487..0x4f84b3) emits the new gravity after the byte changes, before cleanup.
+    if (c.gameEvents) c.gameEvents->push_back({up ? gdev::kGravityInverted : gdev::kGravityRestored, -1, -1});
     P.f64(0x808, P.f64(po::Time));                      // param_1[0x101] = param_1[0x155]
     P.f64(po::FloorBottomY, 0.0);
     P.f64(po::CeilTopY, 0.0);
